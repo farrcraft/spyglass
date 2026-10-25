@@ -1,6 +1,6 @@
 [package]
 name = "spyglass-noise"
-description = "Perlin / improved noise, octave noise and normal noise."
+description = "Bit-exact ports of Minecraft's noise: Perlin, noise stacks and normal noise."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,3 +10,11 @@ publish.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+spyglass-rng.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+spyglass-oracle.workspace = true

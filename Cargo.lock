@@ -646,6 +646,12 @@ version = "0.0.0"
 [[package]]
 name = "spyglass-noise"
 version = "0.0.0"
+dependencies = [
+ "serde_json",
+ "spyglass-oracle",
+ "spyglass-rng",
+ "thiserror",
+]
 
 [[package]]
 name = "spyglass-oracle"

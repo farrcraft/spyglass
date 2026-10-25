@@ -34,6 +34,7 @@ bare_urls = "deny"
 [workspace.dependencies]
 spyglass-data = { path = "crates/spyglass-data" }
 spyglass-oracle = { path = "crates/spyglass-oracle" }
+spyglass-rng = { path = "crates/spyglass-rng" }
 
 anyhow = "1.0.104"
 directories = "6.0.0"

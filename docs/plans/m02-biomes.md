@@ -9,7 +9,7 @@
 
 Overworld biomes at quart (1:4) resolution for any seed, matching the oracle's golden files: exact where the minimum is unique, a member of the tied set where it isn't. Covers the milestone's first exit criterion and the biome-lookup part of the third. Completing this plan completes the milestone.
 
-The last of three plans for milestone 02. Needs [m02-rng-noise](completed/m02-rng-noise.md) and [m02-density](m02-density.md).
+The last of three plans for milestone 02. Needs [m02-rng-noise](completed/m02-rng-noise.md) and [m02-density](completed/m02-density.md).
 
 ## Facts established up front
 
@@ -27,7 +27,7 @@ Checked against `bundles/26.3/`, `oracle-out/26.3/` and the 26.3 jar (`javap`) o
 
 1. **Parameter list** in `spyglass-biome`: parse the report into `ParameterPoint`s (six `[min, max]` long pairs plus `offset`) in list order, with biome ids.
 2. **Nearest search with ties.** An exact search for the minimum fitness that returns every parameter point at that minimum, deduplicated by biome, so a cell is reported as `Unique(biome)` or `Tied(set)`. The default answer for a tied cell is the first in list order, which is what `findValueBruteForce` returns, so results are deterministic and thread-independent. Brute force over all 7,594 points is the reference implementation and the test oracle for the fast search. The fast search is a bounding-box tree like the oracle's `TieSearch`, pruning only strictly farther boxes.
-3. **Climate sampler**: bind the router's six climate functions for a seed ([m02-density](m02-density.md)), sample at quart → block coordinates, quantize with `(long)(f * 10000.0f)`, and search.
+3. **Climate sampler**: bind the router's six climate functions for a seed ([m02-density](completed/m02-density.md)), sample at quart → block coordinates, quantize with `(long)(f * 10000.0f)`, and search.
 4. **API** (`spyglass-biome`, until the `spyglass` crate exists in milestone 03): load the overworld from a bundle and a seed; `climate_at(q)`, `biome_at(q)` (with tie information) and a region fill (`biomes_in(min, size)`) that evaluates per column. Column evaluation is only allowed where the graph proves a subtree independent of y, so it can't change a value.
 5. **Golden comparison**: an ignored integration test that, for every golden file, fills the region and checks each cell against the file by the tie rule. Seeds run on separate threads (`std::thread::scope`; no new dependency). It reports the first mismatches with seed, cell, climate target and both answers, rather than only a count.
 

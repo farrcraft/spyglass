@@ -2,7 +2,7 @@
 
 - Status: In progress
 - Depends on: [01](completed/01-extractor-and-oracle.md)
-- Plans: [m02-rng-noise](../plans/completed/m02-rng-noise.md), [m02-density](../plans/m02-density.md), [m02-biomes](../plans/m02-biomes.md)
+- Plans: [m02-rng-noise](../plans/completed/m02-rng-noise.md), [m02-density](../plans/completed/m02-density.md), [m02-biomes](../plans/m02-biomes.md)
 
 ## Goal
 

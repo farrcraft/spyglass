@@ -9,7 +9,7 @@
 
 Bit-exact ports of the game's random sources and noise primitives in `spyglass-rng` and `spyglass-noise`, checked against values the real 26.3 game produces. Covers the milestone's second exit criterion and the RNG and noise parts of the third.
 
-This is the first of three plans for milestone 02. [m02-density](../m02-density.md) builds the climate density functions on top of it, and [m02-biomes](../m02-biomes.md) the biome lookup and the full golden comparison.
+This is the first of three plans for milestone 02. [m02-density](m02-density.md) builds the climate density functions on top of it, and [m02-biomes](../m02-biomes.md) the biome lookup and the full golden comparison.
 
 ## Facts established up front
 
@@ -77,4 +77,4 @@ Checked against the unpacked 26.3 server jar with `javap` on 2026-10-25. **26.3'
 
 - 2026-10-25: `spyglass-noise` matches all 2,030 `noise.json` cases. Two details a source-level port would likely miss: `NormalNoise`'s normalization sums amplitudes with `DoubleStream.sum()`, which is Kahan-compensated, and `normalize` defaults to `ENABLED` in the codec. `LEGACY` normalization isn't ported (no 26.3 noise uses it) and is refused with an error.
 - 2026-10-25: `spyglass-rng` matches all 665 `rng.json` cases. Ported from `javap -c` bytecode rather than decompiled source, since bytecode is exact about widths and operation order. The Gaussian uses `Math.log`, a transcendental whose last bit could differ between Java's intrinsic and Rust's libm; all 18 probed Gaussian sequences match, and climate doesn't use Gaussians, so it's noted in the spec rather than solved.
-- 2026-10-25: Plan drafted. The `javap` survey above shows 26.3 reworked noise to return `float` and reworked density functions into compiled samplers (see [m02-density](../m02-density.md)). Old-version references are background only.
+- 2026-10-25: Plan drafted. The `javap` survey above shows 26.3 reworked noise to return `float` and reworked density functions into compiled samplers (see [m02-density](m02-density.md)). Old-version references are background only.

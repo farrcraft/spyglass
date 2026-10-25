@@ -147,6 +147,12 @@ Floating-point inputs (`point`) are hex `f64` bits too, so nothing depends on de
 
 **`noise.json`** has, for each golden seed: `perlin` (a `PerlinNoise` built from `new XoroshiroRandomSource(seed)`) and `perlin_parity`; and for each overworld climate noise (`temperature`, `vegetation`, `continentalness`, `erosion`, `ridge`, `offset`) as `RandomState` creates it, `normal_noise` and `normal_noise_parity`. Samples have `method` `get_3d` or `get_2d`, one point each.
 
+**`density.json`** has, for each golden seed, using the overworld's noise settings:
+
+- `density`: each named climate function (`name`, e.g. `minecraft:overworld/offset`) at block `pos`, via `RandomState.sampleBlockValueUncached`;
+- `climate`, at quart `pos`, from `RandomState.createClimateSampler` as chunk generation builds it: `method` `floats` (the six values, `f32`) and `target` (the six quantized longs of `Climate.Sampler.sample`);
+- for each of four chunks (`pos` is `[chunk x, 0, chunk z]`, full overworld height): `climate_volume_vs_point`, the number of cells where the game's volume path and point path differ for any of the six functions, and `climate_digest`, every climate float in the chunk hashed as `h = h·1000003 + bits` (wrapping `long`, `bits` the float's raw bits as unsigned, starting from `h = 1`), over quart cells with y outermost, then z, then x, and the six values in order.
+
 ## Independent check: real world saves
 
 Every chunk in a save that has reached the biomes generation step stores the biomes the game generated, at quart resolution. Comparing the harness against saves made in the target version, with the Default preset and no worldgen datapacks, checks the harness independently of itself. Ties are allowed, as above.

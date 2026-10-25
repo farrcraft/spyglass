@@ -72,6 +72,8 @@ It reports every problem, not only the first.
 
 ## Reading
 
-Loaders read the game's JSON as the game's codecs do, including their shorthands. Values that need care:
+Loaders read the game's JSON as the game's codecs do, including their shorthands and defaults ([ADR 0010](../adr/0010-typed-loading-of-worldgen-json.md)). Each layer's spec lists its types; density functions are in [density-functions.md](density-functions.md#loading). Values that need care:
+
+- **Numbers** are read from their text, as the codec's type asks: a `float` field is the text parsed straight to `f32`, not an `f64` narrowed ([ADR 0011](../adr/0011-parse-json-numbers-from-their-text.md)).
 
 - **Biome parameters.** The reports write each quantized climate value as a float. Loaders recover the game's long with round-to-nearest, not truncation; see [data-sources.md](data-sources.md#climate-parameter-values).

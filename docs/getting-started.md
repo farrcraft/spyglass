@@ -162,10 +162,10 @@ cargo xtask oracle check-save "<path to a world>" # check the harness against a 
 
 The first run downloads the server jar (about 60 MB) and compiles the harness. Startup takes about 10 seconds; the full golden set about a minute more on a few cores. Golden-file tests are `#[ignore]`d until the files exist: run them with `cargo test -- --ignored`.
 
-`cargo xtask oracle probe` (also part of `golden`) writes the game's raw random-source and noise values into `oracle-out/<version>/probe/`. The RNG and noise crates check against them, and the noise test also needs a bundle for the same version ([Game data](#8-game-data)):
+`cargo xtask oracle probe` (also part of `golden`) writes the game's raw random-source, noise and density-function values into `oracle-out/<version>/probe/`. The RNG, noise and density crates check against them, and the noise and density tests also need a bundle for the same version ([Game data](#8-game-data)):
 
 ```sh
-cargo test -p spyglass-rng -p spyglass-noise -- --ignored
+cargo test --release -p spyglass-rng -p spyglass-noise -p spyglass-density -- --ignored
 ```
 
 `check-save` takes any world created in the same game version with the Default preset and no worldgen datapacks. Its folder is in your launcher's `saves` directory. It should report zero unexplained mismatches.

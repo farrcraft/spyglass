@@ -26,7 +26,7 @@ A list of layers `(noise, frequency: f64, amplitude: f32)`. `get(x, y, z)` accum
 
 ## Normal noise (`NormalNoise`)
 
-**Parameters** (`worldgen/noise/*.json`): `base_octave` (required, −32 to 32), `base_amplitude` (default 1.0), `octave_count` (default 1, at most 32), `normalize` (`disabled`, `enabled` or `legacy`, default **`enabled`**), `amplitude_modifiers` (default empty). No 26.3 noise sets `normalize`.
+**Parameters** (`worldgen/noise/*.json`): `base_octave` (required, −32 to 32), `base_amplitude` (default 1.0), `octave_count` (default 1, at most 32), `normalize` (`true` for enabled, `false` for disabled, or the string `"legacy"`; default **enabled**), `amplitude_modifiers` (default empty; up to 32 numbers in `[0, 1000000]`, and if not empty, exactly `octave_count` of them). `base_amplitude` must be in `[9.999999747378752e-6, 1000000]`. No 26.3 noise sets `normalize`.
 
 **Octaves** (`buildOctaves`): `frequency = 2^base_octave`, `amplitude = base_amplitude`, times `2^(count−1) / (2^count − 1)` unless normalization is disabled. For each `i` in `0..octave_count`: the modifier is 1 if the list is empty, else `amplitude_modifiers[i]`. A non-zero modifier adds the octave `(index base_octave + i, frequency, amplitude · modifier)`. Then `frequency *= 2` and `amplitude *= 0.5`. The game computes the powers with `Math.pow(2.0, n)` and `Math.pow(0.5, n)`, which are exact for these integer `n`. spyglass builds them from the exponent bits.
 

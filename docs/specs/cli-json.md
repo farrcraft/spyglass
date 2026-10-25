@@ -12,7 +12,7 @@ Scripts depend on this format, so it's versioned. Within a format version, field
 - Ids are full game ids, e.g. `minecraft:village_plains`.
 - `seed` is the 64-bit seed after text seeds are hashed ([locate.md](locate.md#text-seeds)).
 
-Every object starts with:
+Every `locate` object starts with:
 
 | Field       | Type   | Meaning                                                               |
 | ----------- | ------ | --------------------------------------------------------------------- |
@@ -21,6 +21,17 @@ Every object starts with:
 | `version`   | string | The game version of the bundle used, e.g. `26.3`.                     |
 | `dimension` | string | `minecraft:overworld`.                                                |
 | `seed`      | int    | The world seed.                                                       |
+
+With `--world`, two more:
+
+| Field      | Type   | Meaning                                                                                             |
+| ---------- | ------ | --------------------------------------------------------------------------------------------------- |
+| `world`    | object | `name` (the world list's name) and `dir` (the save's folder).                                       |
+| `warnings` | array  | What makes answers inexact, as [below](#warnings). Never one that blocks answers: those are errors. |
+
+## Warnings
+
+Each warning is `{kind, message}`: `message` is for people, `kind` one of `no_bundle`, `unsupported_generator`, `structures_disabled`, `data_pack`, `modded` or `older_chunks` ([world-saves.md](world-saves.md#warnings)). New kinds may be added within format 1.
 
 ## `locate structure`
 
@@ -66,3 +77,25 @@ Each hit: `position` (`{x, y, z}`), `biome` (the biome there), `tied` (every bio
 | `chunk`              | `[x, z]`         | The chunk the game's spawn search starts from ([spawn.md](spawn.md)). The spawn is in the 11 × 11 chunks around it. |
 | `position`           | `{x, z}` or null | The climate search's best block; null if the dimension has no spawn targets.                                        |
 | `platform_dependent` | bool             | Whether the game's answer may differ by platform.                                                                   |
+
+## `world info`
+
+`format`, `command` (`world info`), and the save:
+
+| Field                 | Type           | Meaning                                                                                                                             |
+| --------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `name`                | string         | The name in the world list.                                                                                                         |
+| `dir`                 | string         | The save's folder.                                                                                                                  |
+| `data_version`        | int or null    | The data version it was last saved in; null before 1.9.                                                                             |
+| `version_name`        | string or null | e.g. `26.3`.                                                                                                                        |
+| `seed`                | int            | The world seed.                                                                                                                     |
+| `generate_structures` | bool           | Whether structures generate.                                                                                                        |
+| `data_packs`          | array          | Enabled data packs, in load order.                                                                                                  |
+| `spawn`, `player`     | object or null | `dimension` and `position` (`[x, y, z]`, numbers); `player` only in single-player saves.                                            |
+| `bundle`              | string or null | The bundle with the save's data version.                                                                                            |
+| `answerable`          | bool           | Whether spyglass answers for the save: no warning blocks answers.                                                                   |
+| `warnings`            | array          | [Warnings](#warnings), including the blocking kinds `no_bundle` and `unsupported_generator`. `older_chunks` only without `--quick`. |
+
+## `world list`
+
+`format`, `command` (`world list`) and `saves`: one object per save in the known launchers' folders, as `world info` without `format` and `command` (and without the chunk scan, so no `older_chunks`), plus `launcher` (e.g. `Modrinth (Fabric 26.3)`). A save that can't be read is `{launcher, dir, error}`.

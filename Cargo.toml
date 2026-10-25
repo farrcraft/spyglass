@@ -40,6 +40,7 @@ spyglass-noise = { path = "crates/spyglass-noise" }
 spyglass-oracle = { path = "crates/spyglass-oracle" }
 spyglass-rng = { path = "crates/spyglass-rng" }
 spyglass-structure = { path = "crates/spyglass-structure" }
+spyglass-world = { path = "crates/spyglass-world" }
 
 anyhow = "1.0.104"
 directories = "6.0.0"

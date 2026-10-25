@@ -17,6 +17,8 @@
 //! spyglass doesn't compute yet, and some results depend on the platform the game runs on;
 //! each result type says which applies. See `docs/specs/locate.md`.
 
+mod save;
+
 use std::path::PathBuf;
 
 use spyglass_biome::{BiomeId, BiomeSource, Biomes, SpawnSearch, SpawnTargets};
@@ -24,6 +26,10 @@ use spyglass_data::bundle::{Bundle, BundleError};
 use spyglass_density::LoadError;
 use spyglass_structure::{Placements, Starts, StructureSets};
 
+pub use save::{
+    LauncherSave, PackConcern, SaveInfo, SaveLocation, SaveReport, SaveWarning, Scan, find_save,
+    inspect_save, launcher_saves,
+};
 pub use spyglass_structure::LOCATE_RADIUS;
 
 /// `/locate biome`'s search radius in blocks (`LocateCommand`).
@@ -53,6 +59,12 @@ pub enum Error {
     /// Seed text the game would treat differently from spyglass, or none.
     #[error("{0}")]
     Seed(&'static str),
+    /// A world save couldn't be read.
+    #[error(transparent)]
+    Save(#[from] spyglass_world::WorldError),
+    /// spyglass can't answer for a world save; the reasons are listed.
+    #[error("spyglass can't answer for this world: {0}")]
+    Unsupported(String),
 }
 
 /// A result, or an [`Error`].

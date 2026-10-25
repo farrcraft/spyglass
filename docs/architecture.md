@@ -26,8 +26,8 @@ spyglass separates what the game _does_ (algorithms, written in Rust) from the _
 | `spyglass-terrain`   | Heightmaps and surface rules.                                                                                                                     | density, data                            |
 | `spyglass-structure` | Placement (seed-only, cheap), then biome validation, then terrain-dependent validity, with optional jigsaw for exact bounds; `/locate structure`. | rng, biome, density, data; later terrain |
 | `spyglass-search`    | Parallel seed search (`rayon`) with required and preferred constraints, ranked results, checks ordered cheapest first.                            | rng, biome, structure                    |
-| `spyglass-world`     | _Planned._ Reads local world saves: `level.dat` seed, version, preset and datapacks.                                                              | data                                     |
-| `spyglass`           | The public API: a `World` (one dimension of a bundle) and seed-bound `Session`s with locate queries; later render and search.                     | biome, structure, density, data          |
+| `spyglass-world`     | Reads local world saves: seed, version, generators, data packs, spawn and player; chunk versions from region files; launcher folders.             | data                                     |
+| `spyglass`           | The public API: a `World` (one dimension of a bundle) and seed-bound `Session`s with locate queries, and world saves; later render and search.    | biome, structure, world, density, data   |
 | `spyglass-cli`       | The `spyglass` command: locate now; world info, render and search later. Human-readable output, or `--json` for scripts.                          | spyglass                                 |
 | `spyglass-viewer`    | Native map app (`egui` + `wgpu`): tiled on-demand rendering, zoom levels, selectable layers.                                                      | spyglass                                 |
 

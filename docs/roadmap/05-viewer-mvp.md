@@ -1,7 +1,7 @@
 # 05. Viewer MVP
 
 - Status: Planned
-- Depends on: [03](completed/03-structure-placement.md), [04](04-world-saves.md)
+- Depends on: [03](completed/03-structure-placement.md), [04](completed/04-world-saves.md)
 - Plans: none yet
 
 ## Goal

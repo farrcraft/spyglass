@@ -629,6 +629,7 @@ dependencies = [
  "spyglass-density",
  "spyglass-oracle",
  "spyglass-structure",
+ "spyglass-world",
  "thiserror",
 ]
 
@@ -652,6 +653,8 @@ dependencies = [
  "clap",
  "serde_json",
  "spyglass",
+ "spyglass-data",
+ "tempfile",
 ]
 
 [[package]]
@@ -735,6 +738,19 @@ name = "spyglass-viewer"
 version = "0.0.0"
 dependencies = [
  "spyglass",
+]
+
+[[package]]
+name = "spyglass-world"
+version = "0.0.0"
+dependencies = [
+ "directories",
+ "flate2",
+ "serde_json",
+ "spyglass-data",
+ "tempfile",
+ "thiserror",
+ "zip",
 ]
 
 [[package]]
@@ -1014,6 +1030,7 @@ dependencies = [
  "clap",
  "serde_json",
  "spyglass-data",
+ "spyglass-world",
 ]
 
 [[package]]

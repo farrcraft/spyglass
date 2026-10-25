@@ -87,5 +87,6 @@ Loaders read the game's JSON as the game's codecs do, including their shorthands
   - A compound is named tags up to a type-0 byte. A repeated name keeps the last value.
   - Strings are a `u16` byte length, then Java's modified UTF-8: `U+0000` is `C0 80`, and characters outside the BMP are two 3-byte surrogates.
   - Nesting deeper than 512 is an error, as in the game's `NbtAccounter`.
+  - `nbt::write` and `write_compressed` produce the same format (`NbtIo.write`), for tests that build files. A list's element type is its first element's.
 
   Which fields a template's reader keeps is in [structure-placement.md](structure-placement.md#jigsaw-starts).

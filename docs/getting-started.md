@@ -235,15 +235,28 @@ cargo run --release -p spyglass-cli -- locate spawn --seed 12345
 
 Or install it with `cargo install --path crates/spyglass-cli` and run `spyglass ...` directly.
 
-| Option                | Default       | What it does                                                          |
-| --------------------- | ------------- | --------------------------------------------------------------------- |
-| `--seed <seed>`       | required      | A number, or text hashed as the world-creation screen does.           |
-| `--from <x,y,z>`      | `0,64,0`      | Where to search from, in blocks; `x,z` means y 64.                    |
-| `--radius <n>`        | as `/locate`  | Placement-cell rings (structures), blocks (biomes) or chunks (slime). |
-| `--game-version <id>` | newest bundle | Which bundle in `--bundles` to use.                                   |
-| `--bundle <dir>`      | none          | Use this bundle directory instead.                                    |
-| `--bundles <dir>`     | `bundles`     | Where bundles are.                                                    |
-| `--json`              | off           | Print JSON for scripts ([specs/cli-json.md](specs/cli-json.md)).      |
+| Option                | Default       | What it does                                                                              |
+| --------------------- | ------------- | ----------------------------------------------------------------------------------------- |
+| `--seed <seed>`       | required      | A number, or text hashed as the world-creation screen does.                               |
+| `--world <save>`      | none          | A world save instead of `--seed`: its folder, or its folder name in a launcher's saves.   |
+| `--from <x,y,z>`      | `0,64,0`      | Where to search from, in blocks; `x,z` means y 64; `player` is `--world`'s single player. |
+| `--radius <n>`        | as `/locate`  | Placement-cell rings (structures), blocks (biomes) or chunks (slime).                     |
+| `--game-version <id>` | newest bundle | Which bundle in `--bundles` to use.                                                       |
+| `--bundle <dir>`      | none          | Use this bundle directory instead.                                                        |
+| `--bundles <dir>`     | `bundles`     | Where bundles are.                                                                        |
+| `--json`              | off           | Print JSON for scripts ([specs/cli-json.md](specs/cli-json.md)).                          |
+
+### Your own worlds
+
+```sh
+cargo run --release -p spyglass-cli -- world list                     # saves in the official launcher and Modrinth App
+cargo run --release -p spyglass-cli -- world info "My World"          # seed, version, spawn, player, warnings
+cargo run --release -p spyglass-cli -- locate structure '#minecraft:village' --world "My World" --from player
+```
+
+`world info` says whether spyglass can answer for a world, and what makes its answers inexact: no bundle for the world's version, a preset other than Default, data packs or mods that may change generation, and chunks an older version generated ([specs/world-saves.md](specs/world-saves.md)). It reads every region file to count those chunks, which takes a few seconds for a large world; `--quick` skips that. spyglass never writes to a save.
+
+### Reading the answers
 
 Answers are listed in the game's search order, which isn't always nearest first. Until terrain is ported, most surface structures (villages, temples, monuments) can't be confirmed without it, so they're shown as **candidates**: the game's answer is the first of them it generates, and in testing that's usually the first one listed. Strongholds, ancient cities and trial chambers don't depend on terrain and are usually **certain**.
 

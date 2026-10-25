@@ -80,6 +80,23 @@ impl Tag {
         }
     }
 
+    /// The value as a `long`, if this is a byte, short, int or long.
+    pub fn as_long(&self) -> Option<i64> {
+        match *self {
+            Tag::Long(v) => Some(v),
+            _ => self.as_int().map(i64::from),
+        }
+    }
+
+    /// The value as a `double`, if this is a float or double.
+    pub fn as_double(&self) -> Option<f64> {
+        match *self {
+            Tag::Float(v) => Some(f64::from(v)),
+            Tag::Double(v) => Some(v),
+            _ => None,
+        }
+    }
+
     /// A child of a compound, by name.
     pub fn get(&self, name: &str) -> Option<&Tag> {
         self.as_compound()?.get(name)
@@ -304,9 +321,142 @@ impl Reader<'_> {
     }
 }
 
+impl Tag {
+    /// The tag's type byte.
+    pub fn id(&self) -> u8 {
+        match self {
+            Tag::Byte(_) => 1,
+            Tag::Short(_) => 2,
+            Tag::Int(_) => 3,
+            Tag::Long(_) => 4,
+            Tag::Float(_) => 5,
+            Tag::Double(_) => 6,
+            Tag::ByteArray(_) => 7,
+            Tag::String(_) => 8,
+            Tag::List(_) => 9,
+            Tag::Compound(_) => 10,
+            Tag::IntArray(_) => 11,
+            Tag::LongArray(_) => 12,
+        }
+    }
+}
+
+/// Writes uncompressed NBT (`NbtIo.write`): one named root tag. A list's element type is its
+/// first element's (`TAG_End` when empty); strings are modified UTF-8 (`DataOutput.writeUTF`)
+/// and must fit in 65,535 bytes. The inverse of [`read`].
+pub fn write(name: &str, root: &Tag) -> Vec<u8> {
+    let mut out = vec![root.id()];
+    write_string(name, &mut out);
+    write_payload(root, &mut out);
+    out
+}
+
+/// Writes gzip-compressed NBT (`NbtIo.writeCompressed`), the inverse of [`read_compressed`].
+pub fn write_compressed(name: &str, root: &Tag) -> Vec<u8> {
+    use std::io::Write;
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder
+        .write_all(&write(name, root))
+        .expect("writing to a Vec doesn't fail");
+    encoder.finish().expect("writing to a Vec doesn't fail")
+}
+
+fn write_string(s: &str, out: &mut Vec<u8>) {
+    let mut bytes = Vec::with_capacity(s.len());
+    for unit in s.encode_utf16() {
+        match unit {
+            0x0001..=0x007F => bytes.push(unit as u8),
+            0x0000 | 0x0080..=0x07FF => {
+                bytes.extend([0xC0 | (unit >> 6) as u8, 0x80 | (unit & 0x3F) as u8]);
+            }
+            _ => bytes.extend([
+                0xE0 | (unit >> 12) as u8,
+                0x80 | (unit >> 6 & 0x3F) as u8,
+                0x80 | (unit & 0x3F) as u8,
+            ]),
+        }
+    }
+    let len = u16::try_from(bytes.len()).expect("NBT strings are at most 65,535 bytes");
+    out.extend(len.to_be_bytes());
+    out.extend(bytes);
+}
+
+fn write_payload(tag: &Tag, out: &mut Vec<u8>) {
+    let len = |n: usize| {
+        i32::try_from(n)
+            .expect("NBT lengths fit in an int")
+            .to_be_bytes()
+    };
+    match tag {
+        Tag::Byte(v) => out.extend(v.to_be_bytes()),
+        Tag::Short(v) => out.extend(v.to_be_bytes()),
+        Tag::Int(v) => out.extend(v.to_be_bytes()),
+        Tag::Long(v) => out.extend(v.to_be_bytes()),
+        Tag::Float(v) => out.extend(v.to_be_bytes()),
+        Tag::Double(v) => out.extend(v.to_be_bytes()),
+        Tag::ByteArray(a) => {
+            out.extend(len(a.len()));
+            out.extend(a.iter().map(|&b| b as u8));
+        }
+        Tag::String(s) => write_string(s, out),
+        Tag::List(items) => {
+            out.push(items.first().map_or(0, Tag::id));
+            out.extend(len(items.len()));
+            items.iter().for_each(|t| write_payload(t, out));
+        }
+        Tag::Compound(c) => {
+            for (name, t) in c {
+                out.push(t.id());
+                write_string(name, out);
+                write_payload(t, out);
+            }
+            out.push(0);
+        }
+        Tag::IntArray(a) => {
+            out.extend(len(a.len()));
+            a.iter().for_each(|v| out.extend(v.to_be_bytes()));
+        }
+        Tag::LongArray(a) => {
+            out.extend(len(a.len()));
+            a.iter().for_each(|v| out.extend(v.to_be_bytes()));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn written_nbt_reads_back() {
+        let root = Tag::Compound(Compound::from([
+            ("b".to_string(), Tag::Byte(-1)),
+            ("s".to_string(), Tag::Short(300)),
+            ("l".to_string(), Tag::Long(i64::MIN)),
+            ("f".to_string(), Tag::Float(0.5)),
+            ("d".to_string(), Tag::Double(-2.25)),
+            ("bytes".to_string(), Tag::ByteArray(vec![1, -2])),
+            ("text".to_string(), Tag::String("nul\0, é, 😀".into())),
+            ("empty".to_string(), Tag::List(vec![])),
+            ("ints".to_string(), Tag::IntArray(vec![1, -1])),
+            ("longs".to_string(), Tag::LongArray(vec![7])),
+            (
+                "list".to_string(),
+                Tag::List(vec![
+                    Tag::Compound(Compound::new()),
+                    Tag::Compound(Compound::new()),
+                ]),
+            ),
+        ]));
+        assert_eq!(
+            read(&write("root", &root)).unwrap(),
+            ("root".to_string(), root.clone())
+        );
+        assert_eq!(
+            read_compressed(&write_compressed("", &root)).unwrap().1,
+            root
+        );
+    }
 
     /// A named tag header: type, then a modified-UTF-8 name.
     fn named(id: u8, name: &str) -> Vec<u8> {

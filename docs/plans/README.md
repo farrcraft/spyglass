@@ -6,4 +6,4 @@ Code must not reference plans. Anything durable a plan produces belongs in a spe
 
 ## Active
 
-None. Milestone [03](../roadmap/completed/03-structure-placement.md) is complete; the next is [04](../roadmap/04-world-saves.md), which needs a plan.
+None. Milestone [04](../roadmap/completed/04-world-saves.md) is complete; the next is [05](../roadmap/05-viewer-mvp.md), which needs a plan.

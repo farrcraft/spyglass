@@ -16,8 +16,9 @@ spyglass-biome.workspace = true
 spyglass-data.workspace = true
 spyglass-density.workspace = true
 spyglass-structure.workspace = true
+spyglass-world.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-serde_json.workspace = true
 spyglass-oracle.workspace = true

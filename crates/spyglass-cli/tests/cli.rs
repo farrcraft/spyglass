@@ -46,7 +46,7 @@ fn bad_arguments_fail_before_loading() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("nowhere"));
     let out = spyglass(&["locate", "biome", "x", "--seed", "1", "--from", "1,2,3,4"]);
     assert!(!out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("x,y,z or x,z"));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("x,y,z, x,z or player"));
     let out = spyglass(&["locate", "spawn", "--seed", "  "]);
     assert!(!out.status.success());
 }

@@ -9,7 +9,7 @@ The milestones build toward the goals in the [README](../../README.md#goals): co
 | 01  | [Extractor and oracle harness](completed/01-extractor-and-oracle.md)          | Game data for 26.3 and a ground-truth reference.                   | Completed |
 | 02  | [RNG, noise and biomes](completed/02-rng-noise-biomes.md)                     | Exact Overworld biomes.                                            | Completed |
 | 03  | [Structure placement and locate queries](completed/03-structure-placement.md) | "Where is X in this seed?", the public API and the `spyglass` CLI. | Completed |
-| 04  | [World saves](04-world-saves.md)                                              | The same answers for your own worlds.                              | Planned   |
+| 04  | [World saves](completed/04-world-saves.md)                                    | The same answers for your own worlds.                              | Completed |
 | 05  | [Viewer MVP](05-viewer-mvp.md)                                                | Map preview with selectable layers; image export.                  | Planned   |
 | 06  | [Seed search](06-seed-search.md)                                              | Required and preferred constraints, ranked results.                | Planned   |
 | 07  | [Terrain, structure validity, jigsaw](07-terrain-and-validity.md)             | Confirmed structures, heights and exact bounds.                    | Planned   |

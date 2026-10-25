@@ -15,3 +15,4 @@ Behavior spyglass must match. Update a spec in the same change as the code that 
 | [spawn.md](spawn.md)                             | Draft  |
 | [locate.md](locate.md)                           | Draft  |
 | [cli-json.md](cli-json.md)                       | Draft  |
+| [world-saves.md](world-saves.md)                 | Draft  |

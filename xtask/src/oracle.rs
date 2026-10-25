@@ -58,7 +58,14 @@ pub enum OracleCmd {
     Spawn(Common),
     /// Ask a real dedicated server `/locate` questions for a fixed case list, and write the
     /// answers into `oracle-out/<version>/locate/`. Takes several minutes; not part of `golden`.
-    Locate(Common),
+    Locate {
+        #[command(flatten)]
+        common: Common,
+        /// Run on a copy of this world save instead of the seed list (repeatable). The server
+        /// never opens the save itself.
+        #[arg(long)]
+        world: Vec<PathBuf>,
+    },
     /// Regenerate the whole golden set (docs/specs/oracle.md), probe files included, into
     /// `oracle-out/<version>/`.
     Golden {
@@ -156,9 +163,9 @@ pub fn run(cmd: OracleCmd) -> Result<()> {
             let harness = build(&common)?;
             harness.structures()
         }
-        OracleCmd::Locate(common) => {
+        OracleCmd::Locate { common, world } => {
             let harness = build(&common)?;
-            crate::locate::run(&harness)
+            crate::locate::run(&harness, &world)
         }
         OracleCmd::Spawn(common) => {
             let harness = build(&common)?;

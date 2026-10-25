@@ -22,3 +22,7 @@ anyhow.workspace = true
 clap.workspace = true
 serde_json.workspace = true
 spyglass.workspace = true
+
+[dev-dependencies]
+spyglass-data.workspace = true
+tempfile.workspace = true

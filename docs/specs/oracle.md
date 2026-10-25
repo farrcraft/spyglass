@@ -225,6 +225,8 @@ The final spawn block isn't written: it needs a live level (`PlayerSpawnFinder`)
 
 The cases: 3 positions × (18 structure arguments, ids and tags for every Overworld structure kind, and 7 biomes, common, rare and underground). It takes about 20 seconds per seed, and isn't part of `golden`.
 
+**On a world save**, `cargo xtask oracle locate --world <save>` (repeatable) does the same on a **copy** of the save, made in the throwaway directory without its `session.lock`; the server never opens the save itself. `server.properties` leaves out `level-seed`, and the cases add the single player's position as a fourth origin when the player is in the overworld. The answers go to `oracle-out/<version>/locate/world-<folder>.json`, which also records `world_dir`, and the comparison opens the save through `inspect_save` ([world-saves.md](world-saves.md#testing)).
+
 One UTF-8 JSON file per seed, `oracle-out/<version>/locate/<seed>.json`:
 
 ```json
@@ -246,7 +248,7 @@ One UTF-8 JSON file per seed, `oracle-out/<version>/locate/<seed>.json`:
 }
 ```
 
-`seed` is the text given to the server. `answer` is null when the game found nothing; its y is null where the game prints `~`. `found` is the structure or biome named in the message. [locate.md](locate.md#testing) has the Rust-side comparison.
+`seed` is the text given to the server, or the save's seed as text. `answer` is null when the game found nothing; its y is null where the game prints `~`. `found` is the structure or biome named in the message. [locate.md](locate.md#testing) has the Rust-side comparison.
 
 ## Probe files
 

@@ -31,7 +31,15 @@ fn locate_agrees_with_the_game() {
             let json: Value =
                 serde_json::from_str(&std::fs::read_to_string(file.path()).unwrap()).unwrap();
             let seed = spyglass::parse_seed(json["seed"].as_str().unwrap()).unwrap();
-            let session = world.session(seed).unwrap();
+            // A save's cases go through the save, as `--world` does.
+            let from_save = json["world_dir"].as_str().map(|dir| {
+                let report =
+                    spyglass::inspect_save(dir, root.join("../bundles"), spyglass::Scan::Quick)
+                        .unwrap();
+                assert_eq!(report.save.seed, seed, "{dir}");
+                report.open_world().unwrap()
+            });
+            let session = from_save.as_ref().unwrap_or(&world).session(seed).unwrap();
             for case in json["cases"].as_array().unwrap() {
                 cases += 1;
                 let target = case["target"].as_str().unwrap();

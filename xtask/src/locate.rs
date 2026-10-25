@@ -6,12 +6,14 @@
 
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
+use spyglass_world::Save;
 
 use crate::oracle::Harness;
 use crate::repo_root;
@@ -63,21 +65,64 @@ const BIOMES: &[&str] = &[
 /// How long one world may take, startup and every case included.
 const TIMEOUT: Duration = Duration::from_secs(1800);
 
-/// Writes `oracle-out/<version>/locate/<seed>.json` for each seed, replacing what was there.
-pub fn run(harness: &Harness) -> Result<()> {
+/// Where a server's world comes from.
+enum Source<'a> {
+    /// A new world with this seed.
+    Seed(&'a str),
+    /// A copy of this save.
+    Save(&'a Path),
+}
+
+/// With no `worlds`, writes `oracle-out/<version>/locate/<seed>.json` for each seed, replacing
+/// the folder. With `worlds`, writes `world-<folder>.json` for each save, from a copy of it,
+/// with the player's position as an extra origin.
+pub fn run(harness: &Harness, worlds: &[PathBuf]) -> Result<()> {
     let out = repo_root()
         .join("oracle-out")
         .join(&harness.version)
         .join("locate");
-    if out.exists() {
+    if worlds.is_empty() && out.exists() {
         fs::remove_dir_all(&out)?;
     }
     fs::create_dir_all(&out)?;
-    for seed in SEEDS {
+    let mut jobs: Vec<(String, Source<'_>, Vec<[i32; 3]>, Value)> = Vec::new();
+    if worlds.is_empty() {
+        for seed in SEEDS {
+            jobs.push((
+                format!("{seed}.json"),
+                Source::Seed(seed),
+                FROM.to_vec(),
+                json!(seed),
+            ));
+        }
+    }
+    for world in worlds {
+        let save = Save::read(world).with_context(|| format!("reading {}", world.display()))?;
+        let mut from = FROM.to_vec();
+        if let Some(player) = save
+            .player
+            .as_ref()
+            .filter(|p| p.dimension == "minecraft:overworld")
+        {
+            from.push(player.pos.map(|v| v.floor() as i32));
+        }
+        let folder = world
+            .file_name()
+            .context("a save folder")?
+            .to_string_lossy()
+            .into_owned();
+        jobs.push((
+            format!("world-{folder}.json"),
+            Source::Save(world),
+            from,
+            json!(save.seed.to_string()),
+        ));
+    }
+    for (name, source, from, seed) in jobs {
         let t0 = Instant::now();
-        let file = out.join(format!("{seed}.json"));
-        let cases = cases();
-        let answers = server(harness, seed, &cases)?;
+        let file = out.join(&name);
+        let cases = cases(&from);
+        let answers = server(harness, &name, &source, &cases)?;
         let rows: Vec<Value> = cases
             .iter()
             .zip(answers)
@@ -92,15 +137,33 @@ pub fn run(harness: &Harness) -> Result<()> {
                 })
             })
             .collect();
-        let root = json!({
+        let mut root = json!({
             "format": 1,
             "version": harness.version,
             "seed": seed,
             "dimension": "minecraft:overworld",
             "cases": rows,
         });
+        if let Source::Save(dir) = source {
+            root["world_dir"] = json!(dir);
+        }
         fs::write(&file, serde_json::to_string_pretty(&root)? + "\n")?;
         println!("{}: {:.0} s", file.display(), t0.elapsed().as_secs_f64());
+    }
+    Ok(())
+}
+
+/// Copies a save, skipping its `session.lock`, so the server never touches the original.
+fn copy_save(from: &Path, to: &Path) -> Result<()> {
+    fs::create_dir_all(to)?;
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        let target = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_save(&entry.path(), &target)?;
+        } else if entry.file_name() != "session.lock" {
+            fs::copy(entry.path(), &target)?;
+        }
     }
     Ok(())
 }
@@ -111,9 +174,9 @@ struct Case {
     from: [i32; 3],
 }
 
-fn cases() -> Vec<Case> {
+fn cases(origins: &[[i32; 3]]) -> Vec<Case> {
     let mut cases = Vec::new();
-    for &from in FROM {
+    for &from in origins {
         for &target in STRUCTURES {
             cases.push(Case {
                 kind: "structure",
@@ -141,21 +204,37 @@ struct Answer {
     message: String,
 }
 
-/// Runs a fresh server for `seed`, sends every case after it's ready, and collects one message
-/// per case between `say` markers.
-fn server(harness: &Harness, seed: &str, cases: &[Case]) -> Result<Vec<Answer>> {
-    let dir = harness.work.join("locate-server").join(seed);
+/// Runs a server on a fresh world or a copy of a save, in a throwaway folder named after
+/// `name`, sends every case after it's ready, and collects one message per case between `say`
+/// markers.
+fn server(
+    harness: &Harness,
+    name: &str,
+    source: &Source<'_>,
+    cases: &[Case],
+) -> Result<Vec<Answer>> {
+    let dir = harness
+        .work
+        .join("locate-server")
+        .join(name.trim_end_matches(".json"));
     if dir.exists() {
         fs::remove_dir_all(&dir)?;
     }
     fs::create_dir_all(&dir)?;
     fs::write(dir.join("eula.txt"), "eula=true\n")?;
-    // Port 0 binds any free port. Pausing when empty would stop the tick loop that runs
-    // console commands.
+    // The world is the default level-name, "world". Port 0 binds any free port. Pausing when
+    // empty would stop the tick loop that runs console commands.
+    let seed = match source {
+        Source::Seed(seed) => format!("level-seed={seed}\n"),
+        Source::Save(save) => {
+            copy_save(save, &dir.join("world"))?;
+            String::new()
+        }
+    };
     fs::write(
         dir.join("server.properties"),
         format!(
-            "level-seed={seed}\nserver-ip=127.0.0.1\nserver-port=0\nonline-mode=false\n\
+            "{seed}server-ip=127.0.0.1\nserver-port=0\nonline-mode=false\n\
              pause-when-empty-seconds=-1\nsync-chunk-writes=false\nspawn-protection=0\n"
         ),
     )?;

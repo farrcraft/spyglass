@@ -6,4 +6,7 @@ Code must not reference plans. Anything durable a plan produces belongs in a spe
 
 ## Active
 
-None yet.
+| Plan                              | Milestone                        | Status |
+| --------------------------------- | -------------------------------- | ------ |
+| [m01-extractor](m01-extractor.md) | 01. Extractor and oracle harness | Draft  |
+| [m01-oracle](m01-oracle.md)       | 01. Extractor and oracle harness | Draft  |

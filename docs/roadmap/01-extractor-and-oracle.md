@@ -2,11 +2,11 @@
 
 - Status: Planned
 - Depends on: —
-- Plans: none yet
+- Plans: [m01-extractor](../plans/m01-extractor.md), [m01-oracle](../plans/m01-oracle.md)
 
 ## Goal
 
-Get trustworthy inputs and a trustworthy reference for one current game version, before writing any generation code.
+Get trustworthy inputs and a trustworthy reference for one current game version, **26.3**, before writing any generation code.
 
 ## Scope
 
@@ -24,5 +24,5 @@ Get trustworthy inputs and a trustworthy reference for one current game version,
 
 ## Open questions
 
-- Which version is the first target?
-- Fabric mod, or something lighter, for the oracle?
+- ~~Which version is the first target?~~ **26.3**, the current release. Its jar is unobfuscated and needs Java 25.
+- Fabric mod, or a standalone harness on the unobfuscated jar? Background is in [research/oracle-approaches.md](../research/oracle-approaches.md). A spike in [m01-oracle](../plans/m01-oracle.md) will answer it, and the result is recorded in an ADR.

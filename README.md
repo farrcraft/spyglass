@@ -53,7 +53,8 @@ See [docs/architecture.md](docs/architecture.md) for how they fit together.
 - [Getting started](docs/getting-started.md)
 - [Architecture](docs/architecture.md)
 - [Specs](docs/specs/)
-- [Roadmap](docs/roadmap.md)
+- [Roadmap](docs/roadmap/README.md)
+- [Development process](docs/development-process.md)
 - [Decision records](docs/adr/)
 - [Research](docs/research/)
 

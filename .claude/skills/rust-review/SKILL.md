@@ -54,6 +54,7 @@ These are correctness bugs, not style issues.
 - Version-specific values belong in extracted data (`spyglass-data` bundles), not Rust constants. Algorithm constants that are fixed across all supported versions (LCG multiplier, Xoroshiro rotations) are fine in code.
 - Dependencies flow downward per `docs/architecture.md`. Flag any new edge that points up or sideways.
 - New dependencies go in `[workspace.dependencies]` and are referenced with `.workspace = true`. A significant new dependency probably warrants an ADR (see the `adr` skill).
+- Code must not reference `docs/roadmap/` or `docs/plans/`, by path or by milestone or plan name ("see milestone 3", "per the m02 plan"), in source, comments, tests or manifests. These are temporary process docs (see `docs/development-process.md`). The durable explanation belongs in the code itself, a spec or an ADR. `scripts/check` catches paths but not names, so look for names by hand.
 - Behavior covered by a spec should match the spec; if the code is right and the spec is wrong, the spec needs updating in the same change.
 
 ### 3. Tests

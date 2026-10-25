@@ -82,7 +82,7 @@ Before pushing, run the same checks CI should:
 ./scripts/check.sh
 ```
 
-These run `cargo fmt --check`, `cargo clippy` with warnings as errors, and `cargo test`.
+These run `cargo fmt --check`, `cargo clippy` with warnings as errors and `cargo test`, and fail if anything under `crates/` references `docs/roadmap/` or `docs/plans/`.
 
 ## 3. Editor setup
 
@@ -95,4 +95,5 @@ Most crates will need a version bundle extracted from a Minecraft server jar. Th
 ## Next steps
 
 - [architecture.md](architecture.md) for how the crates fit together.
-- [roadmap.md](roadmap.md) for what's being worked on.
+- [roadmap/](roadmap/README.md) for what's being worked on.
+- [development-process.md](development-process.md) for how work is planned and tracked.

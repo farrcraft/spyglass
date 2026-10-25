@@ -1,7 +1,7 @@
 # 03. Structure placement and locate queries
 
 - Status: Planned
-- Depends on: [02](02-rng-noise-biomes.md)
+- Depends on: [02](completed/02-rng-noise-biomes.md)
 - Plans: none yet
 
 ## Goal

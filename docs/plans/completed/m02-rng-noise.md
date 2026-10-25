@@ -1,7 +1,7 @@
 # m02. RNG and noise
 
 - Status: Completed
-- Milestone: [02. RNG, noise and biomes](../../roadmap/02-rng-noise-biomes.md)
+- Milestone: [02. RNG, noise and biomes](../../roadmap/completed/02-rng-noise-biomes.md)
 - Started: 2026-10-25
 - Completed: 2026-10-25
 
@@ -9,7 +9,7 @@
 
 Bit-exact ports of the game's random sources and noise primitives in `spyglass-rng` and `spyglass-noise`, checked against values the real 26.3 game produces. Covers the milestone's second exit criterion and the RNG and noise parts of the third.
 
-This is the first of three plans for milestone 02. [m02-density](m02-density.md) builds the climate density functions on top of it, and [m02-biomes](../m02-biomes.md) the biome lookup and the full golden comparison.
+This is the first of three plans for milestone 02. [m02-density](m02-density.md) builds the climate density functions on top of it, and [m02-biomes](m02-biomes.md) the biome lookup and the full golden comparison.
 
 ## Facts established up front
 

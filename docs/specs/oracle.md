@@ -51,6 +51,16 @@ So for biomes:
 - spyglass passes a cell if it matches exactly where the minimum is unique, or returns any member of the tied set where it isn't.
 - spyglass should be able to report a cell as tied, so users can see where the game itself is unpredictable.
 
+### Rust-side comparison
+
+`spyglass-biome/tests/golden.rs` checks every cell of every overworld golden file against `BiomeSource::with_seed(seed).biomes_in(min, size)` by this rule. It also requires spyglass's tie set to equal the file's exactly, and its tied-cell count to match the header. It runs one thread per seed and reports the first mismatches per file, with the cell, its climate target and both answers. Run it with the probe and region tests:
+
+```sh
+cargo test --release -p spyglass-biome -- --ignored
+```
+
+It needs the golden set and a bundle for the same version (`bundles/<version>/`). For 26.3 it checks 63.9 million cells, 52,297 of them tied, in about 15 seconds (one thread per seed, on a 16-core machine). What spyglass answers for a tied cell is in [biome-lookup.md](biome-lookup.md#ties).
+
 ## Golden biome files
 
 One file per (seed, dimension, region). All integers are little-endian.

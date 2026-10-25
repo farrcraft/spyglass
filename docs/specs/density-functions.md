@@ -48,10 +48,22 @@ A loaded graph doesn't depend on the seed. Binding creates the seed's noises as 
 
 The game has two paths: `sampleValue` at a point, and `sampleVolume` over a buffer, which chunk generation uses. The probe compares them for the six climate functions over whole chunks (4 chunks × 10 seeds in 26.3). They agree bit for bit, so spyglass ports only the point path. The probe test fails if that ever changes.
 
+## Column evaluation
+
+`Sampler::depends_on_y` says whether a bound function's value can depend on y. `Sampler::at_column(x, z)` replaces every subtree that can't with a constant, its value at `(x, 0, z)`, and keeps everything else, splines included, with the same structure. The folded sampler gives the same bits as the original at that column, because folding changes no floating-point operation, only when it runs. This works like the game's `SLICE_UNIFORM_AXES` rewrite and `cache_2d`.
+
+What depends on y:
+
+- `shift` and a `gradient` along y do. Constants, `shift_a`, `shift_b` and other gradients don't.
+- A `noise` depends on y if its `y_scale` isn't 0 or its `shift_y` depends on y. With a y scale of 0 the y input is `+0.0` or `-0.0`, depending on the sign of y (plus a y-independent shift). Each Perlin octave adds its y offset, `nextDouble() � 256`, which is never `-0.0`, so the two zeros give the same noise.
+- Everything else depends on y if any input does, including a spline's coordinate or any of its point values.
+
+`ClimateSampler::at_column(qx, qz)` folds all six climate functions for a quart column.
+
 ## The climate sampler
 
 `NoiseRouter.createClimateSampler` binds six router entries: `temperature`, `vegetation`, `continents`, `erosion`, `depth`, `ridges`, which feed the climate parameters temperature, humidity, continentalness, erosion, depth and weirdness. `Climate.Sampler.sample(qx, qy, qz)` evaluates each at block `(4·qx, 4·qy, 4·qz)` (`QuartPos.toBlock`, no centring), and `Climate.target` quantizes each with `quantizeCoord(f) = (long)(f · 10000.0f)`: an `f32` multiply, then truncation.
 
 ## Testing
 
-Committed tests use hand-written JSON ([ADR 0008](../adr/0008-game-derived-test-values-stay-local.md)): shorthands, sharing, cycles, error paths, codec defaults, and gradient, lerp and spline values worked out by hand. The ignored tests in `spyglass-density/tests/probe.rs` check every `density.json` case, including the chunk digests, and that every density function in the bundle loads or is reported as unsupported.
+Committed tests use hand-written JSON ([ADR 0008](../adr/0008-game-derived-test-values-stay-local.md)): shorthands, sharing, cycles, error paths, codec defaults, gradient, lerp and spline values worked out by hand, and column folding against per-cell evaluation. The ignored tests in `spyglass-density/tests/probe.rs` check every `density.json` case, including the chunk digests, and that every density function in the bundle loads or is reported as unsupported.

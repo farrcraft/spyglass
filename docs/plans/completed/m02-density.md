@@ -1,7 +1,7 @@
 # m02. Climate density functions
 
 - Status: Completed
-- Milestone: [02. RNG, noise and biomes](../../roadmap/02-rng-noise-biomes.md)
+- Milestone: [02. RNG, noise and biomes](../../roadmap/completed/02-rng-noise-biomes.md)
 - Started: 2026-10-25
 - Completed: 2026-10-25
 
@@ -9,7 +9,7 @@
 
 Load the overworld's noise settings and density functions from a version bundle, and evaluate the six climate router entries (`temperature`, `vegetation`, `continents`, `erosion`, `depth`, `ridges`) at any block position, bit for bit with the game. Covers the milestone's `spyglass-density` scope and the density-function part of the third exit criterion.
 
-The second of three plans for milestone 02. Needs [m02-rng-noise](m02-rng-noise.md); [m02-biomes](../m02-biomes.md) builds on it.
+The second of three plans for milestone 02. Needs [m02-rng-noise](m02-rng-noise.md); [m02-biomes](m02-biomes.md) builds on it.
 
 ## Facts established up front
 

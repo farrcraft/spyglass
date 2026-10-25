@@ -168,6 +168,12 @@ The first run downloads the server jar (about 60 MB) and compiles the harness. S
 cargo test --release -p spyglass-rng -p spyglass-noise -p spyglass-density -- --ignored
 ```
 
+The biome crate checks every cell of the golden biome files, and needs the golden set and a bundle for the same version. It takes a few seconds per million cells per core (about 15 seconds for 26.3 on a 16-core machine):
+
+```sh
+cargo test --release -p spyglass-biome -- --ignored
+```
+
 `check-save` takes any world created in the same game version with the Default preset and no worldgen datapacks. Its folder is in your launcher's `saves` directory. It should report zero unexplained mismatches.
 
 ## 7. Editor setup

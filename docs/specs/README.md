@@ -10,5 +10,6 @@ Behavior spyglass must match. Update a spec in the same change as the code that 
 | [rng.md](rng.md)                             | Draft  |
 | [noise.md](noise.md)                         | Draft  |
 | [density-functions.md](density-functions.md) | Draft  |
+| [biome-lookup.md](biome-lookup.md)           | Draft  |
 
-Planned: biome lookup, structure placement.
+Planned: structure placement.

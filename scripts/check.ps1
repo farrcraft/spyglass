@@ -1,18 +1,8 @@
-# Runs the same checks CI should: formatting, lints, tests, process-doc references.
+# Runs every check in .pre-commit-config.yaml against the whole repo, as CI should.
 $ErrorActionPreference = 'Stop'
 Set-Location (Split-Path -Parent $PSScriptRoot)
 
-# Roadmap and plan docs are temporary; code must not reference them.
-$refs = Get-ChildItem crates -Recurse -File | Where-Object { $_.FullName -notmatch '[\\/]target[\\/]' } |
-    Select-String -Pattern 'docs[\\/](roadmap|plans)'
-if ($refs) {
-    $refs | ForEach-Object { Write-Host "$($_.Path):$($_.LineNumber): $($_.Line.Trim())" }
-    Write-Error 'Code references docs/roadmap or docs/plans. See docs/development-process.md.'
-}
-
-cargo fmt --all --check
+pre-commit run --all-files --hook-stage pre-commit
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-cargo clippy --workspace --all-targets -- -D warnings
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-cargo test --workspace
+pre-commit run --all-files --hook-stage pre-push
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

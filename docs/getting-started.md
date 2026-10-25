@@ -6,7 +6,13 @@ spyglass uses the stable Rust toolchain through [rustup](https://rustup.rs). The
 
 ### Option A: setup script
 
-The setup scripts install rustup if it is missing, then install the pinned toolchain plus `rustfmt` and `clippy`, and print the versions.
+The setup scripts:
+
+1. install rustup if it is missing, then the pinned toolchain plus `rustfmt` and `clippy`;
+2. install [uv](https://github.com/astral-sh/uv) if it is missing, then [pre-commit](https://pre-commit.com) through uv (uv brings its own Python, so you don't need one);
+3. enable the repo's git hooks with `pre-commit install`.
+
+They're safe to re-run.
 
 ```powershell
 # Windows (PowerShell)
@@ -26,13 +32,13 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 
 ### Option B: by hand
 
-**Windows**
+#### Windows
 
 1. Install the [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with the "Desktop development with C++" workload. Rust's default Windows target uses the MSVC linker.
 2. Install rustup, either with `winget install Rustlang.Rustup` or by downloading `rustup-init.exe` from [rustup.rs](https://rustup.rs).
 3. Open a new terminal so `cargo` is on your `PATH`.
 
-**macOS / Linux**
+#### macOS / Linux
 
 1. Make sure a C toolchain is available (`xcode-select --install` on macOS; `build-essential` or your distro's equivalent on Linux).
 2. Run:
@@ -43,7 +49,7 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 
 3. Restart your shell, or run `. "$HOME/.cargo/env"`.
 
-**Check it worked**
+#### Check it worked
 
 ```sh
 rustc --version
@@ -72,7 +78,14 @@ cargo run -p spyglass-viewer
 cargo run -p spyglass-data --bin spyglass-extract
 ```
 
-Before pushing, run the same checks CI should:
+## 3. Checks and git hooks
+
+All checks are defined in [`.pre-commit-config.yaml`](../.pre-commit-config.yaml) (see [ADR 0002](adr/0002-git-hooks-for-local-checks.md)). Once the setup script has run, they run automatically:
+
+- **On commit**, against staged files: line endings and whitespace, JSON/YAML/TOML syntax, blocks on jars, class files and extracted game data, `cargo fmt`, TOML formatting (taplo), JSON/YAML/Markdown formatting (Prettier), Markdown lint and shellcheck. Formatters fix files in place and fail the commit; review the changes, `git add` them and commit again.
+- **On push:** `cargo clippy` with warnings as errors, and `cargo test`.
+
+To run everything against the whole repo, as CI does:
 
 ```powershell
 ./scripts/check.ps1
@@ -82,13 +95,15 @@ Before pushing, run the same checks CI should:
 ./scripts/check.sh
 ```
 
-These run `cargo fmt --check`, `cargo clippy` with warnings as errors and `cargo test`, and fail if anything under `crates/` references `docs/roadmap/` or `docs/plans/`.
+The first run on a machine downloads the hook environments (including Node for Prettier and markdownlint), which takes a minute or two. To update hook versions, run `pre-commit autoupdate` and review the diff.
 
-## 3. Editor setup
+If you don't want to install Python tooling, [prek](https://github.com/j178/prek) reads the same config: run `prek install` instead of the setup script's pre-commit step.
+
+## 4. Editor setup
 
 Use [rust-analyzer](https://rust-analyzer.github.io/). In VS Code, install the `rust-lang.rust-analyzer` extension. It picks up the workspace from the root `Cargo.toml`.
 
-## 4. Game data (later)
+## 5. Game data (later)
 
 Most crates will need a version bundle extracted from a Minecraft server jar. That pipeline doesn't exist yet. When it does, the steps will live here. See [specs/data-sources.md](specs/data-sources.md) for the plan. Jars and bundles stay on your machine and are gitignored.
 

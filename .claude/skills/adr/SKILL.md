@@ -19,6 +19,7 @@ If the skill was invoked with arguments, treat them as the decision's topic or t
    - the alternatives seriously considered and why each lost.
 
    Pull these from the conversation, the code and existing docs (`docs/architecture.md`, `docs/specs/`, `docs/research/`). If the decision itself or the main alternative is unclear, ask the user. Don't invent rationale.
+
 3. **Write the file** from `docs/adr/template.md`. Set the date to today (ISO `YYYY-MM-DD`). Status is `Proposed` unless the user says the decision is already made, in which case use `Accepted`.
 4. **Add a row to the index** in `docs/adr/README.md`, keeping it sorted by number.
 5. **Cross-link.** If a spec or doc describes the behavior this decision governs, add a short "See ADR NNNN" link there. If the decision changes something stated in `CLAUDE.md` or `docs/architecture.md`, update that text too.
@@ -49,6 +50,7 @@ Fixing typos, broken links or adding a "See also" to an old ADR is fine.
 ## When an ADR is warranted
 
 Suggest one (don't just write it) when a change:
+
 - adds or removes a significant dependency, or picks one library over another,
 - changes crate boundaries or the dependency direction between crates,
 - defines a file or data format (bundles, golden files, filter language),

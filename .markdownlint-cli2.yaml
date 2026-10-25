@@ -1,0 +1,3 @@
+config:
+  # Prose isn't hard-wrapped; Prettier owns layout.
+  line-length: false

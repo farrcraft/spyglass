@@ -1,0 +1,97 @@
+# Single definition of the repo's checks. See docs/adr/0002-git-hooks-for-local-checks.md.
+# Run everything: scripts/check.ps1 or scripts/check.sh. Bump versions: pre-commit autoupdate.
+default_install_hook_types: [pre-commit, pre-push]
+default_stages: [pre-commit]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: check-executables-have-shebangs
+      - id: check-shebang-scripts-are-executable
+      - id: check-json
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+        args: [--maxkb=1024, --enforce-all]
+
+  # Mojang code and data must never be committed.
+  - repo: local
+    hooks:
+      - id: forbid-jars-and-classes
+        name: forbid jars and class files
+        language: fail
+        entry: Jars and class files must not be committed.
+        files: \.(jar|class)$
+      - id: forbid-mojang-data
+        name: forbid extracted game data
+        language: fail
+        entry: Extracted game data must not be committed.
+        files: (^|/)data/minecraft/
+      - id: forbid-java-outside-oracle
+        name: forbid Java outside the oracle harness
+        language: fail
+        entry: Java source belongs only in oracle/. Decompiled game code must not be committed.
+        files: \.java$
+        exclude: ^oracle/
+
+  # Process docs are temporary. See docs/development-process.md.
+  - repo: local
+    hooks:
+      - id: no-process-doc-refs
+        name: code must not reference docs/roadmap or docs/plans
+        language: pygrep
+        entry: docs[/\\](roadmap|plans)
+        files: ^crates/
+
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt
+        language: system
+        entry: cargo fmt --all --check
+        types: [rust]
+        pass_filenames: false
+      - id: cargo-clippy
+        name: cargo clippy
+        language: system
+        entry: cargo clippy --workspace --all-targets -- -D warnings
+        files: (\.rs|Cargo\.(toml|lock))$
+        pass_filenames: false
+        stages: [pre-push]
+      - id: cargo-test
+        name: cargo test
+        language: system
+        entry: cargo test --workspace
+        files: (\.rs|Cargo\.(toml|lock))$
+        pass_filenames: false
+        stages: [pre-push]
+
+  - repo: https://github.com/ComPWA/taplo-pre-commit
+    rev: v0.9.3
+    hooks:
+      - id: taplo-format
+        exclude: ^Cargo\.lock$
+
+  - repo: https://github.com/rbubley/mirrors-prettier
+    rev: v3.9.10
+    hooks:
+      - id: prettier
+        types_or: [json, yaml, markdown]
+
+  - repo: https://github.com/DavidAnson/markdownlint-cli2
+    rev: v0.24.0
+    hooks:
+      - id: markdownlint-cli2
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck

@@ -17,13 +17,13 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo run -p spyglass-viewer                  # run the viewer
 ```
 
-`scripts/check.ps1` / `scripts/check.sh` run fmt, clippy and tests the same way CI should.
+All checks are defined in `.pre-commit-config.yaml` and run as git hooks (commit: hygiene, Mojang-data blocks, fmt, TOML/JSON/YAML/Markdown formatting, shellcheck; push: clippy, tests). `scripts/check.ps1` / `scripts/check.sh` run all of them against the whole repo, as CI should. When a formatter hook modifies files, review and stage the changes, then commit again. Never bypass hooks with `--no-verify`. See [ADR 0002](docs/adr/0002-git-hooks-for-local-checks.md).
 
 ## Layout
 
 - `crates/` holds one crate per layer (rng → noise → density → biome/terrain → structure → search, with `data` feeding versioned parameters and `viewer` on top). Keep dependencies flowing in that direction; lower crates must not depend on higher ones.
 - `docs/` holds getting-started, architecture, the development process, `specs/` (behavior the code must match), `adr/` (decision records), `research/` (prior art, open questions), `roadmap/` (one file per milestone) and `plans/` (implementation plans). `roadmap/` and `plans/` each have a `completed/` subdirectory.
-- `scripts/` holds developer setup and check scripts, in both PowerShell and POSIX sh versions.
+- `scripts/` holds developer setup and check scripts, in both PowerShell and POSIX sh versions. Keep the pairs in sync.
 
 ## Rules
 

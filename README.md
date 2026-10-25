@@ -34,17 +34,17 @@ See [docs/getting-started.md](docs/getting-started.md) for the full walkthrough,
 
 ## Crates
 
-| Crate | Role |
-|---|---|
-| `spyglass-rng` | Bit-exact ports of the game's RNGs. |
-| `spyglass-noise` | Noise primitives. |
-| `spyglass-data` | Version bundles, the manifest client and the extractor CLI. |
-| `spyglass-density` | Loads and evaluates density-function graphs. |
-| `spyglass-biome` | Climate sampling and biome lookup. |
-| `spyglass-terrain` | Heightmaps and surface rules. |
-| `spyglass-structure` | Structure placement and validity checks. |
-| `spyglass-search` | Parallel seed search. |
-| `spyglass-viewer` | Native map app. |
+| Crate                | Role                                                        |
+| -------------------- | ----------------------------------------------------------- |
+| `spyglass-rng`       | Bit-exact ports of the game's RNGs.                         |
+| `spyglass-noise`     | Noise primitives.                                           |
+| `spyglass-data`      | Version bundles, the manifest client and the extractor CLI. |
+| `spyglass-density`   | Loads and evaluates density-function graphs.                |
+| `spyglass-biome`     | Climate sampling and biome lookup.                          |
+| `spyglass-terrain`   | Heightmaps and surface rules.                               |
+| `spyglass-structure` | Structure placement and validity checks.                    |
+| `spyglass-search`    | Parallel seed search.                                       |
+| `spyglass-viewer`    | Native map app.                                             |
 
 See [docs/architecture.md](docs/architecture.md) for how they fit together.
 

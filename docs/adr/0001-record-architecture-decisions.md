@@ -5,7 +5,7 @@
 
 ## Context
 
-spyglass will make decisions with long-lived consequences: bundle formats, crate boundaries, dependencies, how correctness is verified, which game versions are supported. The specs say *what* the code must do, but not *why* one approach was chosen over another. Without that record, decisions get relitigated or silently reversed.
+spyglass will make decisions with long-lived consequences: bundle formats, crate boundaries, dependencies, how correctness is verified, which game versions are supported. The specs say _what_ the code must do, but not _why_ one approach was chosen over another. Without that record, decisions get relitigated or silently reversed.
 
 ## Decision
 

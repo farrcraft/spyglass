@@ -1,7 +1,7 @@
-# 07. Nether, End and multiple versions
+# 08. Nether, End and multiple versions
 
 - Status: Planned
-- Depends on: [06](06-terrain-and-validity.md)
+- Depends on: [07](07-terrain-and-validity.md)
 - Plans: none yet
 
 ## Goal
@@ -10,7 +10,8 @@ Cover all three dimensions and more than one game version.
 
 ## Scope
 
-- Nether and End biomes and structures.
+- Nether and End biomes and structures, available through locate queries, search constraints, world saves and the viewer, with a dimension switch.
+- Cross-dimension constraints, e.g. "a nether fortress within 100 Nether blocks of the Overworld spawn's portal position".
 - Support for several game versions side by side, each with its own bundle.
 - A documented process for adding a new version: extract, diff, fix what changed.
 

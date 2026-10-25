@@ -4,7 +4,7 @@ Guidance for Claude Code when working in this repository.
 
 ## Project
 
-spyglass is a Rust-native, offline seed-map toolkit for Minecraft: Java Edition (biome maps, structure finders, seed search). The goal is **bit-exact** parity with the game on current versions. Start with [docs/architecture.md](docs/architecture.md), [docs/roadmap/](docs/roadmap/README.md) and [docs/development-process.md](docs/development-process.md).
+spyglass is a local-only seed explorer for Minecraft: Java Edition: ranked constraint search over seeds, map preview with selectable layers, locate queries on seeds and on the user's own world saves, and all three dimensions. It's library-first: the CLI and GUI are thin front ends over the `spyglass` public API (see the README's Goals and [docs/architecture.md](docs/architecture.md#front-ends)). The goal is **bit-exact** parity with the game on current versions. Start with [docs/architecture.md](docs/architecture.md), [docs/roadmap/](docs/roadmap/README.md) and [docs/development-process.md](docs/development-process.md).
 
 ## Commands
 
@@ -31,6 +31,7 @@ All checks are defined in `.pre-commit-config.yaml` and run as git hooks (commit
 ## Rules
 
 - **Never commit Mojang code or data.** No jars, decompiled sources, extracted JSON or generated bundles. `/bundles`, `/oracle-out` and `*.jar` are gitignored; keep it that way. Test fixtures derived from the game (golden files) must also be generated locally, not committed, unless a spec explicitly says otherwise.
+- **Library first.** Worldgen logic belongs in the library crates, never in `spyglass-cli` or `spyglass-viewer`. If a front end needs a result, add it to the API.
 - **Algorithms in code, parameters in data.** If a value changes between game versions, it belongs in an extracted bundle, not a Rust constant.
 - **Bit-exact means bit-exact.** Match Java semantics precisely: wrapping integer arithmetic, `i32`/`i64` widths, signed shifts, `f64` vs `f32`, and operation order in floating-point expressions. Do not "simplify" math in a way that could change results.
 - **Correctness is checked against the oracle** (see [docs/specs/oracle.md](docs/specs/oracle.md)), not against other third-party tools.

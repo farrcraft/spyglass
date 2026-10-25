@@ -33,7 +33,7 @@ All in `spyglass-data`: a library for manifest, download and bundle logic, and t
 
    Read each candidate's `release` file for `JAVA_VERSION` rather than running it. Then run `java -DbundlerMainClass=net.minecraft.data.Main -jar server.jar --reports --output <tmp>` and keep the reports the bundle needs, starting with the overworld biome parameter list. The exact report path is confirmed in the first task.
 
-5. **Bundle.** Write `bundles/26.3/` (gitignored) per the bundle spec. Proposed shape: a `bundle.json` holding the version id, jar SHA-1, extractor version and a hash of every included file, then the JSON tree with game paths preserved. Raw JSON keeps bundles diffable between versions, which the "extract, diff, fix" workflow depends on. The format is decided in an ADR before it's built.
+5. **Bundle.** Write `bundles/26.3/` (gitignored) per the bundle spec. Proposed shape: a `bundle.json` holding the version id, the data version (`world_version` from the inner jar's `version.json`, 5023 for 26.3, which world saves record in `level.dat`), jar SHA-1, extractor version and a hash of every included file, then the JSON tree with game paths preserved. Raw JSON keeps bundles diffable between versions, which the "extract, diff, fix" workflow depends on. The format is decided in an ADR before it's built.
 
 ## Tasks
 

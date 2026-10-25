@@ -31,13 +31,13 @@ All in `spyglass-data`: a library for manifest, download and bundle logic, and t
    - Modrinth App: `%APPDATA%\ModrinthApp\meta\java_versions\*`.
    - Others (Prism, CurseForge) to be added as they're confirmed.
 
-   Read each candidate's `release` file for `JAVA_VERSION` rather than running it. Then run `java -DbundlerMainClass=net.minecraft.data.Main -jar server.jar --reports --output <tmp>` and keep the reports the bundle needs, starting with the overworld biome parameter list. The exact report path is confirmed in the first task.
+   Read each candidate's `release` file for `JAVA_VERSION` rather than running it. Then run `java -DbundlerMainClass=net.minecraft.data.Main -jar server.jar --reports --output <tmp>` and keep the reports the bundle needs: `reports/biome_parameters/minecraft/overworld.json` and `nether.json`. Run it in a scratch working directory, because the bundler unpacks its jars into the current directory.
 
 5. **Bundle.** Write `bundles/26.3/` (gitignored) per the bundle spec. Proposed shape: a `bundle.json` holding the version id, the data version (`world_version` from the inner jar's `version.json`, 5023 for 26.3, which world saves record in `level.dat`), jar SHA-1, extractor version and a hash of every included file, then the JSON tree with game paths preserved. Raw JSON keeps bundles diffable between versions, which the "extract, diff, fix" workflow depends on. The format is decided in an ADR before it's built.
 
 ## Tasks
 
-- [ ] Run the data generator on 26.3 by hand with Java 25. Record which reports exist and where the overworld biome parameters land.
+- [x] Run the data generator on 26.3 by hand with Java 25. Record which reports exist and where the overworld biome parameters land (`docs/specs/data-sources.md`, Data generator).
 - [x] Java discovery, including launcher runtimes (`spyglass_data::java`, also used by `cargo xtask doctor`). Only if nothing matches, print install instructions (e.g. `winget install EclipseAdoptium.Temurin.25.JRE`). The setup scripts don't install Java for the extractor.
 - [ ] Write `docs/specs/bundle-format.md`, and an ADR choosing between raw JSON tree and a compiled single file.
 - [x] Manifest client and version JSON types, with unit tests against small hand-written manifest fixtures (`spyglass_data::manifest`).
@@ -66,6 +66,7 @@ All in `spyglass-data`: a library for manifest, download and bundle logic, and t
 
 ## Notes
 
+- 2026-10-25: Ran the data generator by hand (`--reports`, Zulu 25 JRE from the Modrinth App): about 6 s, 1,666 files. Only `biome_parameters/minecraft/{overworld,nether}.json` are needed. The report prints parameters as unquantized floats; recovering the game's longs needs round-to-nearest, not the codec's truncation (spec has the details and the exhaustive check). Decision for the bundle ADR: store the reports as written, and let the loader do the exact inverse, or store quantized longs.
 - 2026-10-24: Java discovery and the manifest client landed early, because `cargo xtask doctor` (ADR 0003) needs them.
 
 - 2026-10-24: On the dev machine, a matching runtime was already present from the Modrinth App (`zulu25.34.17-ca-jre25.0.3`), while `PATH` only had Java 17. The Store launcher's runtime folder had 8/17/21 but no `epsilon`, because 26.3 is played through Modrinth there. That's why launcher runtimes are part of discovery.

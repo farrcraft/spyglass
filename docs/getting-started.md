@@ -69,6 +69,7 @@ cargo build                 # whole workspace
 cargo test                  # all tests
 cargo test -p spyglass-rng  # one crate
 cargo run -p spyglass-viewer
+cargo run -p spyglass-data --bin spyglass-extract
 ```
 
 Before pushing, run the same checks CI should:

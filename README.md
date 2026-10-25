@@ -1,5 +1,7 @@
 # spyglass
 
+![spyglass logo: a blocky robot looking through a spyglass](docs/images/logo.png)
+
 A local-only seed explorer for Minecraft: Java Edition. Describe what you want in a world, and spyglass searches for the seeds that fit best, shows them on a map, and finds where things are in worlds you already play. Output aims to match the game exactly on current versions.
 
 > Status: scaffolding only. Nothing works yet.

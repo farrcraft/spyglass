@@ -1,8 +1,8 @@
 # m01. Oracle harness and golden biome grids
 
-- Status: Draft
+- Status: In progress (phase 1 done; ADR 0004 accepted)
 - Milestone: [01. Extractor and oracle harness](../roadmap/01-extractor-and-oracle.md)
-- Started: —
+- Started: 2026-10-24
 - Completed: —
 
 ## Goal
@@ -20,13 +20,13 @@ Options and what's already known are in [research/oracle-approaches.md](../resea
 
 ### Spike tasks
 
-- [ ] Install a JDK 25; the harness has to be compiled, so a runtime isn't enough. Launcher-bundled runtimes don't include `javac`. Android Studio's bundled JetBrains Runtime does, but it changes with Android Studio updates, so use a standalone JDK (`winget install EclipseAdoptium.Temurin.25.JDK`). Add a JDK check to the setup scripts once the ADR confirms Java is needed.
-- [ ] **B first**, since it's cheaper if it works. Write the smallest Java program that, with `server-26.3.jar` on the classpath, bootstraps the game, loads the vanilla worldgen registries, builds the overworld `RandomState` for a seed, and prints the biome at one position. Record which internal classes it touches and how long bootstrap takes.
-- [ ] **A.** Generate a Fabric 26.3 mod from the template (Loom, loader 0.20.1) that does the same lookup from a server-started hook. Record setup effort, build time and server start time.
-- [ ] Spot-check both against the game at a handful of positions: `/locate biome`, F3, or MiniHUD's biome readout in a client on the same seed. The dev machine already has a Fabric 26.3 client profile with Fabric API `0.162.0+26.3`, Carpet and MiniHUD.
-- [ ] Measure throughput for both: biome samples per second at quart resolution.
-- [ ] Note what each needs in CI: Java 25, the jar download, Gradle, and whether a server process has to run.
-- [ ] Write the ADR. Update the research doc with what the spike found.
+- [x] JDK 25 for the spike: used Android Studio's bundled JetBrains Runtime 25.0.3, which has `javac`, rather than installing one. A standalone JDK is still the recommendation for ongoing work; see ADR 0004.
+- [x] **B**: bootstraps, loads registries the way `WorldLoader` does, builds the Default overworld, and resolves biomes through the chunk path. About 80 lines. Bootstrap 8.5 s, registries 1.2 s.
+- [~] **A**: not prototyped. B matched real worlds exactly, which removed A's confidence advantage; it's kept as the fallback in ADR 0004.
+- [x] Checked against the game: instead of a handful of manual spot checks, the harness was compared with **27.6 million** biome cells stored in two real 26.3 worlds (`Seed Check`, `Seed Check (1)`). Exact everywhere except exact ties; see the research doc.
+- [x] Throughput: about 1.5 million cells per second (chunk path) or 130,000 (point path), one thread.
+- [x] CI needs: a JDK 25, and the jar downloaded from Mojang per run. No Gradle, no server process, no EULA.
+- [x] ADR 0004 written (Proposed). Research doc updated.
 
 ### Questions the spike must answer
 
@@ -73,5 +73,10 @@ To be finalized in the spec:
 
 ## Notes
 
+- 2026-10-24: Phase 1 done. Key findings for phase 2:
+  - Golden data must mark **ties**: cells where several biomes share the minimum fitness. At those cells the game's answer depends on thread scheduling, so comparisons accept any tied biome. A cheap tie check is needed, since brute force over 7,594 points per cell is too slow for full grids.
+  - Use `createResolverForChunk` per chunk, as `ChunkGenerator.doCreateBiomes` does. It's about 10× faster than the point path, and it's the path the game uses.
+  - Players' own 26.3 saves are a free second check. The spike's Python NBT reader and region dumper are worth turning into a Rust test helper.
+  - Spike code is in the session scratchpad (`spike-b/src/SpikeB.java`, `tools/nbt.py`, `tools/dump_biomes.py`). It isn't committed; phase 2 rewrites it properly in `oracle/`.
 - 2026-10-24: The Fabric ecosystem is current for 26.3: the dev machine's playing profile runs Fabric API `0.162.0+26.3`, Carpet `26.3+v260915` and Sodium. That's evidence for option A's version-lag question, at least for releases.
 - 2026-10-24: Plan drafted. Approach left open pending the spike.

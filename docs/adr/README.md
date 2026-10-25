@@ -4,8 +4,9 @@ Each ADR records one significant decision: the context, what was decided, and th
 
 Start from [template.md](template.md). Files are named `NNNN-kebab-case-title.md`. In Claude Code, the `/adr` skill handles numbering, the template and this index.
 
-| #                                                | Title                            | Status   |
-| ------------------------------------------------ | -------------------------------- | -------- |
-| [0001](0001-record-architecture-decisions.md)    | Record architecture decisions    | Accepted |
-| [0002](0002-git-hooks-for-local-checks.md)       | Git hooks for local checks       | Accepted |
-| [0003](0003-cargo-xtask-for-project-commands.md) | cargo xtask for project commands | Accepted |
+| #                                                | Title                                             | Status   |
+| ------------------------------------------------ | ------------------------------------------------- | -------- |
+| [0001](0001-record-architecture-decisions.md)    | Record architecture decisions                     | Accepted |
+| [0002](0002-git-hooks-for-local-checks.md)       | Git hooks for local checks                        | Accepted |
+| [0003](0003-cargo-xtask-for-project-commands.md) | cargo xtask for project commands                  | Accepted |
+| [0004](0004-oracle-standalone-harness.md)        | Oracle: standalone Java harness on the server jar | Accepted |

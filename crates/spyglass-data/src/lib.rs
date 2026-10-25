@@ -3,6 +3,7 @@
 pub mod bundle;
 pub mod bundler;
 pub mod cache;
+pub mod codec;
 pub mod datagen;
 pub mod extract;
 pub mod java;

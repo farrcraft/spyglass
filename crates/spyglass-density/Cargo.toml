@@ -10,3 +10,13 @@ publish.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+serde_json.workspace = true
+spyglass-data.workspace = true
+spyglass-noise.workspace = true
+spyglass-rng.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+spyglass-oracle.workspace = true

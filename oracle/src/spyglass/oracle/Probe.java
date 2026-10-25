@@ -13,9 +13,12 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.stream.JsonWriter;
 
+import net.minecraft.core.QuartPos;
 import net.minecraft.core.registries.Registries;
+import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.util.RandomSource;
+import net.minecraft.world.level.biome.Climate;
 import net.minecraft.world.level.levelgen.LegacyRandomSource;
 import net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator;
 import net.minecraft.world.level.levelgen.Noises;
@@ -24,6 +27,10 @@ import net.minecraft.world.level.levelgen.RandomState;
 import net.minecraft.world.level.levelgen.RandomSupport;
 import net.minecraft.world.level.levelgen.WorldOptions;
 import net.minecraft.world.level.levelgen.XoroshiroRandomSource;
+import net.minecraft.world.level.levelgen.densityfunction.DensityBuffer;
+import net.minecraft.world.level.levelgen.densityfunction.DensitySampler;
+import net.minecraft.world.level.levelgen.densityfunction.DensityVolume;
+import net.minecraft.world.level.levelgen.densityfunction.SamplerContext;
 import net.minecraft.world.level.levelgen.synth.Noise;
 import net.minecraft.world.level.levelgen.synth.NormalNoise;
 import net.minecraft.world.level.levelgen.synth.PerlinNoise;
@@ -59,6 +66,26 @@ final class Probe {
     private static final List<ResourceKey<NormalNoise>> CLIMATE_NOISES = List.of(Noises.TEMPERATURE,
             Noises.VEGETATION, Noises.CONTINENTALNESS, Noises.EROSION, Noises.RIDGE, Noises.SHIFT);
     private static final int SEQUENCE = 8;
+    /** The overworld's climate router entries and the named functions they reach. */
+    private static final String[] DENSITY_FUNCTIONS = {
+        "minecraft:overworld/temperature", "minecraft:overworld/vegetation", "minecraft:overworld/continents",
+        "minecraft:overworld/erosion", "minecraft:overworld/depth", "minecraft:overworld/ridges",
+        "minecraft:overworld/offset", "minecraft:overworld/ridges_folded", "minecraft:shift_x", "minecraft:shift_z",
+    };
+    /** Block positions for density functions; the y sweep at the end exercises depth's gradient. */
+    private static final int[][] BLOCKS = {
+        {0, 0, 0}, {1, -1, 1}, {-1, 64, -1}, {123, -64, -456}, {-1000, 320, 1000}, {1000000, 70, -1000000},
+        {-29999984, 0, 29999984}, {29999983, -63, -29999983}, {7, 100, -13}, {4096, -30, -4096},
+        {-517, -65, 3}, {-517, -40, 3}, {-517, -1, 3}, {-517, 62, 3}, {-517, 63, 3}, {-517, 200, 3},
+        {-517, 319, 3}, {-517, 321, 3},
+    };
+    /** Quart positions for the climate sampler. */
+    private static final int[][] QUARTS = {
+        {0, 0, 0}, {-1, -16, -1}, {31, -5, -77}, {1, 79, 1}, {250000, 16, -250000}, {-7499996, 0, 7499996},
+        {7499995, -16, -7499995}, {-129, 40, 128},
+    };
+    /** Chunks where the climate sampler's volume path is compared with its point path. */
+    private static final int[][] CHUNKS = {{0, 0}, {-1, -1}, {62500, -62500}, {-1874999, 1874999}};
 
     private Probe() {}
 
@@ -66,6 +93,7 @@ final class Probe {
         Files.createDirectories(outDir);
         write(outDir.resolve("rng.json"), game, rng());
         write(outDir.resolve("noise.json"), game, noise(game, seeds));
+        write(outDir.resolve("density.json"), game, density(game, seeds));
         return 0;
     }
 
@@ -247,6 +275,116 @@ final class Probe {
         return cases;
     }
 
+    // ---- Density functions and the climate sampler ----
+
+    private static JsonArray density(Game game, List<String> seedArgs) {
+        var cases = new JsonArray();
+        var stem = game.stem("minecraft:overworld");
+        if (!(stem.generator() instanceof NoiseBasedChunkGenerator generator)) {
+            throw new IllegalStateException("the overworld isn't noise-based");
+        }
+        var noises = game.access.lookupOrThrow(Registries.NOISE);
+        var functions = game.access.lookupOrThrow(Registries.DENSITY_FUNCTION);
+        int quartMinY = QuartPos.fromBlock(stem.type().value().minY());
+        int quartHeight = QuartPos.fromBlock(stem.type().value().height());
+        for (String seedArg : seedArgs) {
+            long seed = WorldOptions.parseSeed(seedArg)
+                    .orElseThrow(() -> new IllegalArgumentException("empty seed"));
+            var state = RandomState.create(noises, seed, generator.generatorSettings().value());
+
+            // Each named function on its own, as RandomState evaluates a single block.
+            for (String id : DENSITY_FUNCTIONS) {
+                var function = functions.getOrThrow(ResourceKey.create(Registries.DENSITY_FUNCTION,
+                        Identifier.parse(id))).value();
+                for (int[] b : BLOCKS) {
+                    var c = kase("density").seed(seed).name(id);
+                    c.json.add("pos", ints(b));
+                    cases.add(c.floats(state.sampleBlockValueUncached(function, b[0], b[1], b[2])).json);
+                }
+            }
+
+            // The climate sampler as chunk generation builds it (ChunkGenerator.doCreateBiomes).
+            var pool = state.acquireDensityBufferPool();
+            try {
+                var context = SamplerContext.builder().enableCaches().useBufferArena(pool).build();
+                Climate.Sampler sampler = state.createClimateSampler(context);
+                DensitySampler.Bound[] six = {sampler.temperature(), sampler.humidity(), sampler.continentalness(),
+                    sampler.erosion(), sampler.depth(), sampler.weirdness()};
+                for (int[] q : QUARTS) {
+                    int bx = QuartPos.toBlock(q[0]);
+                    int by = QuartPos.toBlock(q[1]);
+                    int bz = QuartPos.toBlock(q[2]);
+                    float[] values = new float[6];
+                    for (int i = 0; i < 6; i++) {
+                        values[i] = six[i].sampleValue(bx, by, bz);
+                    }
+                    var c = kase("climate").seed(seed).method("floats");
+                    c.json.add("pos", ints(q));
+                    cases.add(c.floats(values).json);
+                    Climate.TargetPoint t = sampler.sample(q[0], q[1], q[2]);
+                    var ct = kase("climate").seed(seed).method("target");
+                    ct.json.add("pos", ints(q));
+                    cases.add(ct.longs(t.temperature(), t.humidity(), t.continentalness(), t.erosion(), t.depth(),
+                            t.weirdness()).json);
+                }
+
+                // Does the buffered volume path, which chunk generation uses, give the same floats as the
+                // point path? Recorded as the number of differing cells per chunk, over all six functions.
+                int size = QuartPos.fromBlock(16);
+                for (int[] chunk : CHUNKS) {
+                    int qx0 = QuartPos.fromBlock(chunk[0] * 16);
+                    int qz0 = QuartPos.fromBlock(chunk[1] * 16);
+                    var volume = new DensityVolume(size, quartHeight, size, QuartPos.toBlock(qx0),
+                            QuartPos.toBlock(quartMinY), QuartPos.toBlock(qz0), 4, 4, 4);
+                    long differing = 0;
+                    for (DensitySampler.Bound bound : six) {
+                        DensityBuffer buffer = DensityBuffer.createUnpooled(volume.size());
+                        bound.sampleVolume(buffer, volume);
+                        for (int qy = 0; qy < quartHeight; qy++) {
+                            for (int qz = 0; qz < size; qz++) {
+                                for (int qx = 0; qx < size; qx++) {
+                                    float point = bound.sampleValue(QuartPos.toBlock(qx0 + qx),
+                                            QuartPos.toBlock(quartMinY + qy), QuartPos.toBlock(qz0 + qz));
+                                    float buffered = buffer.get(volume.indexUnchecked(qx, qy, qz));
+                                    if (Float.floatToRawIntBits(point) != Float.floatToRawIntBits(buffered)) {
+                                        differing++;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    var c = kase("climate_volume_vs_point").seed(seed);
+                    c.json.add("pos", ints(new int[] {chunk[0], 0, chunk[1]}));
+                    cases.add(c.longs(differing).json);
+
+                    // Every climate float in the chunk, condensed: catches a one-ulp difference
+                    // anywhere without writing ~9,000 values. h = h * 1000003 + unsigned bits, over
+                    // cells y, then z, then x (outermost first), and the six values in order.
+                    long digest = 1;
+                    for (int qy = 0; qy < quartHeight; qy++) {
+                        for (int qz = 0; qz < size; qz++) {
+                            for (int qx = 0; qx < size; qx++) {
+                                int bx = QuartPos.toBlock(qx0 + qx);
+                                int by = QuartPos.toBlock(quartMinY + qy);
+                                int bz = QuartPos.toBlock(qz0 + qz);
+                                for (DensitySampler.Bound bound : six) {
+                                    float v = bound.sampleValue(bx, by, bz);
+                                    digest = digest * 1000003L + (Float.floatToRawIntBits(v) & 0xFFFFFFFFL);
+                                }
+                            }
+                        }
+                    }
+                    var cd = kase("climate_digest").seed(seed);
+                    cd.json.add("pos", ints(new int[] {chunk[0], 0, chunk[1]}));
+                    cases.add(cd.longs(digest).json);
+                }
+            } finally {
+                state.releaseDensityBufferPool(pool);
+            }
+        }
+        return cases;
+    }
+
     /** {@code get(x, y, z)} and {@code get(x, z)} at every probe point, one case each. */
     private static void samples(JsonArray cases, Case template, Noise noise) {
         for (double[] p : POINTS) {
@@ -298,6 +436,11 @@ final class Probe {
 
         Case seed(long seed) {
             json.addProperty("seed", seed);
+            return this;
+        }
+
+        Case method(String method) {
+            json.addProperty("method", method);
             return this;
         }
 

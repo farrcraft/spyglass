@@ -39,7 +39,7 @@ All in `spyglass-data`: a library for manifest, download and bundle logic, and t
 
 - [x] Run the data generator on 26.3 by hand with Java 25. Record which reports exist and where the overworld biome parameters land (`docs/specs/data-sources.md`, Data generator).
 - [x] Java discovery, including launcher runtimes (`spyglass_data::java`, also used by `cargo xtask doctor`). Only if nothing matches, print install instructions (e.g. `winget install EclipseAdoptium.Temurin.25.JRE`). The setup scripts don't install Java for the extractor.
-- [ ] Write `docs/specs/bundle-format.md`, and an ADR choosing between raw JSON tree and a compiled single file.
+- [x] Write `docs/specs/bundle-format.md`, and an ADR choosing between raw JSON tree and a compiled single file. ADR 0006 (raw JSON tree) accepted 2026-10-25.
 - [x] Manifest client and version JSON types, with unit tests against small hand-written manifest fixtures (`spyglass_data::manifest`).
 - [x] Jar cache with SHA-1 verification (`spyglass_data::cache`, done for the oracle).
 - [ ] Bundler jar → inner jar → worldgen JSON copy. Tests use a synthetic zip built in the test, not a Mojang jar. Unpacking the inner jar and libraries is done (`spyglass_data::bundler`, for the oracle); the worldgen JSON copy isn't.
@@ -58,8 +58,8 @@ All in `spyglass-data`: a library for manifest, download and bundle logic, and t
 
 ## Durable outputs
 
-- [ ] `docs/specs/bundle-format.md`
-- [ ] ADR: bundle format
+- [x] `docs/specs/bundle-format.md`
+- [x] ADR 0006: bundle format
 - [x] `docs/specs/data-sources.md`: the obfuscation TODO and the Java question resolved (done while writing this plan)
 - [ ] `docs/getting-started.md`: extraction steps, and what to do if no matching Java is found
 - [x] `docs/specs/data-sources.md`: Java runtime discovery order and launcher locations

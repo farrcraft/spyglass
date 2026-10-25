@@ -76,6 +76,6 @@ Mojang's data and code are never committed or redistributed. The extractor runs 
 
 ## Open questions
 
-- Bundle format and layout on disk.
+- ~~Bundle format and layout on disk.~~ Specified in [bundle-format.md](bundle-format.md), decided in [ADR 0006](../adr/0006-bundle-format-raw-json-tree.md).
 - ~~Which data-generator reports are needed vs which can be read straight from the jar?~~ **Only the overworld and nether biome parameter lists** (see [Data generator](#data-generator)). Everything else comes from the jar's `data/minecraft/worldgen/` JSON.
 - ~~Does the extractor need a Java runtime?~~ **Yes.** The overworld biome parameter list isn't in the jar's JSON (`multi_noise_biome_source_parameter_list/overworld.json` is only `{"preset": "minecraft:overworld"}`). It is built in code by `OverworldBiomeBuilder`, so it has to come from the data generator. The required Java version comes from the version JSON's `javaVersion.majorVersion` (25 for 26.3).

@@ -11,3 +11,4 @@ Start from [template.md](template.md). Files are named `NNNN-kebab-case-title.md
 | [0003](0003-cargo-xtask-for-project-commands.md) | cargo xtask for project commands                          | Accepted |
 | [0004](0004-oracle-standalone-harness.md)        | Oracle: standalone Java harness on the server jar         | Accepted |
 | [0005](0005-extra-rust-checks.md)                | Extra Rust checks: lints, dependencies, MSRV and spelling | Accepted |
+| [0006](0006-bundle-format-raw-json-tree.md)      | Version bundle format: raw JSON tree with a manifest      | Accepted |

@@ -54,6 +54,7 @@ See [docs/architecture.md](docs/architecture.md) for how they fit together.
 - [Architecture](docs/architecture.md)
 - [Specs](docs/specs/)
 - [Roadmap](docs/roadmap.md)
+- [Decision records](docs/adr/)
 - [Research](docs/research/)
 
 ## License

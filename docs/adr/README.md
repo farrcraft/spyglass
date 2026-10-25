@@ -1,0 +1,9 @@
+# Architecture Decision Records
+
+Each ADR records one significant decision: the context, what was decided, and the consequences. Accepted ADRs aren't rewritten. A changed decision gets a new ADR that supersedes the old one.
+
+Start from [template.md](template.md). Files are named `NNNN-kebab-case-title.md`. In Claude Code, the `/adr` skill handles numbering, the template and this index.
+
+| # | Title | Status |
+|---|---|---|
+| [0001](0001-record-architecture-decisions.md) | Record architecture decisions | Accepted |

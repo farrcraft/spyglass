@@ -22,7 +22,7 @@ cargo run -p spyglass-viewer                  # run the viewer
 ## Layout
 
 - `crates/` holds one crate per layer (rng → noise → density → biome/terrain → structure → search, with `data` feeding versioned parameters and `viewer` on top). Keep dependencies flowing in that direction; lower crates must not depend on higher ones.
-- `docs/` holds getting-started, architecture, `specs/` (behavior the code must match), `research/` (prior art, open questions) and the roadmap.
+- `docs/` holds getting-started, architecture, `specs/` (behavior the code must match), `adr/` (decision records), `research/` (prior art, open questions) and the roadmap.
 - `scripts/` holds developer setup and check scripts, in both PowerShell and POSIX sh versions.
 
 ## Rules
@@ -32,4 +32,5 @@ cargo run -p spyglass-viewer                  # run the viewer
 - **Bit-exact means bit-exact.** Match Java semantics precisely: wrapping integer arithmetic, `i32`/`i64` widths, signed shifts, `f64` vs `f32`, and operation order in floating-point expressions. Do not "simplify" math in a way that could change results.
 - **Correctness is checked against the oracle** (see [docs/specs/oracle.md](docs/specs/oracle.md)), not against other third-party tools.
 - New behavior that has a spec should cite the spec; if the spec is wrong or missing, update it in the same change.
+- Significant decisions (dependencies, formats, crate boundaries, policies) get an ADR in `docs/adr/`; use the `adr` skill. Use the `rust-review` skill to review Rust changes.
 - Edition 2024, MSRV in the workspace `Cargo.toml`. Shared metadata and inter-crate dependencies go through `[workspace.package]` / `[workspace.dependencies]`.

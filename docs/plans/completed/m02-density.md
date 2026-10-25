@@ -81,5 +81,5 @@ The questions as first asked:
 
 ## Notes
 
-- 2026-10-25: Done. All 2,040 `density.json` cases match on the first run, including per-chunk digests of every climate float (about 1.5 million values). The digests were added after a mutation check: reassociating the spline's `t·(1−t)·lerp` changed no value at the 200 sampled points per function but breaks 6 chunk digests. Two findings now in specs and ADRs: the game reads `float` fields with `Float.parseFloat` of the JSON text (ADR 0011, Proposed), and it compiles division by a constant to multiplication by the reciprocal (not yet needed). 28 of 26.3's 55 density functions load; the rest need terrain types.
+- 2026-10-25: Done. All 2,040 `density.json` cases match on the first run, including per-chunk digests of every climate float (about 1.5 million values). The digests were added after a mutation check: reassociating the spline's `t·(1−t)·lerp` changed no value at the 200 sampled points per function but breaks 6 chunk digests. Two findings now in specs and ADRs: the game reads `float` fields with `Float.parseFloat` of the JSON text (ADR 0011, accepted 2026-10-25), and it compiles division by a constant to multiplication by the reciprocal (not yet needed). 28 of 26.3's 55 density functions load; the rest need terrain types.
 - 2026-10-25: Plan drafted from a walk of `bundles/26.3/` and the 26.3 jar.

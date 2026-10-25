@@ -1,6 +1,6 @@
 # 0011. Parse JSON numbers from their text
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-25
 - Amends: [0010](0010-typed-loading-of-worldgen-json.md), decision point 6
 

@@ -59,10 +59,18 @@ fn main() -> ExitCode {
         Err(err) => {
             eprintln!("error: {err}");
             if let Some(ExtractError::Java(not_found)) = err.downcast_ref() {
+                let n = not_found.required;
+                let example = if cfg!(windows) {
+                    format!("winget install EclipseAdoptium.Temurin.{n}.JRE")
+                } else if cfg!(target_os = "macos") {
+                    format!("brew install --cask temurin@{n}")
+                } else {
+                    format!("your distro's openjdk-{n}-jre package")
+                };
                 eprintln!(
-                    "\nInstall a Java {} runtime (for example `winget install EclipseAdoptium.Temurin.{}.JRE`, \
-                     or your platform's package manager), or pass --java <path>.",
-                    not_found.required, not_found.required
+                    "\nIf you play this version, starting it once in your launcher downloads a \
+                     matching runtime. Otherwise install a Java {n} runtime ({example}, or Eclipse \
+                     Temurin from https://adoptium.net), or pass --java <path>."
                 );
             }
             ExitCode::FAILURE

@@ -69,6 +69,12 @@ pub enum BundleError {
         /// Every problem found.
         problems: Vec<String>,
     },
+    /// A resource id isn't a valid `namespace:path`.
+    #[error("invalid resource id {0:?}")]
+    BadId(String),
+    /// The bundle has no such resource or report.
+    #[error("{0} isn't in the bundle")]
+    NotFound(String),
 }
 
 fn io_err(path: &Path) -> impl FnOnce(io::Error) -> BundleError + '_ {
@@ -263,6 +269,81 @@ fn sha1_hex(bytes: &[u8]) -> String {
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect()
+}
+
+/// An opened bundle, for reading its resources. Opening reads `bundle.json` and checks its format,
+/// but doesn't rehash the files; [`verify`] does that.
+#[derive(Debug, Clone)]
+pub struct Bundle {
+    dir: PathBuf,
+    manifest: Manifest,
+}
+
+impl Bundle {
+    /// Opens the bundle in `dir`.
+    pub fn open(dir: impl Into<PathBuf>) -> Result<Self, BundleError> {
+        let dir = dir.into();
+        let manifest = read_manifest(&dir)?;
+        Ok(Bundle { dir, manifest })
+    }
+
+    /// The bundle directory.
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
+    /// The bundle's `bundle.json`.
+    pub fn manifest(&self) -> &Manifest {
+        &self.manifest
+    }
+
+    /// Where a registry entry lives in the bundle, as the game's data packs lay it out:
+    /// `data/<namespace>/<registry>/<path>.json`. `registry` is the registry's path, such as
+    /// `worldgen/density_function` or `dimension_type`. An id without a namespace is in
+    /// `minecraft`, as `Identifier.parse` reads it.
+    pub fn resource_path(registry: &str, id: &str) -> Result<String, BundleError> {
+        let (namespace, path) = id.split_once(':').unwrap_or(("minecraft", id));
+        let valid = |s: &str, extra: &[char]| {
+            !s.is_empty()
+                && s.chars().all(|c| {
+                    c.is_ascii_lowercase()
+                        || c.is_ascii_digit()
+                        || "_-.".contains(c)
+                        || extra.contains(&c)
+                })
+        };
+        // Identifier's rules, plus no empty, `.` or `..` path segments.
+        let segments_ok = path
+            .split('/')
+            .all(|seg| !seg.is_empty() && seg != "." && seg != "..");
+        if !valid(namespace, &[]) || !valid(path, &['/']) || !segments_ok {
+            return Err(BundleError::BadId(id.to_string()));
+        }
+        Ok(format!("data/{namespace}/{registry}/{path}.json"))
+    }
+
+    /// A registry entry's JSON, e.g. `resource("worldgen/density_function",
+    /// "minecraft:overworld/continents")`.
+    pub fn resource(&self, registry: &str, id: &str) -> Result<serde_json::Value, BundleError> {
+        self.json(&Self::resource_path(registry, id)?)
+    }
+
+    /// A data-generator report's JSON, by its path in the bundle, e.g.
+    /// `reports/biome_parameters/minecraft/overworld.json`.
+    pub fn report(&self, path: &str) -> Result<serde_json::Value, BundleError> {
+        self.json(path)
+    }
+
+    /// Any file the manifest lists, parsed as JSON. Unlisted paths are refused, so nothing
+    /// outside the bundle can be read.
+    fn json(&self, path: &str) -> Result<serde_json::Value, BundleError> {
+        if !self.manifest.files.contains_key(path) {
+            return Err(BundleError::NotFound(path.to_string()));
+        }
+        let file = self.dir.join(path);
+        let bytes = fs::read(&file).map_err(io_err(&file))?;
+        serde_json::from_slice(&bytes).map_err(|source| BundleError::Json { path: file, source })
+    }
 }
 
 /// Reads and parses a bundle's `bundle.json`, without checking any files.
@@ -508,6 +589,68 @@ mod tests {
         };
         assert_eq!(problems.len(), 1, "{problems:#?}");
         assert!(problems[0].contains("not a relative"));
+    }
+
+    #[test]
+    fn reads_resources_by_registry_and_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (game, reports) = (game_jar(tmp.path()), reports(tmp.path()));
+        let dest = tmp.path().join("26.3");
+        write(&dest, &sources(&game, &reports), false).unwrap();
+
+        let bundle = Bundle::open(&dest).unwrap();
+        assert_eq!(bundle.manifest().version, "26.3");
+        let noise = bundle.resource("worldgen/noise", "minecraft:a").unwrap();
+        assert_eq!(noise, serde_json::json!({"a": 1}));
+        // No namespace means minecraft.
+        assert_eq!(bundle.resource("worldgen/noise", "a").unwrap(), noise);
+        assert_eq!(
+            bundle.resource("dimension_type", "overworld").unwrap(),
+            serde_json::json!({})
+        );
+        let report = bundle
+            .report("reports/biome_parameters/minecraft/nether.json")
+            .unwrap();
+        assert!(report["report"].is_string());
+
+        assert!(matches!(
+            bundle.resource("worldgen/noise", "minecraft:missing"),
+            Err(BundleError::NotFound(_))
+        ));
+        // Recipes exist in the jar but aren't in bundles.
+        assert!(matches!(
+            bundle.resource("recipe", "bread"),
+            Err(BundleError::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn resource_paths_follow_the_data_pack_layout() {
+        assert_eq!(
+            Bundle::resource_path(
+                "worldgen/density_function",
+                "minecraft:overworld/continents"
+            )
+            .unwrap(),
+            "data/minecraft/worldgen/density_function/overworld/continents.json"
+        );
+        for bad in [
+            "",
+            "Minecraft:x",
+            "minecraft:",
+            "minecraft:a//b",
+            "minecraft:../x",
+            "a:b:c",
+            "minecraft:x y",
+        ] {
+            assert!(
+                matches!(
+                    Bundle::resource_path("worldgen/noise", bad),
+                    Err(BundleError::BadId(_))
+                ),
+                "{bad:?}"
+            );
+        }
     }
 
     #[test]

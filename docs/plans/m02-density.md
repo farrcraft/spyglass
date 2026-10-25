@@ -1,8 +1,8 @@
 # m02. Climate density functions
 
-- Status: Draft
+- Status: In progress
 - Milestone: [02. RNG, noise and biomes](../roadmap/02-rng-noise-biomes.md)
-- Started: —
+- Started: 2026-10-25
 - Completed: —
 
 ## Goal
@@ -39,7 +39,7 @@ Checked against `bundles/26.3/` and the 26.3 jar (`javap`) on 2026-10-25.
 
 ## Tasks
 
-- [ ] ADR: loading worldgen JSON into typed structures. Where parsing lives (`spyglass-data` gives bytes or `Value`; each layer parses its own types), whether to use serde derive or a hand-written walk over `serde_json::Value` (codec shorthands and the number/string/object union fit a hand-written walk better), how references are resolved and shared, and how unknown types are reported. Affects every later layer, so record it before writing the parser.
+- [x] ADR 0010 (accepted 2026-10-25): loading worldgen JSON into typed structures. Where parsing lives (`spyglass-data` gives bytes or `Value`; each layer parses its own types), whether to use serde derive or a hand-written walk over `serde_json::Value` (codec shorthands and the number/string/object union fit a hand-written walk better), how references are resolved and shared, and how unknown types are reported. Affects every later layer, so record it before writing the parser.
 - [ ] `spyglass-data`: bundle resource access by registry and id, and report access, with unit tests on a synthetic bundle.
 - [ ] Confirm by `javap -c`: `GradientFunction`'s default `tiling` and its float math; what `blend_alpha` and `blend_offset` return with no blending (expected 1 and 0) and whether `lerp(1.0f, a, b)` is exactly `b` in float (it need not be); `ShiftA`/`ShiftB` argument order; `NoiseFunction`'s sampler when `y_scale` is 0 and how `SLICE_UNIFORM_AXES` fixes the dropped axis (and whether `y * 0.0` giving `-0.0` for negative y can change a noise value); and whether each `Const*Sampler` computes the same float as the general sampler.
 - [ ] `spyglass-density`: parser for the climate types and shorthands, with errors that name the unsupported type. Unit tests on small hand-written JSON (not game data).
@@ -60,7 +60,7 @@ Checked against `bundles/26.3/` and the 26.3 jar (`javap`) on 2026-10-25.
 
 ## Durable outputs
 
-- [ ] ADR: typed loading of worldgen JSON
+- [x] ADR 0010: typed loading of worldgen JSON
 - [ ] `docs/specs/density-functions.md`
 - [ ] `docs/specs/oracle.md`: `density.json` probe section
 - [ ] `docs/specs/bundle-format.md`: reading density functions

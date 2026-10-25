@@ -15,3 +15,4 @@ Start from [template.md](template.md). Files are named `NNNN-kebab-case-title.md
 | [0007](0007-dev-container-and-linux-check.md)       | Dev container and a containerized Linux check             | Accepted |
 | [0008](0008-game-derived-test-values-stay-local.md) | Game-derived test values stay local                       | Accepted |
 | [0009](0009-md5-from-the-md-5-crate.md)             | MD5 from the md-5 crate                                   | Accepted |
+| [0010](0010-typed-loading-of-worldgen-json.md)      | Typed loading of worldgen JSON                            | Accepted |

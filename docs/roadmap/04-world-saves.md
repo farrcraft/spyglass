@@ -1,7 +1,7 @@
 # 04. World saves
 
 - Status: Planned
-- Depends on: [03](03-structure-placement.md)
+- Depends on: [03](completed/03-structure-placement.md)
 - Plans: none yet
 
 ## Goal
@@ -16,7 +16,7 @@ Point spyglass at a local world save and get answers for that world: its seed, v
   - Older saves keep the seed in `level.dat` (`Data.WorldGenSettings`). Supporting both layouts is in scope.
 - Finds saves in known launcher locations (official launcher `saves/`, Modrinth profiles) and accepts any path.
 - Maps the save's data version to a game version, using a data-version table recorded in each extracted bundle.
-- Opens a session from a save through the public API, so every locate query from [03](03-structure-placement.md) works on it.
+- Opens a session from a save through the public API, so every locate query from [03](completed/03-structure-placement.md) works on it.
 - CLI: `spyglass world info <save>` and `spyglass locate --world <save> ...`.
 - Clear handling of worlds spyglass can't predict exactly: unsupported presets, datapacks that change worldgen, or a version with no bundle. Each gets a specific warning, not wrong answers.
 

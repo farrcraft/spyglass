@@ -1,6 +1,6 @@
 # 0014. Public API: a loaded world and seed-bound sessions
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-25
 
 ## Context

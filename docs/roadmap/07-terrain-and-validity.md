@@ -1,7 +1,7 @@
 # 07. Terrain, structure validity, jigsaw
 
 - Status: Planned
-- Depends on: [03](03-structure-placement.md)
+- Depends on: [03](completed/03-structure-placement.md)
 - Plans: none yet
 
 ## Goal

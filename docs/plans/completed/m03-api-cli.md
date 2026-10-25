@@ -1,15 +1,15 @@
 # m03. Public API, locate queries and the CLI
 
-- Status: In progress
-- Milestone: [03. Structure placement and locate queries](../roadmap/03-structure-placement.md)
+- Status: Completed
+- Milestone: [03. Structure placement and locate queries](../../roadmap/completed/03-structure-placement.md)
 - Started: 2026-10-25
-- Completed: —
+- Completed: 2026-10-25
 
 ## Goal
 
 The `spyglass` facade crate, with one session object and locate queries, and the `spyglass` command over it, with human-readable and `--json` output. Covers the milestone's third, fifth and sixth exit criteria. Completing this plan completes the milestone.
 
-The last of three plans for milestone 03. Needs [m03-placement](completed/m03-placement.md); the spawn command needs [m03-spawn](completed/m03-spawn.md).
+The last of three plans for milestone 03. Needs [m03-placement](m03-placement.md); the spawn command needs [m03-spawn](m03-spawn.md).
 
 ## Facts established up front
 
@@ -40,7 +40,7 @@ Agreed on 2026-10-25 (the plan's open questions):
 
 ## Approach
 
-1. **ADR** for the public API: a `Session` (bundle + seed + dimension; later, a world save) that owns the loaded sources and exposes queries; front ends depend only on `spyglass`. It also covers the library-first split between the API, the CLI and the GUI ([architecture.md](../architecture.md#front-ends)), result types that carry `Candidate` vs confirmed and tie information, and errors. Written before the crate.
+1. **ADR** for the public API: a `Session` (bundle + seed + dimension; later, a world save) that owns the loaded sources and exposes queries; front ends depend only on `spyglass`. It also covers the library-first split between the API, the CLI and the GUI ([architecture.md](../../architecture.md#front-ends)), result types that carry `Candidate` vs confirmed and tie information, and errors. Written before the crate.
 2. **`crates/spyglass`**: `Session::new(bundle, seed, dimension)`, `biome_at`, `structures_in(set or structure, area)`, `nearest_structure(kind, from)`, `structures_within(kind, from, radius)`, `nearest_biome(biome, from)`, `is_slime_chunk`, `spawn_origin`. Locate queries follow the game's search order. Results are labelled candidates where the biome check needs terrain.
 3. **`crates/spyglass-cli`** (binary `spyglass`, `clap`): `spyglass locate structure|biome|slime|spawn`, with `--version`, `--seed` (text seeds hashed as the game does), `--from x,z`, `--radius` and `--json`. The bundle comes from `bundles/<version>/`, or `--bundle`. The bin target sets `doc = false` so `cargo doc` doesn't collide with the `spyglass` library.
 4. **`--json` spec**: one documented, versioned schema per command, with a `format` field, because scripts depend on it.
@@ -50,17 +50,17 @@ Agreed on 2026-10-25 (the plan's open questions):
 ## Tasks
 
 - [x] Disassemble `findNearestMapStructure`, both `getNearestGeneratedStructure` overloads and `BiomeSource.findClosestBiome3d` (radius, steps, order) used by `LocateCommand`.
-- [x] ADR: public API shape and the library-first split ([ADR 0014](../adr/0014-public-api-world-and-session.md), Proposed), and [ADR 0015](../adr/0015-locate-checks-on-a-real-server.md) (Proposed) for checking `/locate` on a real server.
+- [x] ADR: public API shape and the library-first split ([ADR 0014](../../adr/0014-public-api-world-and-session.md), Accepted), and [ADR 0015](../../adr/0015-locate-checks-on-a-real-server.md) (Accepted) for checking `/locate` on a real server.
 - [x] `spyglass-biome`: `find_closest_biome_3d` with `spiral_around` and `out_from_origin`; `find_biome_horizontal` returns the alternatives its tie replays find.
 - [x] `spyglass-structure`: `StructureSets::resolve` (ids and tags), `Starts::locate`; ring positions computed lazily per set, and carrying alternative chunks (ties and platform rounding).
 - [x] `crates/spyglass`: `World`, `Session` and queries. Unit tests cover seeds and the shown distance; the queries need a whole dimension's data, so they're covered by the CLI tests and the `/locate` comparison rather than synthetic bundles.
 - [x] `crates/spyglass-cli`: commands, human output and `--json`. Integration tests running the binary on a bundle (ignored when no bundle is present).
 - [x] `docs/specs/cli-json.md`: the JSON output format. `docs/specs/locate.md`: the searches.
 - [x] Oracle: `cargo xtask oracle locate` on a real dedicated server and a fixed case list; ignored comparison test (`crates/spyglass/tests/locate.rs`). The game's answer must be among our hits.
-- [x] `spyglass-viewer` depends on `spyglass` only; update [architecture.md](../architecture.md#crates).
+- [x] `spyglass-viewer` depends on `spyglass` only; update [architecture.md](../../architecture.md#crates).
 - [x] `docs/getting-started.md` and the README: using the CLI.
-- [ ] Accept or revise ADRs 0014 and 0015.
-- [ ] Milestone wrap-up: tick the exit criteria, move the m03 plans and the milestone to `completed/`, update the roadmap and plan indexes, fix links.
+- [x] Accept or revise ADRs 0014 and 0015. Both accepted on 2026-10-25.
+- [x] Milestone wrap-up: tick the exit criteria, move the m03 plans and the milestone to `completed/`, update the roadmap and plan indexes, fix links.
 
 ## Verification
 
@@ -91,3 +91,4 @@ Done on 2026-10-25 for 26.3:
 - 2026-10-25: `findNearestMapStructure` needs a `ServerLevel`, so the plan's oracle subcommand became `cargo xtask oracle locate`, which drives the real dedicated server (ADR 0015). About 20 s per seed.
 - 2026-10-25: The plan's `Session::new(bundle, seed, dimension)` became `World::open` plus `world.session(seed)`: the lower crates' seed-bound types borrow the loaded data, and a loaded world is reused across seeds (ADR 0014). Stronghold rings became lazy, since they take about 2.4 s and most queries don't need them.
 - 2026-10-25: The first comparison failed one case: a stronghold whose ring position depends on tied biome cells. Flagging wasn't enough, because the game's position wasn't in the list. Ring positions now carry their alternative chunks, and locate lists them as candidates.
+- 2026-10-25: ADRs 0014 and 0015 accepted. Completed, and milestone 03 with it.

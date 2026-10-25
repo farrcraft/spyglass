@@ -1,6 +1,6 @@
 # 0015. Check `/locate` answers on a real dedicated server
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-25
 
 ## Context

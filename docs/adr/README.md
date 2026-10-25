@@ -19,5 +19,5 @@ Start from [template.md](template.md). Files are named `NNNN-kebab-case-title.md
 | [0011](0011-parse-json-numbers-from-their-text.md)            | Parse JSON numbers from their text                           | Accepted |
 | [0012](0012-java-trig-results-that-depend-on-the-platform.md) | Java trig results that depend on the platform                | Accepted |
 | [0013](0013-structure-templates-and-nbt.md)                   | Structure templates in bundles, read with our own NBT reader | Accepted |
-| [0014](0014-public-api-world-and-session.md)                  | Public API: a loaded world and seed-bound sessions           | Proposed |
-| [0015](0015-locate-checks-on-a-real-server.md)                | Check `/locate` answers on a real dedicated server           | Proposed |
+| [0014](0014-public-api-world-and-session.md)                  | Public API: a loaded world and seed-bound sessions           | Accepted |
+| [0015](0015-locate-checks-on-a-real-server.md)                | Check `/locate` answers on a real dedicated server           | Accepted |

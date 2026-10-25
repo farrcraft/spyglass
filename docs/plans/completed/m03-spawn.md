@@ -1,7 +1,7 @@
 # m03. World spawn origin
 
 - Status: Draft
-- Milestone: [03. Structure placement and locate queries](../../roadmap/03-structure-placement.md)
+- Milestone: [03. Structure placement and locate queries](../../roadmap/completed/03-structure-placement.md)
 - Started: —
 - Completed: —
 

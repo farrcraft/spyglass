@@ -6,6 +6,4 @@ Code must not reference plans. Anything durable a plan produces belongs in a spe
 
 ## Active
 
-Milestone [03](../roadmap/03-structure-placement.md); [m03-placement](completed/m03-placement.md) and [m03-spawn](completed/m03-spawn.md) are done:
-
-- [m03-api-cli](m03-api-cli.md): the `spyglass` API, locate queries and the CLI.
+None. Milestone [03](../roadmap/completed/03-structure-placement.md) is complete; the next is [04](../roadmap/04-world-saves.md), which needs a plan.

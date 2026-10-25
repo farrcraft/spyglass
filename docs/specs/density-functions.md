@@ -55,7 +55,7 @@ The game has two paths: `sampleValue` at a point, and `sampleVolume` over a buff
 What depends on y:
 
 - `shift` and a `gradient` along y do. Constants, `shift_a`, `shift_b` and other gradients don't.
-- A `noise` depends on y if its `y_scale` isn't 0 or its `shift_y` depends on y. With a y scale of 0 the y input is `+0.0` or `-0.0`, depending on the sign of y (plus a y-independent shift). Each Perlin octave adds its y offset, `nextDouble() · 256`, which is never `-0.0`, so the two zeros give the same noise.
+- A `noise` depends on y if its `y_scale` isn't 0 or its `shift_y` depends on y. With a y scale of 0 the y input is `+0.0` or `-0.0`, depending on the sign of y (plus a y-independent shift). Each Perlin octave adds its y offset, `nextDouble() Â· 256`, which is never `-0.0`, so the two zeros give the same noise.
 - Everything else depends on y if any input does, including a spline's coordinate or any of its point values.
 
 `ClimateSampler::at_column(qx, qz)` folds all six climate functions for a quart column.

@@ -14,7 +14,11 @@ use crate::function::{Axis, DensityFunction, Df, Spline};
 
 /// A density function bound to a seed's noises, ready to evaluate.
 #[derive(Debug, Clone)]
-pub struct Sampler(Arc<Node>);
+pub struct Sampler {
+    node: Arc<Node>,
+    /// Whether the value can depend on y; see [`Sampler::depends_on_y`].
+    y: bool,
+}
 
 #[derive(Debug)]
 enum Node {
@@ -200,7 +204,7 @@ impl<'n> Binder<'n> {
             DensityFunction::BlendAlpha => Node::Constant(1.0),
             DensityFunction::BlendOffset => Node::Constant(0.0),
         };
-        let sampler = Sampler(Arc::new(node));
+        let sampler = Sampler::new(node);
         self.bound.insert(key, sampler.clone());
         Ok(sampler)
     }
@@ -227,10 +231,86 @@ impl<'n> Binder<'n> {
 }
 
 impl Sampler {
+    fn new(node: Node) -> Self {
+        let y = node.depends_on_y();
+        Sampler {
+            node: Arc::new(node),
+            y,
+        }
+    }
+
+    /// Whether the value can depend on y. When this is false, the value is the same at every y
+    /// for a given x and z, bit for bit (see `docs/specs/density-functions.md`).
+    pub fn depends_on_y(&self) -> bool {
+        self.y
+    }
+
+    /// This sampler for the column at block `(x, z)`: every subtree whose value doesn't depend on
+    /// y is evaluated once and replaced by a constant, so sampling the result at `(x, y, z)` gives
+    /// exactly what this sampler gives there, only faster. The result is only valid at this `x`
+    /// and `z`.
+    pub fn at_column(&self, x: i32, z: i32) -> Sampler {
+        if !self.y {
+            return Sampler::new(Node::Constant(self.sample(x, 0, z)));
+        }
+        let col = |s: &Sampler| s.at_column(x, z);
+        let node = match &*self.node {
+            Node::NoiseShiftedXz {
+                noise,
+                xz,
+                y,
+                sx,
+                sz,
+            } => Node::NoiseShiftedXz {
+                noise: noise.clone(),
+                xz: *xz,
+                y: *y,
+                sx: col(sx),
+                sz: col(sz),
+            },
+            Node::NoiseShiftedXyz {
+                noise,
+                xz,
+                y,
+                sx,
+                sy,
+                sz,
+            } => Node::NoiseShiftedXyz {
+                noise: noise.clone(),
+                xz: *xz,
+                y: *y,
+                sx: col(sx),
+                sy: col(sy),
+                sz: col(sz),
+            },
+            Node::Add(a, b) => Node::Add(col(a), col(b)),
+            Node::Mul(a, b) => Node::Mul(col(a), col(b)),
+            Node::Abs(a) => Node::Abs(col(a)),
+            Node::Lerp {
+                alpha,
+                first,
+                second,
+            } => Node::Lerp {
+                alpha: col(alpha),
+                first: col(first),
+                second: col(second),
+            },
+            Node::Spline(spline) => Node::Spline(spline.at_column(x, z)),
+            // Leaves that depend on y have nothing to fold.
+            Node::Constant(_)
+            | Node::Noise { .. }
+            | Node::ShiftA(_)
+            | Node::ShiftB(_)
+            | Node::Shift(_)
+            | Node::Gradient { .. } => return self.clone(),
+        };
+        Sampler::new(node)
+    }
+
     /// `sampleValue` at block `(x, y, z)`.
     pub fn sample(&self, x: i32, y: i32, z: i32) -> f32 {
         let (xd, yd, zd) = (f64::from(x), f64::from(y), f64::from(z));
-        match &*self.0 {
+        match &*self.node {
             Node::Constant(v) => *v,
             Node::Noise { noise, xz, y: ys } => noise.get(xd * xz, yd * ys, zd * xz),
             Node::NoiseShiftedXz {
@@ -298,7 +378,62 @@ impl Sampler {
     }
 }
 
+impl Node {
+    /// Whether the value can depend on y, from the children's flags.
+    ///
+    /// A noise's y input only reaches the noise as `wrap(y * frequency) + offset`, with an offset
+    /// from `nextDouble() * 256`, never `-0.0`. With a y scale of 0, `y * 0.0` is `+0.0` or `-0.0`
+    /// depending on the sign of y, and adding the offset makes the two the same. So a noise with
+    /// a y scale of 0 and a y-independent y shift doesn't depend on y.
+    fn depends_on_y(&self) -> bool {
+        match self {
+            Node::Constant(_) | Node::ShiftA(_) | Node::ShiftB(_) => false,
+            Node::Shift(_) => true,
+            Node::Noise { y, .. } => *y != 0.0,
+            Node::NoiseShiftedXz { y, sx, sz, .. } => *y != 0.0 || sx.y || sz.y,
+            Node::NoiseShiftedXyz { y, sx, sy, sz, .. } => *y != 0.0 || sx.y || sy.y || sz.y,
+            Node::Add(a, b) | Node::Mul(a, b) => a.y || b.y,
+            Node::Abs(a) => a.y,
+            Node::Lerp {
+                alpha,
+                first,
+                second,
+            } => alpha.y || first.y || second.y,
+            Node::Gradient { axis, .. } => *axis == Axis::Y,
+            Node::Spline(spline) => spline.depends_on_y(),
+        }
+    }
+}
+
 impl BoundSpline {
+    fn depends_on_y(&self) -> bool {
+        match self {
+            BoundSpline::Constant(_) => false,
+            BoundSpline::Multipoint {
+                coordinate, values, ..
+            } => coordinate.y || values.iter().any(BoundSpline::depends_on_y),
+        }
+    }
+
+    /// [`Sampler::at_column`] for a spline: coordinates and values are folded where they don't
+    /// depend on y. A folded spline stays a spline, so its arithmetic is unchanged.
+    fn at_column(&self, x: i32, z: i32) -> BoundSpline {
+        match self {
+            BoundSpline::Constant(v) => BoundSpline::Constant(*v),
+            BoundSpline::Multipoint {
+                coordinate,
+                locations,
+                values,
+                derivatives,
+            } => BoundSpline::Multipoint {
+                coordinate: coordinate.at_column(x, z),
+                locations: locations.clone(),
+                values: values.iter().map(|v| v.at_column(x, z)).collect(),
+                derivatives: derivatives.clone(),
+            },
+        }
+    }
+
     /// `CubicSpline.Multipoint.sample`, all in `f32`.
     fn sample(&self, x: i32, y: i32, z: i32) -> f32 {
         let BoundSpline::Multipoint {

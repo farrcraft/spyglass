@@ -241,3 +241,53 @@ fn noise_parameters_have_the_codec_defaults() {
     let err = loader.noise("bad").unwrap_err();
     assert!(matches!(*err.kind, LoadErrorKind::Invalid(_)), "{err}");
 }
+
+#[test]
+fn columns_fold_only_what_doesnt_depend_on_y() {
+    let map = resources(vec![
+        (
+            "worldgen/noise/minecraft:n".to_string(),
+            json!({"base_octave": -4, "octave_count": 2}),
+        ),
+        df(
+            "minecraft:flat",
+            json!({"type": "noise", "noise": "n", "xz_scale": 1, "y_scale": 0}),
+        ),
+        df(
+            "minecraft:tall",
+            json!({"type": "noise", "noise": "n", "xz_scale": 1, "y_scale": 1}),
+        ),
+        df(
+            "minecraft:depth",
+            json!({
+                "type": "add",
+                "left": {"type": "gradient", "axis": "y", "from_coordinate": -64,
+                         "from_value": 1.5, "to_coordinate": 320, "to_value": -1.5},
+                "right": {"type": "spline", "spline": {"coordinate": "flat", "points": [
+                    {"location": -1, "value": 0.5, "derivative": 0},
+                    {"location": 1, "value": {"coordinate": "tall", "points": [
+                        {"location": 0, "value": 1, "derivative": 2}]}, "derivative": 1}]}}
+            }),
+        ),
+    ]);
+    let flat = bind_one(&map, "flat");
+    let tall = bind_one(&map, "tall");
+    let depth = bind_one(&map, "depth");
+    assert!(!flat.depends_on_y());
+    assert!(tall.depends_on_y() && depth.depends_on_y());
+    // A y scale of 0 gives the same value above and below y = 0.
+    assert_eq!(
+        flat.sample(13, -40, 7).to_bits(),
+        flat.sample(13, 40, 7).to_bits()
+    );
+    for (x, z) in [(0, 0), (-37, 1000), (123_456, -987_654)] {
+        let column = depth.at_column(x, z);
+        for y in -64..320 {
+            assert_eq!(
+                column.sample(x, y, z).to_bits(),
+                depth.sample(x, y, z).to_bits(),
+                "({x}, {y}, {z})"
+            );
+        }
+    }
+}

@@ -118,6 +118,14 @@ impl ClimateSampler {
         std::array::from_fn(|i| self.0[i].sample(x, y, z))
     }
 
+    /// This sampler for the column at quart `(qx, qz)`, with every y-independent subtree
+    /// evaluated once ([`Sampler::at_column`]). It gives the same values as this sampler, but
+    /// only at this `qx` and `qz`.
+    pub fn at_column(&self, qx: i32, qz: i32) -> ClimateSampler {
+        let (x, z) = (qx.wrapping_mul(4), qz.wrapping_mul(4));
+        ClimateSampler(std::array::from_fn(|i| self.0[i].at_column(x, z)))
+    }
+
     /// One climate function, by [`CLIMATE_ENTRIES`] index.
     pub fn function(&self, i: usize) -> &Sampler {
         &self.0[i]

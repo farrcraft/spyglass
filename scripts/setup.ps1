@@ -1,4 +1,6 @@
-# Installs rustup (if missing) and the toolchain pinned in rust-toolchain.toml.
+# Installs rustup (if missing) and the toolchain pinned in rust-toolchain.toml, then uv,
+# pre-commit and the git hooks. -Oracle also installs the JDK that oracle work needs.
+param([switch]$Oracle)
 $ErrorActionPreference = 'Stop'
 Set-Location (Split-Path -Parent $PSScriptRoot)
 
@@ -49,6 +51,21 @@ $env:Path = "$env:USERPROFILE\.local\bin;$env:Path"
 # Installs the hook types listed in default_install_hook_types.
 pre-commit install
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+# Oracle work compiles a Java harness, so it needs a JDK, not just a runtime.
+# See docs/adr/0004-oracle-standalone-harness.md.
+if ($Oracle) {
+    $major, $state = (cargo xtask jdk-status) -split ' '
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    if ($state -eq 'found') {
+        Write-Host "JDK $major already installed."
+    } elseif (Get-Command winget -ErrorAction SilentlyContinue) {
+        winget install --id "EclipseAdoptium.Temurin.$major.JDK" -e --accept-source-agreements --accept-package-agreements
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    } else {
+        Write-Warning "Install a JDK $major, e.g. Eclipse Temurin from https://adoptium.net"
+    }
+}
 
 # Reports anything still missing. See docs/adr/0003-cargo-xtask-for-project-commands.md.
 cargo xtask doctor

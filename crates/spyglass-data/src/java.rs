@@ -1,8 +1,8 @@
 //! Finding a Java runtime to run the game's data generator.
 //!
-//! Search order: an explicit path, `JAVA_HOME`, `PATH`, then the runtimes that game launchers
-//! download. Versions are read from each installation's `release` file rather than by running
-//! it. See `docs/specs/data-sources.md`.
+//! Search order: an explicit path, `JAVA_HOME`, `PATH`, standard install locations, then the
+//! runtimes that game launchers download. Versions are read from each installation's `release`
+//! file rather than by running it. See `docs/specs/data-sources.md`.
 
 use std::collections::HashSet;
 use std::fmt;
@@ -12,9 +12,9 @@ use std::path::{Path, PathBuf};
 const JAVA_EXE: &str = if cfg!(windows) { "java.exe" } else { "java" };
 const JAVAC_EXE: &str = if cfg!(windows) { "javac.exe" } else { "javac" };
 
-/// How deep to look below a launcher's runtime folder for a Java home. The official launcher
-/// nests homes as `<component>/<platform>/<component>/`, and macOS homes add `jre.bundle/Contents/Home`.
-const LAUNCHER_SCAN_DEPTH: usize = 6;
+/// How deep to look below a scanned folder for a Java home. The official launcher nests homes as
+/// `<component>/<platform>/<component>/`, and macOS homes add `jre.bundle/Contents/Home`.
+const SCAN_DEPTH: usize = 6;
 
 /// Where a Java installation was found.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,6 +22,8 @@ pub enum JavaSource {
     Explicit,
     JavaHome,
     Path,
+    /// A standard install location (vendor folder, SDK manager), named for display.
+    Installed(&'static str),
     /// A runtime downloaded by a game launcher, named for display.
     Launcher(&'static str),
 }
@@ -32,7 +34,7 @@ impl fmt::Display for JavaSource {
             JavaSource::Explicit => f.write_str("--java"),
             JavaSource::JavaHome => f.write_str("JAVA_HOME"),
             JavaSource::Path => f.write_str("PATH"),
-            JavaSource::Launcher(name) => write!(f, "{name}"),
+            JavaSource::Installed(name) | JavaSource::Launcher(name) => write!(f, "{name}"),
         }
     }
 }
@@ -115,7 +117,51 @@ fn roots(explicit: Option<&Path>) -> Vec<Root> {
             }
         }
     }
+    roots.extend(installed_roots());
     roots.extend(launcher_roots());
+    roots
+}
+
+/// Folders where JDK installers and SDK managers put Java homes on this platform.
+fn installed_roots() -> Vec<Root> {
+    let scan = |path: PathBuf, name| Root {
+        path,
+        source: JavaSource::Installed(name),
+        is_home: false,
+    };
+    let mut roots = Vec::new();
+    if cfg!(windows) {
+        if let Some(pf) = std::env::var_os("ProgramFiles").map(PathBuf::from) {
+            for (dir, name) in [
+                ("Eclipse Adoptium", "Eclipse Adoptium"),
+                ("Java", "Program Files\\Java"),
+                ("Microsoft", "Microsoft Build of OpenJDK"),
+                ("Zulu", "Azul Zulu"),
+                ("Amazon Corretto", "Amazon Corretto"),
+                ("BellSoft", "BellSoft Liberica"),
+            ] {
+                roots.push(scan(pf.join(dir), name));
+            }
+        }
+    } else if cfg!(target_os = "macos") {
+        roots.push(scan(
+            PathBuf::from("/Library/Java/JavaVirtualMachines"),
+            "JavaVirtualMachines",
+        ));
+    } else {
+        roots.push(scan(PathBuf::from("/usr/lib/jvm"), "/usr/lib/jvm"));
+    }
+    if let Some(dirs) = directories::BaseDirs::new() {
+        let home = dirs.home_dir();
+        if cfg!(target_os = "macos") {
+            roots.push(scan(
+                home.join("Library/Java/JavaVirtualMachines"),
+                "JavaVirtualMachines",
+            ));
+        }
+        roots.push(scan(home.join(".sdkman/candidates/java"), "SDKMAN"));
+        roots.push(scan(home.join(".jdks"), "~/.jdks"));
+    }
     roots
 }
 
@@ -222,7 +268,7 @@ fn discover_in(roots: &[Root]) -> Vec<JavaInstall> {
             vec![root.path.clone()]
         } else {
             let mut homes = Vec::new();
-            scan_homes(&root.path, LAUNCHER_SCAN_DEPTH, &mut homes);
+            scan_homes(&root.path, SCAN_DEPTH, &mut homes);
             homes
         };
         for home in homes {

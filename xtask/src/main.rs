@@ -28,6 +28,12 @@ enum Cmd {
         #[arg(long)]
         java: Option<PathBuf>,
     },
+    /// Print the JDK major version the game version needs, and `found` or `missing`. Used by the
+    /// setup scripts' oracle step.
+    JdkStatus {
+        #[arg(long, default_value = "latest")]
+        game_version: String,
+    },
 }
 
 fn main() -> ExitCode {
@@ -35,6 +41,7 @@ fn main() -> ExitCode {
     let result = match cli.command {
         Cmd::Check => check(),
         Cmd::Doctor { game_version, java } => doctor(&game_version, java.as_deref()),
+        Cmd::JdkStatus { game_version } => jdk_status(&game_version),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -88,6 +95,19 @@ fn check() -> Result<()> {
             bail!("{stage} checks failed");
         }
     }
+    Ok(())
+}
+
+fn jdk_status(game_version: &str) -> Result<()> {
+    let manifest = manifest::fetch_manifest().context("fetching the version manifest")?;
+    let version = manifest::fetch_version(manifest.resolve(game_version)?)?;
+    let Some(major) = version.java_version.map(|j| j.major_version) else {
+        bail!("{} doesn't state a Java version", version.id);
+    };
+    let found = java::discover(None)
+        .iter()
+        .any(|j| j.major == major && j.is_jdk);
+    println!("{major} {}", if found { "found" } else { "missing" });
     Ok(())
 }
 
@@ -282,7 +302,9 @@ fn java_checks(r: &mut Report, game_version: &str, explicit: Option<&Path>) {
                 Status::Warn,
                 "JDK (oracle work)",
                 &detail,
-                Some("see docs/getting-started.md"),
+                Some(&format!(
+                    "scripts/setup.ps1 -Oracle (Windows) or scripts/setup.sh --oracle installs a JDK {major}"
+                )),
             );
         }
     }

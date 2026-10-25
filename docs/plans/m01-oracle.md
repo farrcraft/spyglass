@@ -9,7 +9,7 @@
 
 A harness that asks the real 26.3 game for biomes and writes golden files for a fixed seed set. Covers the milestone's second exit criterion and the oracle parts of the third and fourth.
 
-This plan is in two phases. Phase 1 is a spike that ends in an ADR choosing the harness approach. Phase 2 is sketched here and **gets rewritten once that ADR is accepted**.
+This plan is in two phases. Phase 1 was a spike that ended in [ADR 0004](../adr/0004-oracle-standalone-harness.md): a standalone Java harness on the server jar. Phase 2 builds that harness properly.
 
 ## Phase 1: choose the approach
 
@@ -26,50 +26,66 @@ Options and what's already known are in [research/oracle-approaches.md](../resea
 - [x] Checked against the game: instead of a handful of manual spot checks, the harness was compared with **27.6 million** biome cells stored in two real 26.3 worlds (`Seed Check`, `Seed Check (1)`). Exact everywhere except exact ties; see the research doc.
 - [x] Throughput: about 1.5 million cells per second (chunk path) or 130,000 (point path), one thread.
 - [x] CI needs: a JDK 25, and the jar downloaded from Mojang per run. No Gradle, no server process, no EULA.
-- [x] ADR 0004 written (Proposed). Research doc updated.
+- [x] ADR 0004 written and accepted. Research doc updated.
 
-### Questions the spike must answer
+The spike's questions are answered in the research doc's "Spike results" section.
 
-- Can B build a correct `RandomState` without a world on disk and a running server? If it needs most of server startup, B loses its main advantage.
-- How much game-internal API does each approach touch? That's what breaks on version bumps.
-- Does A's mod-loader lag behind new releases and snapshots enough to matter? Fabric supported 26.3 at release; check how quickly it supports snapshots.
-- Which one is simpler to run in CI?
+## Phase 2: harness and golden files
 
-## Phase 2: harness and golden files (sketch)
+### Shape
 
-- Harness lives in `oracle/` at the repo root. The pre-commit hook allows Java there only. Build tooling follows the ADR.
-- Command shape: `dump-biomes --version 26.3 --seed <s> --region <x0,z0,x1,z1> --y <levels> --out oracle-out/`.
-- Golden files go to `oracle-out/` (gitignored), never committed, since they're derived from the game.
-- Golden file format and seed set are specified in `docs/specs/oracle.md` before the dumper is written.
+- **Java side, `oracle/`.** Plain Java sources in package `spyglass.oracle`, no build tool. One entry point with subcommands. Each follows a named server code path and cites it in comments:
+  - `biomes`: dump a region for a seed via `createResolverForChunk` per chunk, marking ties;
+  - `check-save`: compare the harness with the biomes stored in a real save. It reads region files with the game's own `RegionFile`/`NbtIo`, so no Rust NBT dependency is needed yet.
+- **Rust side, `cargo xtask oracle`:**
+  - `build`: fetch and verify the jar (sharing the extractor's jar cache), unpack the bundler into `target/oracle/<version>/classpath/`, find a JDK of the right major with `spyglass_data::java`, and compile with `javac --release <major>`;
+  - `biomes` / `check-save`: build if stale, then run the harness;
+  - `golden`: regenerate the whole golden set for a version into `oracle-out/<version>/`.
+- **Golden files** go to `oracle-out/` (gitignored), never committed. They're regenerated locally and in CI.
 
-### Draft seed set and sampling
+### Golden format (proposal; finalized in `docs/specs/oracle.md`)
 
-To be finalized in the spec:
+One file per (seed, region, dimension):
 
-- Seeds `0`, `1`, `-1`, `i64::MIN`, `i64::MAX`, a seed from a string (`"spyglass"`, via `String.hashCode`), and a handful of random 64-bit seeds.
-- Quart-resolution grid over a 2048 × 2048 block area at the origin, at several Y levels (biomes are 3D since 1.18).
-- Small patches far from the origin (around ±1,000,000 and near the world border) to catch overflow and precision bugs.
+- a small JSON header: version, data version, seed, dimension, quart bounds, Y levels, harness version;
+- a biome palette;
+- one `u16` palette index per cell in x-z-y order, little-endian;
+- a tie table listing each tied cell's index and its full set of tied palette indices.
 
-### Tasks (tentative)
+Binary keeps 2048 × 2048-block grids small (512 × 512 × levels × 2 bytes). The header makes files self-describing for the Rust reader.
 
-- [ ] Golden file format and seed set in `docs/specs/oracle.md`.
-- [ ] Harness per the ADR, with the `dump-biomes` command.
-- [ ] Script to regenerate all golden files for a version (`scripts/oracle.ps1` / `.sh`).
-- [ ] Rust reader for golden files in a test-support location, ready for milestone 02.
-- [ ] Decide how CI gets the jar without redistributing it: download from Mojang during the CI run, and cache.
+### Seed set and sampling (proposal; finalized in the spec)
+
+- Seeds `0`, `1`, `-1`, `i64::MIN`, `i64::MAX`, a string seed (`"spyglass"` via `String.hashCode`), and four fixed random 64-bit seeds.
+- A quart-resolution grid over 2048 × 2048 blocks at the origin, at all Y levels (96 quarts tall in the overworld). That's about 25 million cells per seed at about 1.5 million per second, so about 17 s per seed on one thread, before parallelising across seeds.
+- 64 × 64-block patches at ±1,000,000 and just inside the world border (±29,999,984), to catch overflow and precision bugs.
+
+### Tasks
+
+- [ ] Finalize the golden format, seed set and tie rule in `docs/specs/oracle.md`.
+- [ ] **Tie detection.** An exact search that returns _all_ parameter points at the minimum fitness: a bounding-box tree like `Climate.RTree`, but pruning with `>` rather than `>=` and collecting equals. Validate it against brute force on a random sample of cells, and check it agrees with the spike's tie counts on the two Seed Check worlds.
+- [ ] `oracle/` harness: shared bootstrap (registries via the `WorldLoader` sequence, dimensions via `WorldPresets`), then the `biomes` and `check-save` subcommands.
+- [ ] `cargo xtask oracle build`, using the extractor's jar cache. This depends on the m01-extractor "jar cache" task, so do that one first.
+- [ ] `cargo xtask oracle biomes`, `check-save` and `golden`.
+- [ ] `check-save` passes on both Seed Check worlds: all mismatches are ties, with zero unexplained.
+- [ ] Rust golden-file reader in a test-support crate or module, ready for milestone 02.
+- [ ] Pre-commit hooks for Java: the harness is the repo's only Java, so add a formatter (e.g. google-java-format) only if it earns its keep. Decide while writing the harness.
+- [ ] CI design notes: JDK setup, jar download per run, cached by SHA-1. CI itself isn't set up yet, so this is notes only.
 
 ## Verification
 
-- Spot checks against the running game agree at every sampled position.
+- `check-save` against real 26.3 worlds: every mismatch is an exact tie.
+- Tie detection agrees with brute force on every sampled cell.
 - Regenerating golden files twice gives byte-identical output.
 - The Rust reader round-trips a golden file.
 
 ## Durable outputs
 
-- [ ] ADR: oracle approach
-- [ ] `docs/specs/oracle.md`: format, seed set, open questions resolved
-- [ ] `docs/research/oracle-approaches.md`: spike findings
-- [ ] `docs/getting-started.md`: how to build and run the oracle
+- [x] ADR 0004: oracle approach
+- [ ] `docs/specs/oracle.md`: golden format, seed set, tie rule (tie rule done), open questions resolved
+- [x] `docs/research/oracle-approaches.md`: spike findings
+- [x] `docs/getting-started.md`: JDK setup (`setup -Oracle` / `--oracle`)
+- [ ] `docs/getting-started.md`: building and running the oracle
 
 ## Notes
 

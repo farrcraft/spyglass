@@ -81,7 +81,17 @@ It checks the Rust toolchain, rustfmt and clippy, pre-commit and the git hooks, 
 
 The extractor runs the game's own data generator, so it needs a Java runtime matching the game version (Java 25 for 26.3). **If you've played that version, you probably have one already:** game launchers download their own runtime, and spyglass looks for it in the official Minecraft Launcher (including the Microsoft Store build) and the Modrinth App, after `JAVA_HOME` and `PATH`. Otherwise install a matching runtime, e.g. [Eclipse Temurin](https://adoptium.net) (`winget install EclipseAdoptium.Temurin.25.JRE`).
 
-A **JDK** (a runtime plus the `javac` compiler) is only needed to work on the oracle harness. Launcher runtimes don't include `javac`. doctor warns if there's no JDK, but doesn't fail. How the oracle is built is still being decided; setup instructions will follow.
+A **JDK** (a runtime plus the `javac` compiler) is only needed to work on the oracle harness, which is compiled against the game's server jar ([ADR 0004](adr/0004-oracle-standalone-harness.md)). Launcher runtimes don't include `javac`. doctor warns if there's no JDK, but doesn't fail. The JDK's major version must match the game's (25 for 26.3). To install one:
+
+```powershell
+./scripts/setup.ps1 -Oracle   # Windows: Eclipse Temurin via winget
+```
+
+```sh
+./scripts/setup.sh --oracle   # macOS: Temurin via Homebrew; Linux: prints what to install
+```
+
+Both skip the install if a matching JDK is already there. On Linux, install your distro's `openjdk-25-jdk` (or equivalent), use [SDKMAN](https://sdkman.io), or get [Temurin](https://adoptium.net). spyglass finds JDKs in the usual install folders even when they aren't on `PATH`. No Gradle or other Java build tool is needed: the oracle is built with plain `javac`.
 
 ## 3. Build and test
 

@@ -20,7 +20,12 @@ Running the data generator needs a Java runtime whose major version equals the v
 1. an explicit path (`--java`), either a Java home or the executable;
 2. `JAVA_HOME`;
 3. each `java` on `PATH`, following symlinks to the real home;
-4. runtimes downloaded by game launchers, scanned up to six levels deep:
+4. standard install locations, scanned up to six levels deep:
+   - Windows: `%ProgramFiles%\` + `Eclipse Adoptium`, `Java`, `Microsoft`, `Zulu`, `Amazon Corretto`, `BellSoft`;
+   - macOS: `/Library/Java/JavaVirtualMachines` and `~/Library/Java/JavaVirtualMachines`;
+   - Linux: `/usr/lib/jvm`;
+   - everywhere: `~/.sdkman/candidates/java` (SDKMAN) and `~/.jdks` (IntelliJ downloads);
+5. runtimes downloaded by game launchers, scanned the same way:
 
    | Launcher                             | Windows                                                                                  | macOS                                                          | Linux                                           |
    | ------------------------------------ | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------- | ----------------------------------------------- |
@@ -28,7 +33,7 @@ Running the data generator needs a Java runtime whose major version equals the v
    | Minecraft Launcher (Microsoft Store) | `%LOCALAPPDATA%\Packages\Microsoft.4297127D64EC6_8wekyb3d8bbwe\LocalCache\Local\runtime` | —                                                              | —                                               |
    | Modrinth App                         | `%APPDATA%\ModrinthApp\meta\java_versions`                                               | `~/Library/Application Support/ModrinthApp/meta/java_versions` | `~/.local/share/ModrinthApp/meta/java_versions` |
 
-A directory counts as a Java home if it has `bin/java` and a `release` file. The version is read from the `JAVA_VERSION` line of `release`, never by running the executable. Majors follow both schemes: `25.0.3` → 25, `1.8.0_51` → 8. Duplicate homes (by canonical path) are reported once.
+A directory counts as a Java home if it has `bin/java` and a `release` file. The version is read from the `JAVA_VERSION` line of `release`, never by running the executable. Majors follow both schemes: `25.0.3` → 25, `1.8.0_51` → 8. Duplicate homes (by canonical path) are reported once. A home with `bin/javac` is a JDK, which only oracle work needs ([ADR 0004](../adr/0004-oracle-standalone-harness.md)). The oracle uses the same search, filtered to JDKs.
 
 The Windows rows were confirmed on a real machine on 2026-10-24. The macOS and Linux paths follow each launcher's documented data folder but haven't been confirmed yet.
 

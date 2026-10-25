@@ -1,15 +1,15 @@
 # m02. RNG and noise
 
-- Status: In progress
-- Milestone: [02. RNG, noise and biomes](../roadmap/02-rng-noise-biomes.md)
+- Status: Completed
+- Milestone: [02. RNG, noise and biomes](../../roadmap/02-rng-noise-biomes.md)
 - Started: 2026-10-25
-- Completed: —
+- Completed: 2026-10-25
 
 ## Goal
 
 Bit-exact ports of the game's random sources and noise primitives in `spyglass-rng` and `spyglass-noise`, checked against values the real 26.3 game produces. Covers the milestone's second exit criterion and the RNG and noise parts of the third.
 
-This is the first of three plans for milestone 02. [m02-density](m02-density.md) builds the climate density functions on top of it, and [m02-biomes](m02-biomes.md) the biome lookup and the full golden comparison.
+This is the first of three plans for milestone 02. [m02-density](../m02-density.md) builds the climate density functions on top of it, and [m02-biomes](../m02-biomes.md) the biome lookup and the full golden comparison.
 
 ## Facts established up front
 
@@ -40,7 +40,7 @@ Checked against the unpacked 26.3 server jar with `javap` on 2026-10-25. **26.3'
 3. **`spyglass-noise`.** `GradientNoise` state and `PerlinNoise` (`f32` results, `f64` coordinates, `wrap` exactly as the game does it), `NoiseStack`, and `NormalNoise` built from a `NormalNoiseParameters` struct (plain Rust, no JSON: the noise crate doesn't depend on `spyglass-data`). `SmearedPerlinNoise`, `SimplexNoise` and `BlendedNoise` are left for the terrain and End work; the plan only ports what climate needs, plus whatever `NormalNoise` construction requires.
 4. **Tests at two levels.**
    - Committed unit tests with values from sources that aren't Mojang's: `java.util.Random` sequences (the JDK), Xoroshiro128++ against the reference C implementation, MD5 against RFC 1321's test suite, SplitMix/Stafford mixing against published constants.
-   - Ignored tests that read `oracle-out/<version>/probe/` and compare every value bit for bit, like the existing golden-file test. No game-derived values are committed ([ADR 0008](../adr/0008-game-derived-test-values-stay-local.md)).
+   - Ignored tests that read `oracle-out/<version>/probe/` and compare every value bit for bit, like the existing golden-file test. No game-derived values are committed ([ADR 0008](../../adr/0008-game-derived-test-values-stay-local.md)).
 
 ## Tasks
 
@@ -54,9 +54,9 @@ Checked against the unpacked 26.3 server jar with `javap` on 2026-10-25. **26.3'
 - [x] `spyglass-noise`: `PerlinNoise` (`wrap`, permutation table, `gradDot`, `smoothstep`, `sampleAndLerp`), with a structural check against `parityConfigString` output.
 - [x] `spyglass-noise`: `NoiseStack` and `NormalNoise` (octave list, amplitude modifiers, normalization factor, second stack at `INPUT_FACTOR`). Powers of two computed exactly, not through `powf`.
 - [x] Ignored probe test for `spyglass-noise`: every `noise.json` sample matches bit for bit, for every golden seed (2,030 cases, first run; a deliberate one-ulp change to `smoothstep` breaks 1,915 of them).
-- [ ] `docs/specs/rng.md`: the random sources, seeding (128-bit upgrade, MD5 name seeding, positional `at`), and the Java semantics they depend on.
-- [ ] `docs/specs/noise.md`: Perlin with `wrap`, the noise stack, normal-noise construction and normalization, and what is `f32` vs `f64` at each step.
-- [ ] `docs/specs/README.md`: list the new specs.
+- [x] `docs/specs/rng.md`: the random sources, seeding (128-bit upgrade, MD5 name seeding, positional `at`), and the Java semantics they depend on.
+- [x] `docs/specs/noise.md`: Perlin with `wrap`, the noise stack, normal-noise construction and normalization, and what is `f32` vs `f64` at each step.
+- [x] `docs/specs/README.md`: list the new specs.
 
 ## Verification
 
@@ -66,15 +66,15 @@ Checked against the unpacked 26.3 server jar with `javap` on 2026-10-25. **26.3'
 
 ## Durable outputs
 
-- [ ] `docs/specs/rng.md`
-- [ ] `docs/specs/noise.md`
+- [x] `docs/specs/rng.md`
+- [x] `docs/specs/noise.md`
 - [x] `docs/specs/oracle.md`: `probe` output format and command
 - [x] ADR 0008: game-derived test values
 - [x] ADR 0009: MD5 dependency
-- [ ] `docs/getting-started.md`: running the probe and the ignored tests (coordinate with whoever is editing it)
+- [x] `docs/getting-started.md`: running the probe and the ignored tests
 
 ## Notes
 
 - 2026-10-25: `spyglass-noise` matches all 2,030 `noise.json` cases. Two details a source-level port would likely miss: `NormalNoise`'s normalization sums amplitudes with `DoubleStream.sum()`, which is Kahan-compensated, and `normalize` defaults to `ENABLED` in the codec. `LEGACY` normalization isn't ported (no 26.3 noise uses it) and is refused with an error.
 - 2026-10-25: `spyglass-rng` matches all 665 `rng.json` cases. Ported from `javap -c` bytecode rather than decompiled source, since bytecode is exact about widths and operation order. The Gaussian uses `Math.log`, a transcendental whose last bit could differ between Java's intrinsic and Rust's libm; all 18 probed Gaussian sequences match, and climate doesn't use Gaussians, so it's noted in the spec rather than solved.
-- 2026-10-25: Plan drafted. The `javap` survey above shows 26.3 reworked noise to return `float` and reworked density functions into compiled samplers (see [m02-density](m02-density.md)). Old-version references are background only.
+- 2026-10-25: Plan drafted. The `javap` survey above shows 26.3 reworked noise to return `float` and reworked density functions into compiled samplers (see [m02-density](../m02-density.md)). Old-version references are background only.

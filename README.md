@@ -46,7 +46,7 @@ See [docs/getting-started.md](docs/getting-started.md) for the full walkthrough,
 | Crate                | Role                                                        |
 | -------------------- | ----------------------------------------------------------- |
 | `spyglass-rng`       | Bit-exact ports of the game's RNGs.                         |
-| `spyglass-noise`     | Noise primitives.                                           |
+| `spyglass-noise`     | Bit-exact ports of the game's noise.                        |
 | `spyglass-data`      | Version bundles, the manifest client and the extractor CLI. |
 | `spyglass-density`   | Loads and evaluates density-function graphs.                |
 | `spyglass-biome`     | Climate sampling and biome lookup.                          |

@@ -9,7 +9,7 @@
 
 Load the overworld's noise settings and density functions from a version bundle, and evaluate the six climate router entries (`temperature`, `vegetation`, `continents`, `erosion`, `depth`, `ridges`) at any block position, bit for bit with the game. Covers the milestone's `spyglass-density` scope and the density-function part of the third exit criterion.
 
-The second of three plans for milestone 02. Needs [m02-rng-noise](m02-rng-noise.md); [m02-biomes](m02-biomes.md) builds on it.
+The second of three plans for milestone 02. Needs [m02-rng-noise](completed/m02-rng-noise.md); [m02-biomes](m02-biomes.md) builds on it.
 
 ## Facts established up front
 
@@ -33,7 +33,7 @@ Checked against `bundles/26.3/` and the 26.3 jar (`javap`) on 2026-10-25.
 
 1. **Bundle access** in `spyglass-data`: open a bundle (checking `bundle.json`'s format), and read a resource by registry and id (`density_function`, `minecraft:overworld/continents` → `data/minecraft/worldgen/density_function/overworld/continents.json`), and a report by path. Bytes or `serde_json::Value`; no worldgen types here.
 2. **Parsing** in `spyglass-density`: JSON → a `DensityFunction` tree (an enum), following the game's codecs, including their shorthands: a number is a constant, a string is a reference to a named function, an object is inline. Named references are loaded once and shared. Unknown types fail at load time with the type name and the path to it, rather than at evaluation. Noise parameters (`worldgen/noise/*.json`) parse into `spyglass_noise::NormalNoiseParameters`. Noise settings parse just far enough for `noise_router`, `noise` and `legacy_random_source`.
-3. **Binding to a seed**: walk the tree, create each referenced noise once per seed (as `RandomState.getOrCreateNoise` does, via [m02-rng-noise](m02-rng-noise.md)'s RNG), and produce a bound, evaluable form.
+3. **Binding to a seed**: walk the tree, create each referenced noise once per seed (as `RandomState.getOrCreateNoise` does, via [m02-rng-noise](completed/m02-rng-noise.md)'s RNG), and produce a bound, evaluable form.
 4. **Evaluation**: a point interpreter, `sample(x, y, z) -> f32`, for the climate types. It matches `sampleValue` exactly, including the game's constant specializations and the float operation order of each sampler. `cache` is transparent for point evaluation. Buffered volume evaluation, flattening and SIMD are later work (architecture's "later: flattened, SIMD-friendly evaluation").
 5. **Values from the game**: extend the oracle's `probe` with `density.json`: for each golden seed, `RandomState.sampleBlockValueUncached` of each of the 10 named functions at a fixed point list (including negative, far and border coordinates, and many y levels for `depth`), and the six `Climate$Sampler` floats and `TargetPoint` longs at the same points. Also record the chunk path's buffered values for the same cells, to show whether point and volume evaluation agree bit for bit (see open questions).
 

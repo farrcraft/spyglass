@@ -109,7 +109,7 @@ impl NormalNoise {
 
     /// `create(RandomSource)`: two positional factories forked from `random`, and for each
     /// octave a Perlin noise from each, seeded by `"octave_<index>"`, the second at
-    /// [`INPUT_FACTOR`] times the frequency. Layers alternate first, second, first, second.
+    /// `INPUT_FACTOR` (1.0181268882175227) times the frequency. Layers alternate first, second.
     pub fn create<R: RandomSource>(&self, random: &mut R) -> NoiseStack {
         let first = random.fork_positional();
         let second = random.fork_positional();

@@ -9,7 +9,7 @@
 
 Overworld biomes at quart (1:4) resolution for any seed, matching the oracle's golden files: exact where the minimum is unique, a member of the tied set where it isn't. Covers the milestone's first exit criterion and the biome-lookup part of the third. Completing this plan completes the milestone.
 
-The last of three plans for milestone 02. Needs [m02-rng-noise](m02-rng-noise.md) and [m02-density](m02-density.md).
+The last of three plans for milestone 02. Needs [m02-rng-noise](completed/m02-rng-noise.md) and [m02-density](m02-density.md).
 
 ## Facts established up front
 

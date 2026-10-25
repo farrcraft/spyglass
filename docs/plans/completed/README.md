@@ -6,3 +6,4 @@ Plans that have been fully implemented. See [development-process.md](../../devel
 | --------------------------------- | -------------------------------- | ---------- |
 | [m01-oracle](m01-oracle.md)       | 01. Extractor and oracle harness | 2026-10-25 |
 | [m01-extractor](m01-extractor.md) | 01. Extractor and oracle harness | 2026-10-25 |
+| [m02-rng-noise](m02-rng-noise.md) | 02. RNG, noise and biomes        | 2026-10-25 |

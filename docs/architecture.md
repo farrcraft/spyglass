@@ -22,7 +22,7 @@ spyglass separates what the game _does_ (algorithms, written in Rust) from the _
 | `spyglass-data`      | Version bundles, the manifest client and the extractor CLI.                                                                  | —                                        |
 | `spyglass-oracle`    | Test support: reads the oracle's golden files. A dev-dependency only, never a normal one.                                    | —                                        |
 | `spyglass-density`   | Loads and evaluates density-function graphs.                                                                                 | noise, data                              |
-| `spyglass-biome`     | Climate sampling and biome lookup at quart (1:4) resolution; Overworld, Nether, End.                                         | rng, density, data                       |
+| `spyglass-biome`     | Climate sampling and biome lookup at quart (1:4) resolution; Overworld, Nether, End. The world spawn's climate search.       | rng, noise, density, data                |
 | `spyglass-terrain`   | Heightmaps and surface rules.                                                                                                | density, data                            |
 | `spyglass-structure` | Placement (seed-only, cheap), then biome validation, then terrain-dependent validity, with optional jigsaw for exact bounds. | rng, biome, density, data; later terrain |
 | `spyglass-search`    | Parallel seed search (`rayon`) with required and preferred constraints, ranked results, checks ordered cheapest first.       | rng, biome, structure                    |

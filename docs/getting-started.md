@@ -180,6 +180,12 @@ cargo test --release -p spyglass-biome -- --ignored
 cargo test --release -p spyglass-structure -- --ignored
 ```
 
+`cargo xtask oracle spawn` (also part of `golden`) writes the spawn golden files: the chunk the game's spawn search starts from, and the climate search behind it. The biome crate's ignored tests above include their comparison, which takes under a second on its own:
+
+```sh
+cargo test --release -p spyglass-biome --test spawn -- --ignored
+```
+
 `check-save` takes any world created in the same game version with the Default preset and no worldgen datapacks. Its folder is in your launcher's `saves` directory. It should report zero unexplained mismatches.
 
 ## 7. Editor setup

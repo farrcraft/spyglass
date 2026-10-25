@@ -10,3 +10,4 @@ Plans that have been fully implemented. See [development-process.md](../../devel
 | [m02-density](m02-density.md)     | 02. RNG, noise and biomes                  | 2026-10-25 |
 | [m02-biomes](m02-biomes.md)       | 02. RNG, noise and biomes                  | 2026-10-25 |
 | [m03-placement](m03-placement.md) | 03. Structure placement and locate queries | 2026-10-25 |
+| [m03-spawn](m03-spawn.md)         | 03. Structure placement and locate queries | 2026-10-25 |

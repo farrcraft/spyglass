@@ -19,7 +19,7 @@ const PARAMETER_LIST: &str = "worldgen/multi_noise_biome_source_parameter_list";
 pub const MAX_REPLAYED_TIES: usize = 12;
 
 /// An id with the default namespace made explicit.
-fn full_id(id: &str) -> String {
+pub(crate) fn full_id(id: &str) -> String {
     if id.contains(':') {
         id.to_string()
     } else {
@@ -34,6 +34,7 @@ pub struct BiomeSource {
     router: ClimateRouter,
     parameters: ParameterList,
     tree: SearchTree,
+    noise_settings: String,
 }
 
 impl BiomeSource {
@@ -113,7 +114,14 @@ impl BiomeSource {
             router: ClimateRouter::load(bundle, settings)?,
             tree: SearchTree::new(&parameters),
             parameters,
+            noise_settings: full_id(settings),
         })
+    }
+
+    /// The id of the dimension's noise settings, e.g. `minecraft:overworld`, which also hold
+    /// its spawn targets ([`SpawnTargets::load`](crate::SpawnTargets::load)).
+    pub fn noise_settings(&self) -> &str {
+        &self.noise_settings
     }
 
     /// The parameter list, for biome names and ids.

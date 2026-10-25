@@ -53,6 +53,9 @@ pub enum OracleCmd {
     /// Write structure golden files (placement chunks, what the game tries there, ring
     /// positions, slime chunks) for the golden seeds into `oracle-out/<version>/structures/`.
     Structures(Common),
+    /// Write spawn golden files (the spawn origin and the climate search behind it) for the
+    /// golden seeds into `oracle-out/<version>/spawn/`.
+    Spawn(Common),
     /// Regenerate the whole golden set (docs/specs/oracle.md), probe files included, into
     /// `oracle-out/<version>/`.
     Golden {
@@ -150,10 +153,15 @@ pub fn run(cmd: OracleCmd) -> Result<()> {
             let harness = build(&common)?;
             harness.structures()
         }
+        OracleCmd::Spawn(common) => {
+            let harness = build(&common)?;
+            harness.spawn()
+        }
         OracleCmd::Golden { common, threads } => {
             let harness = build(&common)?;
             harness.probe()?;
             harness.structures()?;
+            harness.spawn()?;
             let dir = repo_root().join("oracle-out").join(&harness.version);
             // Leave nothing from an earlier seed or region set for tests to pick up.
             let biomes = dir.join("biomes");
@@ -259,6 +267,20 @@ impl Harness {
             fs::remove_dir_all(&dir)?;
         }
         let mut args: Vec<OsString> = vec!["structures".into(), dir.join("overworld").into()];
+        args.extend(GOLDEN_SEEDS.iter().map(OsString::from));
+        self.run(&args)
+    }
+
+    /// Writes `oracle-out/<version>/spawn/overworld/`, replacing what was there.
+    fn spawn(&self) -> Result<()> {
+        let dir = repo_root()
+            .join("oracle-out")
+            .join(&self.version)
+            .join("spawn");
+        if dir.exists() {
+            fs::remove_dir_all(&dir)?;
+        }
+        let mut args: Vec<OsString> = vec!["spawn".into(), dir.join("overworld").into()];
         args.extend(GOLDEN_SEEDS.iter().map(OsString::from));
         self.run(&args)
     }

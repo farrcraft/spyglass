@@ -27,6 +27,48 @@ impl Parameter {
         let below = self.min.wrapping_sub(target);
         if above > 0 { above } else { below.max(0) }
     }
+
+    /// `Climate.Parameter.CODEC` on data (not a report): a number, a `[min, max]` pair or a
+    /// `{"min": .., "max": ..}` object (`ExtraCodecs.intervalCodec`). Each end is a float in
+    /// `[-2, 2]` (`Codec.floatRange`), `min` mustn't be above `max` by `Float.compareTo`, and each
+    /// is quantized with [`quantize`], truncating as the game does.
+    pub fn from_codec(json: &Value) -> Result<Self, LoadErrorKind> {
+        let float = |v: &Value| {
+            let f = codec::f32_of(v).ok_or(LoadErrorKind::Shape(
+                "a number, a [min, max] pair or a {min, max} object",
+            ))?;
+            // Float.compareTo, which total_cmp matches for every float JSON can spell.
+            if f.total_cmp(&-2.0).is_lt() || f.total_cmp(&2.0).is_gt() {
+                return Err(LoadErrorKind::OutOfRange {
+                    value: v.to_string(),
+                    min: "-2".into(),
+                    max: "2".into(),
+                });
+            }
+            Ok(f)
+        };
+        let (min, max) = match json {
+            Value::Array(pair) => match pair.as_slice() {
+                [min, max] => (float(min)?, float(max)?),
+                _ => return Err(LoadErrorKind::Shape("a [min, max] pair")),
+            },
+            Value::Object(fields) => {
+                let field = |name| fields.get(name).ok_or(LoadErrorKind::Missing(name));
+                (float(field("min")?)?, float(field("max")?)?)
+            }
+            _ => {
+                let f = float(json)?;
+                (f, f)
+            }
+        };
+        if min.total_cmp(&max).is_gt() {
+            return Err(LoadErrorKind::Invalid("min is above max"));
+        }
+        Ok(Parameter {
+            min: quantize(min),
+            max: quantize(max),
+        })
+    }
 }
 
 /// A quantized climate: temperature, humidity, continentalness, erosion, depth, weirdness, in
@@ -275,6 +317,49 @@ mod tests {
         let target = TargetPoint([-150, 0, 75, 50, 51, -101]);
         // 50² + 0 + 25² + 0 + 1² + 1² + 3².
         assert_eq!(point.fitness(&target), 2500 + 625 + 1 + 1 + 9);
+    }
+
+    #[test]
+    fn parameters_from_data_truncate() {
+        let p = |text: &str| Parameter::from_codec(&number(text));
+        assert_eq!(
+            p("[-0.11, 1.0]").ok(),
+            Some(Parameter {
+                min: -1100,
+                max: 10000
+            })
+        );
+        assert_eq!(
+            p("0.16").ok(),
+            Some(Parameter {
+                min: 1600,
+                max: 1600
+            })
+        );
+        assert_eq!(
+            p(r#"{"min": -2, "max": 2, "extra": 0}"#).ok(),
+            Some(Parameter {
+                min: -20000,
+                max: 20000
+            })
+        );
+        // Unlike a report's values, data is quantized the game's way: -1.6383f * 10000.0f
+        // truncates to -16382.
+        assert_eq!(
+            p("-1.6383").ok(),
+            Some(Parameter {
+                min: -16382,
+                max: -16382
+            })
+        );
+        assert!(matches!(p("2.0001"), Err(LoadErrorKind::OutOfRange { .. })));
+        assert!(matches!(p("[0.5, -0.5]"), Err(LoadErrorKind::Invalid(_))));
+        // Float.compareTo orders -0.0 below 0.0.
+        assert!(p("[-0.0, 0.0]").is_ok());
+        assert!(matches!(p("[0.0, -0.0]"), Err(LoadErrorKind::Invalid(_))));
+        assert!(p("[0.5]").is_err());
+        assert!(p(r#"{"min": 0.5}"#).is_err());
+        assert!(p(r#""0.5""#).is_err());
     }
 
     #[test]

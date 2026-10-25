@@ -1,6 +1,6 @@
 # Differential oracle
 
-Status: draft. Biome grids and structure placement are specified; heightmaps and full structure bounds come later.
+Status: draft. Biome grids, structure placement and the spawn origin are specified; heightmaps and full structure bounds come later.
 
 Correctness is tested against the real game, not assumed.
 
@@ -10,6 +10,7 @@ A standalone Java harness in `oracle/`, compiled against the user's own server j
 
 - biome grids (below);
 - structure placement: placement chunks, what the game tries in each, ring positions and slime chunks ([below](#structure-golden-files));
+- the spawn origin and the climate search behind it ([below](#spawn-golden-files));
 - full structure bounds (later);
 - heightmaps (later).
 
@@ -19,14 +20,15 @@ CI runs the Rust crates against these for a fixed set of seeds per supported ver
 
 `cargo xtask oracle` builds and runs the harness. Every subcommand takes `--game-version` (default `latest`), `--cache-dir` and `--java`.
 
-| Command                                                         | Does                                                                                                     |
-| --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `build`                                                         | Fetch and verify the server jar, unpack its libraries, compile the harness.                              |
-| `biomes <seed> [--dimension] [--x] [--z] [--size] --out <file>` | Write one golden biome file. Block coordinates; x, z and size must be multiples of 16.                   |
-| `check-save <world> [--dimension]`                              | Compare the harness with the biomes stored in a real save. Fails on any unexplained cell.                |
-| `probe`                                                         | Write the [probe files](#probe-files) into `oracle-out/<version>/probe/`.                                |
-| `structures`                                                    | Write the [structure golden files](#structure-golden-files) for the golden seeds.                        |
-| `golden`                                                        | Regenerate the whole golden set below, probe and structure files included, into `oracle-out/<version>/`. |
+| Command                                                         | Does                                                                                                            |
+| --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `build`                                                         | Fetch and verify the server jar, unpack its libraries, compile the harness.                                     |
+| `biomes <seed> [--dimension] [--x] [--z] [--size] --out <file>` | Write one golden biome file. Block coordinates; x, z and size must be multiples of 16.                          |
+| `check-save <world> [--dimension]`                              | Compare the harness with the biomes stored in a real save. Fails on any unexplained cell.                       |
+| `probe`                                                         | Write the [probe files](#probe-files) into `oracle-out/<version>/probe/`.                                       |
+| `structures`                                                    | Write the [structure golden files](#structure-golden-files) for the golden seeds.                               |
+| `spawn`                                                         | Write the [spawn golden files](#spawn-golden-files) for the golden seeds.                                       |
+| `golden`                                                        | Regenerate the whole golden set below, probe, structure and spawn files included, into `oracle-out/<version>/`. |
 
 `build` runs automatically before the others, and does nothing when nothing changed:
 
@@ -47,6 +49,7 @@ The harness runs with `target/oracle/<version>/run/` as its working directory, w
   - Each try calls `Structure.findGenerationPoint` (by reflection: it's protected) on a fresh `GenerationContext`, which gives the stub. It reads the biome there through the context's resolver, and `isValidBiome`.
   - Then `Structure.generate` gives the start, whose validity decides the choice, as in `tryGenerateStructure`.
   - Templates come from a `StructureTemplateManager` on the vanilla pack, with a throwaway level directory under the run directory.
+- **Spawn.** For each seed, `getOrigin` on the dimension's generator, then the climate search's phases on the sampler set `getOrigin` uses (`samplersWithContext` with caches enabled), as [below](#spawn-golden-files).
 - **Errors.** The game routes `System.out` and `System.err` through its logger, so the harness prints a failure's stack trace to the process's own stdout.
 - **Ties.** For a multi-noise biome source, the harness also runs a copy of `MultiNoiseBiomeSource.createResolverForChunk` that keeps each cell's climate target, and an exact search for every parameter point at the minimum fitness. Every cell is checked: the game's resolver and the game's `getNoiseBiome(target)` must both return a member of that set. Every tied cell, and one cell in 1,000, is also checked against a brute-force search using the game's own `Climate.ParameterPoint.fitness`. Any failure stops the run. It means the copy or the search has drifted from the game.
 
@@ -181,6 +184,34 @@ cargo test --release -p spyglass-structure -- --ignored
 ```
 
 For 26.3 it covers 6,056 placement chunks, 9,898 tries and 2,427 check positions in about 40 seconds.
+
+## Spawn golden files
+
+One UTF-8 JSON file per seed: `oracle-out/<version>/spawn/overworld/<seed>.json`, named like the structure files.
+
+```json
+{
+  "format": 1,
+  "harness": 1,
+  "version": "26.3",
+  "data_version": 5023,
+  "seed": 0,
+  "dimension": "minecraft:overworld",
+  "origin": [-2, 0],
+  "phases": [
+    { "position": [0, 0], "fitness": 9299279478784 },
+    { "position": [-490, 145], "fitness": 261125 },
+    { "position": [-31, 6], "fitness": 997 }
+  ],
+  "samples": [{ "position": [-517, 1203], "fitness": 1714498 }]
+}
+```
+
+- `origin` is `ChunkGenerator.getOrigin`, the chunk the spawn search starts from.
+- `phases` are `NoiseSpawnFinder`'s best result (block x and z, y is always 0; fitness as a `long`) after each step: the start at (0, 0), `radialSearch(2048, 512)` and `radialSearch(512, 32)`. The harness replays them through the class's private methods by reflection, and fails unless the last one is `findSpawnPosition`'s answer and lies in `origin`. Both are absent when the dimension has no spawn targets.
+- `samples` is `getSpawnPositionAndFitness` at fixed positions: negatives, quart boundaries and the world border.
+
+The final spawn block isn't written: it needs a live level (`PlayerSpawnFinder`), which the harness doesn't build. [spawn.md](spawn.md) has the algorithm, and `spyglass-biome/tests/spawn.rs` compares the files (`cargo test --release -p spyglass-biome --test spawn -- --ignored`).
 
 ## Probe files
 

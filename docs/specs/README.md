@@ -12,3 +12,4 @@ Behavior spyglass must match. Update a spec in the same change as the code that 
 | [density-functions.md](density-functions.md)     | Draft  |
 | [biome-lookup.md](biome-lookup.md)               | Draft  |
 | [structure-placement.md](structure-placement.md) | Draft  |
+| [spawn.md](spawn.md)                             | Draft  |

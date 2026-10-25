@@ -9,7 +9,7 @@
 
 The `spyglass` facade crate, with one session object and locate queries, and the `spyglass` command over it, with human-readable and `--json` output. Covers the milestone's third, fifth and sixth exit criteria. Completing this plan completes the milestone.
 
-The last of three plans for milestone 03. Needs [m03-placement](completed/m03-placement.md); the spawn command needs [m03-spawn](m03-spawn.md).
+The last of three plans for milestone 03. Needs [m03-placement](completed/m03-placement.md); the spawn command needs [m03-spawn](completed/m03-spawn.md).
 
 ## Facts established up front
 

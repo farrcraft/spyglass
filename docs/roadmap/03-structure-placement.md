@@ -2,7 +2,7 @@
 
 - Status: In progress
 - Depends on: [02](completed/02-rng-noise-biomes.md)
-- Plans: [m03-placement](../plans/completed/m03-placement.md), [m03-spawn](../plans/m03-spawn.md), [m03-api-cli](../plans/m03-api-cli.md)
+- Plans: [m03-placement](../plans/completed/m03-placement.md), [m03-spawn](../plans/completed/m03-spawn.md), [m03-api-cli](../plans/m03-api-cli.md)
 
 ## Goal
 
@@ -21,7 +21,7 @@ Answer "where are things in this seed?": structure positions, slime chunks and t
 ## Exit criteria
 
 - [x] Placement chunks match the oracle for the seed set, for every Overworld structure set in the bundle. The biome check matches exactly where its position doesn't depend on terrain, and exactly at the oracle's start positions everywhere; elsewhere, results are candidates that always include the game's start.
-- [ ] Slime chunks and the spawn origin (the chunk the game's spawn search starts from) match the oracle.
+- [x] Slime chunks and the spawn origin (the chunk the game's spawn search starts from) match the oracle.
 - [ ] `spyglass locate` answers agree with the game's `/locate` at spot-checked positions.
 - [x] A spec describes placement and documents which validity checks are deferred to [07](07-terrain-and-validity.md).
 - [ ] An ADR records the public API shape and the library-first split between the API, the CLI and the GUI.

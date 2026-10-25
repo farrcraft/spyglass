@@ -9,7 +9,7 @@
 
 For any seed, every Overworld structure set's placement chunks and, for each, which structure the game would try and whether it passes the biome check, matching the oracle. Also slime chunks. Covers the milestone's first exit criterion, the slime half of the second, and the placement spec of the fourth.
 
-The first of three plans for milestone 03, followed by [m03-spawn](../m03-spawn.md) and [m03-api-cli](../m03-api-cli.md). It needs only the completed milestone 02 crates.
+The first of three plans for milestone 03, followed by [m03-spawn](m03-spawn.md) and [m03-api-cli](../m03-api-cli.md). It needs only the completed milestone 02 crates.
 
 ## Facts established up front
 

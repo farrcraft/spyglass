@@ -28,6 +28,9 @@ import net.minecraft.world.level.levelgen.WorldOptions;
  * structures &lt;out dir&gt; &lt;seed&gt;...
  *     One structure golden file per seed (&lt;seed&gt;.json): overworld placement chunks, what the game
  *     tries in each, ring positions and slime chunks, in fixed chunk regions.
+ * spawn &lt;out dir&gt; &lt;seed&gt;...
+ *     One spawn golden file per seed (&lt;seed&gt;.json): the overworld spawn origin, the climate
+ *     search's phases and its fitness at fixed positions.
  * </pre>
  */
 public final class Main {
@@ -53,6 +56,8 @@ public final class Main {
                         option(args, "--dimension", "minecraft:overworld")) == 0 ? 0 : 1;
                 case "probe" -> Probe.run(game, Path.of(args[1]), List.of(args).subList(2, args.length));
                 case "structures" -> Structures.run(game, Path.of(args[1]), "minecraft:overworld",
+                        List.of(args).subList(2, args.length));
+                case "spawn" -> Spawn.run(game, Path.of(args[1]), "minecraft:overworld",
                         List.of(args).subList(2, args.length));
                 default -> {
                     usage();
@@ -127,7 +132,7 @@ public final class Main {
 
     private static void usage() {
         System.err.println("usage: biomes <jobs file> [--threads N] | check-save <world dir> [--dimension ID]"
-                + " | probe <out dir> <seed>... | structures <out dir> <seed>...");
+                + " | probe <out dir> <seed>... | structures <out dir> <seed>... | spawn <out dir> <seed>...");
         System.exit(2);
     }
 }

@@ -12,7 +12,7 @@ A standalone Java harness in `oracle/`, compiled against the user's own server j
 - structure starts and bounds (later);
 - heightmaps (later).
 
-CI runs the Rust crates against these for a fixed set of seeds per supported version. Golden files are generated locally into `/oracle-out` (gitignored), since they are derived from the game.
+CI runs the Rust crates against these for a fixed set of seeds per supported version. Golden files are generated locally into `/oracle-out` (gitignored), since they are derived from the game. No game-derived values are committed, not even small test sets ([ADR 0008](../adr/0008-game-derived-test-values-stay-local.md)).
 
 ## Running it
 

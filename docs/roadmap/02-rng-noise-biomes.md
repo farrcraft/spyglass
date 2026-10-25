@@ -1,8 +1,8 @@
 # 02. RNG, noise and biomes
 
-- Status: Planned
+- Status: In progress
 - Depends on: [01](completed/01-extractor-and-oracle.md)
-- Plans: none yet
+- Plans: [m02-rng-noise](../plans/m02-rng-noise.md), [m02-density](../plans/m02-density.md), [m02-biomes](../plans/m02-biomes.md)
 
 ## Goal
 

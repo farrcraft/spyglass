@@ -6,4 +6,10 @@ Code must not reference plans. Anything durable a plan produces belongs in a spe
 
 ## Active
 
-None. The next plan starts milestone 02.
+Milestone 02 has three plans, done in order: each builds on the one before.
+
+| Plan                              | Milestone                 | Status |
+| --------------------------------- | ------------------------- | ------ |
+| [m02-rng-noise](m02-rng-noise.md) | 02. RNG, noise and biomes | Draft  |
+| [m02-density](m02-density.md)     | 02. RNG, noise and biomes | Draft  |
+| [m02-biomes](m02-biomes.md)       | 02. RNG, noise and biomes | Draft  |

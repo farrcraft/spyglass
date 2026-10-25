@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-24
+- See also: [0003](0003-cargo-xtask-for-project-commands.md), which moves the `scripts/check` wrapper to `cargo xtask check`
 
 ## Context
 

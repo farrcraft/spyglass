@@ -61,6 +61,7 @@ pub fn default_dir() -> Result<PathBuf, CacheError> {
 }
 
 /// A directory of verified server jars, keyed by SHA-1.
+#[derive(Debug)]
 pub struct JarCache {
     dir: PathBuf,
 }

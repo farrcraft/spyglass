@@ -18,9 +18,7 @@ directories.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha1.workspace = true
+tempfile.workspace = true
 thiserror.workspace = true
 ureq.workspace = true
 zip.workspace = true
-
-[dev-dependencies]
-tempfile.workspace = true

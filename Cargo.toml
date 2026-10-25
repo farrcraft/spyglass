@@ -44,3 +44,11 @@ tempfile = "3.27.0"
 thiserror = "2.0.21"
 ureq = "3.5.0"
 zip = { version = "9.1.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+
+# Hashing and inflating the 62 MB server jar is several times slower unoptimized, and the extractor
+# and xtask usually run as debug builds.
+[profile.dev.package]
+sha1.opt-level = 3
+block-buffer.opt-level = 3
+zlib-rs.opt-level = 3
+crc32fast.opt-level = 3

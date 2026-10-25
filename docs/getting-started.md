@@ -156,9 +156,25 @@ The first run downloads the server jar (about 60 MB) and compiles the harness. S
 
 Use [rust-analyzer](https://rust-analyzer.github.io/). In VS Code, install the `rust-lang.rust-analyzer` extension. It picks up the workspace from the root `Cargo.toml`.
 
-## 8. Game data (later)
+## 8. Game data
 
-Most crates will need a version bundle extracted from a Minecraft server jar. That pipeline doesn't exist yet. When it does, the steps will live here. See [specs/data-sources.md](specs/data-sources.md) for the plan. Jars and bundles stay on your machine and are gitignored.
+Most crates need a **version bundle**: the game's worldgen data for one version, extracted from the server jar on your machine ([specs/bundle-format.md](specs/bundle-format.md)). It needs a Java runtime matching that version (see [Java](#java)).
+
+```sh
+cargo run -p spyglass-data --bin spyglass-extract -- 26.3     # or: latest, latest-snapshot
+cargo run -p spyglass-data --bin spyglass-extract -- verify bundles/26.3
+```
+
+The extractor downloads the server jar (about 60 MB, once, into your per-user cache) and checks its SHA-1. It copies the worldgen JSON out of the jar and runs the game's data generator for the biome parameter lists that only exist in code, then writes `bundles/<version>/` with a `bundle.json` listing every file's hash. That takes about 10 seconds. `verify` rechecks a bundle against its `bundle.json`.
+
+| Option              | Default                    | What it does                                          |
+| ------------------- | -------------------------- | ----------------------------------------------------- |
+| `--out <dir>`       | `bundles`                  | Where bundles go; each in its own `<version>` folder. |
+| `--force`           | off                        | Replace an existing bundle.                           |
+| `--java <path>`     | search                     | A Java home or executable to try first.               |
+| `--cache-dir <dir>` | your per-user cache folder | Where server jars are kept.                           |
+
+If no matching Java is found, the error lists every place that was searched. Install a runtime of the right major version, or point `--java` at one. Jars and bundles stay on your machine: the cache is outside the repo, and `bundles/` is gitignored.
 
 ## Next steps
 

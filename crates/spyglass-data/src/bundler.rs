@@ -144,8 +144,8 @@ impl<R: Read + Seek> Bundler<R> {
         Ok(out)
     }
 
-    /// Unpacks the single game jar and every library under `dest`.
-    pub fn unpack(&mut self, dest: &Path) -> Result<Classpath, BundlerError> {
+    /// Unpacks only the single game jar, to `dest/versions/<path>`.
+    pub fn unpack_game(&mut self, dest: &Path) -> Result<PathBuf, BundlerError> {
         let versions = self.versions()?;
         let [game] = &versions[..] else {
             return Err(BundlerError::Layout(format!(
@@ -153,7 +153,12 @@ impl<R: Read + Seek> Bundler<R> {
                 versions.len()
             )));
         };
-        let game = self.extract("versions", game, &dest.join("versions"))?;
+        self.extract("versions", game, &dest.join("versions"))
+    }
+
+    /// Unpacks the single game jar and every library under `dest`.
+    pub fn unpack(&mut self, dest: &Path) -> Result<Classpath, BundlerError> {
+        let game = self.unpack_game(dest)?;
         let libraries = self
             .libraries()?
             .iter()

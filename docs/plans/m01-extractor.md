@@ -42,12 +42,13 @@ All in `spyglass-data`: a library for manifest, download and bundle logic, and t
 - [x] Write `docs/specs/bundle-format.md`, and an ADR choosing between raw JSON tree and a compiled single file. ADR 0006 (raw JSON tree) accepted 2026-10-25.
 - [x] Manifest client and version JSON types, with unit tests against small hand-written manifest fixtures (`spyglass_data::manifest`).
 - [x] Jar cache with SHA-1 verification (`spyglass_data::cache`, done for the oracle).
-- [ ] Bundler jar → inner jar → worldgen JSON copy. Tests use a synthetic zip built in the test, not a Mojang jar. Unpacking the inner jar and libraries is done (`spyglass_data::bundler`, for the oracle); the worldgen JSON copy isn't.
-- [ ] Data-generator invocation, with a clear error when no matching Java is found that lists where it looked.
-- [ ] Bundle writer and `bundle.json`, plus a `verify` subcommand that rechecks the hashes.
-- [ ] `spyglass-extract` CLI: `spyglass-extract [VERSION] [--cache-dir] [--java] [--out]`.
-- [ ] End-to-end test against real 26.3, marked `#[ignore]` (needs network and Java). Run with `cargo test -- --ignored`.
-- [ ] Fill in "Game data" in `docs/getting-started.md`.
+- [x] Bundler jar → inner jar → worldgen JSON copy. Tests use a synthetic zip built in the test, not a Mojang jar (`Bundler::unpack_game`, `spyglass_data::bundle`).
+- [x] Data-generator invocation, with a clear error when no matching Java is found that lists where it looked (`spyglass_data::datagen`, `spyglass_data::extract`).
+- [x] Bundle writer and `bundle.json`, plus a `verify` subcommand that rechecks the hashes.
+- [x] `spyglass-extract` CLI: `spyglass-extract [VERSION] [--cache-dir] [--java] [--out] [--force]`, and `spyglass-extract verify <dir>`.
+- [x] End-to-end test against real 26.3, marked `#[ignore]` (needs network and Java). Run with `cargo test -- --ignored` (`crates/spyglass-data/tests/extract.rs`).
+- [x] Fill in "Game data" in `docs/getting-started.md`.
+- [ ] Fresh clone + setup + extract on macOS or Linux (see Verification).
 
 ## Verification
 
@@ -61,11 +62,12 @@ All in `spyglass-data`: a library for manifest, download and bundle logic, and t
 - [x] `docs/specs/bundle-format.md`
 - [x] ADR 0006: bundle format
 - [x] `docs/specs/data-sources.md`: the obfuscation TODO and the Java question resolved (done while writing this plan)
-- [ ] `docs/getting-started.md`: extraction steps, and what to do if no matching Java is found
+- [x] `docs/getting-started.md`: extraction steps, and what to do if no matching Java is found
 - [x] `docs/specs/data-sources.md`: Java runtime discovery order and launcher locations
 
 ## Notes
 
+- 2026-10-25: Extractor built. Real 26.3 bundle: 1,273 files (1,144 worldgen, 123 worldgen tags, 4 dimension types, 2 reports), data version 5023. The ignored end-to-end test extracts twice and gets byte-identical `bundle.json`. A release build takes about 11 s, 8 s of it in the data generator. Debug builds took about 27 s, mostly unoptimized SHA-1 and inflate; `[profile.dev.package]` opt-levels for those crates bring that to about 12 s. Verified on Windows only so far.
 - 2026-10-25: Ran the data generator by hand (`--reports`, Zulu 25 JRE from the Modrinth App): about 6 s, 1,666 files. Only `biome_parameters/minecraft/{overworld,nether}.json` are needed. The report prints parameters as unquantized floats; recovering the game's longs needs round-to-nearest, not the codec's truncation (spec has the details and the exhaustive check). Decision for the bundle ADR: store the reports as written, and let the loader do the exact inverse, or store quantized longs.
 - 2026-10-24: Java discovery and the manifest client landed early, because `cargo xtask doctor` (ADR 0003) needs them.
 

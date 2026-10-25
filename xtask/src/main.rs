@@ -8,6 +8,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use spyglass_data::{java, manifest};
 
+mod linux_check;
 mod oracle;
 
 #[derive(Parser)]
@@ -36,6 +37,8 @@ enum Cmd {
         #[arg(long, default_value = "latest")]
         game_version: String,
     },
+    /// Check a fresh clone, scripts/setup.sh and the extractor on a clean Ubuntu machine, in Docker.
+    LinuxCheck(linux_check::LinuxCheck),
     /// Check the workspace builds with its minimum supported Rust version (`rust-version` in
     /// Cargo.toml). Needs that toolchain; the setup scripts install it.
     Msrv {
@@ -56,6 +59,7 @@ fn main() -> ExitCode {
         Cmd::Check => check(),
         Cmd::Doctor { game_version, java } => doctor(&game_version, java.as_deref()),
         Cmd::JdkStatus { game_version } => jdk_status(&game_version),
+        Cmd::LinuxCheck(args) => linux_check::run(&args),
         Cmd::Msrv { print } => msrv(print),
         Cmd::Oracle { cmd } => oracle::run(cmd),
     };
@@ -327,6 +331,17 @@ fn doctor(game_version: &str, explicit_java: Option<&Path>) -> Result<()> {
     }
 
     java_checks(&mut r, game_version, explicit_java);
+
+    // Only cargo xtask linux-check and the dev container need Docker, so this never fails.
+    match first_line("docker", &["version", "--format", "{{.Server.Version}}"]) {
+        Some(v) => r.line(Status::Ok, "Docker", &format!("server {v}"), None),
+        None => r.line(
+            Status::Warn,
+            "Docker",
+            "not found, or its daemon isn't running; only needed for cargo xtask linux-check and the dev container",
+            Some("install Docker Desktop (Windows, macOS) or Docker Engine (Linux)"),
+        ),
+    }
 
     println!();
     if r.failures > 0 {

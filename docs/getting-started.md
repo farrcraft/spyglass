@@ -75,7 +75,7 @@ Windows and macOS need nothing extra.
 cargo xtask doctor
 ```
 
-It checks the Rust toolchain, rustfmt and clippy, pre-commit and the git hooks, and Java (below). Each line is `ok`, `warn` or `FAIL`, with a fix for anything that isn't ok. It never installs anything, and exits non-zero if something fails. By default it checks Java against the latest release; use `--game-version <id>` for another, and `--java <path>` to check a specific installation.
+It checks the Rust toolchain, rustfmt and clippy, pre-commit and the git hooks, Java (below), and Docker (only a warning; just the [Linux check](#linux-check) and the [dev container](#dev-container) need it). Each line is `ok`, `warn` or `FAIL`, with a fix for anything that isn't ok. It never installs anything, and exits non-zero if something fails. By default it checks Java against the latest release; use `--game-version <id>` for another, and `--java <path>` to check a specific installation.
 
 ### Java
 
@@ -127,16 +127,28 @@ cargo xtask check
 
 The first run on a machine downloads the hook environments (including Node for Prettier and markdownlint), which takes a minute or two. To update hook versions, run `pre-commit autoupdate` and review the diff.
 
+### Linux check
+
+With Docker installed, check the committed `HEAD` on a clean Ubuntu 24.04 machine ([ADR 0007](adr/0007-dev-container-and-linux-check.md)):
+
+```sh
+cargo xtask linux-check          # fresh clone, scripts/setup.sh, Java, doctor, extract, verify
+cargo xtask linux-check --full   # also cargo xtask check: every hook, on Linux
+```
+
+It builds the `base` stage of `.devcontainer/Dockerfile` (only git, curl and a C toolchain), clones `HEAD` into a container and checks each step: the setup script, the default toolchain, the extractor's error with no Java, then with a Java runtime installed, doctor, extraction and a clean `git status`. Uncommitted changes aren't included. A run takes about six minutes, most of it compiling the cargo tools and installing hook environments; `--full` adds only a minute or two. `--keep` leaves the container running to look around in.
+
 ## 5. Project commands
 
 Project-level commands live in the `xtask` crate and run as `cargo xtask <command>` (see [ADR 0003](adr/0003-cargo-xtask-for-project-commands.md)). `cargo xtask --help` lists them. The first run compiles it, which takes a few seconds.
 
-| Command              | What it does                                        |
-| -------------------- | --------------------------------------------------- |
-| `cargo xtask check`  | Every check in the pre-commit config, on all files. |
-| `cargo xtask doctor` | Reports whether this machine is ready.              |
-| `cargo xtask msrv`   | Builds the workspace with its minimum Rust version. |
-| `cargo xtask oracle` | Builds and runs the oracle harness (below).         |
+| Command                   | What it does                                              |
+| ------------------------- | --------------------------------------------------------- |
+| `cargo xtask check`       | Every check in the pre-commit config, on all files.       |
+| `cargo xtask doctor`      | Reports whether this machine is ready.                    |
+| `cargo xtask linux-check` | Checks a fresh clone on a clean Linux machine, in Docker. |
+| `cargo xtask msrv`        | Builds the workspace with its minimum Rust version.       |
+| `cargo xtask oracle`      | Builds and runs the oracle harness (below).               |
 
 ## 6. The oracle
 
@@ -155,6 +167,15 @@ The first run downloads the server jar (about 60 MB) and compiles the harness. S
 ## 7. Editor setup
 
 Use [rust-analyzer](https://rust-analyzer.github.io/). In VS Code, install the `rust-lang.rust-analyzer` extension. It picks up the workspace from the root `Cargo.toml`.
+
+### Dev container
+
+For a ready-made Linux environment, open the repo in VS Code with the Dev Containers extension and Docker installed, then run **Dev Containers: Reopen in Container**. The container (`.devcontainer/`, [ADR 0007](adr/0007-dev-container-and-linux-check.md)) is Ubuntu 24.04 with a JDK 25 and the viewer's build libraries. On creation it runs `scripts/setup.sh`, which installs Rust, the cargo tools, pre-commit and the git hooks. The first creation takes about five minutes.
+
+- `~/.cargo`, `~/.rustup` and the build output (`CARGO_TARGET_DIR=~/target`) live in named Docker volumes, so rebuilding the container is quick and Linux builds don't mix with the host's `target/`.
+- The git hooks are shared with the host checkout. They work on both sides, because pre-commit's hook script falls back to whichever `pre-commit` is on `PATH`.
+- The viewer builds in the container but needs a display to run, so run it on the host.
+- When the target game version needs a new Java major, update the JDK package in the Dockerfile.
 
 ## 8. Game data
 

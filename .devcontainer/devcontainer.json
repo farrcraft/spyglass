@@ -1,0 +1,22 @@
+{
+  "name": "spyglass",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "target": "dev"
+  },
+  "remoteUser": "ubuntu",
+  "containerEnv": {
+    "CARGO_TARGET_DIR": "/home/ubuntu/target"
+  },
+  "mounts": [
+    "source=spyglass-cargo,target=/home/ubuntu/.cargo,type=volume",
+    "source=spyglass-rustup,target=/home/ubuntu/.rustup,type=volume",
+    "source=spyglass-target,target=/home/ubuntu/target,type=volume"
+  ],
+  "postCreateCommand": "git config --global --add safe.directory ${containerWorkspaceFolder} && scripts/setup.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": ["rust-lang.rust-analyzer"]
+    }
+  }
+}

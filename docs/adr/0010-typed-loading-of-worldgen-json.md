@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-25
+- See also: [0011](0011-parse-json-numbers-from-their-text.md), which amends decision point 6
 
 ## Context
 

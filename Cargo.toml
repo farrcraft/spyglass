@@ -41,8 +41,9 @@ directories = "6.0.0"
 md-5 = "0.11.0"
 clap = { version = "4.6.7", features = ["derive"] }
 serde = { version = "1.0.229", features = ["derive"] }
-# float_roundtrip: correctly rounded float parsing, as Java's Double.parseDouble (ADR 0010).
-serde_json = { version = "1.0.154", features = ["float_roundtrip"] }
+# arbitrary_precision keeps each number's text, so loaders parse it as the game's codecs do;
+# float_roundtrip makes derived f64 parsing correctly rounded (ADRs 0010, 0011).
+serde_json = { version = "1.0.154", features = ["arbitrary_precision", "float_roundtrip"] }
 sha1 = "0.11.0"
 tempfile = "3.27.0"
 thiserror = "2.0.21"

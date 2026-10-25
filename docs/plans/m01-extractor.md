@@ -41,8 +41,8 @@ All in `spyglass-data`: a library for manifest, download and bundle logic, and t
 - [x] Java discovery, including launcher runtimes (`spyglass_data::java`, also used by `cargo xtask doctor`). Only if nothing matches, print install instructions (e.g. `winget install EclipseAdoptium.Temurin.25.JRE`). The setup scripts don't install Java for the extractor.
 - [ ] Write `docs/specs/bundle-format.md`, and an ADR choosing between raw JSON tree and a compiled single file.
 - [x] Manifest client and version JSON types, with unit tests against small hand-written manifest fixtures (`spyglass_data::manifest`).
-- [ ] Jar cache with SHA-1 verification.
-- [ ] Bundler jar → inner jar → worldgen JSON copy. Tests use a synthetic zip built in the test, not a Mojang jar.
+- [x] Jar cache with SHA-1 verification (`spyglass_data::cache`, done for the oracle).
+- [ ] Bundler jar → inner jar → worldgen JSON copy. Tests use a synthetic zip built in the test, not a Mojang jar. Unpacking the inner jar and libraries is done (`spyglass_data::bundler`, for the oracle); the worldgen JSON copy isn't.
 - [ ] Data-generator invocation, with a clear error when no matching Java is found that lists where it looked.
 - [ ] Bundle writer and `bundle.json`, plus a `verify` subcommand that rechecks the hashes.
 - [ ] `spyglass-extract` CLI: `spyglass-extract [VERSION] [--cache-dir] [--java] [--out]`.

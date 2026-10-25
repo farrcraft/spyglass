@@ -2,7 +2,7 @@
 
 - Status: In progress
 - Depends on: —
-- Plans: [m01-extractor](../plans/m01-extractor.md), [m01-oracle](../plans/m01-oracle.md)
+- Plans: [m01-extractor](../plans/m01-extractor.md), [m01-oracle](../plans/completed/m01-oracle.md)
 
 ## Goal
 
@@ -18,11 +18,11 @@ Get trustworthy inputs and a trustworthy reference for one current game version,
 ## Exit criteria
 
 - [ ] The extractor produces a bundle for the chosen version from a clean machine, with nothing from Mojang committed.
-- [ ] The oracle produces biome-grid golden files for a fixed seed set.
+- [x] The oracle produces biome-grid golden files for a fixed seed set.
 - [ ] [specs/data-sources.md](../specs/data-sources.md) and [specs/oracle.md](../specs/oracle.md) have their open questions resolved, and the bundle and golden-file formats each have a spec.
 - [ ] ADRs record the bundle format and the oracle approach.
 
 ## Open questions
 
 - ~~Which version is the first target?~~ **26.3**, the current release. Its jar is unobfuscated and needs Java 25.
-- Fabric mod, or a standalone harness on the unobfuscated jar? Background is in [research/oracle-approaches.md](../research/oracle-approaches.md). A spike in [m01-oracle](../plans/m01-oracle.md) will answer it, and the result is recorded in an ADR.
+- ~~Fabric mod, or a standalone harness on the unobfuscated jar?~~ **Standalone harness**, decided by a spike in [m01-oracle](../plans/completed/m01-oracle.md) and recorded in [ADR 0004](../adr/0004-oracle-standalone-harness.md). Background is in [research/oracle-approaches.md](../research/oracle-approaches.md).

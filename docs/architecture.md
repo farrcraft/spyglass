@@ -20,6 +20,7 @@ spyglass separates what the game _does_ (algorithms, written in Rust) from the _
 | `spyglass-rng`       | Bit-exact RNGs. Small, but every bug here poisons everything downstream.                                                     | —                         |
 | `spyglass-noise`     | Noise primitives.                                                                                                            | rng                       |
 | `spyglass-data`      | Version bundles, the manifest client and the extractor CLI.                                                                  | —                         |
+| `spyglass-oracle`    | Test support: reads the oracle's golden files. A dev-dependency only, never a normal one.                                    | —                         |
 | `spyglass-density`   | Loads and evaluates density-function graphs.                                                                                 | noise, data               |
 | `spyglass-biome`     | Climate sampling and biome lookup at quart (1:4) resolution; Overworld, Nether, End.                                         | density, data             |
 | `spyglass-terrain`   | Heightmaps and surface rules.                                                                                                | density, data             |

@@ -126,12 +126,27 @@ Project-level commands live in the `xtask` crate and run as `cargo xtask <comman
 | -------------------- | --------------------------------------------------- |
 | `cargo xtask check`  | Every check in the pre-commit config, on all files. |
 | `cargo xtask doctor` | Reports whether this machine is ready.              |
+| `cargo xtask oracle` | Builds and runs the oracle harness (below).         |
 
-## 6. Editor setup
+## 6. The oracle
+
+The oracle asks the real game for answers and writes golden files that the Rust crates are tested against ([specs/oracle.md](specs/oracle.md)). It needs a JDK (see [Java](#java)). Everything it downloads or generates stays out of the repo: the server jar goes to your per-user cache, build output to `target/oracle/`, and golden files to `oracle-out/` (gitignored).
+
+```sh
+cargo xtask oracle golden                        # regenerate all golden files for the latest release
+cargo xtask oracle golden --game-version 26.3    # or for a specific version
+cargo xtask oracle check-save "<path to a world>" # check the harness against a save made in that version
+```
+
+The first run downloads the server jar (about 60 MB) and compiles the harness. Startup takes about 10 seconds; the full golden set about a minute more on a few cores. Golden-file tests are `#[ignore]`d until the files exist: run them with `cargo test -- --ignored`.
+
+`check-save` takes any world created in the same game version with the Default preset and no worldgen datapacks. Its folder is in your launcher's `saves` directory. It should report zero unexplained mismatches.
+
+## 7. Editor setup
 
 Use [rust-analyzer](https://rust-analyzer.github.io/). In VS Code, install the `rust-lang.rust-analyzer` extension. It picks up the workspace from the root `Cargo.toml`.
 
-## 7. Game data (later)
+## 8. Game data (later)
 
 Most crates will need a version bundle extracted from a Minecraft server jar. That pipeline doesn't exist yet. When it does, the steps will live here. See [specs/data-sources.md](specs/data-sources.md) for the plan. Jars and bundles stay on your machine and are gitignored.
 

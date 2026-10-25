@@ -19,6 +19,7 @@ spyglass-biome = { path = "crates/spyglass-biome" }
 spyglass-terrain = { path = "crates/spyglass-terrain" }
 spyglass-structure = { path = "crates/spyglass-structure" }
 spyglass-search = { path = "crates/spyglass-search" }
+spyglass-oracle = { path = "crates/spyglass-oracle" }
 
 anyhow = "1.0.104"
 directories = "6.0.0"

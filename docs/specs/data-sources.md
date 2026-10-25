@@ -11,7 +11,20 @@ Everything spyglass knows about a game version comes from Mojang's own distribut
 3. **Data generator:** `java -DbundlerMainClass=net.minecraft.data.Main -jar server.jar --all` dumps registries and reports, including the overworld biome parameter list in recent versions.
 4. **Readable code:** decompile with Vineflower. From 26.x the server jar ships unobfuscated (confirmed for 26.3: real class names, and no `server_mappings` in the version JSON), so no mappings step is needed. Older versions need the official mappings.
 
-The server jar is a bundler; the game itself is at `META-INF/versions/<id>/server-<id>.jar` inside it.
+## Server jar
+
+### Jar cache
+
+Downloaded server jars live in a per-user cache (`spyglass_data::cache`), never inside the repo: the platform cache folder for `spyglass` (`%LOCALAPPDATA%\spyglass\cache` on Windows, `~/Library/Caches/spyglass` on macOS, `~/.cache/spyglass` on Linux), or a directory given explicitly. Jars are stored by content as `jars/<sha1>.jar`. Before use, a jar's size and SHA-1 are checked against the version JSON's `downloads.server`. A missing or mismatched jar is downloaded again, into a `.part` file that is renamed only once it verifies. The extractor and the oracle share the cache.
+
+### Bundler layout
+
+The server jar is a bundler. The game itself and its libraries are jars inside it, listed in two files of tab-separated `sha256`, `id` and `path` lines:
+
+- `META-INF/versions.list`: the game, one line, e.g. `26.3/server-26.3.jar`, stored at `META-INF/versions/26.3/server-26.3.jar`;
+- `META-INF/libraries.list`: the libraries (39 for 26.3), under `META-INF/libraries/`.
+
+`spyglass_data::bundler` reads both lists and unpacks the jars. List paths that are absolute or contain `..` are rejected. The outer jar's SHA-1 is verified, so the inner SHA-256 values aren't checked again.
 
 ## Java runtime
 

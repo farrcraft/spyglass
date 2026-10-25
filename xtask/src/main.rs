@@ -8,6 +8,8 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use spyglass_data::{java, manifest};
 
+mod oracle;
+
 #[derive(Parser)]
 #[command(about = "spyglass project commands")]
 struct Cli {
@@ -34,6 +36,11 @@ enum Cmd {
         #[arg(long, default_value = "latest")]
         game_version: String,
     },
+    /// Build and run the oracle harness: the real game's answers, for golden files.
+    Oracle {
+        #[command(subcommand)]
+        cmd: oracle::OracleCmd,
+    },
 }
 
 fn main() -> ExitCode {
@@ -42,6 +49,7 @@ fn main() -> ExitCode {
         Cmd::Check => check(),
         Cmd::Doctor { game_version, java } => doctor(&game_version, java.as_deref()),
         Cmd::JdkStatus { game_version } => jdk_status(&game_version),
+        Cmd::Oracle { cmd } => oracle::run(cmd),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

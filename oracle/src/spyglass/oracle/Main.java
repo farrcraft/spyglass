@@ -1,0 +1,115 @@
+package spyglass.oracle;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+
+import net.minecraft.world.level.levelgen.WorldOptions;
+
+/**
+ * The spyglass oracle: asks the game itself for worldgen results. Built and run by
+ * {@code cargo xtask oracle}; see {@code docs/adr/0004-oracle-standalone-harness.md} and
+ * {@code docs/specs/oracle.md}.
+ *
+ * <pre>
+ * biomes &lt;jobs file&gt; [--threads N]
+ *     One golden biome file per job line: "seed dimension qx qz sizeX sizeZ out-path".
+ *     The seed is parsed as the game parses the world-creation seed field (WorldOptions.parseSeed),
+ *     so text seeds work. Regions are chunk-aligned quart rectangles at full height.
+ * check-save &lt;world dir&gt; [--dimension ID]
+ *     Compare against the biomes stored in a save. Exits 1 on any unexplained mismatch.
+ * </pre>
+ */
+public final class Main {
+    /** Bump when output for the same game version changes. Recorded in golden-file headers. */
+    static final int HARNESS_VERSION = 1;
+
+    private Main() {}
+
+    public static void main(String[] args) throws Exception {
+        if (args.length < 2) {
+            usage();
+        }
+        long t0 = System.nanoTime();
+        Game game = Game.load();
+        System.out.printf("spyglass oracle %s: Minecraft %s (data version %d), loaded in %.1f s%n", HARNESS_VERSION,
+                game.version, game.dataVersion, (System.nanoTime() - t0) / 1e9);
+        int status = switch (args[0]) {
+            case "biomes" -> biomes(game, Path.of(args[1]), intOption(args, "--threads",
+                    Runtime.getRuntime().availableProcessors()));
+            case "check-save" -> CheckSave.run(game, Path.of(args[1]),
+                    option(args, "--dimension", "minecraft:overworld")) == 0 ? 0 : 1;
+            default -> {
+                usage();
+                yield 2;
+            }
+        };
+        // The game leaves non-daemon worker threads running.
+        System.exit(status);
+    }
+
+    private record Job(long seed, String dimension, int qx, int qz, int sizeX, int sizeZ, Path out) {
+        static Job parse(String line) {
+            String[] f = line.trim().split("\\s+", 7);
+            if (f.length != 7) {
+                throw new IllegalArgumentException("bad job line: " + line);
+            }
+            long seed = WorldOptions.parseSeed(f[0])
+                    .orElseThrow(() -> new IllegalArgumentException("empty seed in: " + line));
+            return new Job(seed, f[1], Integer.parseInt(f[2]), Integer.parseInt(f[3]), Integer.parseInt(f[4]),
+                    Integer.parseInt(f[5]), Path.of(f[6]));
+        }
+    }
+
+    private static int biomes(Game game, Path jobsFile, int threads) throws Exception {
+        List<Job> jobs = Files.readAllLines(jobsFile).stream()
+                .filter(l -> !l.isBlank() && !l.startsWith("#"))
+                .map(Job::parse)
+                .toList();
+        try (var pool = Executors.newFixedThreadPool(Math.max(1, Math.min(threads, jobs.size())))) {
+            List<Future<?>> futures = new ArrayList<>();
+            for (Job job : jobs) {
+                futures.add(pool.submit(() -> {
+                    long t0 = System.nanoTime();
+                    var sampler = new BiomeSampler(game, job.dimension, job.seed);
+                    var grid = GoldenGrid.sample(sampler, job.qx, job.qz, job.sizeX, job.sizeZ);
+                    grid.write(job.out, game.version, game.dataVersion, job.seed, job.dimension);
+                    System.out.printf("%s: %d cells, %d tied, %.1f s%n", job.out, sampler.cells(), grid.tieCount(),
+                            (System.nanoTime() - t0) / 1e9);
+                    return null;
+                }));
+            }
+            for (Future<?> f : futures) {
+                try {
+                    f.get();
+                } catch (ExecutionException e) {
+                    pool.shutdownNow();
+                    throw new RuntimeException(e.getCause());
+                }
+            }
+        }
+        return 0;
+    }
+
+    private static String option(String[] args, String name, String fallback) {
+        for (int i = 2; i + 1 < args.length; i++) {
+            if (args[i].equals(name)) {
+                return args[i + 1];
+            }
+        }
+        return fallback;
+    }
+
+    private static int intOption(String[] args, String name, int fallback) {
+        return Integer.parseInt(option(args, name, Integer.toString(fallback)));
+    }
+
+    private static void usage() {
+        System.err.println("usage: biomes <jobs file> [--threads N] | check-save <world dir> [--dimension ID]");
+        System.exit(2);
+    }
+}

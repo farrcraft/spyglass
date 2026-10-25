@@ -15,12 +15,27 @@ use zip::result::ZipError;
 /// Why a bundler couldn't be read or unpacked.
 #[derive(Debug, thiserror::Error)]
 pub enum BundlerError {
+    /// Reading or writing a file failed.
     #[error("I/O error on {path}: {source}")]
-    Io { path: PathBuf, source: io::Error },
+    Io {
+        /// The file, or for an entry inside a jar, its name.
+        path: PathBuf,
+        /// The underlying error.
+        source: io::Error,
+    },
+    /// The jar isn't a valid zip, or an entry is missing.
     #[error("not a readable jar: {0}")]
     Zip(#[from] ZipError),
+    /// A line of `versions.list` or `libraries.list` isn't three tab-separated fields, or its
+    /// path would escape the destination.
     #[error("malformed {list} line: {line:?}")]
-    BadList { list: &'static str, line: String },
+    BadList {
+        /// Which list.
+        list: &'static str,
+        /// The offending line.
+        line: String,
+    },
+    /// The lists don't describe a server jar, e.g. there isn't exactly one game jar.
     #[error("{0}")]
     Layout(String),
 }
@@ -28,7 +43,9 @@ pub enum BundlerError {
 /// One line of `versions.list` or `libraries.list`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
+    /// SHA-256 of the jar, as listed.
     pub sha256: String,
+    /// Version id or Maven coordinates, e.g. `com.mojang:brigadier:1.3.11`.
     pub id: String,
     /// Relative to `META-INF/versions/` or `META-INF/libraries/`.
     pub path: String,
@@ -39,6 +56,7 @@ pub struct Entry {
 pub struct Classpath {
     /// The game jar, e.g. `server-26.3.jar`.
     pub game: PathBuf,
+    /// The game's libraries, in list order.
     pub libraries: Vec<PathBuf>,
 }
 
@@ -55,6 +73,7 @@ pub struct Bundler<R> {
 }
 
 impl Bundler<File> {
+    /// Opens a server jar on disk.
     pub fn open(path: &Path) -> Result<Self, BundlerError> {
         let file = File::open(path).map_err(|source| BundlerError::Io {
             path: path.to_path_buf(),
@@ -65,6 +84,7 @@ impl Bundler<File> {
 }
 
 impl<R: Read + Seek> Bundler<R> {
+    /// Reads a server jar from any seekable source.
     pub fn new(reader: R) -> Result<Self, BundlerError> {
         Ok(Bundler {
             archive: ZipArchive::new(reader)?,
@@ -96,10 +116,12 @@ impl<R: Read + Seek> Bundler<R> {
             .collect()
     }
 
+    /// The entries of `META-INF/versions.list`: the game jar.
     pub fn versions(&mut self) -> Result<Vec<Entry>, BundlerError> {
         self.read_list("versions.list")
     }
 
+    /// The entries of `META-INF/libraries.list`.
     pub fn libraries(&mut self) -> Result<Vec<Entry>, BundlerError> {
         self.read_list("libraries.list")
     }

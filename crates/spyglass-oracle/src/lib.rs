@@ -14,16 +14,27 @@ const MAGIC: &[u8; 8] = b"SPYBIOME";
 /// The golden biome format version this reader understands.
 pub const FORMAT: u32 = 1;
 
+/// Why a golden file couldn't be read.
 #[derive(Debug, thiserror::Error)]
 pub enum GoldenError {
+    /// Reading the file failed.
     #[error("I/O error on {path}: {source}")]
-    Io { path: PathBuf, source: io::Error },
+    Io {
+        /// The file.
+        path: PathBuf,
+        /// The underlying error.
+        source: io::Error,
+    },
+    /// The file doesn't start with the golden biome magic.
     #[error("not a golden biome file")]
     BadMagic,
+    /// The file has a format version this reader doesn't understand.
     #[error("golden format {0}, but this reader understands {FORMAT}; regenerate the golden files")]
     UnsupportedFormat(u32),
+    /// The JSON header doesn't parse.
     #[error("malformed header: {0}")]
     Header(#[from] serde_json::Error),
+    /// The binary part is inconsistent with the header or the spec.
     #[error("malformed file: {0}")]
     Malformed(&'static str),
 }
@@ -32,12 +43,15 @@ pub enum GoldenError {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Header {
+    /// Format version; see [`FORMAT`].
     pub format: u32,
     /// Harness version; changes when the harness's output for a game version changes.
     pub harness: u32,
     /// Game version id, e.g. `26.3`.
     pub version: String,
+    /// The game's data version, e.g. 5023.
     pub data_version: i32,
+    /// The world seed, after text-seed hashing.
     pub seed: i64,
     /// e.g. `minecraft:overworld`.
     pub dimension: String,
@@ -73,6 +87,7 @@ impl Cell<'_> {
 /// A golden biome grid: a box of quart cells for one seed and dimension.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BiomeGrid {
+    /// The file's header.
     pub header: Header,
     /// Palette index per cell, x fastest, then z, then y. A tied cell holds its tie set's lowest
     /// index.
@@ -82,6 +97,7 @@ pub struct BiomeGrid {
 }
 
 impl BiomeGrid {
+    /// Reads and validates a golden file.
     pub fn read(path: &Path) -> Result<Self, GoldenError> {
         let bytes = fs::read(path).map_err(|source| GoldenError::Io {
             path: path.to_path_buf(),
@@ -90,6 +106,7 @@ impl BiomeGrid {
         Self::parse(&bytes)
     }
 
+    /// Parses and validates a golden file's bytes.
     pub fn parse(bytes: &[u8]) -> Result<Self, GoldenError> {
         let mut r = Reader(bytes);
         if r.take(8)? != MAGIC {

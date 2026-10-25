@@ -97,7 +97,7 @@ Both skip the install if a matching JDK is already there. On Linux, install your
 
 ```sh
 cargo build                 # whole workspace
-cargo test                  # all tests
+cargo test                  # all tests (or: cargo nextest run, as the hooks do)
 cargo test -p spyglass-rng  # one crate
 cargo run -p spyglass-viewer
 cargo run -p spyglass-data --bin spyglass-extract
@@ -105,10 +105,19 @@ cargo run -p spyglass-data --bin spyglass-extract
 
 ## 4. Checks and git hooks
 
-All checks are defined in [`.pre-commit-config.yaml`](../.pre-commit-config.yaml) (see [ADR 0002](adr/0002-git-hooks-for-local-checks.md)). Once the setup script has run, they run automatically:
+All checks are defined in [`.pre-commit-config.yaml`](../.pre-commit-config.yaml) (see [ADR 0002](adr/0002-git-hooks-for-local-checks.md) and [ADR 0005](adr/0005-extra-rust-checks.md)). Once the setup script has run, they run automatically:
 
-- **On commit**, against staged files: line endings and whitespace, JSON/YAML/TOML syntax, blocks on jars, class files and extracted game data, `cargo fmt`, TOML formatting (taplo), JSON/YAML/Markdown formatting (Prettier), Markdown lint and shellcheck. Formatters fix files in place and fail the commit; review the changes, `git add` them and commit again.
-- **On push:** `cargo clippy` with warnings as errors, and `cargo test`.
+- **On commit**, against staged files: line endings and whitespace, JSON/YAML/TOML syntax, blocks on jars, class files and extracted game data, `cargo fmt`, unused dependencies (cargo-shear), spelling (typos), TOML formatting (taplo), JSON/YAML/Markdown formatting (Prettier), Markdown lint and shellcheck. Formatters fix files in place and fail the commit; review the changes, `git add` them and commit again.
+- **On push:** `cargo clippy` with warnings as errors, tests (`cargo nextest run`, then `cargo test --doc` for doctests), `cargo doc` with the rustdoc lints, a build with the minimum supported Rust version (`cargo xtask msrv`), and `cargo-deny` (security advisories, licenses, dependency sources; configured in [`deny.toml`](../deny.toml)).
+
+Lint levels for every crate are set once, in `[workspace.lints]` in the root `Cargo.toml`. A new crate opts in with `[lints] workspace = true`.
+
+The setup scripts install the extra tools the hooks need: `cargo-nextest`, `cargo-shear` and the MSRV toolchain. To install them by hand:
+
+```sh
+cargo install --locked cargo-nextest@0.9.149 cargo-shear@1.14.0
+rustup toolchain install "$(cargo xtask msrv --print)" --profile minimal
+```
 
 To run everything against the whole repo, as CI does:
 
@@ -126,6 +135,7 @@ Project-level commands live in the `xtask` crate and run as `cargo xtask <comman
 | -------------------- | --------------------------------------------------- |
 | `cargo xtask check`  | Every check in the pre-commit config, on all files. |
 | `cargo xtask doctor` | Reports whether this machine is ready.              |
+| `cargo xtask msrv`   | Builds the workspace with its minimum Rust version. |
 | `cargo xtask oracle` | Builds and runs the oracle harness (below).         |
 
 ## 6. The oracle

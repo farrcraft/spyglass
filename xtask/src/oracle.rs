@@ -47,7 +47,7 @@ pub enum OracleCmd {
         #[arg(long, default_value = "minecraft:overworld")]
         dimension: String,
     },
-    /// Regenerate the whole golden set (docs/specs/oracle.md) into oracle-out/<version>/.
+    /// Regenerate the whole golden set (docs/specs/oracle.md) into `oracle-out/<version>/`.
     Golden {
         #[command(flatten)]
         common: Common,

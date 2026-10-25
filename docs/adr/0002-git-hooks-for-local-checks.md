@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-24
-- See also: [0003](0003-cargo-xtask-for-project-commands.md), which moves the `scripts/check` wrapper to `cargo xtask check`
+- See also: [0003](0003-cargo-xtask-for-project-commands.md), which moves the `scripts/check` wrapper to `cargo xtask check`; [0005](0005-extra-rust-checks.md), which adds lint, dependency, MSRV and spelling checks
 
 ## Context
 

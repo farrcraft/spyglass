@@ -1,0 +1,36 @@
+# cargo-deny configuration. Runs as a pre-push hook; see .pre-commit-config.yaml and
+# docs/adr/0005-extra-rust-checks.md.
+
+[graph]
+all-features = true
+
+[advisories]
+# Security advisories are errors by default. Yanked crates too.
+yanked = "deny"
+
+[licenses]
+# Licenses compatible with distributing spyglass under MIT. Add to this list deliberately.
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "BSD-3-Clause",
+  "ISC",
+  "Zlib",
+  "Unicode-3.0",
+  # webpki-roots (Mozilla's CA list, via ureq).
+  "CDLA-Permissive-2.0",
+  # option-ext (via directories). Weak, file-level copyleft: fine as an unmodified dependency.
+  "MPL-2.0",
+]
+confidence-threshold = 0.9
+
+[bans]
+# Duplicate versions cost build time but are often unavoidable; report them, don't fail.
+multiple-versions = "warn"
+wildcards = "deny"
+# Workspace path dependencies have no version, which counts as a wildcard.
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

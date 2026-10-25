@@ -27,6 +27,13 @@ if ! command -v cc >/dev/null 2>&1; then
     echo "warning: no C compiler found; install build-essential (Linux) or run xcode-select --install (macOS)" >&2
 fi
 
+# The minimum supported Rust version, which the pre-push hook builds with.
+rustup toolchain install "$(cargo xtask msrv --print)" --profile minimal
+
+# Cargo tools the hooks call. They only build reliably with --locked, so pre-commit can't install
+# them itself. Keep the versions in step with setup.ps1. The first install compiles for a few minutes.
+cargo install --locked cargo-nextest@0.9.149 cargo-shear@1.14.0
+
 # uv provides pre-commit (and its own Python). See docs/adr/0002-git-hooks-for-local-checks.md.
 if ! command -v uv >/dev/null 2>&1; then
     echo "uv not found; installing..."

@@ -30,6 +30,17 @@ if (-not (Get-Command link.exe -ErrorAction SilentlyContinue) -and
     Write-Warning 'MSVC build tools not detected. Install "Desktop development with C++" from https://visualstudio.microsoft.com/visual-cpp-build-tools/'
 }
 
+# The minimum supported Rust version, which the pre-push hook builds with.
+$msrv = cargo xtask msrv --print
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+rustup toolchain install $msrv --profile minimal
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+# Cargo tools the hooks call. They only build reliably with --locked, so pre-commit can't install
+# them itself. Keep the versions in step with setup.sh. The first install compiles for a few minutes.
+cargo install --locked cargo-nextest@0.9.149 cargo-shear@1.14.0
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
 # uv provides pre-commit (and its own Python). See docs/adr/0002-git-hooks-for-local-checks.md.
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
     Write-Host 'uv not found; installing...'

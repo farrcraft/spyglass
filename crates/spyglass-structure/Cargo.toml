@@ -8,8 +8,5 @@ repository.workspace = true
 license.workspace = true
 publish.workspace = true
 
-[dependencies]
-spyglass-rng.workspace = true
-spyglass-biome.workspace = true
-spyglass-terrain.workspace = true
-spyglass-data.workspace = true
+[lints]
+workspace = true

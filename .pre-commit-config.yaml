@@ -66,13 +66,61 @@ repos:
         files: (\.rs|Cargo\.(toml|lock))$
         pass_filenames: false
         stages: [pre-push]
-      - id: cargo-test
-        name: cargo test
+      # nextest and cargo-shear only build reliably with `cargo install --locked`, which a
+      # `language: rust` hook can't do, so the setup scripts install them.
+      #
+      # Tests run under nextest. It doesn't run doctests, so they get their own hook.
+      - id: cargo-nextest
+        name: cargo nextest
         language: system
-        entry: cargo test --workspace
+        entry: cargo nextest run --workspace
         files: (\.rs|Cargo\.(toml|lock))$
         pass_filenames: false
         stages: [pre-push]
+      - id: cargo-doctest
+        name: cargo test --doc
+        language: system
+        entry: cargo test --workspace --doc
+        files: (\.rs|Cargo\.(toml|lock))$
+        pass_filenames: false
+        stages: [pre-push]
+      # Rustdoc lints (broken links and the like) are set in [workspace.lints.rustdoc].
+      - id: cargo-doc
+        name: cargo doc
+        language: system
+        entry: cargo doc --workspace --no-deps --quiet
+        files: (\.rs|Cargo\.(toml|lock))$
+        pass_filenames: false
+        stages: [pre-push]
+      # Builds with the toolchain named by rust-version in Cargo.toml.
+      - id: msrv
+        name: cargo check (MSRV)
+        language: system
+        entry: cargo xtask msrv
+        files: (\.rs|Cargo\.(toml|lock)|rust-toolchain\.toml)$
+        pass_filenames: false
+        stages: [pre-push]
+      - id: cargo-shear
+        name: unused dependencies (cargo-shear)
+        language: system
+        entry: cargo shear
+        files: (\.rs|Cargo\.toml)$
+        pass_filenames: false
+
+  # Advisories, licenses, banned and duplicate crates, and allowed sources: deny.toml.
+  - repo: https://github.com/EmbarkStudios/cargo-deny
+    rev: 0.20.2
+    hooks:
+      - id: cargo-deny
+        stages: [pre-push]
+
+  - repo: https://github.com/crate-ci/typos
+    rev: v1.51.1
+    hooks:
+      # Report only; the upstream default also rewrites files.
+      - id: typos
+        args: [--force-exclude]
+        stages: [pre-commit]
 
   - repo: https://github.com/ComPWA/taplo-pre-commit
     rev: v0.9.3

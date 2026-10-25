@@ -15,16 +15,33 @@ use crate::manifest::Download;
 /// Why a jar couldn't be provided.
 #[derive(Debug, thiserror::Error)]
 pub enum CacheError {
+    /// The platform has no per-user cache folder (e.g. no home directory).
     #[error("no per-user cache directory on this platform; pass one explicitly")]
     NoCacheDir,
+    /// Reading or writing a file failed.
     #[error("I/O error on {path}: {source}")]
-    Io { path: PathBuf, source: io::Error },
+    Io {
+        /// The file.
+        path: PathBuf,
+        /// The underlying error.
+        source: io::Error,
+    },
+    /// The download failed.
     #[error("download of {url} failed: {source}")]
-    Http { url: String, source: ureq::Error },
+    Http {
+        /// What was being downloaded.
+        url: String,
+        /// The underlying error.
+        source: ureq::Error,
+    },
+    /// A jar's size or SHA-1 didn't match the version JSON.
     #[error("{url}: expected {expected}, got {actual}")]
     Mismatch {
+        /// The jar's download URL.
         url: String,
+        /// The expected size or SHA-1.
         expected: String,
+        /// What the file had.
         actual: String,
     },
 }
@@ -49,6 +66,7 @@ pub struct JarCache {
 }
 
 impl JarCache {
+    /// A cache in `dir`. Nothing is created until a jar is fetched.
     pub fn new(dir: impl Into<PathBuf>) -> Self {
         JarCache { dir: dir.into() }
     }
@@ -58,6 +76,7 @@ impl JarCache {
         Ok(Self::new(default_dir()?))
     }
 
+    /// The cache directory.
     pub fn dir(&self) -> &Path {
         &self.dir
     }

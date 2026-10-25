@@ -10,21 +10,33 @@ repository = "https://github.com/OWNER/spyglass"
 license = "MIT"
 publish = false
 
+# Every crate opts in with `[lints] workspace = true`. Warnings fail the hooks (clippy -D warnings).
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+# Widening casts as `T::from`, so every remaining `as` is one that can change a value.
+cast_lossless = "warn"
+dbg_macro = "warn"
+todo = "warn"
+# Not enabled, deliberately: suboptimal_flops and imprecise_flops suggest mul_add and other
+# rewrites that change floating-point results, which breaks parity with the game.
+
+# rustdoc lints only fire under `cargo doc`, which the hooks run.
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "deny"
+private_intra_doc_links = "deny"
+invalid_html_tags = "deny"
+invalid_rust_codeblocks = "deny"
+bare_urls = "deny"
+
 [workspace.dependencies]
-spyglass-rng = { path = "crates/spyglass-rng" }
-spyglass-noise = { path = "crates/spyglass-noise" }
-spyglass-density = { path = "crates/spyglass-density" }
 spyglass-data = { path = "crates/spyglass-data" }
-spyglass-biome = { path = "crates/spyglass-biome" }
-spyglass-terrain = { path = "crates/spyglass-terrain" }
-spyglass-structure = { path = "crates/spyglass-structure" }
-spyglass-search = { path = "crates/spyglass-search" }
-spyglass-oracle = { path = "crates/spyglass-oracle" }
 
 anyhow = "1.0.104"
 directories = "6.0.0"
 clap = { version = "4.6.7", features = ["derive"] }
-md-5 = "0.11.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sha1 = "0.11.0"

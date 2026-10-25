@@ -4,65 +4,94 @@
 
 use serde::Deserialize;
 
+/// Mojang's list of every release and snapshot.
 pub const MANIFEST_URL: &str = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
 
+/// Why the manifest or a version JSON couldn't be fetched or understood.
 #[derive(Debug, thiserror::Error)]
 pub enum ManifestError {
+    /// The request failed or returned an error status.
     #[error("HTTP request failed: {0}")]
     Http(#[from] ureq::Error),
+    /// The response wasn't the JSON expected.
     #[error("malformed JSON: {0}")]
     Json(#[from] serde_json::Error),
+    /// The manifest has no version with this id.
     #[error("unknown version {0:?}")]
     UnknownVersion(String),
 }
 
+/// `version_manifest_v2.json`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct VersionManifest {
+    /// The newest release and snapshot ids.
     pub latest: Latest,
+    /// Every version, newest first.
     pub versions: Vec<VersionEntry>,
 }
 
+/// The manifest's `latest` object.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Latest {
+    /// Newest release id, e.g. `26.3`.
     pub release: String,
+    /// Newest snapshot id.
     pub snapshot: String,
 }
 
+/// One version in the manifest.
 #[derive(Debug, Clone, Deserialize)]
 pub struct VersionEntry {
+    /// Version id, e.g. `26.3`.
     pub id: String,
+    /// `release`, `snapshot`, `old_beta` or `old_alpha`.
     #[serde(rename = "type")]
     pub kind: String,
+    /// Where the version JSON is.
     pub url: String,
+    /// SHA-1 of the version JSON.
     pub sha1: String,
 }
 
+/// A version's own JSON, linked from its [`VersionEntry`].
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VersionJson {
+    /// Version id, e.g. `26.3`.
     pub id: String,
+    /// Jars and mappings for this version.
     pub downloads: Downloads,
+    /// The Java runtime the game needs. Missing on very old versions.
     pub java_version: Option<JavaVersion>,
 }
 
+/// The downloads spyglass uses from a version JSON.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Downloads {
+    /// The server jar (a bundler; see [`crate::bundler`]).
     pub server: Option<Download>,
+    /// Official mappings for an obfuscated server jar. Absent from 26.x, which isn't obfuscated.
     pub server_mappings: Option<Download>,
 }
 
+/// One downloadable file.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Download {
+    /// Expected SHA-1, lower-case hex.
     pub sha1: String,
+    /// Expected size in bytes.
     pub size: u64,
+    /// Where to download it.
     pub url: String,
 }
 
+/// The Java runtime a version needs.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JavaVersion {
     /// The launcher's runtime name, e.g. `java-runtime-epsilon`.
     pub component: String,
+    /// Required major version, e.g. 25.
     pub major_version: u32,
 }
 
@@ -87,10 +116,12 @@ fn get_json<T: serde::de::DeserializeOwned>(url: &str) -> Result<T, ManifestErro
     Ok(serde_json::from_str(&body)?)
 }
 
+/// Downloads the version manifest.
 pub fn fetch_manifest() -> Result<VersionManifest, ManifestError> {
     get_json(MANIFEST_URL)
 }
 
+/// Downloads a version's JSON.
 pub fn fetch_version(entry: &VersionEntry) -> Result<VersionJson, ManifestError> {
     get_json(&entry.url)
 }

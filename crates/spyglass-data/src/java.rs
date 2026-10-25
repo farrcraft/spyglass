@@ -19,8 +19,11 @@ const SCAN_DEPTH: usize = 6;
 /// Where a Java installation was found.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JavaSource {
+    /// A path given explicitly (`--java`).
     Explicit,
+    /// The `JAVA_HOME` environment variable.
     JavaHome,
+    /// A `java` found on `PATH`.
     Path,
     /// A standard install location (vendor folder, SDK manager), named for display.
     Installed(&'static str),
@@ -42,13 +45,17 @@ impl fmt::Display for JavaSource {
 /// A Java installation with a readable version.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JavaInstall {
+    /// The Java home: the folder holding `bin/` and `release`.
     pub home: PathBuf,
+    /// `bin/java` inside the home.
     pub executable: PathBuf,
     /// `JAVA_VERSION` from the `release` file, e.g. `25.0.3`.
     pub version: String,
+    /// The major version, e.g. 25 (or 8 for `1.8.0_51`).
     pub major: u32,
     /// Whether `javac` is present, i.e. this is a JDK and not just a runtime.
     pub is_jdk: bool,
+    /// Where it was found.
     pub source: JavaSource,
 }
 
@@ -56,6 +63,7 @@ pub struct JavaInstall {
 #[derive(Debug, thiserror::Error)]
 #[error("no Java {required} runtime found (searched: {})", display_paths(.searched))]
 pub struct JavaNotFound {
+    /// The major version that was needed.
     pub required: u32,
     /// Installations that were found but didn't match.
     pub found: Vec<JavaInstall>,

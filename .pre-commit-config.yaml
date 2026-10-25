@@ -1,5 +1,5 @@
 # Single definition of the repo's checks. See docs/adr/0002-git-hooks-for-local-checks.md.
-# Run everything: scripts/check.ps1 or scripts/check.sh. Bump versions: pre-commit autoupdate.
+# Run everything: cargo xtask check. Bump versions: pre-commit autoupdate.
 default_install_hook_types: [pre-commit, pre-push]
 default_stages: [pre-commit]
 
@@ -49,7 +49,7 @@ repos:
         name: code must not reference docs/roadmap or docs/plans
         language: pygrep
         entry: docs[/\\](roadmap|plans)
-        files: ^crates/
+        files: ^(crates|xtask)/
 
   - repo: local
     hooks:

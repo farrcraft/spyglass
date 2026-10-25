@@ -19,7 +19,7 @@ Read the changed code in full, plus enough of its callers and callees to judge i
 
 ## Mechanical checks
 
-Run `scripts/check.ps1` (Windows) or `scripts/check.sh`. Report failures, but don't repeat individual clippy warnings in the review. Point to the command output instead.
+Run `cargo xtask check`. Report failures, but don't repeat individual clippy warnings in the review. Point to the command output instead.
 
 ## Checklist
 

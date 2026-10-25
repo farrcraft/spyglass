@@ -1,6 +1,6 @@
 # 01. Extractor and oracle harness
 
-- Status: Planned
+- Status: In progress
 - Depends on: —
 - Plans: [m01-extractor](../plans/m01-extractor.md), [m01-oracle](../plans/m01-oracle.md)
 

@@ -13,6 +13,25 @@ Everything spyglass knows about a game version comes from Mojang's own distribut
 
 The server jar is a bundler; the game itself is at `META-INF/versions/<id>/server-<id>.jar` inside it.
 
+## Java runtime
+
+Running the data generator needs a Java runtime whose major version equals the version JSON's `javaVersion.majorVersion`. A runtime is enough; a JDK isn't needed. `spyglass_data::java` searches, in order, and uses the first exact match:
+
+1. an explicit path (`--java`), either a Java home or the executable;
+2. `JAVA_HOME`;
+3. each `java` on `PATH`, following symlinks to the real home;
+4. runtimes downloaded by game launchers, scanned up to six levels deep:
+
+   | Launcher                             | Windows                                                                                  | macOS                                                          | Linux                                           |
+   | ------------------------------------ | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------- | ----------------------------------------------- |
+   | Minecraft Launcher                   | `%APPDATA%\.minecraft\runtime`                                                           | `~/Library/Application Support/minecraft/runtime`              | `~/.minecraft/runtime`                          |
+   | Minecraft Launcher (Microsoft Store) | `%LOCALAPPDATA%\Packages\Microsoft.4297127D64EC6_8wekyb3d8bbwe\LocalCache\Local\runtime` | —                                                              | —                                               |
+   | Modrinth App                         | `%APPDATA%\ModrinthApp\meta\java_versions`                                               | `~/Library/Application Support/ModrinthApp/meta/java_versions` | `~/.local/share/ModrinthApp/meta/java_versions` |
+
+A directory counts as a Java home if it has `bin/java` and a `release` file. The version is read from the `JAVA_VERSION` line of `release`, never by running the executable. Majors follow both schemes: `25.0.3` → 25, `1.8.0_51` → 8. Duplicate homes (by canonical path) are reported once.
+
+The Windows rows were confirmed on a real machine on 2026-10-24. The macOS and Linux paths follow each launcher's documented data folder but haven't been confirmed yet.
+
 ## Licensing
 
 Mojang's data and code are never committed or redistributed. The extractor runs locally against a jar the user downloads themselves, the same approach Amidst used. Generated bundles go in `/bundles`, which is gitignored.

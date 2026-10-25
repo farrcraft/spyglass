@@ -1,6 +1,6 @@
 # Getting started
 
-## 1. Install Rust
+## 1. Install Rust and tools
 
 spyglass uses the stable Rust toolchain through [rustup](https://rustup.rs). The repo's `rust-toolchain.toml` pins the channel and components, so once rustup is installed, `cargo` picks the right toolchain automatically.
 
@@ -10,7 +10,8 @@ The setup scripts:
 
 1. install rustup if it is missing, then the pinned toolchain plus `rustfmt` and `clippy`;
 2. install [uv](https://github.com/astral-sh/uv) if it is missing, then [pre-commit](https://pre-commit.com) through uv (uv brings its own Python, so you don't need one);
-3. enable the repo's git hooks with `pre-commit install`.
+3. enable the repo's git hooks with `pre-commit install`;
+4. run `cargo xtask doctor` to report anything still missing (see [step 2](#2-check-your-machine)).
 
 They're safe to re-run.
 
@@ -49,14 +50,14 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 
 3. Restart your shell, or run `. "$HOME/.cargo/env"`.
 
-#### Check it worked
+#### Then, on any platform
+
+Install pre-commit (or [prek](https://github.com/j178/prek), which reads the same config and needs no Python), and enable the hooks from inside the repo:
 
 ```sh
-rustc --version
-cargo --version
+uv tool install pre-commit   # or: prek
+pre-commit install           # or: prek install
 ```
-
-Run these from inside the repo so rustup applies `rust-toolchain.toml`.
 
 ### Linux viewer dependencies
 
@@ -68,7 +69,21 @@ sudo apt install libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxr
 
 Windows and macOS need nothing extra.
 
-## 2. Build and test
+## 2. Check your machine
+
+```sh
+cargo xtask doctor
+```
+
+It checks the Rust toolchain, rustfmt and clippy, pre-commit and the git hooks, and Java (below). Each line is `ok`, `warn` or `FAIL`, with a fix for anything that isn't ok. It never installs anything, and exits non-zero if something fails. By default it checks Java against the latest release; use `--game-version <id>` for another, and `--java <path>` to check a specific installation.
+
+### Java
+
+The extractor runs the game's own data generator, so it needs a Java runtime matching the game version (Java 25 for 26.3). **If you've played that version, you probably have one already:** game launchers download their own runtime, and spyglass looks for it in the official Minecraft Launcher (including the Microsoft Store build) and the Modrinth App, after `JAVA_HOME` and `PATH`. Otherwise install a matching runtime, e.g. [Eclipse Temurin](https://adoptium.net) (`winget install EclipseAdoptium.Temurin.25.JRE`).
+
+A **JDK** (a runtime plus the `javac` compiler) is only needed to work on the oracle harness. Launcher runtimes don't include `javac`. doctor warns if there's no JDK, but doesn't fail. How the oracle is built is still being decided; setup instructions will follow.
+
+## 3. Build and test
 
 ```sh
 cargo build                 # whole workspace
@@ -78,7 +93,7 @@ cargo run -p spyglass-viewer
 cargo run -p spyglass-data --bin spyglass-extract
 ```
 
-## 3. Checks and git hooks
+## 4. Checks and git hooks
 
 All checks are defined in [`.pre-commit-config.yaml`](../.pre-commit-config.yaml) (see [ADR 0002](adr/0002-git-hooks-for-local-checks.md)). Once the setup script has run, they run automatically:
 
@@ -87,23 +102,26 @@ All checks are defined in [`.pre-commit-config.yaml`](../.pre-commit-config.yaml
 
 To run everything against the whole repo, as CI does:
 
-```powershell
-./scripts/check.ps1
-```
-
 ```sh
-./scripts/check.sh
+cargo xtask check
 ```
 
 The first run on a machine downloads the hook environments (including Node for Prettier and markdownlint), which takes a minute or two. To update hook versions, run `pre-commit autoupdate` and review the diff.
 
-If you don't want to install Python tooling, [prek](https://github.com/j178/prek) reads the same config: run `prek install` instead of the setup script's pre-commit step.
+## 5. Project commands
 
-## 4. Editor setup
+Project-level commands live in the `xtask` crate and run as `cargo xtask <command>` (see [ADR 0003](adr/0003-cargo-xtask-for-project-commands.md)). `cargo xtask --help` lists them. The first run compiles it, which takes a few seconds.
+
+| Command              | What it does                                        |
+| -------------------- | --------------------------------------------------- |
+| `cargo xtask check`  | Every check in the pre-commit config, on all files. |
+| `cargo xtask doctor` | Reports whether this machine is ready.              |
+
+## 6. Editor setup
 
 Use [rust-analyzer](https://rust-analyzer.github.io/). In VS Code, install the `rust-lang.rust-analyzer` extension. It picks up the workspace from the root `Cargo.toml`.
 
-## 5. Game data (later)
+## 7. Game data (later)
 
 Most crates will need a version bundle extracted from a Minecraft server jar. That pipeline doesn't exist yet. When it does, the steps will live here. See [specs/data-sources.md](specs/data-sources.md) for the plan. Jars and bundles stay on your machine and are gitignored.
 

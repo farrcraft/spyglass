@@ -1,8 +1,8 @@
 # m01. Extractor and version bundle
 
-- Status: Draft
+- Status: In progress
 - Milestone: [01. Extractor and oracle harness](../roadmap/01-extractor-and-oracle.md)
-- Started: —
+- Started: 2026-10-24
 - Completed: —
 
 ## Goal
@@ -38,9 +38,9 @@ All in `spyglass-data`: a library for manifest, download and bundle logic, and t
 ## Tasks
 
 - [ ] Run the data generator on 26.3 by hand with Java 25. Record which reports exist and where the overworld biome parameters land.
-- [ ] Java discovery, including launcher runtimes. Only if nothing matches, print install instructions (e.g. `winget install EclipseAdoptium.Temurin.25.JRE`). The setup scripts don't install Java for the extractor.
+- [x] Java discovery, including launcher runtimes (`spyglass_data::java`, also used by `cargo xtask doctor`). Only if nothing matches, print install instructions (e.g. `winget install EclipseAdoptium.Temurin.25.JRE`). The setup scripts don't install Java for the extractor.
 - [ ] Write `docs/specs/bundle-format.md`, and an ADR choosing between raw JSON tree and a compiled single file.
-- [ ] Manifest client and version JSON types, with unit tests against small hand-written manifest fixtures.
+- [x] Manifest client and version JSON types, with unit tests against small hand-written manifest fixtures (`spyglass_data::manifest`).
 - [ ] Jar cache with SHA-1 verification.
 - [ ] Bundler jar → inner jar → worldgen JSON copy. Tests use a synthetic zip built in the test, not a Mojang jar.
 - [ ] Data-generator invocation, with a clear error when no matching Java is found that lists where it looked.
@@ -62,9 +62,11 @@ All in `spyglass-data`: a library for manifest, download and bundle logic, and t
 - [ ] ADR: bundle format
 - [x] `docs/specs/data-sources.md`: the obfuscation TODO and the Java question resolved (done while writing this plan)
 - [ ] `docs/getting-started.md`: extraction steps, and what to do if no matching Java is found
-- [ ] `docs/specs/data-sources.md`: Java runtime discovery order and launcher locations
+- [x] `docs/specs/data-sources.md`: Java runtime discovery order and launcher locations
 
 ## Notes
+
+- 2026-10-24: Java discovery and the manifest client landed early, because `cargo xtask doctor` (ADR 0003) needs them.
 
 - 2026-10-24: On the dev machine, a matching runtime was already present from the Modrinth App (`zulu25.34.17-ca-jre25.0.3`), while `PATH` only had Java 17. The Store launcher's runtime folder had 8/17/21 but no `epsilon`, because 26.3 is played through Modrinth there. That's why launcher runtimes are part of discovery.
 - 2026-10-24: Plan drafted. Target version 26.3, confirmed unobfuscated.

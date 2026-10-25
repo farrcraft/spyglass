@@ -50,7 +50,6 @@ $env:Path = "$env:USERPROFILE\.local\bin;$env:Path"
 pre-commit install
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-rustc --version
-cargo --version
-pre-commit --version
-Write-Host 'Ready. Try: cargo build'
+# Reports anything still missing. See docs/adr/0003-cargo-xtask-for-project-commands.md.
+cargo xtask doctor
+exit $LASTEXITCODE

@@ -29,6 +29,8 @@ spyglass separates what the game _does_ (algorithms, written in Rust) from the _
 
 Dependencies only point down this table. A lower crate must never depend on a higher one.
 
+`xtask/` (project commands, [ADR 0003](adr/0003-cargo-xtask-for-project-commands.md)) is tooling, not product. It may depend on these crates; none of them may depend on it.
+
 ## Correctness
 
 Output is checked against the real game through the differential oracle. See [specs/oracle.md](specs/oracle.md).

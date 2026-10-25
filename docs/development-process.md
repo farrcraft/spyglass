@@ -26,7 +26,7 @@ When moving a file, search the docs for its filename and update every relative l
 
 Milestones and plans move and eventually stop mattering, so nothing durable may depend on them:
 
-- **Code** (source, doc comments, tests, `Cargo.toml`, scripts) must not reference `docs/roadmap/` or `docs/plans/`, by path or by milestone or plan name. If code needs to explain itself, put the explanation in the code, a spec or an ADR, and reference that. A pre-commit hook rejects any file under `crates/` that mentions either directory.
+- **Code** (source, doc comments, tests, `Cargo.toml`, scripts) must not reference `docs/roadmap/` or `docs/plans/`, by path or by milestone or plan name. If code needs to explain itself, put the explanation in the code, a spec or an ADR, and reference that. A pre-commit hook rejects any file under `crates/` or `xtask/` that mentions either directory.
 - **Durable docs** (specs, ADRs, architecture, CLAUDE.md) may link to the [roadmap index](roadmap/README.md) or [plans index](plans/README.md), but not to individual milestones or plans.
 
 Milestones and plans may link to anything, including each other.

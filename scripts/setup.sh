@@ -31,7 +31,5 @@ uv tool install pre-commit
 # Installs the hook types listed in default_install_hook_types.
 pre-commit install
 
-rustc --version
-cargo --version
-pre-commit --version
-echo "Ready. Try: cargo build"
+# Reports anything still missing. See docs/adr/0003-cargo-xtask-for-project-commands.md.
+cargo xtask doctor

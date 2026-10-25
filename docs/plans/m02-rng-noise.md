@@ -1,8 +1,8 @@
 # m02. RNG and noise
 
-- Status: Draft
+- Status: In progress
 - Milestone: [02. RNG, noise and biomes](../roadmap/02-rng-noise-biomes.md)
-- Started: —
+- Started: 2026-10-25
 - Completed: —
 
 ## Goal
@@ -46,7 +46,7 @@ Checked against the unpacked 26.3 server jar with `javap` on 2026-10-25. **26.3'
 
 - [x] ADR 0008: game-derived test values stay local (decided 2026-10-25). Either every value from the game stays in locally generated probe files (ignored tests, as with golden files), or a spec allows a small committed set (say, a few dozen noise samples) so `cargo test` checks noise without the oracle. CLAUDE.md currently says generated, not committed, unless a spec says otherwise.
 - [x] ADR 0009: MD5 from the `md-5` crate (decided 2026-10-25). Either add the RustCrypto `md-5` crate (MIT or Apache-2.0, both already allowed in `deny.toml`), keeping `spyglass-rng` otherwise dependency-free, or hand-write MD5 (about 100 lines, tested against RFC 1321). It's `spyglass-rng`'s first dependency, so it gets a record.
-- [ ] Oracle `probe` subcommand, RNG and noise sections (`oracle/src/spyglass/oracle/Probe.java`), plus `cargo xtask oracle probe` and inclusion in `cargo xtask oracle golden`. Spec the output in `docs/specs/oracle.md`.
+- [x] Oracle `probe` subcommand, RNG and noise sections (`oracle/src/spyglass/oracle/Probe.java`), plus `cargo xtask oracle probe` and inclusion in `cargo xtask oracle golden`. Spec the output in `docs/specs/oracle.md`.
 - [ ] Confirm by `javap -c` the details the spec must pin down: the Normalization codec default when `normalize` is absent; `nextInt(bound)` and `nextFloat`/`nextDouble` bit counts; `at(x, y, z)` hashing (`Mth.getSeed`); `LegacyPositionalRandomFactory`; and how `PerlinNoise`'s constructor consumes the random (offsets, then the permutation shuffle).
 - [ ] `spyglass-rng`: Xoroshiro128++, `XoroshiroRandom`, positional factory, `Seed128`, MD5 name seeding. Unit tests against reference vectors.
 - [ ] `spyglass-rng`: Java LCG (`LegacyRandom`) and its positional factory, and the Marsaglia polar Gaussian. Unit tests against `java.util.Random` vectors.
@@ -68,7 +68,7 @@ Checked against the unpacked 26.3 server jar with `javap` on 2026-10-25. **26.3'
 
 - [ ] `docs/specs/rng.md`
 - [ ] `docs/specs/noise.md`
-- [ ] `docs/specs/oracle.md`: `probe` output format and command
+- [x] `docs/specs/oracle.md`: `probe` output format and command
 - [x] ADR 0008: game-derived test values
 - [x] ADR 0009: MD5 dependency
 - [ ] `docs/getting-started.md`: running the probe and the ignored tests (coordinate with whoever is editing it)

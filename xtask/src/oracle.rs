@@ -47,7 +47,11 @@ pub enum OracleCmd {
         #[arg(long, default_value = "minecraft:overworld")]
         dimension: String,
     },
-    /// Regenerate the whole golden set (docs/specs/oracle.md) into `oracle-out/<version>/`.
+    /// Write probe files (raw random-source and noise values) for the golden seeds into
+    /// `oracle-out/<version>/probe/`.
+    Probe(Common),
+    /// Regenerate the whole golden set (docs/specs/oracle.md), probe files included, into
+    /// `oracle-out/<version>/`.
     Golden {
         #[command(flatten)]
         common: Common,
@@ -135,8 +139,13 @@ pub fn run(cmd: OracleCmd) -> Result<()> {
                 dimension.into(),
             ])
         }
+        OracleCmd::Probe(common) => {
+            let harness = build(&common)?;
+            harness.probe()
+        }
         OracleCmd::Golden { common, threads } => {
             let harness = build(&common)?;
+            harness.probe()?;
             let dir = repo_root().join("oracle-out").join(&harness.version);
             // Leave nothing from an earlier seed or region set for tests to pick up.
             let biomes = dir.join("biomes");
@@ -216,6 +225,20 @@ impl Harness {
             bail!("the oracle harness failed ({status})");
         }
         Ok(())
+    }
+
+    /// Writes `oracle-out/<version>/probe/`, replacing what was there.
+    fn probe(&self) -> Result<()> {
+        let dir = repo_root()
+            .join("oracle-out")
+            .join(&self.version)
+            .join("probe");
+        if dir.exists() {
+            fs::remove_dir_all(&dir)?;
+        }
+        let mut args: Vec<OsString> = vec!["probe".into(), dir.into()];
+        args.extend(GOLDEN_SEEDS.iter().map(OsString::from));
+        self.run(&args)
     }
 
     fn biomes(&self, jobs: &[Job], threads: Option<usize>) -> Result<()> {

@@ -22,6 +22,9 @@ import net.minecraft.world.level.levelgen.WorldOptions;
  *     so text seeds work. Regions are chunk-aligned quart rectangles at full height.
  * check-save &lt;world dir&gt; [--dimension ID]
  *     Compare against the biomes stored in a save. Exits 1 on any unexplained mismatch.
+ * probe &lt;out dir&gt; &lt;seed&gt;...
+ *     Raw values from the random sources and noises (rng.json, noise.json), for the Rust ports'
+ *     tests. Noise cases are written for each seed; random-source cases use a fixed seed list.
  * </pre>
  */
 public final class Main {
@@ -43,6 +46,7 @@ public final class Main {
                     Runtime.getRuntime().availableProcessors()));
             case "check-save" -> CheckSave.run(game, Path.of(args[1]),
                     option(args, "--dimension", "minecraft:overworld")) == 0 ? 0 : 1;
+            case "probe" -> Probe.run(game, Path.of(args[1]), List.of(args).subList(2, args.length));
             default -> {
                 usage();
                 yield 2;
@@ -109,7 +113,8 @@ public final class Main {
     }
 
     private static void usage() {
-        System.err.println("usage: biomes <jobs file> [--threads N] | check-save <world dir> [--dimension ID]");
+        System.err.println("usage: biomes <jobs file> [--threads N] | check-save <world dir> [--dimension ID]"
+                + " | probe <out dir> <seed>...");
         System.exit(2);
     }
 }

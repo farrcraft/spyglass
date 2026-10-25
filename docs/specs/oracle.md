@@ -18,12 +18,13 @@ CI runs the Rust crates against these for a fixed set of seeds per supported ver
 
 `cargo xtask oracle` builds and runs the harness. Every subcommand takes `--game-version` (default `latest`), `--cache-dir` and `--java`.
 
-| Command                                                         | Does                                                                                      |
-| --------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `build`                                                         | Fetch and verify the server jar, unpack its libraries, compile the harness.               |
-| `biomes <seed> [--dimension] [--x] [--z] [--size] --out <file>` | Write one golden biome file. Block coordinates; x, z and size must be multiples of 16.    |
-| `check-save <world> [--dimension]`                              | Compare the harness with the biomes stored in a real save. Fails on any unexplained cell. |
-| `golden`                                                        | Regenerate the whole golden set below into `oracle-out/<version>/`.                       |
+| Command                                                         | Does                                                                                       |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `build`                                                         | Fetch and verify the server jar, unpack its libraries, compile the harness.                |
+| `biomes <seed> [--dimension] [--x] [--z] [--size] --out <file>` | Write one golden biome file. Block coordinates; x, z and size must be multiples of 16.     |
+| `check-save <world> [--dimension]`                              | Compare the harness with the biomes stored in a real save. Fails on any unexplained cell.  |
+| `probe`                                                         | Write the [probe files](#probe-files) into `oracle-out/<version>/probe/`.                  |
+| `golden`                                                        | Regenerate the whole golden set below, probe files included, into `oracle-out/<version>/`. |
 
 `build` runs automatically before the others, and does nothing when nothing changed:
 
@@ -105,6 +106,46 @@ And these regions per seed, all full height:
 | `border-neg` | −29,999,984 to −29,999,921 | The same, negative.                                   |
 
 That's about 6.4 million cells per seed. The origin region is 1,024 blocks square, not larger, to keep the Rust side's full comparison quick.
+
+## Probe files
+
+Golden files hold biomes only. Porting the layers underneath (random sources, noise) needs the game's raw values, so `cargo xtask oracle probe` writes them into `oracle-out/<version>/probe/`, and `golden` regenerates them too. Like golden files, they're generated locally and never committed ([ADR 0008](../adr/0008-game-derived-test-values-stay-local.md)). The Rust tests that read them are `#[ignore]`d.
+
+Each file is UTF-8 JSON:
+
+```json
+{
+  "format": 1,
+  "harness": 1,
+  "version": "26.3",
+  "data_version": 5023,
+  "cases": [
+    {
+      "test": "next_int_bounded",
+      "kind": "xoroshiro",
+      "seed": -1,
+      "bound": 7,
+      "type": "i64",
+      "values": [3, 0, 6]
+    }
+  ]
+}
+```
+
+A case names what was called (`test`, and `method` where a test has several), carries every parameter needed to reproduce it, and lists the results. The Rust side replays the cases it finds, so the seed and point lists live only in the harness. `type` says how to read `values`:
+
+| `type` | Values                                                                                  |
+| ------ | --------------------------------------------------------------------------------------- |
+| `i64`  | JSON integers. `int` results are widened; booleans are 0 or 1.                          |
+| `f32`  | Hex strings of the raw bits, 8 digits (`Float.floatToRawIntBits`).                      |
+| `f64`  | Hex strings of the raw bits, 16 digits (`Double.doubleToRawLongBits`).                  |
+| `text` | One string, e.g. the game's own `parityConfigString` description of a noise or factory. |
+
+Floating-point inputs (`point`) are hex `f64` bits too, so nothing depends on decimal parsing. Parameters: `seed` (a `long`), `kind` (`xoroshiro` for `XoroshiroRandomSource`, `legacy` for `LegacyRandomSource`, each from `new ...(seed)`), `bound`, `pos` (block `[x, y, z]`), `name` (a string hashed by `seedFromHashOf`, or a noise id).
+
+**`rng.json`** covers `RandomSupport` (`mix_stafford13`, `upgrade_seed_to_128bit`, `upgrade_seed_to_128bit_unmixed`, `seed_from_hash_of`), and for each kind and seed a fresh source per sequence: `next_long`, `next_int`, `next_int_bounded`, `next_float`, `next_double`, `next_gaussian`, `next_boolean` (8 values each), `gaussian_interleaved` (Gaussian, long, Gaussian, Gaussian, `nextInt(10)`, with Gaussians as raw `f64` bits), `consume_count_5` (two longs after `consumeCount(5)`), `fork` (two longs from the fork, then two from the parent), and from `forkPositional()`: `positional_parity`, `positional_at` and `positional_from_hash_of` (two longs each).
+
+**`noise.json`** has, for each golden seed: `perlin` (a `PerlinNoise` built from `new XoroshiroRandomSource(seed)`) and `perlin_parity`; and for each overworld climate noise (`temperature`, `vegetation`, `continentalness`, `erosion`, `ridge`, `offset`) as `RandomState` creates it, `normal_noise` and `normal_noise_parity`. Samples have `method` `get_3d` or `get_2d`, one point each.
 
 ## Independent check: real world saves
 

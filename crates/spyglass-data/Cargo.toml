@@ -1,0 +1,10 @@
+[package]
+name = "spyglass-data"
+description = "Per-version worldgen data bundles and the extractor that builds them from the user's own server jar."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]

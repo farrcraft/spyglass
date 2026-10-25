@@ -1,0 +1,10 @@
+[package]
+name = "spyglass-rng"
+description = "Bit-exact ports of Minecraft's RNGs: Java LCG, Xoroshiro128++, positional random factories."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]

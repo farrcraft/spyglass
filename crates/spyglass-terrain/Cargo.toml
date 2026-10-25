@@ -1,0 +1,12 @@
+[package]
+name = "spyglass-terrain"
+description = "Heightmaps and surface rules."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+spyglass-density.workspace = true
+spyglass-data.workspace = true

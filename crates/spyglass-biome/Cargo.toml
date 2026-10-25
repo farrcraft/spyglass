@@ -1,0 +1,12 @@
+[package]
+name = "spyglass-biome"
+description = "Climate sampling and biome lookup for the Overworld, Nether and End."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+spyglass-density.workspace = true
+spyglass-data.workspace = true

@@ -9,6 +9,7 @@ use clap::{Parser, Subcommand};
 use spyglass_data::{java, manifest};
 
 mod linux_check;
+mod locate;
 mod oracle;
 
 #[derive(Parser)]

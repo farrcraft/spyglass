@@ -8,12 +8,16 @@
 //! [`SpawnTargets`] is the world spawn's climate search, which picks the chunk the game's spawn
 //! search starts from. See `docs/specs/spawn.md`.
 
+mod locate;
 mod parameters;
 mod search;
 mod source;
 mod spawn;
 
+pub use locate::{BiomeHit, BiomeSearch, MAX_UNCERTAIN, out_from_origin, spiral_around};
 pub use parameters::{BiomeId, Parameter, ParameterList, ParameterPoint, TargetPoint, quantize};
 pub use search::{Lookup, SearchTree};
-pub use source::{BiomeRegion, BiomeSource, Biomes, HorizontalMatch, MAX_REPLAYED_TIES};
+pub use source::{
+    BiomeRegion, BiomeSource, Biomes, HorizontalMatch, HorizontalSearch, MAX_REPLAYED_TIES,
+};
 pub use spawn::{SpawnOrigin, SpawnPoint, SpawnSearch, SpawnTargets};

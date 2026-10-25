@@ -56,6 +56,9 @@ pub enum OracleCmd {
     /// Write spawn golden files (the spawn origin and the climate search behind it) for the
     /// golden seeds into `oracle-out/<version>/spawn/`.
     Spawn(Common),
+    /// Ask a real dedicated server `/locate` questions for a fixed case list, and write the
+    /// answers into `oracle-out/<version>/locate/`. Takes several minutes; not part of `golden`.
+    Locate(Common),
     /// Regenerate the whole golden set (docs/specs/oracle.md), probe files included, into
     /// `oracle-out/<version>/`.
     Golden {
@@ -153,6 +156,10 @@ pub fn run(cmd: OracleCmd) -> Result<()> {
             let harness = build(&common)?;
             harness.structures()
         }
+        OracleCmd::Locate(common) => {
+            let harness = build(&common)?;
+            crate::locate::run(&harness)
+        }
         OracleCmd::Spawn(common) => {
             let harness = build(&common)?;
             harness.spawn()
@@ -205,13 +212,15 @@ struct Job {
 }
 
 /// A compiled harness, ready to run.
-struct Harness {
-    version: String,
-    java: PathBuf,
+pub(crate) struct Harness {
+    pub(crate) version: String,
+    pub(crate) java: PathBuf,
     /// The JDK's major version.
-    major: u32,
-    classpath: OsString,
-    work: PathBuf,
+    pub(crate) major: u32,
+    /// The harness's classes and the game's unpacked jars.
+    pub(crate) classpath: OsString,
+    /// `target/oracle/<version>/`.
+    pub(crate) work: PathBuf,
 }
 
 impl Harness {

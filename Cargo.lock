@@ -620,6 +620,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a219298ac11a56ea9a6d2120044824d6f01aeb034955e7af7bc16858527deea"
 
 [[package]]
+name = "spyglass"
+version = "0.0.0"
+dependencies = [
+ "serde_json",
+ "spyglass-biome",
+ "spyglass-data",
+ "spyglass-density",
+ "spyglass-oracle",
+ "spyglass-structure",
+ "thiserror",
+]
+
+[[package]]
 name = "spyglass-biome"
 version = "0.0.0"
 dependencies = [
@@ -629,6 +642,16 @@ dependencies = [
  "spyglass-noise",
  "spyglass-oracle",
  "spyglass-rng",
+]
+
+[[package]]
+name = "spyglass-cli"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "serde_json",
+ "spyglass",
 ]
 
 [[package]]
@@ -710,6 +733,9 @@ version = "0.0.0"
 [[package]]
 name = "spyglass-viewer"
 version = "0.0.0"
+dependencies = [
+ "spyglass",
+]
 
 [[package]]
 name = "strsim"
@@ -986,6 +1012,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "clap",
+ "serde_json",
  "spyglass-data",
 ]
 

@@ -1,0 +1,154 @@
+//! The `spyglass` binary end to end: each command in both output modes. Tests that need a bundle
+//! are ignored without one (`spyglass-extract 26.3`); run them with
+//! `cargo test -p spyglass-cli -- --ignored`.
+
+use std::path::PathBuf;
+use std::process::{Command, Output};
+
+use serde_json::Value;
+
+fn bundles() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../bundles")
+}
+
+fn spyglass(args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_spyglass"))
+        .args(args)
+        .arg("--bundles")
+        .arg(bundles())
+        .output()
+        .unwrap()
+}
+
+fn text(out: &Output) -> String {
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8(out.stdout.clone()).unwrap()
+}
+
+fn json(args: &[&str]) -> Value {
+    let mut args = args.to_vec();
+    args.push("--json");
+    let value: Value = serde_json::from_str(&text(&spyglass(&args))).unwrap();
+    assert_eq!(value["format"], 1);
+    assert_eq!(value["dimension"], "minecraft:overworld");
+    assert!(value["version"].is_string());
+    value
+}
+
+#[test]
+fn bad_arguments_fail_before_loading() {
+    let out = spyglass(&["locate", "spawn", "--seed", "1", "--bundle", "nowhere"]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("nowhere"));
+    let out = spyglass(&["locate", "biome", "x", "--seed", "1", "--from", "1,2,3,4"]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("x,y,z or x,z"));
+    let out = spyglass(&["locate", "spawn", "--seed", "  "]);
+    assert!(!out.status.success());
+}
+
+#[test]
+#[ignore = "needs a bundle: spyglass-extract 26.3"]
+fn structures() {
+    let v = json(&[
+        "locate",
+        "structure",
+        "#minecraft:village",
+        "--seed",
+        "0",
+        "--from",
+        "-100,70,250",
+    ]);
+    assert_eq!(v["command"], "locate structure");
+    assert_eq!(v["seed"], 0);
+    assert_eq!(v["from"], serde_json::json!([-100, 70, 250]));
+    assert_eq!(v["radius"], 100);
+    let hits = v["hits"].as_array().unwrap();
+    assert!(!hits.is_empty());
+    for hit in hits {
+        assert_eq!(hit["set"], "minecraft:villages");
+        assert!(hit["position"]["x"].is_i64() && hit["position"]["z"].is_i64());
+        assert!(
+            hit["structures"][0]
+                .as_str()
+                .unwrap()
+                .starts_with("minecraft:village_")
+        );
+    }
+    // Ancient cities don't depend on terrain: one certain answer.
+    let v = json(&["locate", "structure", "ancient_city", "--seed", "spyglass"]);
+    assert_eq!(v["seed"], -1_556_512_960_i64);
+    assert_eq!(v["complete"], true);
+    assert_eq!(v["certain_answer"], 0);
+    assert_eq!(v["hits"].as_array().unwrap().len(), 1);
+
+    let out = text(&spyglass(&[
+        "locate",
+        "structure",
+        "minecraft:monument",
+        "--seed",
+        "1",
+    ]));
+    assert!(out.starts_with("minecraft:monument from 0 64 0 (seed 1, Minecraft "));
+    assert!(out.contains("candidate"));
+
+    let out = spyglass(&["locate", "structure", "minecraft:nothing", "--seed", "1"]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("unknown structure"));
+}
+
+#[test]
+#[ignore = "needs a bundle: spyglass-extract 26.3"]
+fn biomes() {
+    let v = json(&[
+        "locate",
+        "biome",
+        "minecraft:plains",
+        "--seed",
+        "0",
+        "--from",
+        "0,0",
+    ]);
+    assert_eq!(v["from"], serde_json::json!([0, 64, 0]));
+    assert_eq!(v["radius"], 6400);
+    let hit = v["hits"].as_array().unwrap().last().unwrap().clone();
+    assert_eq!(hit["certain"], true);
+    assert_eq!(hit["biome"], "minecraft:plains");
+    assert!(hit["position"]["y"].is_i64());
+    // A biome the Overworld can't have: found nowhere, not an error.
+    let v = json(&["locate", "biome", "minecraft:nether_wastes", "--seed", "0"]);
+    assert!(v["hits"].as_array().unwrap().is_empty());
+    let out = text(&spyglass(&[
+        "locate",
+        "biome",
+        "minecraft:nether_wastes",
+        "--seed",
+        "0",
+    ]));
+    assert!(out.contains("none within 6400 blocks"));
+}
+
+#[test]
+#[ignore = "needs a bundle: spyglass-extract 26.3"]
+fn slime_and_spawn() {
+    let v = json(&["locate", "slime", "--seed", "0", "--radius", "3"]);
+    let chunks = v["chunks"].as_array().unwrap();
+    assert!(chunks.iter().all(|c| {
+        let [x, z] = [c[0].as_i64().unwrap(), c[1].as_i64().unwrap()];
+        x.abs() <= 3 && z.abs() <= 3
+    }));
+    let out = text(&spyglass(&[
+        "locate", "slime", "--seed", "0", "--radius", "3",
+    ]));
+    assert!(out.starts_with("Slime chunks within 3 chunks of chunk 0 0"));
+
+    let v = json(&["locate", "spawn", "--seed", "0"]);
+    assert!(v["chunk"][0].is_i64());
+    assert_eq!(v["platform_dependent"], false);
+    let out = text(&spyglass(&["locate", "spawn", "--seed", "0"]));
+    assert!(out.contains("the spawn search starts in chunk"));
+}

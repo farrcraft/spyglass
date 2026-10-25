@@ -3,6 +3,7 @@
 //! See `docs/specs/structure-placement.md`.
 
 use std::f64::consts::PI;
+use std::sync::OnceLock;
 
 use spyglass_biome::Biomes;
 use spyglass_rng::{LegacyRandomSource, RandomSource, worldgen};
@@ -160,24 +161,28 @@ pub fn java_round(x: f64) -> i64 {
     rounded as i64
 }
 
-/// `(int) Math.round(trig * scale)`, where `trig` is a `Math.sin` or `Math.cos` result, and
-/// whether it's platform-dependent: whether moving `trig` by up to 4 ulps either way changes
-/// the answer (ADR 0012).
-pub fn round_trig_product(trig: f64, scale: f64) -> (i32, bool) {
+/// `(int) Math.round(trig * scale)`, where `trig` is a `Math.sin` or `Math.cos` result, and the
+/// other value it rounds to if `trig` moves by up to 4 ulps either way (ADR 0012): `None` when
+/// the answer is the same on every platform.
+pub fn round_trig_product(trig: f64, scale: f64) -> (i32, Option<i32>) {
     let answer = java_round(trig * scale) as i32;
     let (mut up, mut down) = (trig, trig);
-    let mut sensitive = false;
+    let mut other = None;
     for _ in 0..4 {
         up = up.next_up();
         down = down.next_down();
-        sensitive |= java_round(up * scale) as i32 != answer;
-        sensitive |= java_round(down * scale) as i32 != answer;
+        for v in [up, down] {
+            let rounded = java_round(v * scale) as i32;
+            if rounded != answer {
+                other = Some(rounded);
+            }
+        }
     }
-    (answer, sensitive)
+    (answer, other)
 }
 
 /// A concentric-ring position for one seed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RingPosition {
     /// The chunk.
     pub chunk: [i32; 2],
@@ -187,6 +192,12 @@ pub struct RingPosition {
     /// Whether the game's answer may differ between runs, because a tied biome cell in the
     /// preferred-biome search could go either way.
     pub tie_dependent: bool,
+    /// Every other chunk the game may use for this position, on another platform or after
+    /// other tie outcomes.
+    pub alternatives: Vec<[i32; 2]>,
+    /// Whether [`alternatives`](Self::alternatives) is complete; false when a search had more
+    /// tied cells than spyglass replays.
+    pub alternatives_known: bool,
 }
 
 impl ConcentricRings {
@@ -209,10 +220,27 @@ impl ConcentricRings {
             let ring_distance = f64::from(
                 (4 * distance).wrapping_add(distance.wrapping_mul(circle).wrapping_mul(6)),
             ) + (random.next_double() - 0.5) * (f64::from(distance) * 2.5);
-            let (x, x_sensitive) = round_trig_product(angle.cos(), ring_distance);
-            let (z, z_sensitive) = round_trig_product(angle.sin(), ring_distance);
-            let mut fork = random.fork();
-            positions.push(self.settle(x, z, biomes, &mut fork, x_sensitive || z_sensitive));
+            let (x, other_x) = round_trig_product(angle.cos(), ring_distance);
+            let (z, other_z) = round_trig_product(angle.sin(), ring_distance);
+            let fork = random.fork();
+            let mut position = self.settle(x, z, biomes, &mut fork.clone());
+            position.platform_dependent = other_x.is_some() || other_z.is_some();
+            // Another platform's ring point settles from the same fork.
+            for ax in [Some(x), other_x].into_iter().flatten() {
+                for az in [Some(z), other_z].into_iter().flatten() {
+                    if [ax, az] == [x, z] {
+                        continue;
+                    }
+                    let other = self.settle(ax, az, biomes, &mut fork.clone());
+                    position.alternatives_known &= other.alternatives_known;
+                    for chunk in std::iter::once(other.chunk).chain(other.alternatives) {
+                        if chunk != position.chunk && !position.alternatives.contains(&chunk) {
+                            position.alternatives.push(chunk);
+                        }
+                    }
+                }
+            }
+            positions.push(position);
             angle += 2.0 * PI / f64::from(spread);
             position_in_circle += 1;
             if position_in_circle == spread {
@@ -227,16 +255,15 @@ impl ConcentricRings {
     }
 
     /// The ring point's move towards a preferred biome: `findBiomeHorizontal` from the chunk
-    /// centre at y 0, radius 112, through the forked random.
+    /// centre at y 0, radius 112, through the forked random. Not yet marked platform-dependent.
     fn settle(
         &self,
         x: i32,
         z: i32,
         biomes: &Biomes<'_>,
         random: &mut LegacyRandomSource,
-        platform_dependent: bool,
     ) -> RingPosition {
-        let found = biomes.find_biome_horizontal(
+        let search = biomes.find_biome_horizontal(
             (x << 4).wrapping_add(8),
             0,
             (z << 4).wrapping_add(8),
@@ -246,43 +273,45 @@ impl ConcentricRings {
             random,
             false,
         );
-        let (chunk, tie_dependent) = match found {
-            Some(f) => ([f.position[0] >> 4, f.position[2] >> 4], f.tie_dependent),
-            None => ([x, z], false),
-        };
+        // No match leaves the ring point where it was.
+        let chunk_of = |p: Option<[i32; 3]>| p.map_or([x, z], |p| [p[0] >> 4, p[2] >> 4]);
+        let chunk = chunk_of(search.found.as_ref().map(|f| f.position));
+        let mut alternatives = Vec::new();
+        for other in search.alternatives.iter().map(|&p| chunk_of(p)) {
+            if other != chunk && !alternatives.contains(&other) {
+                alternatives.push(other);
+            }
+        }
         RingPosition {
             chunk,
-            platform_dependent,
-            tie_dependent,
+            platform_dependent: false,
+            tie_dependent: search.tie_dependent(),
+            alternatives,
+            alternatives_known: search.alternatives_known,
         }
     }
 }
 
-/// A dimension's placements bound to a seed, with ring positions computed once.
+/// A dimension's placements bound to a seed. Each concentric-ring set's positions are computed
+/// the first time they're needed, then kept.
 #[derive(Debug, Clone)]
 pub struct Placements<'s> {
     sets: &'s StructureSets,
     seed: i64,
-    /// Ring positions by set index; `None` for other placement types.
-    rings: Vec<Option<Vec<RingPosition>>>,
+    biomes: Biomes<'s>,
+    /// Ring positions by set index, once computed.
+    rings: Vec<OnceLock<Vec<RingPosition>>>,
 }
 
 impl StructureSets {
-    /// The placements for `seed`. Computes every concentric-ring set's positions, which needs
-    /// the dimension's biomes for the same seed.
-    pub fn with_seed<'s>(&'s self, seed: i64, biomes: &Biomes<'_>) -> Placements<'s> {
-        let rings = self
-            .sets()
-            .iter()
-            .map(|set| match &set.placement.kind {
-                PlacementKind::ConcentricRings(rings) => Some(rings.positions(seed, biomes)),
-                PlacementKind::RandomSpread(_) => None,
-            })
-            .collect();
+    /// The placements for `seed`. `biomes` must be the dimension's biomes for the same seed;
+    /// concentric rings need them.
+    pub fn with_seed<'s>(&'s self, seed: i64, biomes: &Biomes<'s>) -> Placements<'s> {
         Placements {
             sets: self,
             seed,
-            rings,
+            biomes: biomes.clone(),
+            rings: self.sets().iter().map(|_| OnceLock::new()).collect(),
         }
     }
 }
@@ -298,9 +327,15 @@ impl Placements<'_> {
         self.sets
     }
 
-    /// A concentric-ring set's positions, or `None` for other placement types.
+    /// A concentric-ring set's positions, or `None` for other placement types. The first call
+    /// for a set computes them, which takes a while (128 biome searches for strongholds).
     pub fn ring_positions(&self, set: usize) -> Option<&[RingPosition]> {
-        self.rings[set].as_deref()
+        match &self.sets.sets()[set].placement.kind {
+            PlacementKind::ConcentricRings(rings) => {
+                Some(self.rings[set].get_or_init(|| rings.positions(self.seed, &self.biomes)))
+            }
+            PlacementKind::RandomSpread(_) => None,
+        }
     }
 
     /// `StructurePlacement.isStructureChunk`: whether set `set` may start in chunk `(x, z)`:
@@ -311,8 +346,8 @@ impl Placements<'_> {
             PlacementKind::RandomSpread(spread) => {
                 spread.potential_chunk(self.seed, placement.salt, x, z) == [x, z]
             }
-            PlacementKind::ConcentricRings(_) => self.rings[set]
-                .as_ref()
+            PlacementKind::ConcentricRings(_) => self
+                .ring_positions(set)
                 .is_some_and(|ring| ring.iter().any(|p| p.chunk == [x, z])),
         };
         placed
@@ -352,8 +387,9 @@ impl Placements<'_> {
                     .filter(inside)
                     .collect()
             }
-            PlacementKind::ConcentricRings(_) => self.rings[set]
-                .iter()
+            PlacementKind::ConcentricRings(_) => self
+                .ring_positions(set)
+                .into_iter()
                 .flatten()
                 .map(|p| p.chunk)
                 .filter(inside)
@@ -384,10 +420,10 @@ mod tests {
     #[test]
     fn trig_products_near_a_boundary_are_flagged() {
         // 0.5 * 5 = 2.5 sits on a boundary; one ulp below rounds to 2.
-        assert_eq!(round_trig_product(0.5, 5.0), (3, true));
+        assert_eq!(round_trig_product(0.5, 5.0), (3, Some(2)));
         // 0.3 * 5 rounds to exactly 1.5 in f64, so it's on a boundary too; 0.31 * 5 isn't.
-        assert_eq!(round_trig_product(0.3, 5.0), (2, true));
-        assert_eq!(round_trig_product(0.31, 5.0), (2, false));
+        assert_eq!(round_trig_product(0.3, 5.0), (2, Some(1)));
+        assert_eq!(round_trig_product(0.31, 5.0), (2, None));
     }
 
     #[test]

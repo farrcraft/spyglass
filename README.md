@@ -41,7 +41,14 @@ cargo build
 cargo test
 ```
 
-See [docs/getting-started.md](docs/getting-started.md) for the full walkthrough, including installing Rust by hand.
+With a version bundle extracted, ask a seed where things are, as the game's `/locate` would:
+
+```sh
+cargo run -p spyglass-data --bin spyglass-extract -- 26.3
+cargo run --release -p spyglass-cli -- locate structure '#minecraft:village' --seed 12345
+```
+
+See [docs/getting-started.md](docs/getting-started.md) for the full walkthrough, including installing Rust by hand, and the [`spyglass` command](docs/getting-started.md#9-the-spyglass-command).
 
 ## Crates
 
@@ -55,9 +62,11 @@ See [docs/getting-started.md](docs/getting-started.md) for the full walkthrough,
 | `spyglass-terrain`   | Heightmaps and surface rules.                               |
 | `spyglass-structure` | Structure placement and validity checks.                    |
 | `spyglass-search`    | Parallel, ranked seed search.                               |
+| `spyglass`           | The public API that every front end uses.                   |
+| `spyglass-cli`       | The `spyglass` command, with `--json` for scripts.          |
 | `spyglass-viewer`    | Native map app.                                             |
 
-More are planned for the public API, the command-line tool and reading world saves. See [docs/architecture.md](docs/architecture.md) for how they fit together.
+Reading world saves is planned. See [docs/architecture.md](docs/architecture.md) for how they fit together.
 
 ## Documentation
 

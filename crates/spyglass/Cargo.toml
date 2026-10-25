@@ -1,0 +1,23 @@
+[package]
+name = "spyglass"
+description = "The spyglass public API: a version bundle loaded once, and seed-bound sessions with locate queries."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+spyglass-biome.workspace = true
+spyglass-data.workspace = true
+spyglass-density.workspace = true
+spyglass-structure.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+spyglass-oracle.workspace = true

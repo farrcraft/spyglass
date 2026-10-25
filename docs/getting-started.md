@@ -221,6 +221,32 @@ The extractor downloads the server jar (about 60 MB, once, into your per-user ca
 
 If no matching Java is found, the error lists every place that was searched. Install a runtime of the right major version, or point `--java` at one. Jars and bundles stay on your machine: the cache is outside the repo, and `bundles/` is gitignored.
 
+## 9. The `spyglass` command
+
+With a bundle in `bundles/`, the `spyglass` command answers `/locate`-style questions for any seed, the way the game's `/locate` would ([specs/locate.md](specs/locate.md)):
+
+```sh
+cargo run --release -p spyglass-cli -- locate structure '#minecraft:village' --seed 12345
+cargo run --release -p spyglass-cli -- locate structure minecraft:stronghold --seed spyglass --from 1000,64,-2000
+cargo run --release -p spyglass-cli -- locate biome minecraft:cherry_grove --seed 12345
+cargo run --release -p spyglass-cli -- locate slime --seed 12345 --radius 4
+cargo run --release -p spyglass-cli -- locate spawn --seed 12345
+```
+
+Or install it with `cargo install --path crates/spyglass-cli` and run `spyglass ...` directly.
+
+| Option                | Default       | What it does                                                          |
+| --------------------- | ------------- | --------------------------------------------------------------------- |
+| `--seed <seed>`       | required      | A number, or text hashed as the world-creation screen does.           |
+| `--from <x,y,z>`      | `0,64,0`      | Where to search from, in blocks; `x,z` means y 64.                    |
+| `--radius <n>`        | as `/locate`  | Placement-cell rings (structures), blocks (biomes) or chunks (slime). |
+| `--game-version <id>` | newest bundle | Which bundle in `--bundles` to use.                                   |
+| `--bundle <dir>`      | none          | Use this bundle directory instead.                                    |
+| `--bundles <dir>`     | `bundles`     | Where bundles are.                                                    |
+| `--json`              | off           | Print JSON for scripts ([specs/cli-json.md](specs/cli-json.md)).      |
+
+Answers are listed in the game's search order, which isn't always nearest first. Until terrain is ported, most surface structures (villages, temples, monuments) can't be confirmed without it, so they're shown as **candidates**: the game's answer is the first of them it generates, and in testing that's usually the first one listed. Strongholds, ancient cities and trial chambers don't depend on terrain and are usually **certain**.
+
 ## Next steps
 
 - [architecture.md](architecture.md) for how the crates fit together.

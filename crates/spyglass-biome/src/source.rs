@@ -166,6 +166,11 @@ impl Biomes<'_> {
         self.source
     }
 
+    /// The climate sampler.
+    pub(crate) fn climate(&self) -> &ClimateSampler {
+        &self.climate
+    }
+
     /// `Climate.Sampler.sample`: the quantized climate at quart `(qx, qy, qz)`.
     pub fn climate_at(&self, qx: i32, qy: i32, qz: i32) -> TargetPoint {
         TargetPoint::quantize(self.climate.sample(qx, qy, qz))
@@ -187,9 +192,9 @@ impl Biomes<'_> {
     ///
     /// `matches` sees each cell's answer, a tied cell's first candidate. A tied cell whose
     /// candidates disagree on `matches` could go either way in the game. The search is replayed
-    /// for every combination of those cells' outcomes, from the same random state, and
-    /// `tie_dependent` reports whether any gives a different position. With more than
-    /// [`MAX_REPLAYED_TIES`] such cells, it's reported without replaying.
+    /// for every combination of those cells' outcomes, from the same random state, and every
+    /// other outcome is listed in [`HorizontalSearch::alternatives`]. With more than
+    /// [`MAX_REPLAYED_TIES`] such cells, nothing is replayed and the alternatives are unknown.
     #[allow(clippy::too_many_arguments)]
     pub fn find_biome_horizontal<R: RandomSource + Clone>(
         &self,
@@ -201,7 +206,7 @@ impl Biomes<'_> {
         matches: impl Fn(BiomeId) -> bool,
         random: &mut R,
         find_closest: bool,
-    ) -> Option<HorizontalMatch> {
+    ) -> HorizontalSearch {
         let (qx, qy, qz, qr) = (x >> 2, y >> 2, z >> 2, radius >> 2);
         // The cells that can matter, in scan order: every hit, and every cell that could be one.
         let mut cells: Vec<(i32, i32, Lookup, bool)> = Vec::new();
@@ -256,29 +261,33 @@ impl Biomes<'_> {
         };
         let start = random.clone();
         let answer = choose(&|i| matches(cells[i].2.biome()), random);
-        let position = |i: Option<usize>| i.map(|i| (cells[i].0, cells[i].1));
-        let tie_dependent = ambiguous > MAX_REPLAYED_TIES
-            || (ambiguous > 0 && {
-                let tied: Vec<usize> = (0..cells.len()).filter(|&i| cells[i].3).collect();
-                (1_u32..1 << ambiguous).any(|mask| {
-                    let flipped = |i: usize| {
-                        let hit = matches(cells[i].2.biome());
-                        match tied.iter().position(|&t| t == i) {
-                            Some(bit) if mask >> bit & 1 == 1 => !hit,
-                            _ => hit,
-                        }
-                    };
-                    position(choose(&flipped, &mut start.clone())) != position(answer)
-                })
-            });
-        answer.map(|i| {
-            let (cx, cz, lookup, _) = cells.swap_remove(i);
-            HorizontalMatch {
-                position: [cx << 2, y, cz << 2],
-                biome: lookup,
-                tie_dependent,
+        let position = |i: Option<usize>| i.map(|i| [cells[i].0 << 2, y, cells[i].1 << 2]);
+        let mut alternatives = Vec::new();
+        let alternatives_known = ambiguous <= MAX_REPLAYED_TIES;
+        if ambiguous > 0 && alternatives_known {
+            let tied: Vec<usize> = (0..cells.len()).filter(|&i| cells[i].3).collect();
+            for mask in 1_u32..1 << ambiguous {
+                let flipped = |i: usize| {
+                    let hit = matches(cells[i].2.biome());
+                    match tied.iter().position(|&t| t == i) {
+                        Some(bit) if mask >> bit & 1 == 1 => !hit,
+                        _ => hit,
+                    }
+                };
+                let other = position(choose(&flipped, &mut start.clone()));
+                if other != position(answer) && !alternatives.contains(&other) {
+                    alternatives.push(other);
+                }
             }
-        })
+        }
+        HorizontalSearch {
+            found: answer.map(|i| HorizontalMatch {
+                position: position(Some(i)).expect("a match"),
+                biome: cells[i].2.clone(),
+            }),
+            alternatives,
+            alternatives_known,
+        }
     }
 
     /// Every biome in the box of `size` quarts from `min`. Each column's y-independent climate
@@ -322,9 +331,29 @@ pub struct HorizontalMatch {
     pub position: [i32; 3],
     /// The lookup there.
     pub biome: Lookup,
-    /// Whether a tied cell in the search could have changed the result (in the whole square
-    /// when scanning all of it, or up to the match with `find_closest`).
-    pub tie_dependent: bool,
+}
+
+/// The answer to [`Biomes::find_biome_horizontal`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HorizontalSearch {
+    /// spyglass's answer, with each tied cell giving its first candidate; `None` if nothing
+    /// matches.
+    pub found: Option<HorizontalMatch>,
+    /// Every other position the game may answer, `None` meaning no match, from other outcomes
+    /// of tied cells (in the whole square when scanning all of it, or up to the match with
+    /// `find_closest`). Empty when the result doesn't depend on ties.
+    pub alternatives: Vec<Option<[i32; 3]>>,
+    /// Whether [`alternatives`](Self::alternatives) is complete. False when more than
+    /// [`MAX_REPLAYED_TIES`] tied cells were found, so the result depends on ties in ways
+    /// spyglass didn't enumerate.
+    pub alternatives_known: bool,
+}
+
+impl HorizontalSearch {
+    /// Whether the game's answer may differ between runs, because of tied cells.
+    pub fn tie_dependent(&self) -> bool {
+        !self.alternatives.is_empty() || !self.alternatives_known
+    }
 }
 
 /// Biomes over a box of quarts, from [`Biomes::biomes_in`].

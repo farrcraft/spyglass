@@ -2,12 +2,14 @@
 //!
 //! [`StructureSets::load`] reads a bundle's structure sets for one biome source;
 //! [`StructureSets::with_seed`] binds them to a seed as [`Placements`], which answer where each
-//! set may start. Slime chunks are [`is_slime_chunk`]. See `docs/specs/structure-placement.md`.
+//! set may start, and [`Starts::locate`] is `/locate structure`. Slime chunks are
+//! [`is_slime_chunk`]. See `docs/specs/structure-placement.md`.
 
 mod biomes;
 mod check;
 mod jigsaw;
 mod load;
+mod locate;
 mod placement;
 mod slime;
 
@@ -18,6 +20,7 @@ pub use jigsaw::{
     PoolElement, Rotation, Template, VerticalAnchor,
 };
 pub use load::{Entry, Structure, StructureSet, StructureSets, StructureType};
+pub use locate::{LOCATE_RADIUS, MAX_UNCERTAIN, StructureHit, StructureSearch};
 pub use placement::{
     ConcentricRings, ExclusionZone, FrequencyReduction, Placement, PlacementKind, Placements,
     RandomSpread, RingPosition, SpreadType, java_round, round_trig_product,

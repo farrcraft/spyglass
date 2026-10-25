@@ -41,6 +41,8 @@ struct Report {
     stubs: usize,
     tied_stubs: usize,
     ring_flagged: usize,
+    /// Flagged mismatches whose alternatives spyglass didn't enumerate (too many ties).
+    ring_unknown: usize,
     /// Ring positions flagged as tie- or platform-dependent, matching or not.
     rings_flagged_total: usize,
     rings: usize,
@@ -144,10 +146,16 @@ fn structures_match_the_oracle() {
                     report.rings_flagged_total += 1;
                 }
                 if p.chunk != *g {
-                    if p.platform_dependent || p.tie_dependent {
-                        report.ring_flagged += 1;
-                    } else {
+                    if !(p.platform_dependent || p.tie_dependent) {
                         report.fail(format!("{name}: ring {i}: ours {:?}, game {g:?}", p.chunk));
+                    } else if p.alternatives_known && !p.alternatives.contains(g) {
+                        report.fail(format!(
+                            "{name}: ring {i}: the game's {g:?} isn't ours {:?} or an alternative {:?}",
+                            p.chunk, p.alternatives
+                        ));
+                    } else {
+                        report.ring_flagged += 1;
+                        report.ring_unknown += usize::from(!p.alternatives_known);
                     }
                 }
             }
@@ -293,7 +301,7 @@ fn structures_match_the_oracle() {
     }
 
     println!(
-        "{} files: {} placement chunks, {} tries, {} check positions ({} tied), {} jigsaw positions; {} rings, {} flagged, {} flagged mismatches; {} definite starts, {} not started by the game",
+        "{} files: {} placement chunks, {} tries, {} check positions ({} tied), {} jigsaw positions; {} rings, {} flagged, {} flagged mismatches ({} with unknown alternatives); {} definite starts, {} not started by the game",
         files.len(),
         report.chunks,
         report.tries,
@@ -303,6 +311,7 @@ fn structures_match_the_oracle() {
         report.rings,
         report.rings_flagged_total,
         report.ring_flagged,
+        report.ring_unknown,
         report.definite,
         report.definite_not_started
     );

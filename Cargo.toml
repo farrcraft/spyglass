@@ -32,12 +32,14 @@ invalid_rust_codeblocks = "deny"
 bare_urls = "deny"
 
 [workspace.dependencies]
+spyglass = { path = "crates/spyglass" }
 spyglass-biome = { path = "crates/spyglass-biome" }
 spyglass-data = { path = "crates/spyglass-data" }
 spyglass-density = { path = "crates/spyglass-density" }
 spyglass-noise = { path = "crates/spyglass-noise" }
 spyglass-oracle = { path = "crates/spyglass-oracle" }
 spyglass-rng = { path = "crates/spyglass-rng" }
+spyglass-structure = { path = "crates/spyglass-structure" }
 
 anyhow = "1.0.104"
 directories = "6.0.0"

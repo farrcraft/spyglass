@@ -15,30 +15,30 @@ spyglass separates what the game _does_ (algorithms, written in Rust) from the _
 
 ## Crates
 
-| Crate                | Role                                                                                                                         | Depends on                               |
-| -------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| `spyglass-rng`       | Bit-exact RNGs. Small, but every bug here poisons everything downstream.                                                     | —                                        |
-| `spyglass-noise`     | Noise primitives.                                                                                                            | rng                                      |
-| `spyglass-data`      | Version bundles, the manifest client and the extractor CLI.                                                                  | —                                        |
-| `spyglass-oracle`    | Test support: reads the oracle's golden files. A dev-dependency only, never a normal one.                                    | —                                        |
-| `spyglass-density`   | Loads and evaluates density-function graphs.                                                                                 | noise, data                              |
-| `spyglass-biome`     | Climate sampling and biome lookup at quart (1:4) resolution; Overworld, Nether, End. The world spawn's climate search.       | rng, noise, density, data                |
-| `spyglass-terrain`   | Heightmaps and surface rules.                                                                                                | density, data                            |
-| `spyglass-structure` | Placement (seed-only, cheap), then biome validation, then terrain-dependent validity, with optional jigsaw for exact bounds. | rng, biome, density, data; later terrain |
-| `spyglass-search`    | Parallel seed search (`rayon`) with required and preferred constraints, ranked results, checks ordered cheapest first.       | rng, biome, structure                    |
-| `spyglass-world`     | _Planned._ Reads local world saves: `level.dat` seed, version, preset and datapacks.                                         | data                                     |
-| `spyglass`           | _Planned._ The public API: a session (bundle + seed + dimension, or a world save) with locate, render and search queries.    | everything above                         |
-| `spyglass-cli`       | _Planned._ The `spyglass` command: locate, world info, render, search. Human-readable output, or `--json` for scripts.       | spyglass                                 |
-| `spyglass-viewer`    | Native map app (`egui` + `wgpu`): tiled on-demand rendering, zoom levels, selectable layers.                                 | spyglass                                 |
+| Crate                | Role                                                                                                                                              | Depends on                               |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| `spyglass-rng`       | Bit-exact RNGs. Small, but every bug here poisons everything downstream.                                                                          | —                                        |
+| `spyglass-noise`     | Noise primitives.                                                                                                                                 | rng                                      |
+| `spyglass-data`      | Version bundles, the manifest client and the extractor CLI.                                                                                       | —                                        |
+| `spyglass-oracle`    | Test support: reads the oracle's golden files. A dev-dependency only, never a normal one.                                                         | —                                        |
+| `spyglass-density`   | Loads and evaluates density-function graphs.                                                                                                      | noise, data                              |
+| `spyglass-biome`     | Climate sampling and biome lookup at quart (1:4) resolution; Overworld, Nether, End. The spawn's climate search; `/locate biome`.                 | rng, noise, density, data                |
+| `spyglass-terrain`   | Heightmaps and surface rules.                                                                                                                     | density, data                            |
+| `spyglass-structure` | Placement (seed-only, cheap), then biome validation, then terrain-dependent validity, with optional jigsaw for exact bounds; `/locate structure`. | rng, biome, density, data; later terrain |
+| `spyglass-search`    | Parallel seed search (`rayon`) with required and preferred constraints, ranked results, checks ordered cheapest first.                            | rng, biome, structure                    |
+| `spyglass-world`     | _Planned._ Reads local world saves: `level.dat` seed, version, preset and datapacks.                                                              | data                                     |
+| `spyglass`           | The public API: a `World` (one dimension of a bundle) and seed-bound `Session`s with locate queries; later render and search.                     | biome, structure, density, data          |
+| `spyglass-cli`       | The `spyglass` command: locate now; world info, render and search later. Human-readable output, or `--json` for scripts.                          | spyglass                                 |
+| `spyglass-viewer`    | Native map app (`egui` + `wgpu`): tiled on-demand rendering, zoom levels, selectable layers.                                                      | spyglass                                 |
 
-Dependencies only point down this table. A lower crate must never depend on a higher one. Planned crates are added in the milestone that needs them. Until `spyglass` exists, the viewer depends on the lower crates directly.
+Dependencies only point down this table. A lower crate must never depend on a higher one. Planned crates are added in the milestone that needs them. Front ends depend only on `spyglass` ([ADR 0014](adr/0014-public-api-world-and-session.md)).
 
 ## Front ends
 
 spyglass is library-first. Everything a user can do goes through the `spyglass` crate's public API, and every front end is a thin layer over it:
 
 - **Rust library:** depend on `spyglass` directly.
-- **Command line and scripts:** `spyglass` (from `spyglass-cli`). Every command can emit JSON, so shell scripts and other languages can drive it.
+- **Command line and scripts:** `spyglass` (from `spyglass-cli`). Every command can emit JSON ([specs/cli-json.md](specs/cli-json.md)), so shell scripts and other languages can drive it.
 - **GUI:** `spyglass-viewer`.
 
 Nothing in the CLI or viewer computes worldgen results itself. If the viewer can show it, the API can return it, so scripts can do anything the GUI can.

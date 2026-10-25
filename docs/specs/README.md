@@ -13,3 +13,5 @@ Behavior spyglass must match. Update a spec in the same change as the code that 
 | [biome-lookup.md](biome-lookup.md)               | Draft  |
 | [structure-placement.md](structure-placement.md) | Draft  |
 | [spawn.md](spawn.md)                             | Draft  |
+| [locate.md](locate.md)                           | Draft  |
+| [cli-json.md](cli-json.md)                       | Draft  |

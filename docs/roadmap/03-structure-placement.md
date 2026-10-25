@@ -22,10 +22,10 @@ Answer "where are things in this seed?": structure positions, slime chunks and t
 
 - [x] Placement chunks match the oracle for the seed set, for every Overworld structure set in the bundle. The biome check matches exactly where its position doesn't depend on terrain, and exactly at the oracle's start positions everywhere; elsewhere, results are candidates that always include the game's start.
 - [x] Slime chunks and the spawn origin (the chunk the game's spawn search starts from) match the oracle.
-- [ ] `spyglass locate` answers agree with the game's `/locate` at spot-checked positions.
+- [x] `spyglass locate` answers agree with the game's `/locate` at spot-checked positions.
 - [x] A spec describes placement and documents which validity checks are deferred to [07](07-terrain-and-validity.md).
 - [ ] An ADR records the public API shape and the library-first split between the API, the CLI and the GUI.
-- [ ] The `--json` output format has a spec, because scripts depend on it.
+- [x] The `--json` output format has a spec, because scripts depend on it.
 
 ## Not in this milestone
 

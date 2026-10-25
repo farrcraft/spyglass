@@ -1,6 +1,6 @@
 [package]
 name = "spyglass-oracle"
-description = "Reads the oracle's golden files. Test support: use it only as a dev-dependency."
+description = "Reads the oracle's golden and probe files. Test support: use it only as a dev-dependency."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

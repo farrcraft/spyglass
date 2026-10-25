@@ -48,9 +48,9 @@ Checked against the unpacked 26.3 server jar with `javap` on 2026-10-25. **26.3'
 - [x] ADR 0009: MD5 from the `md-5` crate (decided 2026-10-25). Either add the RustCrypto `md-5` crate (MIT or Apache-2.0, both already allowed in `deny.toml`), keeping `spyglass-rng` otherwise dependency-free, or hand-write MD5 (about 100 lines, tested against RFC 1321). It's `spyglass-rng`'s first dependency, so it gets a record.
 - [x] Oracle `probe` subcommand, RNG and noise sections (`oracle/src/spyglass/oracle/Probe.java`), plus `cargo xtask oracle probe` and inclusion in `cargo xtask oracle golden`. Spec the output in `docs/specs/oracle.md`.
 - [ ] Confirm by `javap -c` the details the spec must pin down: the Normalization codec default when `normalize` is absent; `nextInt(bound)` and `nextFloat`/`nextDouble` bit counts; `at(x, y, z)` hashing (`Mth.getSeed`); `LegacyPositionalRandomFactory`; and how `PerlinNoise`'s constructor consumes the random (offsets, then the permutation shuffle).
-- [ ] `spyglass-rng`: Xoroshiro128++, `XoroshiroRandom`, positional factory, `Seed128`, MD5 name seeding. Unit tests against reference vectors.
-- [ ] `spyglass-rng`: Java LCG (`LegacyRandom`) and its positional factory, and the Marsaglia polar Gaussian. Unit tests against `java.util.Random` vectors.
-- [ ] Ignored probe test for `spyglass-rng`: every `rng.json` value matches.
+- [x] `spyglass-rng`: Xoroshiro128++, `XoroshiroRandom`, positional factory, `Seed128`, MD5 name seeding. Unit tests against reference vectors (the JDK's own `jdk.internal.random.Xoroshiro128PlusPlus`, RFC 1321, SplitMix64).
+- [x] `spyglass-rng`: Java LCG (`LegacyRandom`) and its positional factory, and the Marsaglia polar Gaussian. Unit tests against `java.util.Random` vectors.
+- [x] Ignored probe test for `spyglass-rng`: every `rng.json` value matches (665 cases, first run).
 - [ ] `spyglass-noise`: `PerlinNoise` (`wrap`, permutation table, `gradDot`, `smoothstep`, `sampleAndLerp`), with a structural check against `parityConfigString` output.
 - [ ] `spyglass-noise`: `NoiseStack` and `NormalNoise` (octave list, amplitude modifiers, normalization factor, second stack at `INPUT_FACTOR`). Powers of two computed exactly, not through `powf`.
 - [ ] Ignored probe test for `spyglass-noise`: every `noise.json` sample matches bit for bit, for every golden seed.
@@ -75,4 +75,5 @@ Checked against the unpacked 26.3 server jar with `javap` on 2026-10-25. **26.3'
 
 ## Notes
 
+- 2026-10-25: `spyglass-rng` matches all 665 `rng.json` cases. Ported from `javap -c` bytecode rather than decompiled source, since bytecode is exact about widths and operation order. The Gaussian uses `Math.log`, a transcendental whose last bit could differ between Java's intrinsic and Rust's libm; all 18 probed Gaussian sequences match, and climate doesn't use Gaussians, so it's noted in the spec rather than solved.
 - 2026-10-25: Plan drafted. The `javap` survey above shows 26.3 reworked noise to return `float` and reworked density functions into compiled samplers (see [m02-density](m02-density.md)). Old-version references are background only.

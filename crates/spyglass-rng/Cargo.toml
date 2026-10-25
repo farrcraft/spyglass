@@ -10,3 +10,9 @@ publish.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+md-5.workspace = true
+
+[dev-dependencies]
+spyglass-oracle.workspace = true

@@ -627,6 +627,7 @@ dependencies = [
  "spyglass-data",
  "spyglass-density",
  "spyglass-oracle",
+ "spyglass-rng",
 ]
 
 [[package]]
@@ -636,6 +637,7 @@ dependencies = [
  "anyhow",
  "clap",
  "directories",
+ "flate2",
  "serde",
  "serde_json",
  "sha1",
@@ -691,6 +693,14 @@ version = "0.0.0"
 [[package]]
 name = "spyglass-structure"
 version = "0.0.0"
+dependencies = [
+ "serde_json",
+ "spyglass-biome",
+ "spyglass-data",
+ "spyglass-density",
+ "spyglass-rng",
+ "tempfile",
+]
 
 [[package]]
 name = "spyglass-terrain"

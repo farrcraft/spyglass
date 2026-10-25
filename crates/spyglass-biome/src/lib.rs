@@ -11,4 +11,4 @@ mod source;
 
 pub use parameters::{BiomeId, Parameter, ParameterList, ParameterPoint, TargetPoint, quantize};
 pub use search::{Lookup, SearchTree};
-pub use source::{BiomeRegion, BiomeSource, Biomes};
+pub use source::{BiomeRegion, BiomeSource, Biomes, HorizontalMatch, MAX_REPLAYED_TIES};

@@ -26,12 +26,15 @@ import net.minecraft.world.level.levelgen.presets.WorldPresets;
  */
 final class Game {
     final RegistryAccess.Frozen access;
+    /** The vanilla data pack, for structure templates. */
+    final MultiPackResourceManager resources;
     final WorldDimensions dimensions;
     final String version;
     final int dataVersion;
 
-    private Game(RegistryAccess.Frozen access, WorldDimensions dimensions) {
+    private Game(RegistryAccess.Frozen access, MultiPackResourceManager resources, WorldDimensions dimensions) {
         this.access = access;
+        this.resources = resources;
         this.dimensions = dimensions;
         var current = SharedConstants.getCurrentVersion();
         this.version = current.id();
@@ -53,9 +56,12 @@ final class Game {
         RegistryAccess.Frozen world =
                 RegistryDataLoader.load(resources, lookups, RegistryDataLoader.WORLD_REGISTRIES, Runnable::run).join();
         RegistryAccess.Frozen access = layers.replaceFrom(RegistryLayer.WORLD, world).compositeAccess();
+        // ReloadableServerResources.updateStaticRegistryTags: bind the static registries' tags
+        // (blocks, items), which structure pieces read.
+        tags.forEach(net.minecraft.core.Registry.PendingTags::apply);
 
         // What CreateWorldScreen and the dedicated server give a world with the Default preset.
-        return new Game(access, WorldPresets.createNormalWorldDimensions(access));
+        return new Game(access, resources, WorldPresets.createNormalWorldDimensions(access));
     }
 
     /** A dimension by id, e.g. {@code minecraft:overworld}. */

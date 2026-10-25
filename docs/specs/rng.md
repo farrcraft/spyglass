@@ -42,6 +42,14 @@ The source for `legacy_random_source: false`, which the overworld uses.
 - `fork()`: a source seeded with `nextLong()`. `forkPositional()`: a factory seeded with `nextLong()`.
 - **Positional factory** (`seed`): `at(x, y, z)` is a source seeded with `getSeed(x, y, z) ^ seed`; `fromHashOf(name)` uses `String.hashCode()` (not MD5): `(long)hash ^ seed`; `fromSeed(s)` ignores the factory's seed.
 
+## Worldgen seeding (`WorldgenRandom`)
+
+`WorldgenRandom` wraps a source; when it's a `LegacyRandomSource`, `next(bits)` is the inner source's, so drawing from it is drawing from that source. Its seeding methods, all on a legacy source, are in `spyglass_rng::worldgen`. Arithmetic wraps; `(long)` widens an `int`.
+
+- `setLargeFeatureSeed(seed, x, z)`: `setSeed(seed)`, `a = nextLong()`, `b = nextLong()`, then `setSeed((long)x * a ^ (long)z * b ^ seed)`.
+- `setLargeFeatureWithSalt(seed, x, z, salt)`: `setSeed((long)x * 341873128712 + (long)z * 132897987541 + seed + salt)`.
+- `seedSlimeChunk(x, z, seed, salt)`: a new legacy source seeded with `seed + (long)(x * x * 4987142) + (long)(x * 5947611) + (long)(z * z) * 4392871 + (long)(z * 389711) ^ salt`. The products in `(long)(...)` are `int` products, wrapped in 32 bits; `(long)(z * z)` is widened before the multiply by 4392871.
+
 ## Gaussian
 
 Both sources use `MarsagliaPolarGaussian`: draw `v1 = 2·nextDouble() − 1` and `v2` likewise until `s = v1² + v2²` is in `(0, 1)`; then `m = sqrt(−2·ln(s) / s)`, return `v1·m` and cache `v2·m` for the next call. `setSeed` clears the cache. Other calls don't disturb it.

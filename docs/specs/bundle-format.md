@@ -14,6 +14,7 @@ A bundle is a directory, by default `bundles/<version id>/`:
 | `data/minecraft/worldgen/**`          | The inner game jar, same path.                                               | 1,144      |
 | `data/minecraft/tags/worldgen/**`     | The inner game jar, same path.                                               | 123        |
 | `data/minecraft/dimension_type/**`    | The inner game jar, same path.                                               | 4          |
+| `data/minecraft/structure/**`         | The inner game jar, same path: structure templates, gzip-compressed NBT.     | 1,511      |
 | `reports/biome_parameters/minecraft/` | The data generator's `--reports` output: `overworld.json` and `nether.json`. | 2          |
 
 Rules:
@@ -23,7 +24,7 @@ Rules:
 - Paths use `/` and are relative to the bundle root, both on disk and in `bundle.json`.
 - Nothing else is in the bundle directory. A file that isn't listed in `bundle.json` makes the bundle invalid.
 
-The set of included directories is part of the format. Adding one (structure templates under `data/minecraft/structure/` are expected later) changes this spec and the extractor's version, but not `format`.
+The set of included directories is part of the format. Adding one changes this spec and the extractor's version, but not `format`. Structure templates were added this way ([ADR 0013](../adr/0013-structure-templates-and-nbt.md)). A bundle extracted before then has none, and loaders that need templates say so and ask for it to be extracted again.
 
 ## `bundle.json`
 
@@ -77,3 +78,14 @@ Loaders read the game's JSON as the game's codecs do, including their shorthands
 - **Numbers** are read from their text, as the codec's type asks: a `float` field is the text parsed straight to `f32`, not an `f64` narrowed ([ADR 0011](../adr/0011-parse-json-numbers-from-their-text.md)).
 
 - **Biome parameters.** The reports write each quantized climate value as a float. Loaders recover the game's long with round-to-nearest, not truncation; see [data-sources.md](data-sources.md#climate-parameter-values).
+
+- **Structure templates** (`Bundle::structure_template(id)`: `minecraft:igloo/top` is `data/minecraft/structure/igloo/top.nbt`) are read with `spyglass_data::nbt` ([ADR 0013](../adr/0013-structure-templates-and-nbt.md)). NBT is the game's binary tag format (`NbtIo.readCompressed`):
+  - The file is gzip-compressed, and holds one named root tag.
+  - Each named tag is a type byte, a name, then the payload. Integers and floats are big-endian.
+  - The 12 value types are byte (1), short, int, long, float, double, byte array (7), string (8), list (9), compound (10), int array and long array (12).
+  - A list is its element type, an `int` length, then that many payloads. An empty list may give type 0.
+  - A compound is named tags up to a type-0 byte. A repeated name keeps the last value.
+  - Strings are a `u16` byte length, then Java's modified UTF-8: `U+0000` is `C0 80`, and characters outside the BMP are two 3-byte surrogates.
+  - Nesting deeper than 512 is an error, as in the game's `NbtAccounter`.
+
+  Which fields a template's reader keeps is in [structure-placement.md](structure-placement.md#jigsaw-starts).

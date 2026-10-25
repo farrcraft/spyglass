@@ -7,6 +7,7 @@ mod gaussian;
 mod legacy;
 mod source;
 pub mod support;
+pub mod worldgen;
 mod xoroshiro;
 
 pub use legacy::{LegacyPositionalRandomFactory, LegacyRandomSource};

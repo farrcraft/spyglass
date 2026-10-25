@@ -1,6 +1,6 @@
 # Differential oracle
 
-Status: draft. Biome grids are specified; structure starts and heightmaps come later.
+Status: draft. Biome grids and structure placement are specified; heightmaps and full structure bounds come later.
 
 Correctness is tested against the real game, not assumed.
 
@@ -9,7 +9,8 @@ Correctness is tested against the real game, not assumed.
 A standalone Java harness in `oracle/`, compiled against the user's own server jar, calls the game's own functions directly, following the same code paths the server uses. This is much faster than `/locate`. The approach is decided in [ADR 0004](../adr/0004-oracle-standalone-harness.md). It dumps golden files:
 
 - biome grids (below);
-- structure starts and bounds (later);
+- structure placement: placement chunks, what the game tries in each, ring positions and slime chunks ([below](#structure-golden-files));
+- full structure bounds (later);
 - heightmaps (later).
 
 CI runs the Rust crates against these for a fixed set of seeds per supported version. Golden files are generated locally into `/oracle-out` (gitignored), since they are derived from the game. No game-derived values are committed, not even small test sets ([ADR 0008](../adr/0008-game-derived-test-values-stay-local.md)).
@@ -18,13 +19,14 @@ CI runs the Rust crates against these for a fixed set of seeds per supported ver
 
 `cargo xtask oracle` builds and runs the harness. Every subcommand takes `--game-version` (default `latest`), `--cache-dir` and `--java`.
 
-| Command                                                         | Does                                                                                       |
-| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `build`                                                         | Fetch and verify the server jar, unpack its libraries, compile the harness.                |
-| `biomes <seed> [--dimension] [--x] [--z] [--size] --out <file>` | Write one golden biome file. Block coordinates; x, z and size must be multiples of 16.     |
-| `check-save <world> [--dimension]`                              | Compare the harness with the biomes stored in a real save. Fails on any unexplained cell.  |
-| `probe`                                                         | Write the [probe files](#probe-files) into `oracle-out/<version>/probe/`.                  |
-| `golden`                                                        | Regenerate the whole golden set below, probe files included, into `oracle-out/<version>/`. |
+| Command                                                         | Does                                                                                                     |
+| --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `build`                                                         | Fetch and verify the server jar, unpack its libraries, compile the harness.                              |
+| `biomes <seed> [--dimension] [--x] [--z] [--size] --out <file>` | Write one golden biome file. Block coordinates; x, z and size must be multiples of 16.                   |
+| `check-save <world> [--dimension]`                              | Compare the harness with the biomes stored in a real save. Fails on any unexplained cell.                |
+| `probe`                                                         | Write the [probe files](#probe-files) into `oracle-out/<version>/probe/`.                                |
+| `structures`                                                    | Write the [structure golden files](#structure-golden-files) for the golden seeds.                        |
+| `golden`                                                        | Regenerate the whole golden set below, probe and structure files included, into `oracle-out/<version>/`. |
 
 `build` runs automatically before the others, and does nothing when nothing changed:
 
@@ -37,8 +39,15 @@ The harness runs with `target/oracle/<version>/run/` as its working directory, w
 
 ### What the harness does
 
-- **Game state.** `SharedConstants.tryDetectVersion`, `Bootstrap.bootStrap`, then the `WorldLoader` sequence with only the vanilla pack: static registries, tags, then the worldgen registries into the `WORLD` layer. Dimensions come from `WorldPresets.createNormalWorldDimensions`, which is what a new Default world gets. A seed becomes a `RandomState` through `RandomState.create`, as `ChunkMap` does. Text seeds are converted by `WorldOptions.parseSeed`, as the world-creation screen does.
+- **Game state.** `SharedConstants.tryDetectVersion`, `Bootstrap.bootStrap`, then the `WorldLoader` sequence with only the vanilla pack: static registries, tags, then the worldgen registries into the `WORLD` layer. The static registries' tags (blocks, items) are then bound, as `ReloadableServerResources.updateStaticRegistryTags` does, because structure pieces read them. Dimensions come from `WorldPresets.createNormalWorldDimensions`, which is what a new Default world gets. A seed becomes a `RandomState` through `RandomState.create`, as `ChunkMap` does. Text seeds are converted by `WorldOptions.parseSeed`, as the world-creation screen does.
 - **Biomes.** Per chunk, as `ChunkGenerator.doCreateBiomes` does: a cached `SamplerContext` on a pooled buffer arena, `createClimateSampler`, then `BiomeSource.createResolverForChunk` over the full height of the dimension type.
+- **Structures.** For each seed:
+  - `ChunkGenerator.createState` builds the placements, and `ensureStructuresGenerated` computes the rings.
+  - For each applicable set and each placement chunk, the harness replays `ChunkGenerator.createStructures`' choice among the set's structures.
+  - Each try calls `Structure.findGenerationPoint` (by reflection: it's protected) on a fresh `GenerationContext`, which gives the stub. It reads the biome there through the context's resolver, and `isValidBiome`.
+  - Then `Structure.generate` gives the start, whose validity decides the choice, as in `tryGenerateStructure`.
+  - Templates come from a `StructureTemplateManager` on the vanilla pack, with a throwaway level directory under the run directory.
+- **Errors.** The game routes `System.out` and `System.err` through its logger, so the harness prints a failure's stack trace to the process's own stdout.
 - **Ties.** For a multi-noise biome source, the harness also runs a copy of `MultiNoiseBiomeSource.createResolverForChunk` that keeps each cell's climate target, and an exact search for every parameter point at the minimum fitness. Every cell is checked: the game's resolver and the game's `getNoiseBiome(target)` must both return a member of that set. Every tied cell, and one cell in 1,000, is also checked against a brute-force search using the game's own `Climate.ParameterPoint.fitness`. Any failure stops the run. It means the copy or the search has drifted from the game.
 
 ## Comparing biomes: exact, except ties
@@ -116,6 +125,62 @@ And these regions per seed, all full height:
 | `border-neg` | −29,999,984 to −29,999,921 | The same, negative.                                   |
 
 That's about 6.4 million cells per seed. The origin region is 1,024 blocks square, not larger, to keep the Rust side's full comparison quick.
+
+## Structure golden files
+
+One UTF-8 JSON file per seed: `oracle-out/<version>/structures/overworld/<seed>.json`, named by the seed as given, like the biome folders. Placement depends on the seed, not on the region asked for, so one file holds every region.
+
+```json
+{
+  "format": 1,
+  "harness": 1,
+  "version": "26.3",
+  "data_version": 5023,
+  "seed": 0,
+  "dimension": "minecraft:overworld",
+  "regions": [{ "name": "origin", "min": [-64, -64], "max": [63, 63] }],
+  "rings": [{ "set": "minecraft:strongholds", "chunks": [[12, -34]] }],
+  "sets": [
+    {
+      "set": "minecraft:villages",
+      "chunks": [
+        {
+          "chunk": [5, 9],
+          "tries": [
+            {
+              "structure": "minecraft:village_plains",
+              "stub": [87, 70, 152],
+              "biome": "minecraft:plains",
+              "valid_biome": true,
+              "start": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "slime": [{ "region": "origin", "chunks": [[-64, -60]] }]
+}
+```
+
+- `regions` are chunk rectangles, inclusive: `origin` (chunks −64 to 63), `far-pos` and `far-neg` (32 × 32 chunks from block ±1,000,000), and `border-pos` and `border-neg` (the 32 × 32 chunks inside the world border).
+- `rings` gives each concentric-ring set's positions, in the game's order.
+- `sets` lists every set the dimension generates (`possibleStructureSets`), with every placement chunk in the regions (`isStructureChunk`).
+- `tries` is each structure the game's choice tried there, in order, ending at the first `start`. For each try:
+  - `stub` is the check position `findGenerationPoint` returned. It's absent when there was none, e.g. a failed climate-only condition.
+  - `biome` is the biome there, and `valid_biome` is `isValidBiome`.
+  - `start` is whether `generate` made a valid start.
+- `slime` gives each region's slime chunks.
+
+### Rust-side structure comparison
+
+`spyglass-structure/tests/golden.rs` checks every file by the rules in [structure-placement.md](structure-placement.md#testing). It needs a bundle for the same version, with templates. Run it with:
+
+```sh
+cargo test --release -p spyglass-structure -- --ignored
+```
+
+For 26.3 it covers 6,056 placement chunks, 9,898 tries and 2,427 check positions in about 40 seconds.
 
 ## Probe files
 

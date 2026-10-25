@@ -6,12 +6,17 @@ use std::collections::BTreeMap;
 use serde_json::Value;
 use spyglass_data::bundle::Bundle;
 use spyglass_density::{ClimateRouter, ClimateSampler, LoadError, LoadErrorKind};
+use spyglass_rng::RandomSource;
 
 use crate::parameters::{BiomeId, ParameterList, TargetPoint};
 use crate::search::{Lookup, SearchTree};
 
 const WORLD_PRESET: &str = "worldgen/world_preset";
 const PARAMETER_LIST: &str = "worldgen/multi_noise_biome_source_parameter_list";
+
+/// The most tied cells [`Biomes::find_biome_horizontal`] replays every combination of; beyond
+/// it, a result is reported as tie-dependent without checking.
+pub const MAX_REPLAYED_TIES: usize = 12;
 
 /// An id with the default namespace made explicit.
 fn full_id(id: &str) -> String {
@@ -163,6 +168,111 @@ impl Biomes<'_> {
         self.source.lookup(&self.climate_at(qx, qy, qz))
     }
 
+    /// `BiomeSource.findBiomeHorizontal(x, y, z, radius, increment, predicate, random,
+    /// findClosest)`, in block coordinates: a biome matching `matches` among the quarts of the
+    /// square of `radius` blocks around `(x, z)` at height `y`.
+    ///
+    /// With `find_closest`, rings are scanned outwards from the centre and the first match is
+    /// returned. Otherwise the whole square is scanned, z outer and x inner, and one match is
+    /// chosen by reservoir sampling: the first match is kept, and the `n`-th replaces it when
+    /// `random.next_int_bounded(n) == 0`.
+    ///
+    /// `matches` sees each cell's answer, a tied cell's first candidate. A tied cell whose
+    /// candidates disagree on `matches` could go either way in the game. The search is replayed
+    /// for every combination of those cells' outcomes, from the same random state, and
+    /// `tie_dependent` reports whether any gives a different position. With more than
+    /// [`MAX_REPLAYED_TIES`] such cells, it's reported without replaying.
+    #[allow(clippy::too_many_arguments)]
+    pub fn find_biome_horizontal<R: RandomSource + Clone>(
+        &self,
+        x: i32,
+        y: i32,
+        z: i32,
+        radius: i32,
+        increment: i32,
+        matches: impl Fn(BiomeId) -> bool,
+        random: &mut R,
+        find_closest: bool,
+    ) -> Option<HorizontalMatch> {
+        let (qx, qy, qz, qr) = (x >> 2, y >> 2, z >> 2, radius >> 2);
+        // The cells that can matter, in scan order: every hit, and every cell that could be one.
+        let mut cells: Vec<(i32, i32, Lookup, bool)> = Vec::new();
+        let mut ambiguous = 0;
+        let mut r = if find_closest { 0 } else { qr };
+        'scan: while r <= qr {
+            let mut dz = -r;
+            while dz <= r {
+                let z_edge = dz.wrapping_abs() == r;
+                let mut dx = -r;
+                while dx <= r {
+                    if find_closest && dx.wrapping_abs() != r && !z_edge {
+                        dx += increment;
+                        continue;
+                    }
+                    let (cx, cz) = (qx.wrapping_add(dx), qz.wrapping_add(dz));
+                    let lookup = self.biome_at(cx, qy, cz);
+                    let hit = matches(lookup.biome());
+                    let tied = lookup.candidates().iter().any(|&b| matches(b) != hit);
+                    if hit || tied {
+                        ambiguous += usize::from(tied);
+                        cells.push((cx, cz, lookup, tied));
+                        // Nothing after a certain match changes the closest one.
+                        if find_closest && hit && !tied {
+                            break 'scan;
+                        }
+                    }
+                    dx += increment;
+                }
+                dz += increment;
+            }
+            r += increment;
+        }
+
+        // The game's draws, given which cells match.
+        let choose = |is_match: &dyn Fn(usize) -> bool, random: &mut R| -> Option<usize> {
+            let mut chosen = None;
+            let mut count = 0_i32;
+            for i in 0..cells.len() {
+                if !is_match(i) {
+                    continue;
+                }
+                if chosen.is_none() || random.next_int_bounded(count + 1) == 0 {
+                    chosen = Some(i);
+                    if find_closest {
+                        return chosen;
+                    }
+                }
+                count += 1;
+            }
+            chosen
+        };
+        let start = random.clone();
+        let answer = choose(&|i| matches(cells[i].2.biome()), random);
+        let position = |i: Option<usize>| i.map(|i| (cells[i].0, cells[i].1));
+        let tie_dependent = ambiguous > MAX_REPLAYED_TIES
+            || (ambiguous > 0 && {
+                let tied: Vec<usize> = (0..cells.len()).filter(|&i| cells[i].3).collect();
+                (1_u32..1 << ambiguous).any(|mask| {
+                    let flipped = |i: usize| {
+                        let hit = matches(cells[i].2.biome());
+                        match tied.iter().position(|&t| t == i) {
+                            Some(bit) if mask >> bit & 1 == 1 => !hit,
+                            _ => hit,
+                        }
+                    };
+                    position(choose(&flipped, &mut start.clone())) != position(answer)
+                })
+            });
+        answer.map(|i| {
+            let (cx, cz, lookup, _) = cells.swap_remove(i);
+            HorizontalMatch {
+                position: [cx << 2, y, cz << 2],
+                biome: lookup,
+                tie_dependent,
+            }
+        })
+    }
+
     /// Every biome in the box of `size` quarts from `min`. Each column's y-independent climate
     /// is evaluated once ([`ClimateSampler::at_column`]), which gives the same answers as
     /// [`biome_at`](Self::biome_at) on every cell.
@@ -195,6 +305,18 @@ impl Biomes<'_> {
             ties,
         }
     }
+}
+
+/// A match from [`Biomes::find_biome_horizontal`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HorizontalMatch {
+    /// The block position: the matching quart's minimum x and z, and the `y` searched at.
+    pub position: [i32; 3],
+    /// The lookup there.
+    pub biome: Lookup,
+    /// Whether a tied cell in the search could have changed the result (in the whole square
+    /// when scanning all of it, or up to the match with `find_closest`).
+    pub tie_dependent: bool,
 }
 
 /// Biomes over a box of quarts, from [`Biomes::biomes_in`].

@@ -25,6 +25,9 @@ import net.minecraft.world.level.levelgen.WorldOptions;
  * probe &lt;out dir&gt; &lt;seed&gt;...
  *     Raw values from the random sources and noises (rng.json, noise.json), for the Rust ports'
  *     tests. Noise cases are written for each seed; random-source cases use a fixed seed list.
+ * structures &lt;out dir&gt; &lt;seed&gt;...
+ *     One structure golden file per seed (&lt;seed&gt;.json): overworld placement chunks, what the game
+ *     tries in each, ring positions and slime chunks, in fixed chunk regions.
  * </pre>
  */
 public final class Main {
@@ -41,17 +44,27 @@ public final class Main {
         Game game = Game.load();
         System.out.printf("spyglass oracle %s: Minecraft %s (data version %d), loaded in %.1f s%n", HARNESS_VERSION,
                 game.version, game.dataVersion, (System.nanoTime() - t0) / 1e9);
-        int status = switch (args[0]) {
-            case "biomes" -> biomes(game, Path.of(args[1]), intOption(args, "--threads",
-                    Runtime.getRuntime().availableProcessors()));
-            case "check-save" -> CheckSave.run(game, Path.of(args[1]),
-                    option(args, "--dimension", "minecraft:overworld")) == 0 ? 0 : 1;
-            case "probe" -> Probe.run(game, Path.of(args[1]), List.of(args).subList(2, args.length));
-            default -> {
-                usage();
-                yield 2;
-            }
-        };
+        int status;
+        try {
+            status = switch (args[0]) {
+                case "biomes" -> biomes(game, Path.of(args[1]), intOption(args, "--threads",
+                        Runtime.getRuntime().availableProcessors()));
+                case "check-save" -> CheckSave.run(game, Path.of(args[1]),
+                        option(args, "--dimension", "minecraft:overworld")) == 0 ? 0 : 1;
+                case "probe" -> Probe.run(game, Path.of(args[1]), List.of(args).subList(2, args.length));
+                case "structures" -> Structures.run(game, Path.of(args[1]), "minecraft:overworld",
+                        List.of(args).subList(2, args.length));
+                default -> {
+                    usage();
+                    yield 2;
+                }
+            };
+        } catch (Throwable e) {
+            // The game routes System.out and System.err through its logger, which drops stack
+            // traces; write to the process's stdout directly.
+            e.printStackTrace(new java.io.PrintStream(new java.io.FileOutputStream(java.io.FileDescriptor.out), true));
+            status = 1;
+        }
         // The game leaves non-daemon worker threads running.
         System.exit(status);
     }
@@ -114,7 +127,7 @@ public final class Main {
 
     private static void usage() {
         System.err.println("usage: biomes <jobs file> [--threads N] | check-save <world dir> [--dimension ID]"
-                + " | probe <out dir> <seed>...");
+                + " | probe <out dir> <seed>... | structures <out dir> <seed>...");
         System.exit(2);
     }
 }

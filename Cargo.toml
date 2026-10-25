@@ -32,6 +32,7 @@ invalid_rust_codeblocks = "deny"
 bare_urls = "deny"
 
 [workspace.dependencies]
+spyglass-biome = { path = "crates/spyglass-biome" }
 spyglass-data = { path = "crates/spyglass-data" }
 spyglass-density = { path = "crates/spyglass-density" }
 spyglass-noise = { path = "crates/spyglass-noise" }
@@ -40,6 +41,7 @@ spyglass-rng = { path = "crates/spyglass-rng" }
 
 anyhow = "1.0.104"
 directories = "6.0.0"
+flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs"] }
 md-5 = "0.11.0"
 clap = { version = "4.6.7", features = ["derive"] }
 serde = { version = "1.0.229", features = ["derive"] }

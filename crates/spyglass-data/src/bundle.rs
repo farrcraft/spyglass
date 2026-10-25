@@ -23,6 +23,7 @@ pub const JAR_DIRS: &[&str] = &[
     "data/minecraft/worldgen/",
     "data/minecraft/tags/worldgen/",
     "data/minecraft/dimension_type/",
+    "data/minecraft/structure/",
 ];
 
 /// Data-generator reports copied into a bundle, relative to the generator's output directory and
@@ -334,6 +335,35 @@ impl Bundle {
         self.json(path)
     }
 
+    /// A structure template's bytes (gzip-compressed NBT, as in the jar), by id: e.g.
+    /// `minecraft:igloo/top` is `data/minecraft/structure/igloo/top.nbt`. Bundles extracted
+    /// before templates were included have none, and say so.
+    pub fn structure_template(&self, id: &str) -> Result<Vec<u8>, BundleError> {
+        let path = Self::resource_path("structure", id)?;
+        let path = format!("{}.nbt", path.strip_suffix(".json").unwrap_or(&path));
+        if !self
+            .manifest
+            .files
+            .keys()
+            .any(|p| p.starts_with("data/minecraft/structure/"))
+        {
+            return Err(BundleError::Layout(format!(
+                "{} has no structure templates; extract it again with this version of spyglass",
+                self.dir.display()
+            )));
+        }
+        self.bytes(&path)
+    }
+
+    /// Any file the manifest lists, as bytes. Unlisted paths are refused.
+    fn bytes(&self, path: &str) -> Result<Vec<u8>, BundleError> {
+        if !self.manifest.files.contains_key(path) {
+            return Err(BundleError::NotFound(path.to_string()));
+        }
+        let file = self.dir.join(path);
+        fs::read(&file).map_err(io_err(&file))
+    }
+
     /// Any file the manifest lists, parsed as JSON. Unlisted paths are refused, so nothing
     /// outside the bundle can be read.
     fn json(&self, path: &str) -> Result<serde_json::Value, BundleError> {
@@ -456,6 +486,7 @@ mod tests {
                 ("data/minecraft/tags/worldgen/biome/is_ocean.json", b"[]"),
                 ("data/minecraft/tags/block/logs.json", b"not copied"),
                 ("data/minecraft/dimension_type/overworld.json", b"{}"),
+                ("data/minecraft/structure/igloo/top.nbt", b"\x1f\x8b"),
                 ("data/minecraft/recipe/bread.json", b"not copied"),
                 ("net/minecraft/Main.class", b"not copied"),
             ],
@@ -499,6 +530,7 @@ mod tests {
             manifest.files.keys().collect::<Vec<_>>(),
             [
                 "data/minecraft/dimension_type/overworld.json",
+                "data/minecraft/structure/igloo/top.nbt",
                 "data/minecraft/tags/worldgen/biome/is_ocean.json",
                 "data/minecraft/worldgen/biome/plains.json",
                 "data/minecraft/worldgen/noise/a.json",

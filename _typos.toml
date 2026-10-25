@@ -1,0 +1,4 @@
+# Words typos would "correct" that are right here.
+[default.extend-words]
+# flate2, the deflate and gzip crate (ADR 0013).
+flate = "flate"

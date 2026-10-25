@@ -174,6 +174,12 @@ The biome crate checks every cell of the golden biome files, and needs the golde
 cargo test --release -p spyglass-biome -- --ignored
 ```
 
+`cargo xtask oracle structures` (also part of `golden`) writes the structure golden files: placement chunks, what the game tries in each, ring positions and slime chunks for each golden seed. The structure crate checks against them in about 40 seconds. It needs a bundle with structure templates, so extract again if yours predates them:
+
+```sh
+cargo test --release -p spyglass-structure -- --ignored
+```
+
 `check-save` takes any world created in the same game version with the Default preset and no worldgen datapacks. Its folder is in your launcher's `saves` directory. It should report zero unexplained mismatches.
 
 ## 7. Editor setup

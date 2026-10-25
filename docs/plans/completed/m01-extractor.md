@@ -1,9 +1,9 @@
 # m01. Extractor and version bundle
 
-- Status: In progress
-- Milestone: [01. Extractor and oracle harness](../roadmap/01-extractor-and-oracle.md)
+- Status: Completed
+- Milestone: [01. Extractor and oracle harness](../../roadmap/completed/01-extractor-and-oracle.md)
 - Started: 2026-10-24
-- Completed: —
+- Completed: 2026-10-25
 
 ## Goal
 
@@ -48,7 +48,7 @@ All in `spyglass-data`: a library for manifest, download and bundle logic, and t
 - [x] `spyglass-extract` CLI: `spyglass-extract [VERSION] [--cache-dir] [--java] [--out] [--force]`, and `spyglass-extract verify <dir>`.
 - [x] End-to-end test against real 26.3, marked `#[ignore]` (needs network and Java). Run with `cargo test -- --ignored` (`crates/spyglass-data/tests/extract.rs`).
 - [x] Fill in "Game data" in `docs/getting-started.md`.
-- [ ] Fresh clone + setup + extract on macOS or Linux (see Verification).
+- [x] Fresh clone + setup + extract on macOS or Linux (see Verification). Done on Linux: stock Ubuntu 24.04 in Docker.
 
 ## Verification
 
@@ -67,7 +67,8 @@ All in `spyglass-data`: a library for manifest, download and bundle logic, and t
 
 ## Notes
 
-- 2026-10-25: Extractor built. Real 26.3 bundle: 1,273 files (1,144 worldgen, 123 worldgen tags, 4 dimension types, 2 reports), data version 5023. The ignored end-to-end test extracts twice and gets byte-identical `bundle.json`. A release build takes about 11 s, 8 s of it in the data generator. Debug builds took about 27 s, mostly unoptimized SHA-1 and inflate; `[profile.dev.package]` opt-levels for those crates bring that to about 12 s. A fresh clone on Windows extracts a bundle whose `bundle.json` is byte-identical to the dev checkout's, and `git status --ignored` shows only `bundles/` and `target/`. macOS or Linux still to do.
+- 2026-10-25: Extractor built. Real 26.3 bundle: 1,273 files (1,144 worldgen, 123 worldgen tags, 4 dimension types, 2 reports), data version 5023. The ignored end-to-end test extracts twice and gets byte-identical `bundle.json`. A release build takes about 11 s, 8 s of it in the data generator. Debug builds took about 27 s, mostly unoptimized SHA-1 and inflate; `[profile.dev.package]` opt-levels for those crates bring that to about 12 s. A fresh clone on Windows extracts a bundle whose `bundle.json` is byte-identical to the dev checkout's, and `git status --ignored` shows only `bundles/` and `target/`.
+- 2026-10-25: Linux verified with a throwaway `ubuntu:24.04` container: git, curl and build-essential, then a fresh clone, `scripts/setup.sh`, extraction without Java (clear error listing every searched path), `openjdk-25-jre-headless` from apt, then extraction. Its `bundle.json` is byte-identical to the Windows one, though a different Java build ran the generator. `git status --porcelain` stays empty. The run found two setup issues, both fixed: on a fresh rustup the MSRV toolchain became the global default, and the no-Java hint suggested winget on Linux.
 - 2026-10-25: Ran the data generator by hand (`--reports`, Zulu 25 JRE from the Modrinth App): about 6 s, 1,666 files. Only `biome_parameters/minecraft/{overworld,nether}.json` are needed. The report prints parameters as unquantized floats; recovering the game's longs needs round-to-nearest, not the codec's truncation (spec has the details and the exhaustive check). Decision for the bundle ADR: store the reports as written, and let the loader do the exact inverse, or store quantized longs.
 - 2026-10-24: Java discovery and the manifest client landed early, because `cargo xtask doctor` (ADR 0003) needs them.
 

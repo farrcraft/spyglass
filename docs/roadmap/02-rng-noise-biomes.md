@@ -1,7 +1,7 @@
 # 02. RNG, noise and biomes
 
 - Status: Planned
-- Depends on: [01](01-extractor-and-oracle.md)
+- Depends on: [01](completed/01-extractor-and-oracle.md)
 - Plans: none yet
 
 ## Goal

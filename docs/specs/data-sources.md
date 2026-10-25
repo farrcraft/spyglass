@@ -48,7 +48,7 @@ Running the data generator needs a Java runtime whose major version equals the v
 
 A directory counts as a Java home if it has `bin/java` and a `release` file. The version is read from the `JAVA_VERSION` line of `release`, never by running the executable. Majors follow both schemes: `25.0.3` → 25, `1.8.0_51` → 8. Duplicate homes (by canonical path) are reported once. A home with `bin/javac` is a JDK, which only oracle work needs ([ADR 0004](../adr/0004-oracle-standalone-harness.md)). The oracle uses the same search, filtered to JDKs.
 
-The Windows rows were confirmed on a real machine on 2026-10-24. The macOS and Linux paths follow each launcher's documented data folder but haven't been confirmed yet.
+The Windows rows were confirmed on a real machine on 2026-10-24. On Linux, `PATH` and `/usr/lib/jvm` were confirmed with Ubuntu 24.04's `openjdk-25-jre-headless` on 2026-10-25. The macOS paths and the Linux launcher paths follow each launcher's documented data folder but haven't been confirmed yet.
 
 ## Data generator
 

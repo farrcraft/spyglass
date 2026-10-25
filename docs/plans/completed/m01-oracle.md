@@ -1,7 +1,7 @@
 # m01. Oracle harness and golden biome grids
 
 - Status: Completed
-- Milestone: [01. Extractor and oracle harness](../../roadmap/01-extractor-and-oracle.md)
+- Milestone: [01. Extractor and oracle harness](../../roadmap/completed/01-extractor-and-oracle.md)
 - Started: 2026-10-24
 - Completed: 2026-10-25
 

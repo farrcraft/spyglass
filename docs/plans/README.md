@@ -6,6 +6,4 @@ Code must not reference plans. Anything durable a plan produces belongs in a spe
 
 ## Active
 
-| Plan                              | Milestone                        | Status      |
-| --------------------------------- | -------------------------------- | ----------- |
-| [m01-extractor](m01-extractor.md) | 01. Extractor and oracle harness | In progress |
+None. The next plan starts milestone 02.

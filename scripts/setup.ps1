@@ -25,6 +25,13 @@ if (-not (Get-Command rustup -ErrorAction SilentlyContinue)) {
 rustup toolchain install
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+# A fresh rustup has no default toolchain, and the first toolchain installed by name (the MSRV,
+# below) would become the default everywhere. Make the pinned channel the default instead.
+if (-not (rustup toolchain list | Select-String -SimpleMatch 'default)')) {
+    rustup default ((rustup show active-toolchain) -split ' ')[0]
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
+
 if (-not (Get-Command link.exe -ErrorAction SilentlyContinue) -and
     -not (Test-Path "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe")) {
     Write-Warning 'MSVC build tools not detected. Install "Desktop development with C++" from https://visualstudio.microsoft.com/visual-cpp-build-tools/'

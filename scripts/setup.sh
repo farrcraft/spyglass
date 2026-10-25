@@ -23,6 +23,12 @@ fi
 # Reads rust-toolchain.toml and installs the channel and components it names.
 rustup toolchain install
 
+# A fresh rustup has no default toolchain, and the first toolchain installed by name (the MSRV,
+# below) would become the default everywhere. Make the pinned channel the default instead.
+if ! rustup toolchain list | grep -q 'default)'; then
+    rustup default "$(rustup show active-toolchain | cut -d' ' -f1)"
+fi
+
 if ! command -v cc >/dev/null 2>&1; then
     echo "warning: no C compiler found; install build-essential (Linux) or run xcode-select --install (macOS)" >&2
 fi

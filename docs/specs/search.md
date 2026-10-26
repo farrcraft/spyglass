@@ -1,6 +1,6 @@
 # Seed search
 
-Status: stable. Implemented in `spyglass-search` and `spyglass`, and checked by tests (these are spyglass's semantics, not the game's). Covers the query language, how each constraint is evaluated and scored, seed sources and their order, and what makes results deterministic. The language is [ADR 0020](../adr/0020-search-query-language.md), with dimensions from [ADR 0024](../adr/0024-dimensions-in-the-search-language.md) ([below](#dimensions), a draft until it's implemented); the engine is [ADR 0021](../adr/0021-search-engine.md).
+Status: stable. Implemented in `spyglass-search` and `spyglass`, and checked by tests (these are spyglass's semantics, not the game's). Covers the query language, how each constraint is evaluated and scored, seed sources and their order, and what makes results deterministic. The language is [ADR 0020](../adr/0020-search-query-language.md), with dimensions from [ADR 0024](../adr/0024-dimensions-in-the-search-language.md) and [ADR 0025](../adr/0025-inferring-dimensions-in-search-queries.md) ([below](#dimensions)); the engine is [ADR 0021](../adr/0021-search-engine.md).
 
 A query describes a world as a list of constraints. A **required** constraint must be met for a seed to be reported; a **preferred** one adds to the seed's score. A search evaluates seeds from a source in a fixed order and keeps the best ones.
 
@@ -79,20 +79,18 @@ The last line asks for the spawn to be in plains: a disc of radius 0 holds only 
 
 ## Dimensions
 
-Draft: decided in [ADR 0024](../adr/0024-dimensions-in-the-search-language.md), not yet implemented.
+Every constraint is in one dimension: the Overworld, the Nether or the End of the Default preset. `Game::search_query` resolves a query across them; `SearchQuery::dimension` says which each constraint is in.
 
-Every constraint is in one dimension: the Overworld, the Nether or the End of the Default preset.
+- **Inferred.** A structure or tag's dimension is the first of the Overworld, the Nether and the End that places any of its structures: some structure it names has biomes in that dimension's biome source ([structure-placement.md](structure-placement.md)). A biome's is the first whose source has it. A target that no dimension places is the Overworld's, and is never found there. Slime counts and `spawn` constraints are the Overworld's. Inference reads each dimension's data until one places the target, so a Nether target loads the Overworld's too.
+- **Explicit.** A dimension written after `require` or `prefer` sets it, and must place some of the target, or it's an error ("minecraft:tower isn't placed in the Nether"). That's how the rest of a tag that spans dimensions is reached: the Overworld places some of `#minecraft:ruined_portal`, so it infers the Overworld, and `nether` picks the Nether's portal.
+- **Overworld only.** Slime chunks and `spawn` constraints in another dimension are errors. Structures on concentric rings (strongholds) aren't placed anywhere else, so naming them in another dimension is the error above.
 
-- **Inferred.** A structure or tag's dimension is the one whose biome source can place every structure it names (its set applies there, [structure-placement.md](structure-placement.md)). A biome's is the one whose biome source has it. Slime counts and `spawn` constraints are the Overworld's.
-- **Explicit.** A dimension written after `require` or `prefer` sets it. It's required when inference fails (a tag whose structures are placed in more than one dimension), and an error when it contradicts the target ("fortresses aren't placed in the Overworld").
-- **Overworld only.** Slime chunks and structures placed on concentric rings (strongholds) are errors in another dimension.
-
-Points, boxes, `at y` and every position a constraint counts are in its dimension's coordinates.
+Points, boxes, `at y` and every position a constraint counts are in its dimension's coordinates. `at y` must be within that dimension's build height.
 
 **Anchors in other dimensions** are converted into the constraint's dimension as the game scales a teleport (`DimensionType.getTeleportationScale`): each coordinate `v` becomes `floor(v · (from / to))` in `double`, where `from` and `to` are the two dimension types' `coordinate_scale` (1 for the Overworld and the End, 8 for the Nether, from the bundle), saturated to `i32` (`Game::convert`). Unlike a teleport, it isn't clamped to the world border, which matters only past 3,749,998 Nether blocks out. So:
 
-- `spawn` in a Nether constraint is the Overworld spawn's position divided by 8, rounded down: the block its portal links to.
-- A structure anchor in another dimension is converted the same way, from its own place, which is in its own dimension's coordinates.
+- `spawn` in a Nether constraint is the Overworld spawn's position divided by 8, rounded down: the block its portal links to. Rounding down means a radius around it is measured from that one block, not from the eight Overworld blocks that map to it.
+- A structure anchor is in the constraint's dimension if that dimension places some of its structures, and otherwise in the anchor's own inferred dimension. Its place is in the anchor's dimension's coordinates, with `spawn` converted there. Its starts are then converted into the constraint's dimension. A start is never its own anchor; starts in different dimensions are different starts.
 - The End isn't linked to the other dimensions by coordinates. An anchor between the End and another dimension, and `spawn` in an End constraint, are errors.
 
 For example:
@@ -101,11 +99,15 @@ For example:
 # A fortress at the spawn's portal, with a bastion near it.
 require minecraft:fortress within 100 of spawn
 prefer minecraft:bastion_remnant within 200 of minecraft:fortress within 1000 of spawn
+# A fortress under a village: the village's position divided by 8.
+prefer minecraft:fortress within 50 of #minecraft:village within 800 of spawn
 ```
 
-Both lines are in the Nether, which fortresses and bastions infer, and `spawn` there is the Overworld spawn's portal position. In `require nether #minecraft:ruined_portal within 300 of spawn`, the ruined portal tag names Overworld and Nether portals, so `nether` picks the Nether's.
+The first two lines are in the Nether, which fortresses and bastions infer, and the bastion's anchor is the Nether's fortresses. In the third, the Nether places no villages, so its anchor is the Overworld's villages, converted.
 
-Every query written before dimensions existed infers the Overworld throughout, so it keeps its meaning and canonical text.
+**Canonical text** writes a constraint's dimension only when it isn't the inferred one, so `require nether minecraft:fortress …` prints as `require minecraft:fortress …`. Every query written before dimensions existed infers the Overworld throughout, so it keeps its meaning and canonical text.
+
+**One world.** `World::search_query` resolves every constraint in the world's own dimension, without inference: a dimension written as another, slime chunks or `spawn` outside the Overworld, and a `spawn` anchor in a world other than the Overworld (which needs the Overworld's spawn) are errors. Such a query, and `Session::evaluate` and `World::search` on it, read that dimension only. `GameSession::evaluate` and `Game::search` judge any query, binding a dimension's session for a seed only when one of its constraints is checked.
 
 ## Positions and regions
 
@@ -226,4 +228,5 @@ Nothing in the semantics depends on floating point: positions, distances and sco
 - **Language**: every example in this spec parses; canonical text parses back to the same query; malformed input gives an error with a line and column, never a panic.
 - **Evaluation**: hand-checked answers for each constraint form on fixture bundles, including candidates, tied cells, a platform-dependent spawn and certain mode.
 - **The fast path**: for every seed in test ranges, the placement prefilter never rejects a seed the plain evaluation reports, and the fast check's verdict and score equal the plain evaluation's, confirmed or not. Confirming must narrow every result, as above.
+- **Dimensions**: on a fixture bundle with an Overworld and a Nether, inference, written dimensions and canonical text, every error above, a world's queries against a game's, and a `spawn` anchor in the Nether counting exactly the starts around the Overworld spawn divided by 8. The fast path and prefilter checks above run over queries that span both dimensions, with anchors converted both ways; an ignored test repeats them on the real 26.3 game, Nether and End queries included, confirmed or not.
 - **Determinism**: equal results for 1, 2 and 8 threads, and for a range run whole or in two parts.

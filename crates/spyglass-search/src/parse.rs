@@ -1,8 +1,10 @@
 //! The query parser: lines into tokens, tokens into constraints (`docs/specs/search.md`).
 
+use spyglass_data::dimension::Dimension;
+
 use crate::query::{
     Anchor, Constraint, Count, Importance, Kind, MAX_COORDINATE, MAX_PLACE_SIDE, MAX_SAMPLES,
-    Place, Region, Sampling,
+    Place, Region, Sampling, keyword,
 };
 
 /// Why a query's text didn't parse, and where.
@@ -17,9 +19,28 @@ pub struct ParseError {
     pub message: String,
 }
 
-const KEYWORDS: [&str; 18] = [
-    "require", "prefer", "weight", "no", "cluster", "within", "of", "each", "other", "in", "to",
-    "spawn", "slime", "biome", "covers", "at", "y", "step",
+const KEYWORDS: [&str; 21] = [
+    "require",
+    "prefer",
+    "weight",
+    "no",
+    "cluster",
+    "within",
+    "of",
+    "each",
+    "other",
+    "in",
+    "to",
+    "spawn",
+    "slime",
+    "biome",
+    "covers",
+    "at",
+    "y",
+    "step",
+    "overworld",
+    "nether",
+    "end",
 ];
 
 /// A word of a line, and its column.
@@ -171,6 +192,12 @@ impl<'a> Parser<'_, 'a> {
             _ => return Err(self.expected("`require` or `prefer`")),
         };
         self.next += 1;
+        let dimension = Dimension::ALL
+            .into_iter()
+            .find(|&d| self.peek_is(keyword(d)));
+        if dimension.is_some() {
+            self.next += 1;
+        }
         let kind = self.kind()?;
         let importance = if self.peek_is("weight") {
             if required {
@@ -188,7 +215,11 @@ impl<'a> Parser<'_, 'a> {
         if self.peek().is_some() {
             return Err(self.expected("the end of the line"));
         }
-        Ok(Constraint { importance, kind })
+        Ok(Constraint {
+            importance,
+            dimension,
+            kind,
+        })
     }
 
     fn kind(&mut self) -> Parsed<Kind> {
@@ -549,6 +580,7 @@ mod tests {
             c,
             [Constraint {
                 importance: Importance::Required,
+                dimension: None,
                 kind: Kind::Structures {
                     count: Count::AtLeast(2),
                     structure: "minecraft:swamp_hut".to_string(),
@@ -564,6 +596,7 @@ mod tests {
             c[0],
             Constraint {
                 importance: Importance::Preferred { weight: 7 },
+                dimension: None,
                 kind: Kind::Structures {
                     count: Count::No,
                     structure: "#minecraft:village".to_string(),
@@ -628,6 +661,52 @@ mod tests {
         );
         assert!(matches!(c[1].kind, Kind::Biome { present: false, .. }));
         assert!(matches!(c[2].kind, Kind::Spawn { .. }));
+    }
+
+    #[test]
+    fn dimensions() {
+        let c = parse(
+            "require nether fortress within 100 of spawn
+prefer end end_city in 0,0 to 9,9 weight 3",
+        );
+        assert_eq!(c[0].dimension, Some(Dimension::Nether));
+        assert_eq!(c[1].dimension, Some(Dimension::End));
+        assert_eq!(
+            c[1].to_string(),
+            "prefer end minecraft:end_city in 0,0 to 9,9 weight 3"
+        );
+        assert_eq!(parse("prefer igloo within 5 of spawn")[0].dimension, None);
+        let mut query = Query::parse("require overworld igloo within 5 of spawn").unwrap();
+        assert_eq!(
+            query.to_string(),
+            "require overworld minecraft:igloo within 5 of spawn
+"
+        );
+        query.forget_dimension(0);
+        assert_eq!(
+            query.to_string(),
+            "require minecraft:igloo within 5 of spawn
+"
+        );
+        // The dimension comes first, once, and is never an id.
+        for (text, column) in [
+            ("require igloo nether within 5 of spawn", 15),
+            ("require nether nether igloo within 5 of spawn", 16),
+            ("require nether end within 5 of spawn", 16),
+        ] {
+            assert_eq!(error(text).column, column, "{text}");
+        }
+        assert_eq!(
+            parse("require minecraft:end within 5 of spawn")[0].kind,
+            Kind::Structures {
+                count: Count::AtLeast(1),
+                structure: "minecraft:end".to_string(),
+                region: Region::Place(Place::Within {
+                    radius: 5,
+                    anchor: Anchor::Spawn
+                }),
+            }
+        );
     }
 
     /// The spec's query examples: its `text` blocks that start like a query.
@@ -757,6 +836,9 @@ mod tests {
             "at",
             "y",
             "step",
+            "overworld",
+            "nether",
+            "end",
             "0",
             "-5",
             "2,3",

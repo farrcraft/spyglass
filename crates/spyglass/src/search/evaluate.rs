@@ -8,8 +8,11 @@ use spyglass_search::{
     Anchor, Checked, Count, Importance, Kind, Place, Region, Sampling, distance_sqr, largest_group,
 };
 
-use super::{Resolved, SearchQuery, Target};
-use crate::{BiomeAt, Result, Session, SpawnOrigin, StructureQuery, StructureStart};
+use super::{Resolved, SearchQuery, Target, convert};
+use crate::{
+    BiomeAt, Dimension, Error, GameSession, Result, Session, SpawnOrigin, StructureQuery,
+    StructureStart,
+};
 
 /// Whether a constraint, or a seed, meets a query (`docs/specs/search.md#outcomes`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -59,6 +62,8 @@ impl Evaluation {
 /// One constraint's result.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConstraintResult {
+    /// The dimension it counts in: its features' positions are in its coordinates.
+    pub dimension: Dimension,
     /// Its outcome.
     pub outcome: Outcome,
     /// Its satisfaction in the best case, 0 to 1,000. Required constraints have one too, though
@@ -103,9 +108,9 @@ struct Judged {
 }
 
 impl Judged {
-    /// The constraint's result. A spawn that may differ by platform makes a constraint that
-    /// uses it possibly met, and worth nothing in the worst case.
-    fn result(self, spawn_uncertain: bool) -> ConstraintResult {
+    /// The constraint's result in `dimension`. A spawn that may differ by platform makes a
+    /// constraint that uses it possibly met, and worth nothing in the worst case.
+    fn result(self, dimension: Dimension, spawn_uncertain: bool) -> ConstraintResult {
         let outcome = if spawn_uncertain {
             Outcome::PossiblyMet
         } else if self.worst {
@@ -116,6 +121,7 @@ impl Judged {
             Outcome::Failed
         };
         ConstraintResult {
+            dimension,
             outcome,
             best: self.best_sat,
             worst: if spawn_uncertain { 0 } else { self.worst_sat },
@@ -124,76 +130,98 @@ impl Judged {
     }
 }
 
-/// One evaluation's view of a session: the spawn origin is found once, when first needed.
-struct Judge<'a, 's> {
-    session: &'a Session<'s>,
+/// Each dimension's session for one seed: one world's, or a game's.
+pub(crate) trait Sessions<'w> {
+    /// `dimension`'s session, bound if it isn't yet.
+    fn session(&self, dimension: Dimension) -> Result<&Session<'w>>;
+
+    /// Fails unless every dimension `query` reads is here, with the world it was resolved
+    /// against.
+    fn check_worlds(&self, query: &SearchQuery) -> Result<()>;
+}
+
+impl<'w> Sessions<'w> for Session<'w> {
+    fn session(&self, dimension: Dimension) -> Result<&Session<'w>> {
+        if dimension == self.world.dimension {
+            Ok(self)
+        } else {
+            Err(Error::Unsupported(format!(
+                "this needs {}, and the session is in {}",
+                dimension.name(),
+                self.world.dimension.name()
+            )))
+        }
+    }
+
+    fn check_worlds(&self, query: &SearchQuery) -> Result<()> {
+        let mine = self.world.dimension;
+        let here = Dimension::ALL.into_iter().all(|d| {
+            let id = query.worlds[d.index()];
+            if d == mine {
+                id == Some(self.world.id)
+            } else {
+                id.is_none()
+            }
+        });
+        if here {
+            Ok(())
+        } else {
+            Err(Error::OtherWorld(query.to_string().trim_end().to_string()))
+        }
+    }
+}
+
+impl<'g> Sessions<'g> for GameSession<'g> {
+    fn session(&self, dimension: Dimension) -> Result<&Session<'g>> {
+        self.dimension(dimension)
+    }
+
+    fn check_worlds(&self, query: &SearchQuery) -> Result<()> {
+        for d in Dimension::ALL {
+            if let Some(id) = query.worlds[d.index()]
+                && self.game().world(d)?.id != id
+            {
+                return Err(Error::OtherWorld(query.to_string().trim_end().to_string()));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// One evaluation's view of a seed's sessions: the spawn origin is found once, when first
+/// needed.
+struct Judge<'a, 'w> {
+    sessions: &'a dyn Sessions<'w>,
+    /// The Overworld spawn's origin.
     spawn: OnceCell<SpawnOrigin>,
     /// Whether structure starts are confirmed with the seed's terrain.
     confirm: bool,
 }
 
-impl<'a, 's> Judge<'a, 's> {
-    fn new(session: &'a Session<'s>, confirm: bool) -> Self {
+impl<'a, 'w> Judge<'a, 'w> {
+    fn new(sessions: &'a dyn Sessions<'w>, confirm: bool) -> Self {
         Judge {
-            session,
+            sessions,
             spawn: OnceCell::new(),
             confirm,
         }
+    }
+
+    fn session(&self, dimension: Dimension) -> Result<&'a Session<'w>> {
+        self.sessions.session(dimension)
     }
 }
 
 impl Session<'_> {
     /// Judges this seed against `query`: every constraint, in full, with what it matched. The
     /// plain implementation of `docs/specs/search.md`; searches check their answers against
-    /// it. With `confirm`, structure starts are decided with the seed's terrain.
+    /// it. With `confirm`, structure starts are decided with the seed's terrain. The query
+    /// must be in this session's dimension only: [`GameSession::evaluate`] judges any.
     pub fn evaluate(&self, query: &SearchQuery, confirm: bool) -> Result<Evaluation> {
-        self.check_world(query.world, query.to_string().trim_end())?;
-        let judge = Judge::new(self, confirm);
-        let constraints: Vec<ConstraintResult> = query
-            .query
-            .constraints()
-            .iter()
-            .zip(&query.resolved)
-            .map(|(c, resolved)| judge.constraint(&c.kind, resolved))
-            .collect();
-        let mut verdict = Outcome::Met;
-        let (mut best_score, mut worst_score) = (0, 0);
-        for (c, result) in query.query.constraints().iter().zip(&constraints) {
-            match c.importance {
-                Importance::Required => {
-                    verdict = match (verdict, result.outcome) {
-                        (_, Outcome::Failed) | (Outcome::Failed, _) => Outcome::Failed,
-                        (_, Outcome::PossiblyMet) | (Outcome::PossiblyMet, _) => {
-                            Outcome::PossiblyMet
-                        }
-                        (Outcome::Met, Outcome::Met) => Outcome::Met,
-                    }
-                }
-                Importance::Preferred { weight } => {
-                    best_score += u64::from(weight) * u64::from(result.best);
-                    worst_score += u64::from(weight) * u64::from(result.worst);
-                }
-            }
-        }
-        Ok(Evaluation {
-            verdict,
-            best_score,
-            worst_score,
-            constraints,
-        })
+        evaluate(self, query, confirm)
     }
-}
 
-impl Session<'_> {
-    /// The fast path a search calls: whether this seed is reported and, if its score is at least
-    /// `threshold`, what it is. The same answer as [`Session::evaluate`], with required
-    /// constraints checked cheapest first and stopping at the first that fails, and preferred
-    /// constraints skipped once the score can no longer reach `threshold`.
-    ///
-    /// With `confirm`, terrain comes last: the required constraints are first judged without
-    /// it, in their best case. Terrain only narrows each constraint's best and worst cases
-    /// (`docs/specs/search.md#confirmed-mode`), so a seed that fails there fails confirmed too,
-    /// and its terrain is never bound.
+    /// The fast path a search calls; see [`check`].
     pub(crate) fn check(
         &self,
         query: &SearchQuery,
@@ -201,64 +229,143 @@ impl Session<'_> {
         threshold: u64,
         confirm: bool,
     ) -> Result<Checked> {
-        self.check_world(query.world, query.to_string().trim_end())?;
-        // An unreachable threshold stops before any preferred constraint.
-        if confirm && self.check_with(query, false, u64::MAX, false) == Checked::Failed {
-            return Ok(Checked::Failed);
-        }
-        Ok(self.check_with(query, certain, threshold, confirm))
+        check(self, query, certain, threshold, confirm)
+    }
+}
+
+impl GameSession<'_> {
+    /// Judges this seed against `query`, in every dimension it reads, binding each
+    /// dimension's session as a constraint needs it: [`Session::evaluate`] across dimensions.
+    pub fn evaluate(&self, query: &SearchQuery, confirm: bool) -> Result<Evaluation> {
+        evaluate(self, query, confirm)
     }
 
-    /// [`check`](Self::check) in one pass.
-    fn check_with(
+    /// The fast path a search calls; see [`check`].
+    pub(crate) fn check(
         &self,
         query: &SearchQuery,
         certain: bool,
         threshold: u64,
         confirm: bool,
-    ) -> Checked {
-        let judge = Judge::new(self, confirm);
-        let constraints = query.query.constraints();
-        for &i in &query.order {
-            if constraints[i].importance != Importance::Required {
-                continue;
+    ) -> Result<Checked> {
+        check(self, query, certain, threshold, confirm)
+    }
+}
+
+/// [`Session::evaluate`] or [`GameSession::evaluate`].
+fn evaluate<'w>(
+    sessions: &dyn Sessions<'w>,
+    query: &SearchQuery,
+    confirm: bool,
+) -> Result<Evaluation> {
+    sessions.check_worlds(query)?;
+    let judge = Judge::new(sessions, confirm);
+    let constraints: Vec<ConstraintResult> = query
+        .query
+        .constraints()
+        .iter()
+        .zip(&query.resolved)
+        .map(|(c, resolved)| judge.constraint(&c.kind, resolved))
+        .collect::<Result<_>>()?;
+    let mut verdict = Outcome::Met;
+    let (mut best_score, mut worst_score) = (0, 0);
+    for (c, result) in query.query.constraints().iter().zip(&constraints) {
+        match c.importance {
+            Importance::Required => {
+                verdict = match (verdict, result.outcome) {
+                    (_, Outcome::Failed) | (Outcome::Failed, _) => Outcome::Failed,
+                    (_, Outcome::PossiblyMet) | (Outcome::PossiblyMet, _) => Outcome::PossiblyMet,
+                    (Outcome::Met, Outcome::Met) => Outcome::Met,
+                }
             }
-            let result = judge.constraint(&constraints[i].kind, &query.resolved[i]);
-            let kept = match result.outcome {
-                Outcome::Met => true,
-                Outcome::PossiblyMet => !certain,
-                Outcome::Failed => false,
-            };
-            if !kept {
-                return Checked::Failed;
+            Importance::Preferred { weight } => {
+                best_score += u64::from(weight) * u64::from(result.best);
+                worst_score += u64::from(weight) * u64::from(result.worst);
             }
-        }
-        let weight = |i: usize| match constraints[i].importance {
-            Importance::Preferred { weight } => Some(u64::from(weight)),
-            Importance::Required => None,
-        };
-        let mut remaining: u64 = (0..constraints.len())
-            .filter_map(weight)
-            .map(|w| w * 1000)
-            .sum();
-        let mut score = 0;
-        for &i in &query.order {
-            let Some(w) = weight(i) else {
-                continue;
-            };
-            if score + remaining < threshold {
-                return Checked::Below;
-            }
-            let result = judge.constraint(&constraints[i].kind, &query.resolved[i]);
-            remaining -= w * 1000;
-            score += w * u64::from(if certain { result.worst } else { result.best });
-        }
-        if score >= threshold {
-            Checked::Scored(score)
-        } else {
-            Checked::Below
         }
     }
+    Ok(Evaluation {
+        verdict,
+        best_score,
+        worst_score,
+        constraints,
+    })
+}
+
+/// The fast path a search calls: whether this seed is reported and, if its score is at least
+/// `threshold`, what it is. The same answer as [`evaluate`], with required constraints checked
+/// cheapest first and stopping at the first that fails, and preferred constraints skipped once
+/// the score can no longer reach `threshold`. A dimension's session is bound only when a
+/// constraint in it is checked.
+///
+/// With `confirm`, terrain comes last: the required constraints are first judged without it,
+/// in their best case. Terrain only narrows each constraint's best and worst cases
+/// (`docs/specs/search.md#confirmed-mode`), so a seed that fails there fails confirmed too, and
+/// its terrain is never bound.
+fn check<'w>(
+    sessions: &dyn Sessions<'w>,
+    query: &SearchQuery,
+    certain: bool,
+    threshold: u64,
+    confirm: bool,
+) -> Result<Checked> {
+    sessions.check_worlds(query)?;
+    // An unreachable threshold stops before any preferred constraint.
+    if confirm && check_with(sessions, query, false, u64::MAX, false)? == Checked::Failed {
+        return Ok(Checked::Failed);
+    }
+    check_with(sessions, query, certain, threshold, confirm)
+}
+
+/// [`check`] in one pass.
+fn check_with<'w>(
+    sessions: &dyn Sessions<'w>,
+    query: &SearchQuery,
+    certain: bool,
+    threshold: u64,
+    confirm: bool,
+) -> Result<Checked> {
+    let judge = Judge::new(sessions, confirm);
+    let constraints = query.query.constraints();
+    for &i in &query.order {
+        if constraints[i].importance != Importance::Required {
+            continue;
+        }
+        let result = judge.constraint(&constraints[i].kind, &query.resolved[i])?;
+        let kept = match result.outcome {
+            Outcome::Met => true,
+            Outcome::PossiblyMet => !certain,
+            Outcome::Failed => false,
+        };
+        if !kept {
+            return Ok(Checked::Failed);
+        }
+    }
+    let weight = |i: usize| match constraints[i].importance {
+        Importance::Preferred { weight } => Some(u64::from(weight)),
+        Importance::Required => None,
+    };
+    let mut remaining: u64 = (0..constraints.len())
+        .filter_map(weight)
+        .map(|w| w * 1000)
+        .sum();
+    let mut score = 0;
+    for &i in &query.order {
+        let Some(w) = weight(i) else {
+            continue;
+        };
+        if score + remaining < threshold {
+            return Ok(Checked::Below);
+        }
+        let result = judge.constraint(&constraints[i].kind, &query.resolved[i])?;
+        remaining -= w * 1000;
+        score += w * u64::from(if certain { result.worst } else { result.best });
+    }
+    Ok(if score >= threshold {
+        Checked::Scored(score)
+    } else {
+        Checked::Below
+    })
 }
 
 /// A place in blocks.
@@ -359,10 +466,11 @@ fn graded(mut distances: Vec<u32>, n: u32, radius: u32) -> u32 {
 
 /// A feature that may be counted.
 struct Candidate {
+    /// In the constraint's dimension's coordinates.
     position: [i32; 2],
     certain: bool,
-    /// For structure starts, the set and chunk: a start is never its own anchor.
-    start: Option<(String, [i32; 2])>,
+    /// For structure starts, the dimension, set and chunk: a start is never its own anchor.
+    start: Option<(Dimension, String, [i32; 2])>,
 }
 
 /// A feature in a region: its distance in each case, `None` where it isn't counted.
@@ -432,32 +540,54 @@ impl Within {
     }
 }
 
-impl Judge<'_, '_> {
-    fn spawn(&self) -> &SpawnOrigin {
-        self.spawn.get_or_init(|| self.session.spawn_origin())
+impl<'a, 'w> Judge<'a, 'w> {
+    /// The Overworld spawn's origin.
+    fn spawn(&self) -> Result<&SpawnOrigin> {
+        if let Some(spawn) = self.spawn.get() {
+            return Ok(spawn);
+        }
+        let spawn = self.session(Dimension::Overworld)?.spawn_origin();
+        Ok(self.spawn.get_or_init(|| spawn))
     }
 
-    fn area(&self, place: &Place) -> Area {
-        match *place {
+    /// `p` in `from`'s coordinates, converted into `to`'s.
+    fn convert(&self, p: [i32; 2], from: Dimension, to: Dimension) -> Result<[i32; 2]> {
+        if from == to {
+            return Ok(p);
+        }
+        let scale = |d| Ok::<_, Error>(self.session(d)?.world.coordinate_scale());
+        Ok(convert(p, scale(from)?, scale(to)?))
+    }
+
+    /// `place` in `dimension`, whose spawn is the Overworld's, converted.
+    fn area(&self, place: &Place, dimension: Dimension) -> Result<Area> {
+        Ok(match *place {
             Place::Within { radius, anchor } => Area::Disc {
                 centre: match anchor {
-                    Anchor::Spawn => self.spawn().map_block(),
+                    Anchor::Spawn => {
+                        self.convert(self.spawn()?.map_block(), Dimension::Overworld, dimension)?
+                    }
                     Anchor::Point(p) => p,
                 },
                 radius,
             },
             Place::Box { min, max } => Area::Box { min, max },
-        }
+        })
     }
 
-    fn constraint(&self, kind: &Kind, resolved: &Resolved) -> ConstraintResult {
+    fn constraint(&self, kind: &Kind, resolved: &Resolved) -> Result<ConstraintResult> {
+        let dimension = resolved.dimension;
+        let session = self.session(dimension)?;
         let judged = match (kind, &resolved.target) {
             (Kind::Structures { count, region, .. }, Some(Target::Structure(target))) => {
-                let within = self.within(region, resolved.anchor.as_ref());
-                let starts = within
-                    .bounds()
-                    .map_or_else(Vec::new, |(min, max)| self.starts(target, min, max));
-                let candidates: Vec<Candidate> = starts.iter().map(candidate).collect();
+                let within = self.within(region, resolved.anchor.as_ref(), dimension)?;
+                let starts = within.bounds().map_or_else(Vec::new, |(min, max)| {
+                    self.starts(session, target, min, max)
+                });
+                let candidates: Vec<Candidate> = starts
+                    .iter()
+                    .map(|s| candidate(s, dimension, xz(s)))
+                    .collect();
                 let (matched, judged) = count_matches(*count, &within, &candidates);
                 let mut features = Vec::new();
                 for m in matched {
@@ -466,10 +596,10 @@ impl Judge<'_, '_> {
                 Judged { features, ..judged }
             }
             (Kind::Slime { count, region }, None) => {
-                let within = self.within(region, resolved.anchor.as_ref());
+                let within = self.within(region, resolved.anchor.as_ref(), dimension)?;
                 let chunks = within
                     .bounds()
-                    .map_or_else(Vec::new, |(min, max)| self.slime_chunks(min, max));
+                    .map_or_else(Vec::new, |(min, max)| slime_chunks(session, min, max));
                 let candidates: Vec<Candidate> = chunks
                     .iter()
                     .map(|&c| Candidate {
@@ -491,10 +621,10 @@ impl Judge<'_, '_> {
                 },
                 Some(Target::Structure(target)),
             ) => {
-                let area = self.area(place);
+                let area = self.area(place, dimension)?;
                 let (min, max) = area.bounds();
                 let starts: Vec<StructureStart> = self
-                    .starts(target, min, max)
+                    .starts(session, target, min, max)
                     .into_iter()
                     .filter(|s| area.distance(xz(s)).is_some())
                     .collect();
@@ -523,7 +653,13 @@ impl Judge<'_, '_> {
                     ..
                 },
                 Some(Target::Biome(biome)),
-            ) => self.biome_presence(*present, &self.area(place), *sampling, biome.biome),
+            ) => biome_presence(
+                session,
+                *present,
+                &self.area(place, dimension)?,
+                *sampling,
+                biome.biome,
+            ),
             (
                 Kind::Coverage {
                     percent,
@@ -532,10 +668,16 @@ impl Judge<'_, '_> {
                     ..
                 },
                 Some(Target::Biome(biome)),
-            ) => self.coverage(*percent, &self.area(place), *sampling, biome.biome),
+            ) => coverage(
+                session,
+                *percent,
+                &self.area(place, dimension)?,
+                *sampling,
+                biome.biome,
+            ),
             (Kind::Spawn { place }, None) => {
-                let area = self.area(place);
-                let spawn = *self.spawn();
+                let area = self.area(place, dimension)?;
+                let spawn = *self.spawn()?;
                 let d = area.distance(spawn.map_block());
                 let sat = d.map_or(0, |d| points(d, area.radius()) as u32);
                 Judged {
@@ -548,23 +690,29 @@ impl Judge<'_, '_> {
             }
             _ => unreachable!("resolution gives each kind its target"),
         };
-        let spawn_uncertain = uses_spawn(kind) && self.spawn().platform_dependent;
-        judged.result(spawn_uncertain)
+        let spawn_uncertain = uses_spawn(kind) && self.spawn()?.platform_dependent;
+        Ok(judged.result(dimension, spawn_uncertain))
     }
 
-    /// A region with its anchors found: a structure anchor's starts in their place.
-    fn within(&self, region: &Region, anchor: Option<&StructureQuery>) -> Within {
-        match (region, anchor) {
-            (Region::Place(place), _) => Within::Area(self.area(place)),
-            (Region::NearStructure { radius, place, .. }, Some(anchor)) => {
-                let area = self.area(place);
+    /// A region in `dimension` with its anchors found: a structure anchor's starts in their
+    /// place, in their own dimension, converted into this one.
+    fn within(
+        &self,
+        region: &Region,
+        anchor: Option<&(Dimension, StructureQuery)>,
+        dimension: Dimension,
+    ) -> Result<Within> {
+        Ok(match (region, anchor) {
+            (Region::Place(place), _) => Within::Area(self.area(place, dimension)?),
+            (Region::NearStructure { radius, place, .. }, Some((anchor_in, anchor))) => {
+                let area = self.area(place, *anchor_in)?;
                 let (min, max) = area.bounds();
-                let anchors = self
-                    .starts(anchor, min, max)
-                    .iter()
-                    .filter(|s| area.distance(xz(s)).is_some())
-                    .map(candidate)
-                    .collect();
+                let starts = self.starts(self.session(*anchor_in)?, anchor, min, max);
+                let mut anchors = Vec::new();
+                for s in starts.iter().filter(|s| area.distance(xz(s)).is_some()) {
+                    let position = self.convert(xz(s), *anchor_in, dimension)?;
+                    anchors.push(candidate(s, *anchor_in, position));
+                }
                 Within::Anchors {
                     radius: *radius,
                     anchors,
@@ -573,11 +721,18 @@ impl Judge<'_, '_> {
             (Region::NearStructure { .. }, None) => {
                 unreachable!("resolution gives each structure anchor its query")
             }
-        }
+        })
     }
 
-    /// The starts of `query` whose position is in `min..=max`, by set, then in chunk order.
-    fn starts(&self, query: &StructureQuery, min: [i32; 2], max: [i32; 2]) -> Vec<StructureStart> {
+    /// The starts of `query` in `session` whose position is in `min..=max`, by set, then in
+    /// chunk order.
+    fn starts(
+        &self,
+        session: &Session<'_>,
+        query: &StructureQuery,
+        min: [i32; 2],
+        max: [i32; 2],
+    ) -> Vec<StructureStart> {
         // position = chunk · 16 + offset, so the chunks run from ceil((min − offset) / 16) to
         // floor((max − offset) / 16). Every value is far from overflowing.
         let chunks = |offset: [i32; 3]| {
@@ -588,126 +743,126 @@ impl Judge<'_, '_> {
                 [hi(max[0], offset[0]), hi(max[1], offset[2])],
             )
         };
-        self.session
-            .starts_by_set(&query.targets, chunks, self.confirm)
+        session.starts_by_set(&query.targets, chunks, self.confirm)
     }
+}
 
-    /// The slime chunks whose centre is in `min..=max`.
-    fn slime_chunks(&self, min: [i32; 2], max: [i32; 2]) -> Vec<[i32; 2]> {
-        let lo = min.map(|b| (b - 8 + 15).div_euclid(16));
-        let hi = max.map(|b| (b - 8).div_euclid(16));
-        self.session.slime_chunks(lo, hi)
-    }
+/// The slime chunks whose centre is in `min..=max`.
+fn slime_chunks(session: &Session<'_>, min: [i32; 2], max: [i32; 2]) -> Vec<[i32; 2]> {
+    let lo = min.map(|b| (b - 8 + 15).div_euclid(16));
+    let hi = max.map(|b| (b - 8).div_euclid(16));
+    session.slime_chunks(lo, hi)
+}
 
-    fn biome_presence(
-        &self,
-        present: bool,
-        area: &Area,
-        sampling: Sampling,
-        target: Option<BiomeId>,
-    ) -> Judged {
-        // The nearest sample that possibly matches, and the nearest that certainly does.
-        let mut possible: Option<([i32; 3], u32)> = None;
-        let mut certain: Option<([i32; 3], u32)> = None;
-        for (p, d) in area.grid(sampling.step) {
-            let position = [p[0], sampling.y, p[1]];
-            let (maybe, sure) = self.sample(position, target);
-            let nearer = |best: Option<([i32; 3], u32)>| best.is_none_or(|(_, b)| d < b);
-            if maybe && nearer(possible) {
-                possible = Some((position, d));
-            }
-            if sure && nearer(certain) {
-                certain = Some((position, d));
-            }
+fn biome_presence(
+    session: &Session<'_>,
+    present: bool,
+    area: &Area,
+    sampling: Sampling,
+    target: Option<BiomeId>,
+) -> Judged {
+    // The nearest sample that possibly matches, and the nearest that certainly does.
+    let mut possible: Option<([i32; 3], u32)> = None;
+    let mut certain: Option<([i32; 3], u32)> = None;
+    for (p, d) in area.grid(sampling.step) {
+        let position = [p[0], sampling.y, p[1]];
+        let (maybe, sure) = sample(session, position, target);
+        let nearer = |best: Option<([i32; 3], u32)>| best.is_none_or(|(_, b)| d < b);
+        if maybe && nearer(possible) {
+            possible = Some((position, d));
         }
-        let radius = area.radius();
-        let sat = |hit: Option<([i32; 3], u32)>| hit.map_or(0, |(_, d)| points(d, radius) as u32);
-        let mut features = Vec::new();
-        for (position, _) in possible.into_iter().chain(certain) {
-            if !features
-                .iter()
-                .any(|f| matches!(f, Feature::Biome { position: p, .. } if *p == position))
-            {
-                let lookup = self.lookup(position);
-                features.push(Feature::Biome {
-                    position,
-                    biome: self.session.biome_names(&lookup),
-                    certain: !lookup.is_tied(),
-                });
-            }
-        }
-        if present {
-            Judged {
-                best: possible.is_some(),
-                worst: certain.is_some(),
-                best_sat: sat(possible),
-                worst_sat: sat(certain),
-                features,
-            }
-        } else {
-            let all_or_nothing = |holds: bool| if holds { 1000 } else { 0 };
-            Judged {
-                best: certain.is_none(),
-                worst: possible.is_none(),
-                best_sat: all_or_nothing(certain.is_none()),
-                worst_sat: all_or_nothing(possible.is_none()),
-                features,
-            }
+        if sure && nearer(certain) {
+            certain = Some((position, d));
         }
     }
-
-    fn coverage(
-        &self,
-        percent: u32,
-        area: &Area,
-        sampling: Sampling,
-        target: Option<BiomeId>,
-    ) -> Judged {
-        let grid = area.grid(sampling.step);
-        let (mut possible, mut certain) = (0_u64, 0_u64);
-        for &(p, _) in &grid {
-            let (maybe, sure) = self.sample([p[0], sampling.y, p[1]], target);
-            possible += u64::from(maybe);
-            certain += u64::from(sure);
+    let radius = area.radius();
+    let sat = |hit: Option<([i32; 3], u32)>| hit.map_or(0, |(_, d)| points(d, radius) as u32);
+    let mut features = Vec::new();
+    for (position, _) in possible.into_iter().chain(certain) {
+        if !features
+            .iter()
+            .any(|f| matches!(f, Feature::Biome { position: p, .. } if *p == position))
+        {
+            let lookup = lookup(session, position);
+            features.push(Feature::Biome {
+                position,
+                biome: session.biome_names(&lookup),
+                certain: !lookup.is_tied(),
+            });
         }
-        let total = grid.len() as u64 * u64::from(percent);
-        let holds = |m: u64| 100 * m >= total;
-        let sat = |m: u64| (100_000 * m / total).min(1000) as u32;
+    }
+    if present {
         Judged {
-            best: holds(possible),
-            worst: holds(certain),
+            best: possible.is_some(),
+            worst: certain.is_some(),
             best_sat: sat(possible),
             worst_sat: sat(certain),
-            features: Vec::new(),
+            features,
+        }
+    } else {
+        let all_or_nothing = |holds: bool| if holds { 1000 } else { 0 };
+        Judged {
+            best: certain.is_none(),
+            worst: possible.is_none(),
+            best_sat: all_or_nothing(certain.is_none()),
+            worst_sat: all_or_nothing(possible.is_none()),
+            features,
         }
     }
+}
 
-    fn lookup(&self, [x, y, z]: [i32; 3]) -> spyglass_biome::Lookup {
-        self.session.biomes.biome_at(x >> 2, y >> 2, z >> 2)
+fn coverage(
+    session: &Session<'_>,
+    percent: u32,
+    area: &Area,
+    sampling: Sampling,
+    target: Option<BiomeId>,
+) -> Judged {
+    let grid = area.grid(sampling.step);
+    let (mut possible, mut certain) = (0_u64, 0_u64);
+    for &(p, _) in &grid {
+        let (maybe, sure) = sample(session, [p[0], sampling.y, p[1]], target);
+        possible += u64::from(maybe);
+        certain += u64::from(sure);
     }
+    let total = grid.len() as u64 * u64::from(percent);
+    let holds = |m: u64| 100 * m >= total;
+    let sat = |m: u64| (100_000 * m / total).min(1000) as u32;
+    Judged {
+        best: holds(possible),
+        worst: holds(certain),
+        best_sat: sat(possible),
+        worst_sat: sat(certain),
+        features: Vec::new(),
+    }
+}
 
-    /// Whether the sample at `position` possibly, and certainly, is `target`.
-    fn sample(&self, position: [i32; 3], target: Option<BiomeId>) -> (bool, bool) {
-        let Some(target) = target else {
-            return (false, false);
-        };
-        let lookup = self.lookup(position);
-        (
-            lookup.candidates().contains(&target),
-            !lookup.is_tied() && lookup.biome() == target,
-        )
-    }
+fn lookup(session: &Session<'_>, [x, y, z]: [i32; 3]) -> spyglass_biome::Lookup {
+    session.biomes.biome_at(x >> 2, y >> 2, z >> 2)
+}
+
+/// Whether the sample at `position` possibly, and certainly, is `target`.
+fn sample(session: &Session<'_>, position: [i32; 3], target: Option<BiomeId>) -> (bool, bool) {
+    let Some(target) = target else {
+        return (false, false);
+    };
+    let lookup = lookup(session, position);
+    (
+        lookup.candidates().contains(&target),
+        !lookup.is_tied() && lookup.biome() == target,
+    )
 }
 
 fn xz(s: &StructureStart) -> [i32; 2] {
     [s.position[0], s.position[2]]
 }
 
-fn candidate(s: &StructureStart) -> Candidate {
+/// Start `s` in `dimension`, at `position` (its own, or converted into another dimension).
+fn candidate(s: &StructureStart, dimension: Dimension, position: [i32; 2]) -> Candidate {
     Candidate {
-        position: xz(s),
+        position,
         certain: s.certain,
-        start: Some((s.set.clone(), s.chunk)),
+        start: Some((dimension, s.set.clone(), s.chunk)),
     }
 }
 
@@ -790,13 +945,17 @@ mod tests {
             worst_sat: 400,
             features: Vec::new(),
         };
-        let outcome = |best, worst, uncertain| judged(best, worst).result(uncertain).outcome;
+        let outcome = |best, worst, uncertain| {
+            judged(best, worst)
+                .result(Dimension::Overworld, uncertain)
+                .outcome
+        };
         assert_eq!(outcome(true, true, false), Outcome::Met);
         assert_eq!(outcome(true, false, false), Outcome::PossiblyMet);
         assert_eq!(outcome(false, false, false), Outcome::Failed);
         // A platform-dependent spawn: possibly met either way, and nothing in the worst case.
         for (best, worst) in [(true, true), (false, false)] {
-            let r = judged(best, worst).result(true);
+            let r = judged(best, worst).result(Dimension::Overworld, true);
             assert_eq!((r.outcome, r.best, r.worst), (Outcome::PossiblyMet, 900, 0));
         }
     }

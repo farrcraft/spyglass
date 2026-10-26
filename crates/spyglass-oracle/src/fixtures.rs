@@ -244,34 +244,59 @@ pub fn structure(name: &str, kind: &str, biomes: &str) -> (String, Value) {
 /// `#minecraft:towers_too`) and `#minecraft:towers_too` (towers and huts). With `tie`, plains
 /// cells are tied with forest, as in [`overworld`].
 pub fn structured_overworld(tie: bool) -> TestBundle {
-    overworld(
-        &[
-            random_spread_set("towers", 8, 2, "minecraft:tower"),
-            structure("tower", "minecraft:stronghold", "minecraft:plains"),
-            random_spread_set("huts", 8, 2, "minecraft:hut"),
-            structure("hut", "minecraft:swamp_hut", "minecraft:plains"),
-            random_spread_set("monuments", 8, 2, "minecraft:monument"),
-            structure("monument", "minecraft:ocean_monument", "minecraft:plains"),
-            resource(
-                "worldgen/structure_set",
-                "rings",
-                json!({"placement": {"type": "minecraft:concentric_rings", "salt": 0,
+    overworld(&structured_files(), tie)
+}
+
+/// [`structured_overworld`]'s structures, and [`overworld_and_nether`]'s Nether with forts:
+/// certain in `minecraft:nether_wastes`, random spread with spacing 4 and separation 1. Tag
+/// `#minecraft:mixed` names huts and forts, so the Overworld and the Nether each place some.
+pub fn structured_overworld_and_nether() -> TestBundle {
+    let mut files = structured_files();
+    files.extend([
+        resource(
+            "worldgen/structure_set",
+            "forts",
+            json!({"placement": {"type": "minecraft:random_spread", "salt": 54321,
+                    "spacing": 4, "separation": 1},
+                "structures": [{"structure": "minecraft:fort", "weight": 1}]}),
+        ),
+        structure("fort", "minecraft:stronghold", "minecraft:nether_wastes"),
+        resource(
+            "tags/worldgen/structure",
+            "mixed",
+            json!({"values": ["minecraft:hut", "minecraft:fort"]}),
+        ),
+    ]);
+    TestBundle::new(&overworld_files(&files, false, true))
+}
+
+/// [`structured_overworld`]'s structure files.
+fn structured_files() -> Vec<(String, Value)> {
+    vec![
+        random_spread_set("towers", 8, 2, "minecraft:tower"),
+        structure("tower", "minecraft:stronghold", "minecraft:plains"),
+        random_spread_set("huts", 8, 2, "minecraft:hut"),
+        structure("hut", "minecraft:swamp_hut", "minecraft:plains"),
+        random_spread_set("monuments", 8, 2, "minecraft:monument"),
+        structure("monument", "minecraft:ocean_monument", "minecraft:plains"),
+        resource(
+            "worldgen/structure_set",
+            "rings",
+            json!({"placement": {"type": "minecraft:concentric_rings", "salt": 0,
                         "distance": 4, "spread": 3, "count": 6,
                         "preferred_biomes": "minecraft:plains"},
                     "structures": [{"structure": "minecraft:keep", "weight": 1}]}),
-            ),
-            structure("keep", "minecraft:stronghold", "minecraft:plains"),
-            resource(
-                "tags/worldgen/structure",
-                "everything",
-                json!({"values": ["minecraft:tower", "#minecraft:towers_too"]}),
-            ),
-            resource(
-                "tags/worldgen/structure",
-                "towers_too",
-                json!({"values": ["minecraft:tower", "minecraft:hut"]}),
-            ),
-        ],
-        tie,
-    )
+        ),
+        structure("keep", "minecraft:stronghold", "minecraft:plains"),
+        resource(
+            "tags/worldgen/structure",
+            "everything",
+            json!({"values": ["minecraft:tower", "#minecraft:towers_too"]}),
+        ),
+        resource(
+            "tags/worldgen/structure",
+            "towers_too",
+            json!({"values": ["minecraft:tower", "minecraft:hut"]}),
+        ),
+    ]
 }

@@ -59,7 +59,7 @@ fn queries_resolve_and_errors_name_lines() {
         .unwrap_err();
     assert_eq!(
         e.to_string(),
-        "line 1: y 400 is outside the build height, -64 to 319"
+        "line 1: y 400 is outside the build height of the Overworld, -64 to 319"
     );
     let e = world.search_query("require nothing").unwrap_err();
     assert!(

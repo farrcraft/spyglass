@@ -55,6 +55,7 @@ pub use search::{
     ConstraintResult, Evaluation, Feature, Outcome, RankedSeed, SearchHit, SearchOptions,
     SearchOutcome, SearchProgress, SearchQuery, SeedSource,
 };
+pub use spyglass_data::dimension::Dimension;
 pub use spyglass_structure::LOCATE_RADIUS;
 pub use spyglass_terrain::Heightmap;
 
@@ -278,57 +279,6 @@ static WORLDS: AtomicU64 = AtomicU64::new(0);
 
 /// The world preset every [`World`] is a dimension of: the Default preset.
 pub(crate) const PRESET: &str = "minecraft:normal";
-
-/// One of the Default preset's dimensions (ADR 0023).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum Dimension {
-    /// `minecraft:overworld`.
-    Overworld,
-    /// `minecraft:the_nether`.
-    Nether,
-    /// `minecraft:the_end`.
-    End,
-}
-
-impl Dimension {
-    /// All three, in this order.
-    pub const ALL: [Dimension; 3] = [Dimension::Overworld, Dimension::Nether, Dimension::End];
-
-    /// The dimension's id, e.g. `minecraft:the_nether`.
-    pub fn id(self) -> &'static str {
-        match self {
-            Dimension::Overworld => "minecraft:overworld",
-            Dimension::Nether => "minecraft:the_nether",
-            Dimension::End => "minecraft:the_end",
-        }
-    }
-
-    /// The dimension's name in English prose, e.g. `the Nether`.
-    pub fn name(self) -> &'static str {
-        match self {
-            Dimension::Overworld => "the Overworld",
-            Dimension::Nether => "the Nether",
-            Dimension::End => "the End",
-        }
-    }
-
-    /// The position in [`ALL`](Self::ALL).
-    pub(crate) fn index(self) -> usize {
-        self as usize
-    }
-
-    /// The dimension with id `id` (with or without the `minecraft:` namespace).
-    pub fn from_id(id: &str) -> Option<Dimension> {
-        let id = full_id(id);
-        Dimension::ALL.into_iter().find(|d| d.id() == id)
-    }
-}
-
-impl std::fmt::Display for Dimension {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.id())
-    }
-}
 
 /// One dimension of a version bundle, loaded once: everything that doesn't depend on the seed.
 pub struct World {

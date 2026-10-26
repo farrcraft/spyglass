@@ -251,3 +251,124 @@ fn layers_follow_the_dimension() {
     };
     assert!(unused.check(nether.world()).is_ok());
 }
+
+#[test]
+fn constraints_infer_their_dimension() {
+    let bundle = fixtures::structured_overworld_and_nether();
+    let game = Game::open(bundle.path()).unwrap();
+    let query = game
+        .search_query(
+            "require fort within 100 of spawn\n\
+             require nether minecraft:fort within 100 of 0,0\n\
+             require #minecraft:mixed within 100 of spawn\n\
+             require nether #minecraft:mixed within 100 of spawn\n\
+             prefer overworld tower within 30 of fort in 0,0 to 10,10\n\
+             prefer biome nether_wastes within 10 of 0,0 at y 100\n\
+             prefer 2 slime within 64 of spawn",
+        )
+        .unwrap();
+    let dimensions: Vec<Dimension> = (0..7).map(|i| query.dimension(i)).collect();
+    let (o, n) = (Dimension::Overworld, Dimension::Nether);
+    assert_eq!(dimensions, [n, n, o, n, o, n, o]);
+    // A dimension is written only where it isn't the inferred one.
+    assert_eq!(
+        query.to_string(),
+        "require minecraft:fort within 100 of spawn\n\
+         require minecraft:fort within 100 of 0,0\n\
+         require #minecraft:mixed within 100 of spawn\n\
+         require nether #minecraft:mixed within 100 of spawn\n\
+         prefer minecraft:tower within 30 of minecraft:fort in 0,0 to 10,10\n\
+         prefer biome minecraft:nether_wastes within 10 of 0,0 at y 100\n\
+         prefer 2 slime within 64 of spawn\n"
+    );
+    let again = game.search_query(&query.to_string()).unwrap();
+    assert_eq!(again.to_string(), query.to_string());
+}
+
+#[test]
+fn dimensions_that_contradict_are_errors() {
+    let bundle = fixtures::structured_overworld_and_nether();
+    let game = Game::open(bundle.path()).unwrap();
+    let error = |text: &str| match game.search_query(text) {
+        Err(Error::InvalidQuery {
+            line,
+            column: None,
+            message,
+        }) => (line, message),
+        other => panic!("{text}: {other:?}"),
+    };
+    assert_eq!(
+        error("prefer tower within 5 of 0,0\nrequire nether tower within 5 of 0,0"),
+        (2, "minecraft:tower isn't placed in the Nether".to_string())
+    );
+    assert_eq!(
+        error("require nether biome plains within 5 of 0,0").1,
+        "the Nether has no minecraft:plains"
+    );
+    assert_eq!(
+        error("require nether 2 slime within 5 of 0,0").1,
+        "slime chunks are only in the Overworld"
+    );
+    assert_eq!(
+        error("require nether spawn within 5 of 0,0").1,
+        "the spawn is only in the Overworld"
+    );
+    // The fixture has no End.
+    assert!(
+        error("require end tower within 5 of 0,0")
+            .1
+            .contains("dimension")
+    );
+    assert!(
+        error("require biome nether_wastes within 5 of 0,0 at y 300")
+            .1
+            .contains("build height of the Nether, 0 to 255")
+    );
+}
+
+#[test]
+fn a_world_searches_its_own_dimension() {
+    let bundle = fixtures::structured_overworld_and_nether();
+    let game = Game::open(bundle.path()).unwrap();
+    let nether = game.world(Dimension::Nether).unwrap();
+    let overworld = game.world(Dimension::Overworld).unwrap();
+    // In a world, everything is its dimension, written or not.
+    let query = nether
+        .search_query("require nether fort within 50 of 0,0\nprefer #minecraft:mixed in 0,0 to 9,9")
+        .unwrap();
+    assert_eq!(query.dimension(1), Dimension::Nether);
+    assert_eq!(
+        query.to_string(),
+        "require minecraft:fort within 50 of 0,0\nprefer #minecraft:mixed in 0,0 to 9,9\n"
+    );
+    let session = nether.session(3).unwrap();
+    assert_eq!(
+        session.evaluate(&query, false).unwrap(),
+        game.session(3).evaluate(&query, false).unwrap()
+    );
+    // The spawn and slime chunks need the Overworld.
+    for text in [
+        "require fort within 50 of spawn",
+        "require 2 slime in 0,0 to 9,9",
+        "require overworld tower in 0,0 to 9,9",
+    ] {
+        assert!(
+            matches!(nether.search_query(text), Err(Error::InvalidQuery { .. })),
+            "{text}"
+        );
+    }
+    assert!(
+        overworld
+            .search_query("require nether fort within 50 of 0,0")
+            .is_err()
+    );
+    // A query in two dimensions isn't one world's to judge.
+    let both = game
+        .search_query("require fort within 50 of 0,0\nrequire tower within 50 of 0,0")
+        .unwrap();
+    assert!(matches!(
+        overworld.session(3).unwrap().evaluate(&both, false),
+        Err(Error::OtherWorld(_))
+    ));
+    assert!(game.session(3).evaluate(&both, false).is_ok());
+}

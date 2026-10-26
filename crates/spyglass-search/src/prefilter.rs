@@ -4,7 +4,8 @@
 //! A filter may reject a seed only if the full evaluation would too. Each one counts placement
 //! chunks, a superset of the structure starts, so it bounds a count from above, and it can only
 //! refute "at least N". Slime chunks are exact. Spawn anchors are unknown here, so their discs
-//! are widened to every place the spawn can be.
+//! are widened to every place the spawn can be: [`SPAWN_REACH`] in the Overworld, and as far as
+//! that reaches when converted into another dimension.
 
 use spyglass_structure::{PlacementKind, SeedPlacements, StructureSets, is_slime_chunk};
 
@@ -20,7 +21,8 @@ pub const SPAWN_REACH: u32 = 2048 + 512;
 pub struct Named<'a> {
     /// What's counted, for structure counts and clusters.
     pub target: Option<&'a [usize]>,
-    /// A structure anchor's structure.
+    /// A structure anchor's structure, if it's in the same dimension; a region anchored in
+    /// another dimension isn't filtered.
     pub anchor: Option<&'a [usize]>,
 }
 
@@ -67,13 +69,14 @@ enum Area {
 }
 
 impl Area {
-    /// The place, with a spawn anchor widened to every place the spawn can be.
-    fn new(place: &Place) -> Area {
+    /// The place, with a spawn anchor widened to every place the spawn can be: within
+    /// `spawn_reach` of (0, 0).
+    fn new(place: &Place, spawn_reach: u32) -> Area {
         match *place {
             Place::Within { radius, anchor } => match anchor {
                 Anchor::Spawn => Area::Disc {
                     centre: [0, 0],
-                    radius: radius + SPAWN_REACH,
+                    radius: radius + spawn_reach,
                 },
                 Anchor::Point(centre) => Area::Disc { centre, radius },
             },
@@ -84,7 +87,7 @@ impl Area {
     fn bounds(self) -> ([i32; 2], [i32; 2]) {
         match self {
             Area::Disc { centre, radius } => {
-                let r = radius as i32; // at most 32,767 + SPAWN_REACH
+                let r = radius as i32; // at most 32,767 + a spawn reach
                 (centre.map(|c| c - r), centre.map(|c| c + r))
             }
             Area::Box { min, max } => (min, max),
@@ -130,19 +133,31 @@ fn sets_of(sets: &StructureSets, structures: &[usize]) -> Option<Vec<usize>> {
 }
 
 impl Prefilter {
-    /// The filters for `constraints`, each with the structures it names. Only required "at
-    /// least" constraints the lower 48 bits can refute get one.
-    pub fn new(sets: &StructureSets, constraints: &[Constraint], named: &[Named<'_>]) -> Prefilter {
+    /// The filters for `constraints`, all in the dimension `sets` are for, each with the
+    /// structures it names, where the spawn is at most `spawn_reach` from (0, 0). Only required
+    /// "at least" constraints the lower 48 bits can refute get one.
+    pub fn new(
+        sets: &StructureSets,
+        constraints: &[Constraint],
+        named: &[Named<'_>],
+        spawn_reach: u32,
+    ) -> Prefilter {
         let filters = constraints
             .iter()
             .zip(named)
             .filter(|(c, _)| c.importance == Importance::Required)
-            .filter_map(|(c, named)| Self::filter(sets, &c.kind, named))
+            .filter_map(|(c, named)| Self::filter(sets, &c.kind, named, spawn_reach))
             .collect();
         Prefilter { filters }
     }
 
-    fn filter(sets: &StructureSets, kind: &Kind, named: &Named<'_>) -> Option<Filter> {
+    fn filter(
+        sets: &StructureSets,
+        kind: &Kind,
+        named: &Named<'_>,
+        spawn_reach: u32,
+    ) -> Option<Filter> {
+        let area = |place: &Place| Area::new(place, spawn_reach);
         match kind {
             Kind::Structures {
                 count: Count::AtLeast(n),
@@ -151,11 +166,11 @@ impl Prefilter {
             } => {
                 let target = sets_of(sets, named.target?)?;
                 let region = match region {
-                    Region::Place(place) => Within::Area(Area::new(place)),
+                    Region::Place(place) => Within::Area(area(place)),
                     Region::NearStructure { radius, place, .. } => Within::Near {
                         radius: *radius,
                         sets: sets_of(sets, named.anchor?)?,
-                        area: Area::new(place),
+                        area: area(place),
                     },
                 };
                 Some(Filter::Starts {
@@ -170,7 +185,7 @@ impl Prefilter {
                 size: *size as usize,
                 sets: sets_of(sets, named.target?)?,
                 apart: *apart,
-                area: Area::new(place),
+                area: area(place),
             }),
             // Widened to the spawn's reach, a slime count would almost never fail and costs
             // tens of thousands of chunks, so only fixed places are checked.
@@ -179,7 +194,7 @@ impl Prefilter {
                 region: Region::Place(place),
             } if !spawn_anchored(place) => Some(Filter::Slime {
                 count: *n as usize,
-                area: Area::new(place),
+                area: area(place),
             }),
             _ => None,
         }

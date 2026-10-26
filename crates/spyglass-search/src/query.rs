@@ -2,6 +2,8 @@
 
 use std::fmt;
 
+use spyglass_data::dimension::Dimension;
+
 use crate::parse::{self, ParseError};
 
 /// The largest coordinate, radius or distance a query may name: the world border.
@@ -40,6 +42,13 @@ impl Query {
     pub fn lines(&self) -> &[usize] {
         &self.lines
     }
+
+    /// Forgets the dimension written on constraint `index`, as the canonical text does when
+    /// it's the one inferred (`docs/specs/search.md#dimensions`). Panics if there's no such
+    /// constraint.
+    pub fn forget_dimension(&mut self, index: usize) {
+        self.constraints[index].dimension = None;
+    }
 }
 
 /// The canonical text: one constraint per line, each ending in a newline.
@@ -57,6 +66,8 @@ impl fmt::Display for Query {
 pub struct Constraint {
     /// Required, or preferred with a weight.
     pub importance: Importance,
+    /// The dimension written after `require` or `prefer`, if any.
+    pub dimension: Option<Dimension>,
     /// What it asks for.
     pub kind: Kind,
 }
@@ -224,9 +235,17 @@ impl Place {
 impl fmt::Display for Constraint {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.importance {
-            Importance::Required => write!(f, "require {}", self.kind),
-            Importance::Preferred { weight: 1 } => write!(f, "prefer {}", self.kind),
-            Importance::Preferred { weight } => write!(f, "prefer {} weight {weight}", self.kind),
+            Importance::Required => write!(f, "require ")?,
+            Importance::Preferred { .. } => write!(f, "prefer ")?,
+        }
+        if let Some(d) = self.dimension {
+            write!(f, "{} ", keyword(d))?;
+        }
+        match self.importance {
+            Importance::Preferred { weight } if weight != 1 => {
+                write!(f, "{} weight {weight}", self.kind)
+            }
+            _ => write!(f, "{}", self.kind),
         }
     }
 }
@@ -266,6 +285,15 @@ impl fmt::Display for Kind {
             } => write!(f, "biome {biome} covers {percent}% {place}{sampling}"),
             Kind::Spawn { place } => write!(f, "spawn {place}"),
         }
+    }
+}
+
+/// A dimension's keyword in the language.
+pub fn keyword(dimension: Dimension) -> &'static str {
+    match dimension {
+        Dimension::Overworld => "overworld",
+        Dimension::Nether => "nether",
+        Dimension::End => "end",
     }
 }
 

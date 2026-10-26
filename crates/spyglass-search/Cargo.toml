@@ -12,5 +12,6 @@ workspace = true
 
 [dependencies]
 rayon.workspace = true
+spyglass-data.workspace = true
 spyglass-structure.workspace = true
 thiserror.workspace = true

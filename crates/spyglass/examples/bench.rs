@@ -5,7 +5,7 @@
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
-use spyglass::World;
+use spyglass::{Dimension, Game, World};
 
 const SEEDS: [i64; 5] = [
     0,
@@ -214,7 +214,7 @@ fn main() -> spyglass::Result<()> {
     });
     // Six huts can't fit within 300 blocks, so placement rejects every lower 48 bits.
     let impossible = world.search_query("require 6 minecraft:swamp_hut within 300 of 0,0")?;
-    rate(
+    rate_world(
         &world,
         "search, placement rejects all, 1 thread",
         &impossible,
@@ -231,7 +231,7 @@ fn main() -> spyglass::Result<()> {
             (Some(1), "1 thread", 1 << 12),
             (None, "all threads", 1 << 16),
         ] {
-            rate(
+            rate_world(
                 &world,
                 &format!("search, witch huts {mode}, {label}"),
                 &witch,
@@ -255,7 +255,7 @@ fn main() -> spyglass::Result<()> {
         first: 0,
         last: i64::MAX,
     };
-    rate(
+    rate_world(
         &world,
         "search, huts and preferences, 1 thread",
         &mixed,
@@ -264,7 +264,7 @@ fn main() -> spyglass::Result<()> {
         Some(1),
         false,
     );
-    rate(
+    rate_world(
         &world,
         "search, huts and preferences, all threads",
         &mixed,
@@ -273,11 +273,78 @@ fn main() -> spyglass::Result<()> {
         None,
         false,
     );
+    // The Nether and the End: opening and binding, a fortress locate, and a search whose
+    // constraints are in two dimensions.
+    for dimension in [Dimension::Nether, Dimension::End] {
+        report(&format!("World::open_dimension {dimension}"), 3, || {
+            black_box(World::open_dimension(&dir, dimension).unwrap());
+        });
+    }
+    let game = Game::open(&dir)?;
+    let nether = game.world(Dimension::Nether)?;
+    let end = game.world(Dimension::End)?;
+    report("Nether World::session", 20, || {
+        black_box(nether.session(*seeds.next().unwrap()).unwrap());
+    });
+    report("End World::session", 20, || {
+        black_box(end.session(*seeds.next().unwrap()).unwrap());
+    });
+    let fortress = nether.structure_query("minecraft:fortress")?;
+    for confirm in [false, true] {
+        let mode = if confirm { "confirmed" } else { "unconfirmed" };
+        report(
+            &format!("locate_structure fortress {mode}, new session"),
+            5,
+            || {
+                let session = nether.session(*seeds.next().unwrap()).unwrap();
+                let options = spyglass::LocateOptions {
+                    radius: spyglass::LOCATE_RADIUS,
+                    confirm,
+                };
+                black_box(
+                    session
+                        .locate_structure(&fortress, [0, 64, 0], &options)
+                        .unwrap(),
+                );
+            },
+        );
+    }
+    let portal = game.search_query(
+        "require minecraft:fortress within 200 of spawn\n\
+         prefer #minecraft:village within 400 of spawn",
+    )?;
+    report(
+        "evaluate fortress near spawn's portal, new session",
+        5,
+        || {
+            let session = game.session(*seeds.next().unwrap());
+            black_box(session.evaluate(&portal, false).unwrap());
+        },
+    );
+    for (threads, label, count) in [
+        (Some(1), "1 thread", 1 << 11),
+        (None, "all threads", 1 << 15),
+    ] {
+        rate(
+            &format!("search, fortress near spawn's portal, {label}"),
+            spyglass::SeedSource::Range {
+                first: 0,
+                last: i64::MAX,
+            },
+            count,
+            threads,
+            false,
+            |options| {
+                game.search(&portal, options, |_| std::ops::ControlFlow::Continue(()))
+                    .unwrap()
+            },
+        );
+    }
     Ok(())
 }
 
-/// Searches the first `count` seeds of `source` and prints seeds per second.
-fn rate(
+/// [`rate`] for a search in one world.
+fn rate_world(
     world: &World,
     name: &str,
     query: &spyglass::SearchQuery,
@@ -285,6 +352,22 @@ fn rate(
     count: u64,
     threads: Option<usize>,
     confirm: bool,
+) {
+    rate(name, source, count, threads, confirm, |options| {
+        world
+            .search(query, options, |_| std::ops::ControlFlow::Continue(()))
+            .unwrap()
+    });
+}
+
+/// Searches the first `count` seeds of `source` with `search` and prints seeds per second.
+fn rate(
+    name: &str,
+    source: spyglass::SeedSource,
+    count: u64,
+    threads: Option<usize>,
+    confirm: bool,
+    search: impl Fn(&spyglass::SearchOptions) -> spyglass::SearchOutcome,
 ) {
     let options = spyglass::SearchOptions {
         source,
@@ -294,9 +377,7 @@ fn rate(
         ..spyglass::SearchOptions::default()
     };
     let start = Instant::now();
-    let outcome = world
-        .search(query, &options, |_| std::ops::ControlFlow::Continue(()))
-        .unwrap();
+    let outcome = search(&options);
     let seconds = start.elapsed().as_secs_f64();
     let p = &outcome.progress;
     println!(

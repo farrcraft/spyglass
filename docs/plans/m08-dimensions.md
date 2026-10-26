@@ -227,10 +227,11 @@ Specs and ADRs that govern this: [noise.md](../specs/noise.md), [rng.md](../spec
 
 ### Phase 7: cross-dimension search
 
-- [ ] Parser, canonical printer and resolution for dimensions and scaled anchors (inferring a target's dimension from what each dimension can place, and `Game::convert` for anchors); round-trip and error tests.
-- [ ] Evaluation and the fast path over sessions per dimension; the prefilter per dimension.
-- [ ] Soundness and equality tests on fixtures, extended to cross-dimension queries; `search.md` final.
-- [ ] Bench lines: a Nether fortress locate, a cross-dimension search, Nether and End binding.
+- [x] Parser, canonical printer and resolution for dimensions and scaled anchors (inferring a target's dimension from what each dimension can place, and `Game::convert` for anchors); round-trip and error tests.
+- [x] Evaluation and the fast path over sessions per dimension; the prefilter per dimension.
+- [x] Soundness and equality tests on fixtures, extended to cross-dimension queries; `search.md` final.
+- [x] Bench lines: a Nether fortress locate, a cross-dimension search, Nether and End binding.
+- [ ] ADR 0025 (inference revised from ADR 0024) accepted.
 
 ### Phase 8: front ends and close-out
 
@@ -260,9 +261,9 @@ Specs and ADRs that govern this: [noise.md](../specs/noise.md), [rng.md](../spec
 - [ ] `docs/specs/rng.md`, `docs/specs/density-functions.md`: legacy binding, `distance_to_point`, `end_outer_islands`
 - [ ] `docs/specs/biome-lookup.md`: the Nether, `TheEndBiomeSource`
 - [ ] `docs/specs/terrain.md`, `docs/specs/structure-placement.md`, `docs/specs/locate.md`: both dimensions
-- [ ] `docs/specs/search.md`: dimensions and scaled anchors
+- [x] `docs/specs/search.md`: dimensions and scaled anchors
 - [ ] `docs/specs/world-saves.md`, `docs/specs/render.md`, `docs/specs/cli-json.md`, `docs/specs/oracle.md`
-- [x] ADRs: dimensions in the API ([0023](../adr/0023-dimensions-in-the-public-api.md)); the query language's dimensions ([0024](../adr/0024-dimensions-in-the-search-language.md))
+- [x] ADRs: dimensions in the API ([0023](../adr/0023-dimensions-in-the-public-api.md)); the query language's dimensions ([0024](../adr/0024-dimensions-in-the-search-language.md), inference revised by [0025](../adr/0025-inferring-dimensions-in-search-queries.md), proposed)
 - [ ] `docs/architecture.md`, `README.md`, `docs/getting-started.md`
 
 ## Decisions
@@ -281,6 +282,7 @@ Agreed on 2026-10-26, as recommended:
 
 ## Notes
 
+- 2026-10-26: Phase 7 done but for accepting ADR 0025. Constraints carry a written dimension (`overworld`, `nether`, `end` after `require`/`prefer`); `Game::search_query` infers the rest and converts anchors; `GameSession::evaluate` and `Game::search` bind each dimension's session only when one of its constraints is checked; the prefilter runs per dimension, with the spawn's reach converted into the Nether. `Dimension` moved to `spyglass-data` so the parser can use it. ADR 0024's "places all" inference would have made `#minecraft:ruined_portal` an error in existing queries, so ADR 0025 (proposed) infers the first dimension that places any of a target, and anchors follow the constraint's dimension when it places them. Fixture tests: the fast path and prefilter agree with `evaluate` over 150 seeds of six cross-dimension queries, and a Nether `spawn` anchor counts exactly the forts around the Overworld spawn divided by 8. On the real game, six Nether, End and cross-dimension queries agree over 30 seeds, confirmed or not (309 reported, 16 rejected by the prefilter, 102 decided by terrain). Bench (release; this machine measures about half m06's search rates today, before and after the change alike): opening the Nether 0.78 s and the End 0.90 s; binding either under 0.02 ms; a fortress locate 0.03 ms, confirmed 0.07 ms; judging a fortress near the spawn's portal 4 ms in a new session; searching it 325 seeds a second on one thread, 3,000 on all.
 - 2026-10-26: Phase 6 done. `Game` opens each dimension's `World` on first use and keeps it; `Game::session(seed)` binds each dimension's session on first use; `Game::convert` scales anchors between the Overworld and the Nether (the End is unlinked). Inferring a search target's dimension stays with the parser in phase 7, where its rules (every structure placed versus some) are used. Saves are assessed per dimension: each of the Default preset's dimensions has its generator compared, so a superflat or Amplified world still has answers in the Nether and the End, and older chunks are counted per dimension. `open_world` takes a dimension and `open_game` refuses each blocked one. On this machine's saves, every Default 26.3 world stores all three generators and each matches. Maps refuse slime chunks and the spawn outside the Overworld, and terrain layers where the dimension type has a ceiling, so front ends follow one rule (`render.md`). The front ends pass the Overworld until phase 8.
 - 2026-10-26: `check-save` on the test world (seed `spyglass`, 26.3), after a visit to both dimensions: the Nether's 3,074,048 stored biome cells in 3,002 chunks and the End's 3,459,072 in 3,378 chunks agree with the harness, with no unexplained mismatches. 128 of the Nether's 384 tied cells hold a different tied biome than the harness's first, as ties allow. Phase 3 is complete.
 - 2026-10-26: Phase 5 done. Structure sets already resolved per dimension. New: the nether fossil's height provider and base-column scan, end cities on the mansion's rule, and ruined portals decided without terrain where their biomes are all or none of the source's (every Nether placement chunk's portal). Against the golden files: in the Nether, 26,142 stubs and 51,604 of 51,605 outcomes as the game's (one behind a tie), and 132 bastion layouts piece for piece; in the End, 17 stubs and all 510 outcomes. `/locate`: all 480 cases agree, and every one of the Nether's 48 and the End's 12 confirmed structure cases is exactly the game's answer. Dropping the fossil scan's air test fails 33,070 checks.

@@ -42,4 +42,4 @@ The grammar and the meaning of each constraint are in [specs/search.md](../specs
 
 ## See also
 
-- [ADR 0024](0024-dimensions-in-the-search-language.md): dimensions in the language.
+- [ADR 0024](0024-dimensions-in-the-search-language.md): dimensions in the language, with inference revised by [ADR 0025](0025-inferring-dimensions-in-search-queries.md).

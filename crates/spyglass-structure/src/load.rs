@@ -10,7 +10,7 @@ use spyglass_data::codec::{
 };
 
 use crate::biomes::{BiomeSet, Tags};
-use crate::jigsaw::{GenerationHeights, Jigsaw, JigsawLoader};
+use crate::jigsaw::{GenerationHeights, HeightProvider, Jigsaw, JigsawLoader, height_provider};
 use crate::placement::{
     ConcentricRings, ExclusionZone, FrequencyReduction, Placement, PlacementKind, RandomSpread,
     SpreadType,
@@ -98,6 +98,8 @@ pub struct Structure {
     pub beached: bool,
     /// For [`StructureType::RuinedPortal`], its setups and templates.
     pub ruined_portal: Option<RuinedPortal>,
+    /// For [`StructureType::NetherFossil`], `height`: where its scan starts.
+    pub height: Option<HeightProvider>,
 }
 
 /// One weighted entry of a structure set (`StructureSet.StructureSelectionEntry`).
@@ -370,6 +372,13 @@ impl SetLoader<'_> {
         };
         let beached = kind == StructureType::Shipwreck
             && obj.get("is_beached").and_then(Value::as_bool) == Some(true);
+        let height = match kind {
+            StructureType::NetherFossil => Some(height_provider(
+                field(obj, "height", &root)?,
+                &root.child("height"),
+            )?),
+            _ => None,
+        };
         self.structures.push(Structure {
             id: id.clone(),
             kind,
@@ -377,6 +386,7 @@ impl SetLoader<'_> {
             jigsaw,
             beached,
             ruined_portal,
+            height,
         });
         let i = self.structures.len() - 1;
         self.structure_index.insert(id, i);

@@ -3,9 +3,9 @@
 //! generator's terrain, which gives most types their real check position. See
 //! `docs/specs/structure-placement.md`.
 
-use spyglass_biome::{Biomes, Lookup};
+use spyglass_biome::{BiomeId, Biomes, Lookup};
 use spyglass_rng::{RandomSource, worldgen};
-use spyglass_terrain::{Heightmap, Terrain};
+use spyglass_terrain::{Block, Heightmap, Terrain};
 
 use crate::assembly::{Assembly, JigsawPools};
 use crate::biomes::BiomeSet;
@@ -203,8 +203,16 @@ impl<'a> Starts<'a> {
         let s = &self.placements.sets().structures()[structure];
         let (before, at) = match (found.before, found.at) {
             (Check::Rejected, _) => return Check::Rejected,
-            // A mineshaft whose whole column is in its set passes wherever its check is.
-            (Check::Passes, None) if s.kind == StructureType::Mineshaft => return Check::Passes,
+            // A mineshaft whose whole column is in its set, or a ruined portal whose set is every
+            // biome, passes wherever its check is.
+            (Check::Passes, None)
+                if matches!(
+                    s.kind,
+                    StructureType::Mineshaft | StructureType::RuinedPortal
+                ) =>
+            {
+                return Check::Passes;
+            }
             (before, None) => return precondition(before),
             (before, Some(at)) => (before, at),
         };
@@ -303,9 +311,9 @@ impl<'a> Starts<'a> {
                     ..found
                 }
             }
-            // WoodlandMansionStructure: the rotation from the context random, then the lowest
-            // corner of a 5 × 5 box rotated with it; below 60, no start.
-            StructureType::WoodlandMansion => {
+            // WoodlandMansionStructure and EndCityStructure: the rotation from the context
+            // random, then the lowest corner of a 5 × 5 box rotated with it; below 60, no start.
+            StructureType::WoodlandMansion | StructureType::EndCity => {
                 let (x, z) = (min_x.wrapping_add(7), min_z.wrapping_add(7));
                 let before = terrain_column(x, z);
                 if before == Check::Rejected {
@@ -331,10 +339,6 @@ impl<'a> Starts<'a> {
                     before,
                     at: Some([x, y, z]),
                 }
-            }
-            // The End's terrain isn't computed: the column test only.
-            StructureType::EndCity => {
-                Found::pending(terrain_column(min_x.wrapping_add(7), min_z.wrapping_add(7)))
             }
             // The check is at (midX, 50 + dy, minZ), with dy from the piece layout, which isn't
             // ported. y is in the level, so the level's column there decides it when its quarts
@@ -393,9 +397,23 @@ impl<'a> Starts<'a> {
                 }
             }
             // RuinedPortalStructure: no condition before the check, whose height needs terrain.
+            // It always finds a position, so where its biomes are every biome the source can
+            // give (the Nether's portal, in the Nether) it passes without one, and where they're
+            // none (the Overworld's portals there) it fails.
             StructureType::RuinedPortal => {
                 let Some(t) = terrain else {
-                    return Found::pending(Check::Candidate);
+                    let every = self.biomes.source().biome_names().names().len();
+                    let everywhere = (0..every).all(|b| s.biomes.contains(BiomeId(b as u16)));
+                    return if s.biomes.is_empty() {
+                        Found::REJECTED
+                    } else if everywhere {
+                        Found {
+                            before: Check::Passes,
+                            at: None,
+                        }
+                    } else {
+                        Found::pending(Check::Candidate)
+                    };
                 };
                 let portal = s
                     .ruined_portal
@@ -408,8 +426,39 @@ impl<'a> Starts<'a> {
                     at: Some(portal.check_position(chunk, t, level_min_y, &mut random)),
                 }
             }
-            // The Nether's terrain isn't computed.
-            StructureType::NetherFossil => Found::pending(Check::Candidate),
+            // NetherFossilStructure: x and z in the chunk, the height provider, then down the base
+            // column while above the sea level, to a floor under air; none, no start. The check
+            // is at the floor. Without terrain, the column there decides what it can.
+            StructureType::NetherFossil => {
+                let mut random =
+                    worldgen::large_feature(self.placements.seed(), chunk[0], chunk[1]);
+                let x = min_x.wrapping_add(random.next_int_bounded(16));
+                let z = min_z.wrapping_add(random.next_int_bounded(16));
+                let Some(t) = terrain else {
+                    let column = self.column(&s.biomes, x, z, level_min_y, level_max_y);
+                    return Found::pending(precondition(column));
+                };
+                let height = s.height.expect("nether fossils load their height");
+                let mut y = height.sample(&mut random, heights);
+                let column = t.base_column(x, z);
+                let sea_level = sets.sea_level();
+                while y > sea_level {
+                    let top = column.at(y);
+                    y = y.wrapping_sub(1);
+                    // Soul sand never occurs in a base column; the default block is a full
+                    // block, so its top face is sturdy, and fluids' and air's aren't.
+                    if top == Block::Air && column.at(y) == Block::Default {
+                        break;
+                    }
+                }
+                if y <= sea_level {
+                    return Found::REJECTED;
+                }
+                Found {
+                    before: Check::Passes,
+                    at: Some([x, y, z]),
+                }
+            }
         }
     }
 

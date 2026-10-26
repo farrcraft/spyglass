@@ -559,7 +559,7 @@ impl VerticalAnchor {
     }
 }
 
-/// A height provider (`HeightProvider`), the kinds jigsaw starts use.
+/// A height provider (`HeightProvider`), the kinds jigsaw starts and nether fossils use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HeightProvider {
     /// `constant`, or a bare anchor.
@@ -571,7 +571,11 @@ pub enum HeightProvider {
 
 impl HeightProvider {
     /// `sample(random, context)`.
-    fn sample(self, random: &mut LegacyRandomSource, heights: &GenerationHeights) -> i32 {
+    pub(crate) fn sample(
+        self,
+        random: &mut LegacyRandomSource,
+        heights: &GenerationHeights,
+    ) -> i32 {
         match self {
             HeightProvider::Constant(a) => a.resolve(heights),
             HeightProvider::Uniform(lo, hi) => {
@@ -1223,7 +1227,7 @@ fn alias_binding(json: &Value, at: &At<'_>) -> LoadResult<AliasBinding> {
 /// `HeightProvider.CODEC` for the kinds jigsaw starts use: a bare anchor (constant),
 /// `{"type": "constant", "value": anchor}` or `{"type": "uniform", "min_inclusive",
 /// "max_inclusive"}`.
-fn height_provider(json: &Value, at: &At<'_>) -> LoadResult<HeightProvider> {
+pub(crate) fn height_provider(json: &Value, at: &At<'_>) -> LoadResult<HeightProvider> {
     let obj = json
         .as_object()
         .ok_or_else(|| at.error(LoadErrorKind::Shape("a height provider")))?;

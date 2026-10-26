@@ -223,7 +223,7 @@ Not covered: single-piece structures (whose boxes would come from `makeBoundingB
 
 ## The Nether and the End
 
-Draft, from the 26.3 bytecode; to be checked against the structure golden files for both dimensions.
+From the 26.3 bytecode, checked against the structure golden files for both dimensions ([Testing](#testing)).
 
 - **Which sets apply** works as in the Overworld. The Nether gets `nether_complexes` (fortress weight 2, bastion 3), `nether_fossils` and `ruined_portals`; the End gets `end_cities`. No ring placement applies in either, and none of their sets has an exclusion zone or frequency.
 - **Biomes don't depend on y** in either dimension ([biome-lookup.md](biome-lookup.md#the-ends-source)), so every biome check is decided by its x and z from the climate alone. Terrain gives only the stub's y and terrain's own rejections.
@@ -238,7 +238,7 @@ Draft, from the 26.3 bytecode; to be checked against the structure golden files 
 
   In 26.3's columns this is the first y from the start − 1 down to 33 with netherrack at y and air above.
 
-- **Ruined portal (`in_nether`):** as [above](#with-terrain), with one setup and no air pocket. Lava counts for `findSuitableY`, so in the Nether its y is always 27 to 100. Its tag is every Nether biome, so it always passes.
+- **Ruined portal (`in_nether`):** as [above](#with-terrain), with one setup and no air pocket. Lava counts for `findSuitableY`, so in the Nether its y is always 27 to 100. Its tag is every Nether biome, so it always passes. Without terrain, spyglass decides a ruined portal whose biomes are all of the source's (it passes wherever its check is) or none of them (it fails), as it does mineshafts whose column is all in their biomes.
 - **The shared `ruined_portals` set** applies in both the Overworld and the Nether. In the Nether the six Overworld portals fail their biome checks and the pick draws again, so every placement chunk gets a Nether portal.
 - **End city:** the mansion's footprint rule, as in the table. A corner over the void has base height 0, so its first occupied height is −1, below 60. The main island is `the_end`, which isn't in its biomes.
 
@@ -270,4 +270,9 @@ The biome check only ever removes starts, so a count of placement chunks is an u
   - With terrain (`structures_with_terrain_match_the_oracle`): every stub spyglass computes must equal the game's exactly, and where the game has no stub spyglass must have none, unless a tied condition stands before it. Every outcome spyglass decides (a certain start, or none) must be the game's. For 26.3 that's 1,640 stubs, all equal, with mineshafts' 787 left unknown, and 5,986 outcomes decided of 6,056, all equal.
   - With terrain and pools, in the same test: every jigsaw start the game made must assemble to the game's pieces, box for box in order, and to the game's bounds. For 26.3 that's 301 starts and 47,534 pieces, the trial chambers' aliases included.
 
-  Run it with `cargo test --release -p spyglass-structure -- --ignored`. For 26.3 it compares 6,056 placement chunks, 2,427 check positions, 682 jigsaw positions and 1,280 ring positions. 304 rings are flagged, and the 61 that differ are all among them.
+  Run it with `cargo test --release -p spyglass-structure -- --ignored`. For 26.3 it compares 6,056 placement chunks, 2,427 check positions, 682 jigsaw positions and 1,280 ring positions in the Overworld. 304 rings are flagged, and the 61 that differ are all among them.
+
+- **Both tests run in the Nether and the End too.** For 26.3:
+  - The Nether: 51,605 placement chunks and 26,142 check positions equal; 405 starts decided without terrain; with terrain, 26,142 stubs equal and 51,604 outcomes decided, the one left open behind a tie; 132 bastions assembled to the game's 12,530 pieces.
+  - The End: 510 placement chunks equal; with terrain, 17 end city stubs equal and all 510 outcomes decided.
+  - Dropping the nether fossil scan's test for air above its floor fails 33,070 checks.

@@ -214,10 +214,10 @@ Specs and ADRs that govern this: [noise.md](../specs/noise.md), [rng.md](../spec
 
 ### Phase 5: structures
 
-- [ ] Per-dimension sets, the Nether's ruined portal in its own set, fortress and bastion checks, `Starts::with_terrain` for the nether fossil, the Nether's ruined portal and the end city.
-- [ ] Golden structure tests in both dimensions: exact stubs, bastion layouts box for box.
-- [ ] Confirmed `/locate` comparison in both dimensions.
-- [ ] `structure-placement.md` and `locate.md` updated.
+- [x] Per-dimension sets, the Nether's ruined portal in its own set, fortress and bastion checks, `Starts::with_terrain` for the nether fossil, the Nether's ruined portal and the end city.
+- [x] Golden structure tests in both dimensions: exact stubs, bastion layouts box for box.
+- [x] Confirmed `/locate` comparison in both dimensions.
+- [x] `structure-placement.md` and `locate.md` updated.
 
 ### Phase 6: the library and saves
 
@@ -281,6 +281,7 @@ Agreed on 2026-10-26, as recommended:
 
 ## Notes
 
+- 2026-10-26: Phase 5 done. Structure sets already resolved per dimension. New: the nether fossil's height provider and base-column scan, end cities on the mansion's rule, and ruined portals decided without terrain where their biomes are all or none of the source's (every Nether placement chunk's portal). Against the golden files: in the Nether, 26,142 stubs and 51,604 of 51,605 outcomes as the game's (one behind a tie), and 132 bastion layouts piece for piece; in the End, 17 stubs and all 510 outcomes. `/locate`: all 480 cases agree, and every one of the Nether's 48 and the End's 12 confirmed structure cases is exactly the game's answer. Dropping the fossil scan's air test fails 33,070 checks.
 - 2026-10-26: Phase 4 done. With legacy binding from phase 3, every height and block column in the Nether's and End's height golden files matches: 6,135,300 values in 30 files across the three dimensions. No terrain code changed beyond accepting legacy randomness.
 - 2026-10-26: Phase 3 done but for `check-save`, which needs a save with Nether and End chunks. Every golden biome cell matches: the Nether's 42,598,400 cells (8,064 tied, every tie set equal) and the End's 42,598,400, and the 30 spawn files. `BiomeSource` is multi-noise or the End's; biome names moved to `BiomeNames`, which structure loading takes instead of the parameter list. `World::open_dimension` reads each dimension's type from the preset. Terrain settings accept legacy randomness (refusing it only with aquifers, which no vanilla dimension combines), a phase 4 task done early because opening a world loads terrain.
 - 2026-10-26: Phase 2 done. All 19,660 density probe cases match bit for bit: 14,660 in the Overworld, 2,240 in the Nether and 2,760 in the End, now including the router's inline entries. Every density function in the 26.3 bundle binds. Skipping 17,291 draws instead of 17,292 for the End's islands fails 548 cases. The binder takes a legacy flag (`Binder::with_legacy_random`) and the climate router reads it; terrain settings still refuse legacy until phase 4. Legacy normalization is ported but only hand-tested, since no 26.3 noise uses it.

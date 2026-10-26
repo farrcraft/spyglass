@@ -65,14 +65,21 @@ impl Report {
     }
 }
 
-#[test]
-#[ignore = "needs oracle-out/<version>/structures and bundles/<version>"]
-fn structures_match_the_oracle() {
-    let version = "26.3";
+/// The Default preset's dimensions, by their folders in `oracle-out/<version>/structures/`;
+/// each id is `minecraft:<folder>`, also its dimension type's.
+const DIMENSIONS: [&str; 3] = ["overworld", "the_nether", "the_end"];
+
+/// One dimension's golden files, with its biome source and structure sets.
+fn dimension(
+    bundle: &Bundle,
+    version: &str,
+    folder: &str,
+) -> (Vec<PathBuf>, BiomeSource, StructureSets) {
     let dir = root()
         .join("oracle-out")
         .join(version)
-        .join("structures/overworld");
+        .join("structures")
+        .join(folder);
     let files: Vec<PathBuf> = std::fs::read_dir(&dir)
         .unwrap_or_else(|e| panic!("{}: {e}; run cargo xtask oracle structures", dir.display()))
         .map(|e| e.unwrap().path())
@@ -82,9 +89,26 @@ fn structures_match_the_oracle() {
         "no structure golden files in {}",
         dir.display()
     );
+    let id = format!("minecraft:{folder}");
+    let source = BiomeSource::load(bundle, "minecraft:normal", &id).unwrap();
+    let sets = StructureSets::load(bundle, "minecraft:normal", &id, &source)
+        .unwrap_or_else(|e| panic!("{e}"));
+    (files, source, sets)
+}
+
+#[test]
+#[ignore = "needs oracle-out/<version>/structures and bundles/<version>"]
+fn structures_match_the_oracle() {
+    let version = "26.3";
     let bundle = Bundle::open(root().join("bundles").join(version)).unwrap();
-    let source = BiomeSource::overworld(&bundle).unwrap();
-    let sets = StructureSets::overworld(&bundle, &source).unwrap_or_else(|e| panic!("{e}"));
+    for folder in DIMENSIONS {
+        println!("{folder}:");
+        structures_match_in(&bundle, version, folder);
+    }
+}
+
+fn structures_match_in(bundle: &Bundle, version: &str, folder: &str) {
+    let (files, source, sets) = dimension(bundle, version, folder);
     let mut report = Report::default();
 
     for path in &files {
@@ -472,20 +496,22 @@ fn with_terrain(
 #[ignore = "needs oracle-out/<version>/structures and bundles/<version>"]
 fn structures_with_terrain_match_the_oracle() {
     let version = "26.3";
-    let dir = root()
-        .join("oracle-out")
-        .join(version)
-        .join("structures/overworld");
-    let files: Vec<PathBuf> = std::fs::read_dir(&dir)
-        .unwrap_or_else(|e| panic!("{}: {e}; run cargo xtask oracle structures", dir.display()))
-        .map(|e| e.unwrap().path())
-        .collect();
     let bundle = Bundle::open(root().join("bundles").join(version)).unwrap();
-    let source = BiomeSource::overworld(&bundle).unwrap();
-    let sets = StructureSets::overworld(&bundle, &source).unwrap();
-    let settings =
-        TerrainSettings::load(&bundle, source.noise_settings(), "minecraft:overworld").unwrap();
-    let pools = JigsawPools::load(&bundle, &sets).unwrap_or_else(|e| panic!("{e}"));
+    for folder in DIMENSIONS {
+        println!("{folder}:");
+        with_terrain_in(&bundle, version, folder);
+    }
+}
+
+fn with_terrain_in(bundle: &Bundle, version: &str, folder: &str) {
+    let (files, source, sets) = dimension(bundle, version, folder);
+    let settings = TerrainSettings::load(
+        bundle,
+        source.noise_settings(),
+        &format!("minecraft:{folder}"),
+    )
+    .unwrap();
+    let pools = JigsawPools::load(bundle, &sets).unwrap_or_else(|e| panic!("{e}"));
     let reports: Vec<TerrainReport> = files
         .par_iter()
         .map(|p| with_terrain(p, &sets, &source, &settings, &pools))

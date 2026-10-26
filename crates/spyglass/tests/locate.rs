@@ -5,7 +5,7 @@
 //! `cargo test --release -p spyglass --test locate -- --ignored --nocapture`.
 
 use serde_json::Value;
-use spyglass::World;
+use spyglass::{Dimension, World};
 
 fn ints(v: &Value) -> Vec<Option<i32>> {
     v.as_array()
@@ -15,12 +15,13 @@ fn ints(v: &Value) -> Vec<Option<i32>> {
         .collect()
 }
 
-/// Whether a case is in the Overworld: format 1 files have only Overworld cases, and no
-/// dimension per case. Cases in other dimensions aren't compared yet.
-fn in_overworld(case: &Value) -> bool {
+/// A case's dimension: format 1 files have only Overworld cases, and no dimension per case.
+fn dimension(case: &Value) -> Dimension {
     case["dimension"]
         .as_str()
-        .is_none_or(|d| d == "minecraft:overworld")
+        .map_or(Dimension::Overworld, |d| {
+            Dimension::from_id(d).expect("a dimension")
+        })
 }
 
 #[test]
@@ -32,13 +33,16 @@ fn locate_agrees_with_the_game() {
     // Confirmed structure cases, and those whose hits were all certain, so that spyglass's
     // answer was exactly the game's.
     let (mut confirmed, mut decided) = (0, 0);
+    let mut by_dimension: std::collections::BTreeMap<Dimension, usize> = Default::default();
     for entry in std::fs::read_dir(&root).expect("no oracle-out/").flatten() {
         let version = entry.file_name().to_string_lossy().into_owned();
         let Ok(files) = std::fs::read_dir(entry.path().join("locate")) else {
             continue;
         };
-        let world = World::open(root.join("../bundles").join(&version))
-            .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {version}"));
+        let worlds = Dimension::ALL.map(|d| {
+            World::open_dimension(root.join("../bundles").join(&version), d)
+                .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {version}"))
+        });
         for file in files.flatten() {
             let json: Value =
                 serde_json::from_str(&std::fs::read_to_string(file.path()).unwrap()).unwrap();
@@ -51,18 +55,37 @@ fn locate_agrees_with_the_game() {
                 assert_eq!(report.save.seed, seed, "{dir}");
                 report.open_world().unwrap()
             });
-            let session = from_save.as_ref().unwrap_or(&world).session(seed).unwrap();
+            // The save's Overworld goes through the save; its other dimensions aren't opened
+            // from saves yet, so their cases are skipped.
+            let sessions = Dimension::ALL.map(|d| {
+                let world = &worlds[d as usize];
+                let world = match (&from_save, d) {
+                    (Some(save), Dimension::Overworld) => save,
+                    _ => world,
+                };
+                world.session(seed).unwrap()
+            });
+            let session_for = |case: &Value| {
+                let d = dimension(case);
+                (from_save.is_none() || d == Dimension::Overworld).then(|| &sessions[d as usize])
+            };
             let structure_cases = json["cases"]
                 .as_array()
                 .unwrap()
                 .iter()
-                .filter(|c| c["kind"] == "structure" && in_overworld(c));
+                .filter(|c| c["kind"] == "structure");
             for case in structure_cases {
+                let Some(session) = session_for(case) else {
+                    continue;
+                };
                 let target = case["target"].as_str().unwrap();
                 let from: Vec<i32> = ints(&case["from"]).into_iter().flatten().collect();
                 let from = [from[0], from[1], from[2]];
                 let game = case["answer"].as_array().map(|_| ints(&case["answer"]));
-                let name = format!("seed {seed}: {target} from {from:?}, confirmed");
+                let name = format!(
+                    "seed {seed}: {target} from {from:?} in {}, confirmed",
+                    dimension(case)
+                );
                 let query = session.world().structure_query(target).unwrap();
                 let r = session
                     .locate_structure(&query, from, &spyglass::LocateOptions::default())
@@ -96,15 +119,16 @@ fn locate_agrees_with_the_game() {
                 }
             }
             for case in json["cases"].as_array().unwrap() {
-                if !in_overworld(case) {
+                let Some(session) = session_for(case) else {
                     continue;
-                }
+                };
+                *by_dimension.entry(dimension(case)).or_default() += 1;
                 cases += 1;
                 let target = case["target"].as_str().unwrap();
                 let from: Vec<i32> = ints(&case["from"]).into_iter().flatten().collect();
                 let from = [from[0], from[1], from[2]];
                 let game = case["answer"].as_array().map(|_| ints(&case["answer"]));
-                let name = format!("seed {seed}: {target} from {from:?}");
+                let name = format!("seed {seed}: {target} from {from:?} in {}", dimension(case));
                 // Our hits as (x, z) or (x, y, z), whether the list is complete, and whether
                 // it holds a certain hit.
                 let (hits, complete, certain): (Vec<[Option<i32>; 3]>, bool, bool) =
@@ -171,7 +195,7 @@ fn locate_agrees_with_the_game() {
     }
     assert!(cases > 0, "no locate files; run cargo xtask oracle locate");
     println!(
-        "{cases} cases: the game's answer was our first hit in {first}; \
+        "{cases} cases {by_dimension:?}: the game's answer was our first hit in {first}; \
          {inconclusive} beyond our candidate cap. {confirmed} structure cases confirmed, \
          {decided} with every hit certain, all equal to the game's"
     );

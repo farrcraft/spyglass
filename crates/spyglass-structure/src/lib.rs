@@ -19,7 +19,7 @@ mod slime;
 pub use assembly::{Assembly, JigsawPools, Layout};
 pub use biomes::BiomeSet;
 pub use check::{Check, Selection, Starts};
-pub use jigsaw::{BoundingBox, GenerationHeights, Jigsaw, JigsawCheck};
+pub use jigsaw::{BoundingBox, GenerationHeights, HeightProvider, Jigsaw, JigsawCheck};
 pub use load::{Entry, Structure, StructureSet, StructureSets, StructureType};
 pub use locate::{LOCATE_RADIUS, MAX_UNCERTAIN, StructureHit, StructureSearch};
 pub use placement::{

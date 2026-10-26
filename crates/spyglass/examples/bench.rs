@@ -95,17 +95,113 @@ fn main() -> spyglass::Result<()> {
         let session = world.session(*seeds.next().unwrap()).unwrap();
         black_box(session.spawn_origin());
     });
-    let huts = world.search_query(
-        "require 2 minecraft:swamp_hut within 600 of spawn
-         require cluster 2 minecraft:swamp_hut within 200 of each other within 600 of spawn
-         prefer 3 #minecraft:village within 400 of spawn
-         prefer biome minecraft:cherry_grove within 500 of spawn",
+    // Seed search: one constraint of each kind, judged in a new session (what a search's
+    // full check costs per seed), then whole searches.
+    let kinds = [
+        (
+            "swamp hut count",
+            "require 2 minecraft:swamp_hut within 1000 of 0,0",
+        ),
+        (
+            "village near an outpost",
+            "require #minecraft:village within 300 of minecraft:pillager_outpost within 1500 of 0,0",
+        ),
+        (
+            "swamp hut cluster",
+            "require cluster 2 minecraft:swamp_hut within 300 of each other within 2000 of 0,0",
+        ),
+        ("slime chunks", "require 4 slime within 128 of 0,0"),
+        ("spawn", "require spawn within 300 of 0,0"),
+        (
+            "near spawn",
+            "require 2 minecraft:swamp_hut within 1000 of spawn",
+        ),
+        (
+            "biome presence, 500",
+            "require biome minecraft:cherry_grove within 500 of 0,0",
+        ),
+        (
+            "biome coverage, 1000 step 32",
+            "require biome minecraft:plains covers 30% within 1000 of 0,0 step 32",
+        ),
+        (
+            "stronghold",
+            "require minecraft:stronghold within 1500 of 0,0",
+        ),
+    ];
+    for (name, text) in kinds {
+        let query = world.search_query(text)?;
+        report(&format!("evaluate {name}, new session"), 5, || {
+            let session = world.session(*seeds.next().unwrap()).unwrap();
+            black_box(session.evaluate(&query).unwrap());
+        });
+    }
+    // Six huts can't fit within 300 blocks, so placement rejects every lower 48 bits.
+    let impossible = world.search_query("require 6 minecraft:swamp_hut within 300 of 0,0")?;
+    rate(
+        &world,
+        "search, placement rejects all, 1 thread",
+        &impossible,
+        spyglass::SeedSource::All,
+        1 << 32,
+        Some(1),
+    );
+    let mixed = world.search_query(
+        "require 2 minecraft:swamp_hut within 400 of 0,0\n\
+         prefer biome minecraft:cherry_grove within 300 of 0,0\n\
+         prefer 3 #minecraft:village within 600 of 0,0",
     )?;
-    report("evaluate swamp huts near spawn, new session", 5, || {
-        let session = world.session(*seeds.next().unwrap()).unwrap();
-        black_box(session.evaluate(&huts).unwrap());
-    });
+    // A range, so each seed is prefiltered on its own and most are checked.
+    let range = spyglass::SeedSource::Range {
+        first: 0,
+        last: i64::MAX,
+    };
+    rate(
+        &world,
+        "search, huts and preferences, 1 thread",
+        &mixed,
+        range.clone(),
+        1 << 11,
+        Some(1),
+    );
+    rate(
+        &world,
+        "search, huts and preferences, all threads",
+        &mixed,
+        range,
+        1 << 15,
+        None,
+    );
     Ok(())
+}
+
+/// Searches the first `count` seeds of `source` and prints seeds per second.
+fn rate(
+    world: &World,
+    name: &str,
+    query: &spyglass::SearchQuery,
+    source: spyglass::SeedSource,
+    count: u64,
+    threads: Option<usize>,
+) {
+    let options = spyglass::SearchOptions {
+        source,
+        seeds: Some(count),
+        threads,
+        ..spyglass::SearchOptions::default()
+    };
+    let start = Instant::now();
+    let outcome = world
+        .search(query, &options, |_| std::ops::ControlFlow::Continue(()))
+        .unwrap();
+    let seconds = start.elapsed().as_secs_f64();
+    let p = &outcome.progress;
+    println!(
+        "{name:<45} {:>10.0} seeds/s ({} checked, {} reported)",
+        count as f64 / seconds,
+        p.checked,
+        p.reported
+    );
 }
 
 /// Runs `f` `runs` times and prints the median.

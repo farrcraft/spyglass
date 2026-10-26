@@ -282,6 +282,32 @@ cargo run --release -p spyglass-cli -- render --world "My World" --highlight min
 
 The seed, world and bundle options are as for `locate`. With `--json` it prints the area and everything it drew.
 
+### Seed search
+
+`spyglass search` finds the seeds that best fit a query ([specs/search.md](specs/search.md)). Each line of a query is a constraint: `require` ones a seed must meet, `prefer` ones that add to its score, with `weight N` to count one more.
+
+```sh
+cargo run --release -p spyglass-cli -- search --time 2m -q 'require 2 minecraft:swamp_hut within 600 of spawn
+require cluster 2 minecraft:swamp_hut within 200 of each other within 600 of spawn
+prefer 3 #minecraft:village within 800 of spawn
+prefer biome minecraft:cherry_grove within 500 of spawn weight 2'
+cargo run --release -p spyglass-cli -- search --query-file huts.txt --range -2147483648..2147483647 --count 1000000
+```
+
+| Option                          | Default    | What it does                                                                                       |
+| ------------------------------- | ---------- | -------------------------------------------------------------------------------------------------- |
+| `-q <text>` or `--query-file`   | required   | The query.                                                                                         |
+| `--count <n>`, `--time <t>`     | none       | Stop after this many seeds, or this long (`90s`, `10m`, `2h`). Without either, Ctrl-C stops it.    |
+| `--range <a..b>`, `--seeds <f>` | every seed | Only seeds from a to b (both included; the example is every text seed), or those listed in a file. |
+| `--from <index>`                | `0`        | Where to start; a search prints the index to continue from.                                        |
+| `--top <n>`                     | `10`       | How many seeds to keep.                                                                            |
+| `--certain`                     | off        | Only seeds whose required constraints hold whatever terrain decides.                               |
+| `--threads <n>`                 | all cores  | Worker threads.                                                                                    |
+
+The bundle options are as for `locate`; `--json` prints every hit with what each constraint matched. Searching every seed checks structure placement first, which depends only on the seed's lower 48 bits, so seeds that can't place enough structures are skipped 65,536 at a time. The same query, range, start and count always give the same list, on any machine.
+
+Most structures need terrain to confirm, so until it's ported a constraint on them is usually **possibly** met rather than met: the structures are where the game tries them, and whether each one generates depends on the ground there.
+
 ### Reading the answers
 
 Answers are listed in the game's search order, which isn't always nearest first. Until terrain is ported, most surface structures (villages, temples, monuments) can't be confirmed without it, so they're shown as **candidates**: the game's answer is the first of them it generates, and in testing that's usually the first one listed. Strongholds, ancient cities and trial chambers don't depend on terrain and are usually **certain**.
@@ -299,6 +325,7 @@ The viewer opens the newest bundle in `bundles/` (choose another folder from the
 - **Layers:** tied biome cells, slime chunks, the world spawn, structures to mark (hover a marker for what it is), and biomes to highlight. **Height** sets the y biomes are drawn at.
 - **Locate:** right-click the map for the nearest structure or biome from there, as `/locate` would. Hits are listed in the side panel (click one to go there) and ringed on the map.
 - **Export:** **Export image…** saves the view as a PNG, and **Copy command** copies the `spyglass render` command that draws the same image.
+- **Search:** type a query in the **Search** section, set a seed count or time limit, and press **Search**. The best seeds appear as they're found; click one to open it, centred on the query's first place with everything its constraints matched ringed.
 
 Rendering runs in the background on all but one core, so the map stays responsive while tiles fill in. Settings are kept between runs.
 

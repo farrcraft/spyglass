@@ -126,6 +126,11 @@ const TESTS: &[(&str, &str, &[Input])] = &[
     ),
     (
         "spyglass-structure",
+        "ring_chunks_in_a_box_settle_only_what_they_need",
+        &[Input::Bundle],
+    ),
+    (
+        "spyglass-structure",
         "structures_match_the_oracle",
         &[Input::Structures, Input::Bundle],
     ),

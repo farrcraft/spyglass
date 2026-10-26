@@ -123,3 +123,44 @@ fn seed_placements_decide_random_spread_from_48_bits() {
         }
     }
 }
+
+#[test]
+#[ignore = "needs bundles/26.3"]
+fn ring_chunks_in_a_box_settle_only_what_they_need() {
+    let bundle = bundle();
+    let source = BiomeSource::overworld(&bundle).unwrap();
+    let sets = StructureSets::overworld(&bundle, &source).unwrap();
+    let set = sets.set_index("minecraft:strongholds").unwrap();
+    let boxes = [
+        ([-100, -100], [100, 100]),
+        ([-300, -300], [300, 300]),
+        ([50, -400], [500, 0]),
+        ([-2000, -2000], [2000, 2000]),
+    ];
+    for seed in [0_i64, 1, -1_556_512_960, 123_456_789] {
+        let biomes = source.with_seed(seed).unwrap();
+        let full = sets.with_seed(seed, &biomes);
+        let all: Vec<[i32; 2]> = full
+            .ring_positions(set)
+            .unwrap()
+            .iter()
+            .map(|p| p.chunk)
+            .collect();
+        for (min, max) in boxes {
+            // A fresh session settles only near the box.
+            let lazy = sets.with_seed(seed, &biomes);
+            let mut expected = Vec::new();
+            for c in &all {
+                let inside = (0..2).all(|i| (min[i]..=max[i]).contains(&c[i]));
+                if inside && !expected.contains(c) && full.is_structure_chunk(set, c[0], c[1]) {
+                    expected.push(*c);
+                }
+            }
+            assert_eq!(
+                lazy.structure_chunks_in(set, min, max),
+                expected,
+                "seed {seed} box {min:?} {max:?}"
+            );
+        }
+    }
+}

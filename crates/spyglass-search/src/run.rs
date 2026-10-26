@@ -6,9 +6,15 @@ use std::time::{Duration, Instant};
 
 use rayon::prelude::*;
 
-/// Indices per batch. It divides 65,536, so in [`SeedSource::All`] a batch never spans two
-/// values of the lower 48 bits.
-const BATCH: u64 = 1024;
+/// Indices per batch of checks: small, since one check can take milliseconds.
+const BATCH: u128 = 16;
+/// Seeds that share their lower 48 bits in [`SeedSource::All`]: one prefilter answer each.
+const GROUP: u128 = 1 << 16;
+/// How long a round of batches aims to take: progress, stopping and time limits act between
+/// rounds, and each round's results raise the score later checks must reach.
+const ROUND: Duration = Duration::from_millis(500);
+/// The most indices in one round, however cheap they are.
+const MAX_ROUND: u128 = 1 << 30;
 
 /// Where a search's seeds come from, each with an index.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,8 +60,9 @@ impl SeedSource {
         }
     }
 
-    /// Whether every seed in a batch shares its lower 48 bits, so one prefilter answer covers it.
-    fn batches_share_lower_bits(&self) -> bool {
+    /// Whether consecutive runs of [`GROUP`] indices share their lower 48 bits, so one
+    /// prefilter answer covers each.
+    fn groups_share_lower_bits(&self) -> bool {
         matches!(self, SeedSource::All)
     }
 }
@@ -136,8 +143,9 @@ struct Batch {
 }
 
 /// Runs a search. `accepts` is the prefilter; `check(seed, threshold)` says whether a seed is
-/// reported and, if its score is at least `threshold`, what it is. `progress` is called after
-/// each round of batches with the state so far, and stops the search by returning `Break`.
+/// reported and, if its score is at least `threshold`, what it is. Work goes in rounds of about
+/// half a second; `progress` is called after each with the state so far, and stops the search
+/// by returning `Break`. The threshold is the top list's last score when the round began.
 pub fn run<E: Send>(
     options: &RunOptions,
     accepts: impl Fn(i64) -> bool + Sync,
@@ -156,8 +164,11 @@ pub fn run<E: Send>(
         .num_threads(options.threads.unwrap_or(0))
         .build()
         .expect("a thread pool");
-    let wave = u128::from(BATCH) * 4 * pool.current_num_threads() as u128;
-    let shared = options.source.batches_share_lower_bits();
+    let threads = pool.current_num_threads() as u128;
+    // Every thread gets a batch in the first round; later rounds aim at ROUND.
+    let min_round = threads * BATCH;
+    let mut round = min_round;
+    let grouped = options.source.groups_share_lower_bits();
     let next = |cursor: u128| (cursor < len).then_some(cursor as u64);
     let mut state = Progress {
         evaluated: 0,
@@ -170,35 +181,57 @@ pub fn run<E: Send>(
     };
     let mut cursor = from;
     while cursor < end {
-        let stop = end.min(cursor + wave);
+        let stop = end.min(cursor + round);
+        let started = Instant::now();
         let threshold = if state.top.len() == top_n {
             state.top[top_n - 1].score
         } else {
             0
         };
-        // Batches aligned to multiples of BATCH, so in `All` each shares its lower 48 bits.
-        let mut ranges = Vec::new();
-        let mut a = cursor;
-        while a < stop {
-            let b = ((a / u128::from(BATCH) + 1) * u128::from(BATCH)).min(stop);
-            ranges.push((a, b));
-            a = b;
+        // The indices to check. In `All`, one prefilter answer covers each group of seeds
+        // sharing their lower 48 bits, and rejected groups are skipped whole.
+        let mut ranges = vec![(cursor, stop)];
+        if grouped {
+            let mut groups = Vec::new();
+            let mut a = cursor;
+            while a < stop {
+                let b = ((a / GROUP + 1) * GROUP).min(stop);
+                groups.push((a, b));
+                a = b;
+            }
+            let accepted: Vec<bool> = pool.install(|| {
+                groups
+                    .par_iter()
+                    .map(|&(a, _)| accepts(options.source.seed(a as u64)))
+                    .collect()
+            });
+            ranges = groups
+                .into_iter()
+                .zip(accepted)
+                .filter_map(|(range, accepted)| {
+                    if !accepted {
+                        state.prefiltered += (range.1 - range.0) as u64;
+                    }
+                    accepted.then_some(range)
+                })
+                .collect();
         }
-        let batches: Vec<Result<Batch, E>> = pool.install(|| {
-            ranges
+        let batches: Vec<(u128, u128)> = ranges
+            .into_iter()
+            .flat_map(|(a, b)| {
+                (0..(b - a).div_ceil(BATCH))
+                    .map(move |k| (a + k * BATCH, (a + (k + 1) * BATCH).min(b)))
+            })
+            .collect();
+        let results: Vec<Result<Batch, E>> = pool.install(|| {
+            batches
                 .par_iter()
                 .map(|&(a, b)| {
                     let mut batch = Batch::default();
-                    let mut accepted = None;
                     for index in a..b {
                         let index = index as u64; // below len, at most 2⁶⁴
                         let seed = options.source.seed(index);
-                        let pass = if shared {
-                            *accepted.get_or_insert_with(|| accepts(seed))
-                        } else {
-                            accepts(seed)
-                        };
-                        if !pass {
+                        if !grouped && !accepts(seed) {
                             batch.prefiltered += 1;
                             continue;
                         }
@@ -216,13 +249,16 @@ pub fn run<E: Send>(
                 })
                 .collect()
         });
-        for batch in batches {
+        for batch in results {
             let batch = batch?;
             state.prefiltered += batch.prefiltered;
             state.checked += batch.checked;
             state.reported += batch.reported;
             merge(&mut state.top, batch.top, top_n);
         }
+        let took = started.elapsed().as_secs_f64().max(1e-6);
+        let per_second = (stop - cursor) as f64 / took;
+        round = ((per_second * ROUND.as_secs_f64()) as u128).clamp(min_round, MAX_ROUND);
         cursor = stop;
         state.evaluated = u64::try_from(cursor - from).unwrap_or(u64::MAX);
         state.next = next(cursor);

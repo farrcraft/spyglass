@@ -1,6 +1,6 @@
 # Seed search
 
-Status: draft. Covers the query language, how each constraint is evaluated and scored, seed sources and their order, and what makes results deterministic. The language is [ADR 0020](../adr/0020-search-query-language.md); the engine is [ADR 0021](../adr/0021-search-engine.md).
+Status: stable. Implemented in `spyglass-search` and `spyglass`, and checked by tests (these are spyglass's semantics, not the game's). Covers the query language, how each constraint is evaluated and scored, seed sources and their order, and what makes results deterministic. The language is [ADR 0020](../adr/0020-search-query-language.md); the engine is [ADR 0021](../adr/0021-search-engine.md).
 
 A query describes a world as a list of constraints. A **required** constraint must be met for a seed to be reported; a **preferred** one adds to the seed's score. A search evaluates seeds from a source in a fixed order and keeps the best ones.
 

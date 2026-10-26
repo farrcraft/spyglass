@@ -4,7 +4,7 @@
 
 A local-only seed explorer for Minecraft: Java Edition. Describe what you want in a world, and spyglass searches for the seeds that fit best, shows them on a map, and finds where things are in worlds you already play. Output aims to match the game exactly on current versions.
 
-> Status: early. For game version 26.3, the `spyglass` command answers `/locate`-style questions (structures, biomes, slime chunks, spawn) for any seed or a world save in the Overworld, with `--json` for scripts, and draws maps of them. The viewer shows the same maps, pannable and zoomable, with layers you choose. Seed search, terrain and the Nether and End are still to come ([roadmap](docs/roadmap/README.md)).
+> Status: early. For game version 26.3, the `spyglass` command answers `/locate`-style questions (structures, biomes, slime chunks, spawn) for any seed or a world save in the Overworld, with `--json` for scripts, draws maps of them, and searches for the seeds that best fit a query of required and preferred constraints. The viewer shows the same maps, pannable and zoomable, with layers you choose, and runs the same searches. Terrain and the Nether and End are still to come ([roadmap](docs/roadmap/README.md)).
 
 Not affiliated with or endorsed by Mojang or Microsoft.
 
@@ -48,6 +48,7 @@ cargo run -p spyglass-extract -- 26.3
 cargo run --release -p spyglass-cli -- locate structure '#minecraft:village' --seed 12345
 cargo run --release -p spyglass-cli -- locate structure '#minecraft:village' --world "My World" --from player
 cargo run --release -p spyglass-cli -- render --seed 12345 --structures '#minecraft:village' --spawn -o map.png
+cargo run --release -p spyglass-cli -- search -q 'require 2 minecraft:swamp_hut within 600 of spawn' --time 60s
 cargo run --release -p spyglass-viewer
 ```
 
@@ -65,12 +66,13 @@ See [docs/getting-started.md](docs/getting-started.md) for the full walkthrough,
 | `spyglass-density`   | Loads and evaluates density-function graphs.        |
 | `spyglass-biome`     | Climate sampling and biome lookup.                  |
 | `spyglass-structure` | Structure placement and validity checks.            |
+| `spyglass-search`    | The search query language and parallel runner.      |
 | `spyglass-world`     | Reads your world saves.                             |
 | `spyglass`           | The public API that every front end uses.           |
 | `spyglass-cli`       | The `spyglass` command, with `--json` for scripts.  |
 | `spyglass-viewer`    | Native map app: layers, locate, saves, export.      |
 
-Planned: `spyglass-terrain` (heightmaps and surface rules) and `spyglass-search` (parallel, ranked seed search).
+Planned: `spyglass-terrain` (heightmaps and surface rules).
 
 See [docs/architecture.md](docs/architecture.md) for how they fit together.
 

@@ -167,12 +167,12 @@ Specs and ADRs that govern this: [ADR 0014](../adr/0014-public-api-world-and-ses
 
 ### Phase 8: speed, benchmarks and close-out
 
-- [ ] Bench lines (`cargo xtask bench`), in seeds per second on one thread and on all: structure count (placement stage only, and with biome checks), cluster, structure-to-structure distance, slime, biome presence, biome coverage, spawn, and a mixed query.
-- [ ] Measure binding cost per seed in the full-seed stage; if it dominates, bind only what the query needs (climate without spawn targets), in the library.
-- [ ] Stronghold constraints: compute ring positions one ring at a time if ring 1 alone settles most queries; checked by the structure golden tests.
-- [ ] The scoring bound, kept only if it measurably helps.
-- [ ] Update architecture.md (search no longer planned), README, getting-started (a first search).
-- [ ] `cargo xtask check` and `cargo xtask oracle-test`; move this plan and the milestone to `completed/`.
+- [x] Bench lines (`cargo xtask bench`): each constraint kind's cost per seed in a new session (structure count, structure anchor, cluster, slime, spawn, spawn-anchored count, biome presence, coverage, stronghold), and seeds per second for placement rejecting everything (one thread) and a mixed query (one thread and all).
+- [x] Measure binding cost per seed in the full-seed stage; if it dominates, bind only what the query needs (climate without spawn targets), in the library. It doesn't dominate (see Notes), so nothing changed.
+- [x] Stronghold constraints: compute ring positions one ring at a time if ring 1 alone settles most queries; checked by the structure golden tests. Done per position rather than per ring: ring points are generated without biomes, and only those that can land in the area asked about are settled.
+- [x] The scoring bound, kept only if it measurably helps. It saves 12% on a query that most seeds pass, once rounds are short enough for the threshold to rise.
+- [x] Update architecture.md (search no longer planned), README, getting-started (a first search).
+- [ ] `cargo xtask check` and `cargo xtask oracle-test`; move this plan and the milestone to `completed/`. Both pass; the move waits for the manual viewer check in Verification.
 
 ## Verification
 
@@ -184,12 +184,12 @@ Specs and ADRs that govern this: [ADR 0014](../adr/0014-public-api-world-and-ses
 
 ## Durable outputs
 
-- [ ] `docs/specs/search.md` (new)
+- [x] `docs/specs/search.md` (new)
 - [x] `docs/specs/structure-placement.md`: lower-48-bit results
 - [x] `docs/specs/cli-json.md`: `search`
 - [x] ADR: the query language ([0020](../adr/0020-search-query-language.md))
 - [x] ADR: the search engine ([0021](../adr/0021-search-engine.md))
-- [ ] `docs/architecture.md`, `README.md`, `docs/getting-started.md`
+- [x] `docs/architecture.md`, `README.md`, `docs/getting-started.md`
 
 ## Decisions
 
@@ -204,6 +204,11 @@ Agreed on 2026-10-25, as recommended:
 
 ## Notes
 
+- 2026-10-25: Phase 8 done but for the move. `cargo xtask check` passes, and `cargo xtask oracle-test` passes all 26 tests, including the four new real-bundle ones (48-bit placement, lazy rings, the fast path, counting like `structures_in`). Left before completing: drive the viewer's Search section by hand (run a search, stop it, open a live hit and a finished one, continue from `next`) and compare a hit with `spyglass search` for the same query and count.
+- 2026-10-25: Phase 8, measurements (`cargo xtask bench`, release, 16 threads; this machine's load varied between runs by up to 1.7×, so these are from the quietest run). Cost per seed of judging one constraint in a new session: swamp-hut count within 1000, 1.2 ms; village near an outpost, 0.3 ms; swamp-hut cluster within 2000, 4.5 ms; four slime chunks within 128, 0.1 ms; spawn, 1.2 ms; a swamp-hut count around the spawn, 2.3 ms; cherry grove within 500, 7.8 ms; plains coverage within 1000 at step 32, 7.0 ms; a stronghold within 1500, 5.8 ms (was 1,416 ms). Searching: placement rejects about 6.5 million lower-48 values a second on one thread (4.2 × 10¹¹ seeds a second); a mixed query checks 3,700 seeds a second on one thread and 24,000 on all.
+- 2026-10-25: Binding a seed is 87 µs of climate plus 13 µs of spawn targets. A swamp-hut check is 95 µs, almost all of it the column of 97 quarts the game's `couldValidBiomeExistInTerrainColumn` asks about, and a 1,000-block disc has a dozen candidate huts. So binding is under a tenth of a check and stays as it is. Faster biome lookups are the density work the architecture defers, not search work.
+- 2026-10-25: Strongholds settled all 128 ring positions (each a biome search) for any question about them. Now `Placements` generates the ring points without biomes and settles a position only when its point is within 7 chunks of the area asked about, which is exact: the search looks 112 blocks from the chunk centre. `ring_positions`, which `/locate` uses, still settles them all. A new ignored test compares the two on four seeds and four boxes; the golden structure and `/locate` checks still pass.
+- 2026-10-25: Rounds of work were 4,096 indices a thread. With 60 ms checks that's minutes between progress reports, time-limit checks and threshold updates (so the scoring bound never acted). Rounds now aim at half a second, from the last round's rate; check batches are 16 indices, and in `All` the prefilter answers once per lower-48 value before any batch is made. A 3-second `--time` search now ends at 3.0 s.
 - 2026-10-25: Phase 7 done, except driving it by hand. The viewer has a Search section: the query in a code editor, re-resolved when it changes, with errors under it; how many to keep, a seed count or time limit, a seed range, the start index and certain mode; Search and Stop; progress and the top list live; Continue from `next` when a search ends. Clicking a hit opens its seed centred on the query's first place, switches on the structures it matched, and rings every feature its constraints matched, with the constraint in the tooltip. A live hit is evaluated in the background first. Searches use every core but one. The viewer was built and started on Windows, but not clicked through: that's for the manual check in Verification.
 - 2026-10-25: Phase 6 done. A first real search, `require 2 minecraft:swamp_hut within 400 of 0,0`, over the first 4,194,304 seeds of `All` (64 values of the lower 48 bits): 146 s on all cores, the prefilter skipped 18 of the 64 (1,179,648 seeds), 3,014,656 were checked and 10,626 reported. The top hit's two huts agree with `spyglass locate structure`. Checking is about 20,000 seeds a second across the machine, nearly all of it binding sessions and the huts' biome checks: phase 8's subject. The run also showed `reported` counting only seeds that reached the top list's threshold; `check` now says `Failed`, `Below` or `Scored`, so the count is every reported seed and doesn't depend on timing.
 - 2026-10-25: Phases 4 and 5 done. `SeedPlacements` answers placement from the lower 48 bits, and `Placements` now asks it first; the structure golden tests and `/locate` checks still pass, and on 26.3 it decides every random-spread set exactly (every exclusion zone there is against a random-spread set). Over 200 fixture seeds and 6 queries the prefilter never rejected a seed `evaluate` reports, and `check` equalled `evaluate` at six thresholds in both modes; the same holds for 40 seeds and 5 queries on 26.3 (an ignored test). The runner works in rounds of 1,024-index batches, 4 per thread, merged in rank order; the threshold it passes to `check` is the current Nth score, ties included, so pruning can't change the list. Indices are counted in `u128` inside the runner so `All`'s 2⁶⁴ seeds have an end. `largest_group` moved to `spyglass-search`, which the prefilter needs too, with a brute-force test over every subset of 12 points.

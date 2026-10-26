@@ -201,13 +201,38 @@ pub struct RingPosition {
     pub alternatives_known: bool,
 }
 
+/// How far, in chunks along each axis, a ring position can be from its ring point: the biome
+/// search looks within 112 blocks of the point's chunk centre, `16x + 8`, so the chunk it finds
+/// is within `x - 7 ..= x + 7`.
+const SETTLE_REACH: i32 = 7;
+
+/// A ring point before it moves towards a preferred biome: where the ring puts it, the other
+/// platform's rounding if that can differ (ADR 0012), and the random its biome search uses.
+#[derive(Debug, Clone)]
+struct RingPoint {
+    x: i32,
+    z: i32,
+    other_x: Option<i32>,
+    other_z: Option<i32>,
+    fork: LegacyRandomSource,
+}
+
 impl ConcentricRings {
     /// `ChunkGeneratorStructureState.generateRingPositions`: every position for `seed`, in the
     /// game's order.
     pub fn positions(&self, seed: i64, biomes: &Biomes<'_>) -> Vec<RingPosition> {
-        let mut positions = Vec::with_capacity(self.count.max(0) as usize);
+        self.points(seed)
+            .iter()
+            .map(|p| self.settle_point(p, biomes))
+            .collect()
+    }
+
+    /// Every ring point, in the game's order. The ring's own random never depends on biomes:
+    /// each position's search draws from a fork of it.
+    fn points(&self, seed: i64) -> Vec<RingPoint> {
+        let mut points = Vec::with_capacity(self.count.max(0) as usize);
         if self.count == 0 {
-            return positions;
+            return points;
         }
         let distance = self.distance;
         let count = self.count;
@@ -223,25 +248,13 @@ impl ConcentricRings {
             ) + (random.next_double() - 0.5) * (f64::from(distance) * 2.5);
             let (x, other_x) = round_trig_product(angle.cos(), ring_distance);
             let (z, other_z) = round_trig_product(angle.sin(), ring_distance);
-            let fork = random.fork();
-            let mut position = self.settle(x, z, biomes, &mut fork.clone());
-            position.platform_dependent = other_x.is_some() || other_z.is_some();
-            // Another platform's ring point settles from the same fork.
-            for ax in [Some(x), other_x].into_iter().flatten() {
-                for az in [Some(z), other_z].into_iter().flatten() {
-                    if [ax, az] == [x, z] {
-                        continue;
-                    }
-                    let other = self.settle(ax, az, biomes, &mut fork.clone());
-                    position.alternatives_known &= other.alternatives_known;
-                    for chunk in std::iter::once(other.chunk).chain(other.alternatives) {
-                        if chunk != position.chunk && !position.alternatives.contains(&chunk) {
-                            position.alternatives.push(chunk);
-                        }
-                    }
-                }
-            }
-            positions.push(position);
+            points.push(RingPoint {
+                x,
+                z,
+                other_x,
+                other_z,
+                fork: random.fork(),
+            });
             angle += 2.0 * PI / f64::from(spread);
             position_in_circle += 1;
             if position_in_circle == spread {
@@ -252,7 +265,36 @@ impl ConcentricRings {
                 angle += random.next_double() * PI * 2.0;
             }
         }
-        positions
+        points
+    }
+
+    /// A ring point's position: its biome search, and another platform's if its rounding can
+    /// differ, which settles from the same fork.
+    fn settle_point(&self, point: &RingPoint, biomes: &Biomes<'_>) -> RingPosition {
+        let RingPoint {
+            x,
+            z,
+            other_x,
+            other_z,
+            ref fork,
+        } = *point;
+        let mut position = self.settle(x, z, biomes, &mut fork.clone());
+        position.platform_dependent = other_x.is_some() || other_z.is_some();
+        for ax in [Some(x), other_x].into_iter().flatten() {
+            for az in [Some(z), other_z].into_iter().flatten() {
+                if [ax, az] == [x, z] {
+                    continue;
+                }
+                let other = self.settle(ax, az, biomes, &mut fork.clone());
+                position.alternatives_known &= other.alternatives_known;
+                for chunk in std::iter::once(other.chunk).chain(other.alternatives) {
+                    if chunk != position.chunk && !position.alternatives.contains(&chunk) {
+                        position.alternatives.push(chunk);
+                    }
+                }
+            }
+        }
+        position
     }
 
     /// The ring point's move towards a preferred biome: `findBiomeHorizontal` from the chunk
@@ -408,14 +450,24 @@ fn frequent(placement: &Placement, seed: i64, x: i32, z: i32) -> bool {
         )
 }
 
-/// A dimension's placements bound to a seed. Each concentric-ring set's positions are computed
-/// the first time they're needed, then kept.
+/// A dimension's placements bound to a seed. A concentric-ring set's points are generated the
+/// first time they're needed, and each position is settled (its biome search, the slow part)
+/// only when something asks about the area it can land in, then kept.
 #[derive(Debug, Clone)]
 pub struct Placements<'s> {
     seed_only: SeedPlacements<'s>,
     biomes: Biomes<'s>,
-    /// Ring positions by set index, once computed.
-    rings: Vec<OnceLock<Vec<RingPosition>>>,
+    /// Ring points and their positions by set index, once generated.
+    rings: Vec<OnceLock<Rings>>,
+}
+
+/// One concentric-ring set's points, each with its position once settled.
+#[derive(Debug, Clone)]
+struct Rings {
+    points: Vec<RingPoint>,
+    settled: Vec<OnceLock<RingPosition>>,
+    /// Every position, in order, once all have been asked for.
+    all: OnceLock<Vec<RingPosition>>,
 }
 
 impl StructureSets {
@@ -441,15 +493,61 @@ impl Placements<'_> {
         self.seed_only.sets
     }
 
-    /// A concentric-ring set's positions, or `None` for other placement types. The first call
-    /// for a set computes them, which takes a while (128 biome searches for strongholds).
-    pub fn ring_positions(&self, set: usize) -> Option<&[RingPosition]> {
-        match &self.sets().sets()[set].placement.kind {
-            PlacementKind::ConcentricRings(rings) => {
-                Some(self.rings[set].get_or_init(|| rings.positions(self.seed(), &self.biomes)))
+    /// A concentric-ring set's points, generated on first use, and the set; `None` for other
+    /// placement types.
+    fn rings(&self, set: usize) -> Option<(&ConcentricRings, &Rings)> {
+        let PlacementKind::ConcentricRings(config) = &self.sets().sets()[set].placement.kind else {
+            return None;
+        };
+        let rings = self.rings[set].get_or_init(|| {
+            let points = config.points(self.seed());
+            Rings {
+                settled: points.iter().map(|_| OnceLock::new()).collect(),
+                points,
+                all: OnceLock::new(),
             }
-            PlacementKind::RandomSpread(_) => None,
-        }
+        });
+        Some((config, rings))
+    }
+
+    /// A concentric-ring set's positions, or `None` for other placement types. The first call
+    /// for a set settles every one, which takes a while (128 biome searches for strongholds).
+    pub fn ring_positions(&self, set: usize) -> Option<&[RingPosition]> {
+        let (config, rings) = self.rings(set)?;
+        Some(rings.all.get_or_init(|| {
+            (0..rings.points.len())
+                .map(|i| self.settled(config, rings, i).clone())
+                .collect()
+        }))
+    }
+
+    fn settled<'r>(
+        &self,
+        config: &ConcentricRings,
+        rings: &'r Rings,
+        i: usize,
+    ) -> &'r RingPosition {
+        rings.settled[i].get_or_init(|| config.settle_point(&rings.points[i], &self.biomes))
+    }
+
+    /// The positions of concentric-ring set `set` whose chunk is in `min..=max` (chunk
+    /// coordinates, inclusive), in the game's order, settling only those that can land there.
+    /// `None` for other placement types.
+    fn ring_chunks_in(&self, set: usize, min: [i32; 2], max: [i32; 2]) -> Option<Vec<[i32; 2]>> {
+        let (config, rings) = self.rings(set)?;
+        let near = |p: &RingPoint| {
+            (min[0].saturating_sub(SETTLE_REACH)..=max[0].saturating_add(SETTLE_REACH))
+                .contains(&p.x)
+                && (min[1].saturating_sub(SETTLE_REACH)..=max[1].saturating_add(SETTLE_REACH))
+                    .contains(&p.z)
+        };
+        Some(
+            (0..rings.points.len())
+                .filter(|&i| near(&rings.points[i]))
+                .map(|i| self.settled(config, rings, i).chunk)
+                .filter(|c| inside(c, min, max))
+                .collect(),
+        )
     }
 
     /// `StructurePlacement.isStructureChunk`: whether set `set` may start in chunk `(x, z)`:
@@ -460,8 +558,8 @@ impl Placements<'_> {
         }
         let placement = &self.sets().sets()[set].placement;
         let placed = self.seed_only.placed(set, x, z).unwrap_or_else(|| {
-            self.ring_positions(set)
-                .is_some_and(|ring| ring.iter().any(|p| p.chunk == [x, z]))
+            self.ring_chunks_in(set, [x, z], [x, z])
+                .is_some_and(|chunks| !chunks.is_empty())
                 && frequent(placement, self.seed(), x, z)
         });
         placed
@@ -482,14 +580,8 @@ impl Placements<'_> {
         let mut chunks = self
             .seed_only
             .cell_chunks_in(set, min, max)
-            .unwrap_or_else(|| {
-                self.ring_positions(set)
-                    .into_iter()
-                    .flatten()
-                    .map(|p| p.chunk)
-                    .filter(|c| inside(c, min, max))
-                    .collect()
-            });
+            .or_else(|| self.ring_chunks_in(set, min, max))
+            .unwrap_or_default();
         // Ring positions can repeat; keep each chunk's first.
         let mut seen = HashSet::new();
         chunks.retain(|&c @ [x, z]| seen.insert(c) && self.is_structure_chunk(set, x, z));

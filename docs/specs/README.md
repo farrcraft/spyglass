@@ -19,4 +19,4 @@ A spec is **Stable** when the behavior it describes is implemented and checked: 
 | [cli-json.md](cli-json.md)                       | The `spyglass` command's JSON output.                             | Stable |
 | [world-saves.md](world-saves.md)                 | Reading world saves and judging whether spyglass can answer.      | Stable |
 | [render.md](render.md)                           | Map images: sampling, colours, layers.                            | Stable |
-| [search.md](search.md)                           | Seed search: the query language, scoring, seed order.             | Draft  |
+| [search.md](search.md)                           | Seed search: the query language, scoring, seed order.             | Stable |

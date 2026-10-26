@@ -1,8 +1,8 @@
 # 06. Seed search
 
-- Status: In progress
-- Depends on: [03](completed/03-structure-placement.md)
-- Plans: [m06-seed-search](../plans/m06-seed-search.md)
+- Status: Completed
+- Depends on: [03](03-structure-placement.md)
+- Plans: [m06-seed-search](../../plans/completed/m06-seed-search.md)
 
 ## Goal
 
@@ -24,7 +24,7 @@ Describe what you want in a world and get back the seeds that fit it **best**, n
 
 ## Exit criteria
 
-- [ ] The query language has a spec and an ADR.
-- [ ] Every seed the search reports meets all its required constraints, verified against the plain (unoptimized) implementations.
-- [ ] Scores are deterministic: the same query and seed range give the same ranked list.
-- [ ] Benchmarks exist for the main constraint types.
+- [x] The query language has a spec and an ADR.
+- [x] Every seed the search reports meets all its required constraints, verified against the plain (unoptimized) implementations.
+- [x] Scores are deterministic: the same query and seed range give the same ranked list.
+- [x] Benchmarks exist for the main constraint types.

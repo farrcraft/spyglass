@@ -1,9 +1,9 @@
 # m06. Seed search
 
-- Status: In progress
-- Milestone: [06. Seed search](../roadmap/06-seed-search.md)
+- Status: Completed
+- Milestone: [06. Seed search](../../../roadmap/completed/06-seed-search.md)
 - Started: 2026-10-25
-- Completed: —
+- Completed: 2026-10-25
 
 ## Goal
 
@@ -22,14 +22,14 @@ From the code as of 67bcbc6 and `cargo xtask bench` numbers recorded in earlier 
 - **The biome check can only remove starts.** Placement gives the chunks where a set may start; `Starts::check` then rejects or keeps them. So a placement-only count is an upper bound on the real count, and an "at least N" constraint that fails on placement alone fails for every one of the 65,536 seeds sharing those lower 48 bits.
 - **Per-seed costs today** (release, one thread): binding a session 0.1 ms; `spawn_origin` in a new session 1.2 ms; one `biome_at` about 2.4 µs (65,536 in 158 ms); stronghold ring positions about 1 s in a new session (128 biome searches). Placement of one random-spread cell is one LCG seeding and a few draws, tens of nanoseconds.
 - **Consequence for 48 → 64-bit expansion.** Each lower-48 value that survives the placement stage costs 65,536 session bindings, about 6.5 s on one core, before any check runs. The placement stage has to be strict, and binding only what a query needs (climate without spawn targets, say) may be worth doing; phase 8 measures it.
-- **Uncertainty.** Most Overworld starts are candidates (`certain: false`) until terrain exists ([milestone 07](../roadmap/07-terrain-and-validity.md)): swamp huts, villages, outposts and most others. Only strongholds, ancient cities and trial chambers can be certain. The spawn origin is exact; the final spawn block is somewhere in the 11 × 11 chunks around it ([specs/spawn.md](../specs/spawn.md)). Tied biome cells make some biome answers uncertain too.
+- **Uncertainty.** Most Overworld starts are candidates (`certain: false`) until terrain exists ([milestone 07](../../roadmap/07-terrain-and-validity.md)): swamp huts, villages, outposts and most others. Only strongholds, ancient cities and trial chambers can be certain. The spawn origin is exact; the final spawn block is somewhere in the 11 × 11 chunks around it ([specs/spawn.md](../../specs/spawn.md)). Tied biome cells make some biome answers uncertain too.
 - **`spyglass-search` doesn't exist.** The stub was deleted in m05-cleanup, to be created by the milestone that needs it. `rayon` isn't a dependency yet.
 
 ## Approach
 
 ### Layers
 
-- **`spyglass-search`** (new; depends on rng, biome, structure, data, as [architecture.md](../architecture.md) plans): the query language (text to syntax tree, with a canonical printer), the **placement prefilter** over the lower 48 bits (on `spyglass-structure`'s seed-only placement), seed sources and order, and the parallel runner with ranking. It knows nothing about `World` or `Session`: `spyglass` hands it the query's structure targets resolved to set indices, and a per-seed check to call on the seeds the prefilter keeps.
+- **`spyglass-search`** (new; depends on rng, biome, structure, data, as [architecture.md](../../architecture.md) plans): the query language (text to syntax tree, with a canonical printer), the **placement prefilter** over the lower 48 bits (on `spyglass-structure`'s seed-only placement), seed sources and order, and the parallel runner with ranking. It knows nothing about `World` or `Session`: `spyglass` hands it the query's structure targets resolved to set indices, and a per-seed check to call on the seeds the prefilter keeps.
 - **`spyglass`**: `World::search_query(text)` parses and resolves ids and tags (errors name the line and column). `Session::evaluate(&query)` is the **plain implementation**: it judges one seed completely, every constraint, with details, from the session's own queries (`structures_in` and its per-set ranges, `biome_at`, `slime_chunks`, `spawn_origin`). `Session::check(&query, threshold)` is the fast path the runner calls: the same per-constraint functions, cheapest first, stopping at the first failed required constraint, and skipping preferred constraints that can't lift the score past `threshold`. `World::search(&query, &options, progress)` runs the engine with `check`. Final hits are re-evaluated with `Session::evaluate` for their details (matched features, distances), and that doubles as a check: a hit whose plain verdict or score differs from the engine's is a bug (a debug assertion, and every test).
 - So the optimizations the exit criterion asks to verify are the prefilter, the 48 → 64-bit expansion, cost ordering, early exit and the scoring bound. All of them are checked against `Session::evaluate`.
 - **Front ends**: `spyglass search` and a search panel in the viewer, both over `World::search`.
@@ -65,7 +65,7 @@ pub struct SearchProgress { pub evaluated: u64, pub next: u64, pub stages: Vec<S
 
 ### The language
 
-A line-oriented text format with a hand-written parser and no new dependency. Each line is a constraint, `require` or `prefer`, with an optional `weight N` at the end of a `prefer`; `#` starts a comment. The grammar is in [specs/search.md](../specs/search.md); an example:
+A line-oriented text format with a hand-written parser and no new dependency. Each line is a constraint, `require` or `prefer`, with an optional `weight N` at the end of a `prefer`; `#` starts a comment. The grammar is in [specs/search.md](../../specs/search.md); an example:
 
 ```text
 # A witch-hut farm near spawn, with a village not far off.
@@ -85,7 +85,7 @@ prefer spawn within 200 of 0,0
 - **Regions**: `within R of <anchor>`, or a box `in x1,z1 to x2,z2`; every constraint has one, so every check is bounded. Anchors are `spawn`, a point `x,z`, or, for structure and slime counts, a structure in a region of its own (so "a village within 300 of an ancient city" means some pair is that close).
 - **Biome sampling**: biomes are sampled on a grid, at y 64 and every 16 blocks by default, with `at y` and `step` to change them; `covers P%` is the share of grid points in the region.
 - **Distances** are horizontal and Euclidean between `/locate` positions (chunk plus the set's locate offset), in integer arithmetic. Bounds-based distances need jigsaw and terrain, so they wait for milestone 07.
-- **Spawn** is the spawn origin's climate position ([specs/spawn.md](../specs/spawn.md)). The spec says the real spawn block can be anywhere in the 11 × 11 chunks around the origin chunk.
+- **Spawn** is the spawn origin's climate position ([specs/spawn.md](../../specs/spawn.md)). The spec says the real spawn block can be anywhere in the 11 × 11 chunks around the origin chunk.
 
 The canonical printer turns any parsed query back into text that parses to the same tree. The viewer's editor and `--json` output use that text, and the round trip is tested.
 
@@ -114,17 +114,17 @@ Each constraint provides a **necessary condition** for each stage it can be chec
 
 ### Front ends
 
-- **`spyglass search`**: `-q <text>` or `--query <file>`, `--top`, `--count`, `--time`, `--from`, `--range a..b` or `--seeds <file>`, `--threads`, `--certain`, `--json`, plus the usual `--game-version`, `--bundle`, `--bundles`. Progress (rate, seeds evaluated, survivors per stage, current best) on stderr; results on stdout when the budget runs out or on Ctrl-C (the best so far). `--json` adds a `search` section to [specs/cli-json.md](../specs/cli-json.md): the canonical query, source, `from`, `next`, `evaluated`, and the hits with each constraint's outcome and matched features.
+- **`spyglass search`**: `-q <text>` or `--query <file>`, `--top`, `--count`, `--time`, `--from`, `--range a..b` or `--seeds <file>`, `--threads`, `--certain`, `--json`, plus the usual `--game-version`, `--bundle`, `--bundles`. Progress (rate, seeds evaluated, survivors per stage, current best) on stderr; results on stdout when the budget runs out or on Ctrl-C (the best so far). `--json` adds a `search` section to [specs/cli-json.md](../../specs/cli-json.md): the canonical query, source, `from`, `next`, `evaluated`, and the hits with each constraint's outcome and matched features.
 - **Viewer**: a search panel with a monospace query editor (parse errors under it with line and column, re-parsed as you type), options (top N, budget, source, threads, certain), Run and Stop, live progress, and the top list updating as it grows. Clicking a hit opens that seed on the map, centred on the query's first anchor, with the structure layers the query names switched on and each constraint's matched features ringed (from `Session::evaluate`). Searches run on their own thread with a rayon pool one core smaller than the machine, so tiles keep rendering. The last query is kept in settings.
 
-Specs and ADRs that govern this: [ADR 0014](../adr/0014-public-api-world-and-session.md) (the public API), [specs/structure-placement.md](../specs/structure-placement.md) (placement and certainty), [specs/locate.md](../specs/locate.md) (locate positions), [specs/biome-lookup.md](../specs/biome-lookup.md) (quarts and ties), [specs/spawn.md](../specs/spawn.md), [specs/render.md](../specs/render.md) (the default y), [ADR 0008](../adr/0008-game-derived-test-values-stay-local.md).
+Specs and ADRs that govern this: [ADR 0014](../../adr/0014-public-api-world-and-session.md) (the public API), [specs/structure-placement.md](../../specs/structure-placement.md) (placement and certainty), [specs/locate.md](../../specs/locate.md) (locate positions), [specs/biome-lookup.md](../../specs/biome-lookup.md) (quarts and ties), [specs/spawn.md](../../specs/spawn.md), [specs/render.md](../../specs/render.md) (the default y), [ADR 0008](../../adr/0008-game-derived-test-values-stay-local.md).
 
 ## Tasks
 
 ### Phase 1: spec and ADRs
 
-- [x] ADR: the query language (a line-oriented DSL with a hand-written parser and canonical printer, over TOML or JSON; why): [0020](../adr/0020-search-query-language.md).
-- [x] ADR: the search engine: `spyglass-search` and its boundary with `spyglass`, `rayon`, staging by necessary conditions, the total order and batch merging that make results deterministic, `ctrlc` for the CLI. Licences checked against `deny.toml`: [0021](../adr/0021-search-engine.md).
+- [x] ADR: the query language (a line-oriented DSL with a hand-written parser and canonical printer, over TOML or JSON; why): [0020](../../adr/0020-search-query-language.md).
+- [x] ADR: the search engine: `spyglass-search` and its boundary with `spyglass`, `rayon`, staging by necessary conditions, the total order and batch merging that make results deterministic, `ctrlc` for the CLI. Licences checked against `deny.toml`: [0021](../../adr/0021-search-engine.md).
 - [x] `docs/specs/search.md`: grammar, every constraint's meaning and evaluation (counts, clusters, regions, anchors, biome grids, distances), three-valued outcomes, scoring arithmetic, ranking, seed sources and index order, budgets and `next`, determinism.
 - [x] `docs/specs/structure-placement.md`: which results depend only on the lower 48 bits, and why.
 
@@ -172,7 +172,7 @@ Specs and ADRs that govern this: [ADR 0014](../adr/0014-public-api-world-and-ses
 - [x] Stronghold constraints: compute ring positions one ring at a time if ring 1 alone settles most queries; checked by the structure golden tests. Done per position rather than per ring: ring points are generated without biomes, and only those that can land in the area asked about are settled.
 - [x] The scoring bound, kept only if it measurably helps. It saves 12% on a query that most seeds pass, once rounds are short enough for the threshold to rise.
 - [x] Update architecture.md (search no longer planned), README, getting-started (a first search).
-- [ ] `cargo xtask check` and `cargo xtask oracle-test`; move this plan and the milestone to `completed/`. Both pass; the move waits for the manual viewer check in Verification.
+- [x] `cargo xtask check` and `cargo xtask oracle-test`; move this plan and the milestone to `completed/`. Both pass.
 
 ## Verification
 
@@ -187,8 +187,8 @@ Specs and ADRs that govern this: [ADR 0014](../adr/0014-public-api-world-and-ses
 - [x] `docs/specs/search.md` (new)
 - [x] `docs/specs/structure-placement.md`: lower-48-bit results
 - [x] `docs/specs/cli-json.md`: `search`
-- [x] ADR: the query language ([0020](../adr/0020-search-query-language.md))
-- [x] ADR: the search engine ([0021](../adr/0021-search-engine.md))
+- [x] ADR: the query language ([0020](../../adr/0020-search-query-language.md))
+- [x] ADR: the search engine ([0021](../../adr/0021-search-engine.md))
 - [x] `docs/architecture.md`, `README.md`, `docs/getting-started.md`
 
 ## Decisions
@@ -204,6 +204,7 @@ Agreed on 2026-10-25, as recommended:
 
 ## Notes
 
+- 2026-10-25: Plan complete, closed at the user's go-ahead. Every task is done and both checks pass. The viewer's Search section was built, started and tested headless (option building, focus, matched-feature rings), but I didn't drive it by hand, so the manual check in Verification is unconfirmed for the viewer; the CLI half was run against 26.3.
 - 2026-10-25: Phase 8 done but for the move. `cargo xtask check` passes, and `cargo xtask oracle-test` passes all 26 tests, including the four new real-bundle ones (48-bit placement, lazy rings, the fast path, counting like `structures_in`). Left before completing: drive the viewer's Search section by hand (run a search, stop it, open a live hit and a finished one, continue from `next`) and compare a hit with `spyglass search` for the same query and count.
 - 2026-10-25: Phase 8, measurements (`cargo xtask bench`, release, 16 threads; this machine's load varied between runs by up to 1.7×, so these are from the quietest run). Cost per seed of judging one constraint in a new session: swamp-hut count within 1000, 1.2 ms; village near an outpost, 0.3 ms; swamp-hut cluster within 2000, 4.5 ms; four slime chunks within 128, 0.1 ms; spawn, 1.2 ms; a swamp-hut count around the spawn, 2.3 ms; cherry grove within 500, 7.8 ms; plains coverage within 1000 at step 32, 7.0 ms; a stronghold within 1500, 5.8 ms (was 1,416 ms). Searching: placement rejects about 6.5 million lower-48 values a second on one thread (4.2 × 10¹¹ seeds a second); a mixed query checks 3,700 seeds a second on one thread and 24,000 on all.
 - 2026-10-25: Binding a seed is 87 µs of climate plus 13 µs of spawn targets. A swamp-hut check is 95 µs, almost all of it the column of 97 quarts the game's `couldValidBiomeExistInTerrainColumn` asks about, and a 1,000-block disc has a dozen candidate huts. So binding is under a tenth of a check and stays as it is. Faster biome lookups are the density work the architecture defers, not search work.

@@ -15,3 +15,4 @@ Plans that have been fully implemented. See [development-process.md](../../devel
 | [m04-world-saves](m04-world-saves.md) | 04. World saves                            | 2026-10-25 |
 | [m05-cleanup](m05-cleanup.md)         | 05. Viewer MVP                             | 2026-10-25 |
 | [m05-viewer](m05-viewer.md)           | 05. Viewer MVP                             | 2026-10-25 |
+| [m06-seed-search](m06-seed-search.md) | 06. Seed search                            | 2026-10-25 |

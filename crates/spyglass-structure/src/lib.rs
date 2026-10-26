@@ -11,6 +11,7 @@ mod jigsaw;
 mod load;
 mod locate;
 mod placement;
+mod portal;
 mod slime;
 
 pub use biomes::BiomeSet;
@@ -22,4 +23,5 @@ pub use placement::{
     ConcentricRings, ExclusionZone, FrequencyReduction, Placement, PlacementKind, Placements,
     RandomSpread, RingPosition, SeedPlacements, SpreadType,
 };
+pub use portal::{RuinedPortal, Setup, VerticalPlacement};
 pub use slime::is_slime_chunk;

@@ -133,9 +133,9 @@ Specs and ADRs that govern this: [density-functions.md](../specs/density-functio
 
 ### Phase 5: validity
 
-- [ ] `Starts` with terrain: every Overworld type's check at its real position, and its other conditions.
-- [ ] The golden test, extended: with terrain, every stub must equal the game's exactly, and the selection must equal the game's choice wherever no tie or platform-dependent ring is involved. The confirmed `/locate` comparison.
-- [ ] `docs/specs/structure-placement.md` and `locate.md`: what terrain decides, and what still can't be decided.
+- [x] `Starts` with terrain: every Overworld type's check at its real position, and its other conditions. All but mineshafts, whose check needs their piece layout (`MineshaftPieces`), which isn't ported; they're decided by their column where it's all in or all out of their biomes.
+- [x] The golden test, extended: with terrain, every stub must equal the game's exactly, and the selection must equal the game's choice wherever no tie or platform-dependent ring is involved. The confirmed `/locate` comparison moves to phase 7, where `Session` gets `confirm`.
+- [x] `docs/specs/structure-placement.md`: what terrain decides, and what still can't be decided. `locate.md` moves to phase 7 with confirmed mode.
 
 ### Phase 6: jigsaw assembly
 
@@ -192,6 +192,7 @@ Agreed on 2026-10-25, as recommended:
 
 ## Notes
 
+- 2026-10-26: Phase 5 done. `Starts::with_terrain` checks surface and ocean types, pyramids and temples (lowest corner below sea level rejects), monuments, mansions (rotation, lowest corner below 60 rejects), projected jigsaws (first free height, then padding) and ruined portals (setup, template, rotation and mirror from the context random, then `findSuitableY` over four block columns) at their real positions. Against the structure golden files: 1,640 stubs equal to the game's (mineshafts' 787 unknown); 5,986 of 6,056 placement chunks decided, every one as the game decided, 70 left open (mixed-column mineshafts and ties). Without terrain, mineshafts whose whole column is in their biomes now pass, so 870 starts are certain (175 before), all made by the game. From the bytecode: `findSuitableY` tests the placement's own heightmap, returns `minY + 15` when no height has three solid corners, and the Nether portal is tried in the Overworld's set (its y ranges are ported; its biome check fails). One stub sits behind a tied climate condition the game failed, so the test allows stubs behind ties.
 - 2026-10-26: Phase 4 done. Exit criterion 1 is met: every height in the ten golden files (both heightmaps, 81,920 columns each) and every block of their sampled columns matches, 2,041,000 values, through both the chunk-wise path and, for every 13th column, a column's own. `OCEAN_FLOOR_WG` needs `#minecraft:blocks_motion_in_heightmap`, so bundles now include `data/minecraft/tags/block/` (297 files); older bundles must be extracted again. First measurement (release, one thread, `cargo xtask bench`):
   - Binding a seed's terrain: 321 µs, mostly creating its noises. One column in a bound session: 243 µs in the bench (one column, repeated), 430 µs on average over 300 varied columns, of which the density volume is 262 µs, the aquifer's surface-level prefill 141 µs and the scan the rest. One column in a new session: 552 µs in the bench. The game: about 500 µs.
   - 1,000 columns (40 × 25 from 0,0): 462 ms column by column, 24 ms chunk by chunk (one density volume and one aquifer per chunk, which share cell corners and surface levels). `heights_in` uses the chunk path.

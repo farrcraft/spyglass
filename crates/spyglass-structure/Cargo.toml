@@ -15,6 +15,8 @@ serde_json.workspace = true
 spyglass-biome.workspace = true
 spyglass-data.workspace = true
 spyglass-rng.workspace = true
+spyglass-terrain.workspace = true
 
 [dev-dependencies]
+rayon.workspace = true
 spyglass-oracle.workspace = true

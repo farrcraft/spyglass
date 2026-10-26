@@ -153,6 +153,11 @@ const TESTS: &[(&str, &str, &[Input])] = &[
         &[Input::Structures, Input::Bundle],
     ),
     (
+        "spyglass-structure",
+        "structures_with_terrain_match_the_oracle",
+        &[Input::Structures, Input::Bundle],
+    ),
+    (
         "spyglass",
         "locate_agrees_with_the_game",
         &[Input::Locate, Input::Bundle],

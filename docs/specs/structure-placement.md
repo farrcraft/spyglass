@@ -152,19 +152,21 @@ The rotation is `StructureTemplate.transform` with mirror none and pivot 0. Cloc
 
 ## What spyglass can decide
 
-For each try, `Starts::check` answers:
+For each try, `Starts::check` answers, from the climate alone (`Starts::new`) or with the seed's terrain (`Starts::with_terrain`, [below](#with-terrain)):
 
 - **`Rejected`**: no start, whatever the terrain. Either a climate-only condition above fails for every candidate of every tied cell involved, or the check is at a terrain-independent position whose biome isn't in the set, or a jigsaw start has no start piece or doesn't fit its padding.
-- **`Passes`**: the check is at a terrain-independent position and its biome is in the set for every tied candidate. In 26.3's Overworld that's strongholds, ancient cities and trial chambers.
+- **`Passes`**: the check is at a terrain-independent position and its biome is in the set for every tied candidate. In 26.3's Overworld that's strongholds, ancient cities and trial chambers. A mineshaft passes too when every quart of the level's column at its check's x and z is in its set: its check's y, from the piece layout spyglass doesn't port, is somewhere in that column.
 - **`Candidate`**: everything else. Either the check position needs terrain (surface types, projected jigsaws, mineshafts, ruined portals), or a tied cell could go either way. Every climate-only condition has passed.
+
+With terrain, the same answers hold with the real check position wherever spyglass computes it (every Overworld type but mineshafts, whose layout isn't ported): `Rejected` also covers terrain's own rejections, and a candidate remains only behind a tied cell or for a mineshaft whose column is mixed. `Starts::stub` gives the check position itself.
 
 A lookup counts as in a set if every candidate of the cell is, and out if none is. Mixed cells make the answer `Candidate`.
 
-`Passes` covers the biome check only. Validity that depends on pieces or terrain can still reject a start, as the table lists. Of the 175 starts the golden set calls certain, the game made all 175.
+`Passes` covers the biome check only. Without terrain, validity that depends on pieces or terrain can still reject a start, as the table lists. Of the 870 starts the golden set calls certain without terrain, the game made all 870. With terrain, 5,986 of its 6,056 placement chunks have a decided outcome, every one the game's ([Testing](#testing)).
 
 ## With terrain
 
-Draft. Each type's check with the generator's heights ([terrain.md](terrain.md#queries)), in the order of its terrain queries and context-random draws (`R`). After the biome check, a start is valid if it has pieces (`StructureStart.isValid`); no type checks anything else. Corners are `getCornerHeights(x, dx, z, dz)`: first occupied `WORLD_SURFACE_WG` at `(x, z)`, `(x, z + dz)`, `(x + dx, z)`, `(x + dx, z + dz)`, one block outside a `dx`-wide footprint.
+Implemented in `Starts::with_terrain`, except mineshafts. Each type's check with the generator's heights ([terrain.md](terrain.md#queries)), in the order of its terrain queries and context-random draws (`R`). After the biome check, a start is valid if it has pieces (`StructureStart.isValid`); no type checks anything else. Corners are `getCornerHeights(x, dx, z, dz)`: first occupied `WORLD_SURFACE_WG` at `(x, z)`, `(x, z + dz)`, `(x + dx, z)`, `(x + dx, z + dz)`, one block outside a `dx`-wide footprint.
 
 - **Surface and ocean types** (`onTopOfChunkCenter`): the chunk-centre pre-check, then the check at `(minX + 8, first occupied, minZ + 8)` with the type's heightmap. No draws before the check.
 - **Desert pyramid, jungle temple** (`SinglePieceStructure`): first the pre-check, then the lowest of the corners at `(minX, minZ)` with `(dx, dz)` = (21, 21) for the pyramid and (12, 15) for the temple. Below the sea level, no start. Then as the surface types.
@@ -173,13 +175,13 @@ Draft. Each type's check with the generator's heights ([terrain.md](terrain.md#q
   1. The setup: with several, `f = R.nextFloat()`, subtracting each `weight / total` (`f32`, list order) until `f < 0`. The air pocket draws only if its probability is strictly between 0 and 1 (none in 26.3).
   2. The template: `R.nextFloat() < 0.05` picks `giant_portal_1..3` with `R.nextInt(3)`, else `portal_1..10` with `R.nextInt(10)`. Then the rotation (`R.nextInt(4)`), and the mirror (`R.nextFloat() < 0.5`: none, else front-back).
   3. The box at `(minX, 0, minZ)` with pivot `(size.x / 2, 0, size.z / 2)`; its centre `min + (max − min + 1) / 2`; `Y0` = the first occupied height there (`OCEAN_FLOOR_WG` for `on_ocean_floor`, else `WORLD_SURFACE_WG`).
-  4. `y` by placement: `on_land_surface`, `on_ocean_floor`: `Y0`; `partly_buried`: `Y0 − ySpan + R.nextInt(7) + 2`; `in_mountain`: between 70 and `Y0 − ySpan`; `underground`: between `minY + 15` and `Y0 − ySpan`; `in_nether` its own ranges. "Between `a` and `b`" is `R.nextInt(b − a + 1) + a` if `a < b`, else `b` with no draw.
-  5. `findSuitableY`: the block columns at the box's four corners (min x min z, max x min z, min x max z, max x max z); from `y` down to just above `minY + 15`, the first height where at least three of them hold a block the heightmap counts.
-- **Mineshaft:** the pieces first (`R.nextDouble()` discarded, then the layout). Normal: moved below the sea level with `R`, as now. Mesa: `h` = `getBaseHeight` (not first occupied) of `WORLD_SURFACE_WG` at the layout's centre; the target is the sea level if `h ≤ seaLevel`, else `R.nextInt(h − seaLevel + 1) + seaLevel`, and `dy` = target − the centre's y.
+  4. `y` by placement: `on_land_surface`, `on_ocean_floor`: `Y0`; `partly_buried`: `Y0 − ySpan + R.nextInt(7) + 2`; `in_mountain`: between 70 and `Y0 − ySpan`; `underground`: between `minY + 15` and `Y0 − ySpan`; `in_nether`: with the air pocket `R.nextInt(69) + 32`, else `R.nextFloat() < 0.5` gives `R.nextInt(3) + 27` and otherwise `R.nextInt(72) + 29`. "Between `a` and `b`" is `R.nextInt(b − a + 1) + a` if `a < b`, else `b` with no draw. `minY` is the level's, and `ySpan` the template's height.
+  5. `findSuitableY`: the block columns (`getBaseColumn`) at the box's four corners (min x min z, max x min z, min x max z, max x max z); from `y` down while above `minY + 15`, the first height where three of them hold a block the placement's heightmap counts (`OCEAN_FLOOR_WG` for `on_ocean_floor`, else `WORLD_SURFACE_WG`). If there's none, `minY + 15`. The check is at `(minX, y, minZ)`. The Overworld's set has the Nether's portal too: its check runs on the Overworld's terrain, and its biome test fails.
+- **Mineshaft** (not implemented: the piece layout isn't ported): the pieces first (`R.nextDouble()` discarded, then the layout). Normal: moved below the sea level with `R`, as now. Mesa: `h` = `getBaseHeight` (not first occupied) of `WORLD_SURFACE_WG` at the layout's centre; the target is the sea level if `h ≤ seaLevel`, else `R.nextInt(h − seaLevel + 1) + seaLevel`, and `dy` = target − the centre's y.
 - **Shipwreck:** no terrain beyond the check: the game's later height fix applies only to templates over 32 blocks, and 26.3 has none.
 - **Projected jigsaw:** `y = start height + first free height` at the centre, then [as before](#jigsaw-starts).
 
-So with terrain every Overworld type's check is at a known position. The only answers that stay open are tied biome cells and platform-dependent ring positions.
+So with terrain every Overworld type's check is at a known position, but for mineshafts until their layout is ported. The only answers that stay open are tied biome cells, platform-dependent ring positions, and mineshafts in mixed columns.
 
 ## Jigsaw assembly
 
@@ -236,12 +238,13 @@ The biome check only ever removes starts, so a count of placement chunks is an u
 
 ## Testing
 
-- **Unit tests** cover codec defaults, ranges and errors on hand-written bundles; placement and the frequency reducers on hand-computed draws; `Math.round` and the trig flag; rotation, template boxes, the shuffle and height providers.
+- **Unit tests** cover codec defaults, ranges and errors on hand-written bundles; placement and the frequency reducers on hand-computed draws; `Math.round` and the trig flag; rotation, template boxes, the shuffle and height providers; ruined portals' transform, setup pick and air pocket draws.
 - **The ignored golden test** `crates/spyglass-structure/tests/golden.rs` compares against the [structure golden files](oracle.md#structure-golden-files):
   - Placement chunks of every applicable set, and slime chunks, must be equal in every region.
   - Ring positions must be equal unless flagged.
   - At every check position the game used, the game's biome must be among spyglass's candidates. Where the cell isn't tied, the check results must be equal.
   - Every jigsaw check position must equal the game's stub: exactly, or in x and z where projected.
   - Every start the game made must be among the selection's structures.
+  - With terrain (`structures_with_terrain_match_the_oracle`): every stub spyglass computes must equal the game's exactly, and where the game has no stub spyglass must have none, unless a tied condition stands before it. Every outcome spyglass decides (a certain start, or none) must be the game's. For 26.3 that's 1,640 stubs, all equal, with mineshafts' 787 left unknown, and 5,986 outcomes decided of 6,056, all equal.
 
   Run it with `cargo test --release -p spyglass-structure -- --ignored`. For 26.3 it compares 6,056 placement chunks, 2,427 check positions, 682 jigsaw positions and 1,280 ring positions. 304 rings are flagged, and the 61 that differ are all among them.

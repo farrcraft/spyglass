@@ -5,14 +5,17 @@
 //! Needs `cargo xtask oracle structures` (or `golden`) and a bundle for the same version. Run with
 //! `cargo test --release -p spyglass-structure -- --ignored`.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+
+use rayon::prelude::*;
 
 use serde_json::Value;
 use spyglass_biome::BiomeSource;
 use spyglass_data::bundle::Bundle;
 use spyglass_rng::worldgen;
 use spyglass_structure::{Check, JigsawCheck, Starts, StructureSets, is_slime_chunk};
+use spyglass_terrain::{Terrain, TerrainSettings};
 
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -322,4 +325,144 @@ fn structures_match_the_oracle() {
             report.failures.join("\n")
         );
     }
+}
+
+/// What one file's comparison with terrain found.
+#[derive(Default)]
+struct TerrainReport {
+    failures: Vec<String>,
+    /// Stubs spyglass computed, all equal to the game's.
+    stubs: usize,
+    /// Stubs spyglass computed behind a tied condition the game failed.
+    tie_stubs: usize,
+    /// Tries with a game stub that spyglass doesn't compute, by structure type.
+    unknown: BTreeMap<String, usize>,
+    /// Placement chunks whose outcome spyglass decided (all equal to the game's), and those it
+    /// left open.
+    decided: usize,
+    open: usize,
+}
+
+/// One file against [`Starts::with_terrain`]: every stub spyglass computes must be the game's,
+/// and every outcome it decides must be the game's.
+fn with_terrain(
+    path: &std::path::Path,
+    sets: &StructureSets,
+    source: &BiomeSource,
+    settings: &TerrainSettings,
+) -> TerrainReport {
+    let golden: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    let seed = golden["seed"].as_i64().unwrap();
+    let name = path.file_name().unwrap().to_string_lossy().into_owned();
+    let biomes = source.with_seed(seed).unwrap();
+    let placements = sets.with_seed(seed, &biomes);
+    let terrain = Terrain::new(settings, seed).unwrap();
+    let starts = Starts::with_terrain(&placements, &biomes, &terrain);
+    let mut report = TerrainReport::default();
+    for s in golden["sets"].as_array().unwrap() {
+        let set_id = s["set"].as_str().unwrap();
+        let set = sets.set_index(set_id).unwrap();
+        for c in s["chunks"].as_array().unwrap() {
+            let at = chunk(&c["chunk"]);
+            let tries = c["tries"].as_array().unwrap();
+            for t in tries {
+                let id = t["structure"].as_str().unwrap();
+                let structure = sets.structure_index(id).unwrap();
+                let ours = starts.stub(structure, at);
+                match (t.get("stub"), ours) {
+                    (Some(stub), Some(p)) => {
+                        let g = ints(stub);
+                        if [g[0] as i32, g[1] as i32, g[2] as i32] == p {
+                            report.stubs += 1;
+                        } else {
+                            report.failures.push(format!(
+                                "{name}: {set_id} {at:?}: {id}: game stub {g:?}, ours {p:?}"
+                            ));
+                        }
+                    }
+                    (Some(_), None) => {
+                        let kind = format!("{:?}", sets.structures()[structure].kind);
+                        *report.unknown.entry(kind).or_default() += 1;
+                    }
+                    // A stub behind a tied climate condition is conditional: the game's tie
+                    // may go the other way.
+                    (None, Some(_)) if starts.check(structure, at) == Check::Candidate => {
+                        report.tie_stubs += 1;
+                    }
+                    (None, Some(p)) => report.failures.push(format!(
+                        "{name}: {set_id} {at:?}: {id}: the game has no stub, ours {p:?}"
+                    )),
+                    (None, None) => {}
+                }
+            }
+            // The outcome: what the game started, if anything, against what we decided.
+            let game = tries
+                .iter()
+                .find(|t| t["start"].as_bool() == Some(true))
+                .map(|t| {
+                    sets.structure_index(t["structure"].as_str().unwrap())
+                        .unwrap()
+                });
+            let selection = starts.select(set, at);
+            let ours = match selection.tries.as_slice() {
+                [] => Some(None),
+                _ => selection.definite().map(Some),
+            };
+            match ours {
+                Some(o) if o == game => report.decided += 1,
+                Some(o) => report.failures.push(format!(
+                    "{name}: {set_id} {at:?}: the game started {game:?}, we decided {o:?}: {:?}",
+                    selection.tries
+                )),
+                None => report.open += 1,
+            }
+        }
+    }
+    report
+}
+
+#[test]
+#[ignore = "needs oracle-out/<version>/structures and bundles/<version>"]
+fn structures_with_terrain_match_the_oracle() {
+    let version = "26.3";
+    let dir = root()
+        .join("oracle-out")
+        .join(version)
+        .join("structures/overworld");
+    let files: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .unwrap_or_else(|e| panic!("{}: {e}; run cargo xtask oracle structures", dir.display()))
+        .map(|e| e.unwrap().path())
+        .collect();
+    let bundle = Bundle::open(root().join("bundles").join(version)).unwrap();
+    let source = BiomeSource::overworld(&bundle).unwrap();
+    let sets = StructureSets::overworld(&bundle, &source).unwrap();
+    let settings =
+        TerrainSettings::load(&bundle, source.noise_settings(), "minecraft:overworld").unwrap();
+    let reports: Vec<TerrainReport> = files
+        .par_iter()
+        .map(|p| with_terrain(p, &sets, &source, &settings))
+        .collect();
+    let mut unknown: BTreeMap<String, usize> = BTreeMap::new();
+    let (mut stubs, mut tie_stubs, mut decided, mut open) = (0, 0, 0, 0);
+    let mut failures = Vec::new();
+    for r in reports {
+        stubs += r.stubs;
+        tie_stubs += r.tie_stubs;
+        decided += r.decided;
+        open += r.open;
+        for (k, n) in r.unknown {
+            *unknown.entry(k).or_default() += n;
+        }
+        failures.extend(r.failures);
+    }
+    println!(
+        "{} files: {stubs} stubs equal to the game's, {tie_stubs} behind a tie the game failed, unknown by type {unknown:?}; {decided} outcomes decided and equal to the game's, {open} left open",
+        files.len()
+    );
+    assert!(
+        failures.is_empty(),
+        "{} problems:\n{}",
+        failures.len(),
+        failures[..failures.len().min(40)].join("\n")
+    );
 }

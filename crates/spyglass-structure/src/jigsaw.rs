@@ -395,17 +395,22 @@ pub enum JigsawCheck {
     NoStart,
     /// The check is at this block position.
     At([i32; 3]),
-    /// The start is projected to a heightmap, so y needs terrain. The check is at
-    /// `(x, heightmap y + y_offset, z)`, and the game first requires some biome in the
-    /// structure's set in the column `min_y..=max_y` at `(x, z)`
-    /// (`couldStructureExistInColumn`).
+    /// The start is projected to a heightmap, so y needs terrain. The game first requires
+    /// some biome in the structure's set in the level's column at `(x, z)`
+    /// (`couldStructureExistInColumn`). Then the piece's y is `start_y` plus the heightmap's
+    /// first free height at `(x, z)`, which must fit the padding
+    /// ([`Jigsaw::fits_padding`]), and the check is at `(x, y + offset_y, z)`.
     Projected {
         /// Block x of the check.
         x: i32,
         /// Block z of the check.
         z: i32,
-        /// Added to the heightmap's first free height for the check's y.
-        y_offset: i32,
+        /// The start height, before the heightmap is added.
+        start_y: i32,
+        /// The start jigsaw's offset in y, added for the check.
+        offset_y: i32,
+        /// The start piece's box in y, before it's moved to its height.
+        box_y: [i32; 2],
         /// The heightmap, e.g. `WORLD_SURFACE_WG`.
         heightmap: String,
     },
@@ -448,30 +453,37 @@ impl Jigsaw {
         };
         let x = bbox.max[0].wrapping_add(bbox.min[0]) / 2;
         let z = bbox.max[2].wrapping_add(bbox.min[2]) / 2;
+        let box_y = [bbox.min[1], bbox.max[1]];
         match &self.project_start_to_heightmap {
             Some(heightmap) => JigsawCheck::Projected {
                 x,
                 z,
-                y_offset: start[1].wrapping_add(offset[1]),
+                start_y: start[1],
+                offset_y: offset[1],
+                box_y,
                 heightmap: heightmap.clone(),
             },
             None => {
                 let y = piece[1];
-                if let Some((bottom, top)) = self.dimension_padding {
-                    // The piece moves so its box's minimum y plus the ground level delta (1)
-                    // is at y; then it must fit inside the padded level height.
-                    let dy = y.wrapping_sub(bbox.min[1].wrapping_add(1));
-                    let (min_y, max_y) =
-                        (bbox.min[1].wrapping_add(dy), bbox.max[1].wrapping_add(dy));
-                    if min_y < heights.level_min_y.wrapping_add(bottom)
-                        || max_y > heights.level_max_y().wrapping_sub(top)
-                    {
-                        return JigsawCheck::NoStart;
-                    }
+                if !self.fits_padding(y, box_y, heights) {
+                    return JigsawCheck::NoStart;
                 }
                 JigsawCheck::At([x, y.wrapping_add(offset[1]), z])
             }
         }
+    }
+
+    /// `isStartTooCloseToWorldHeightLimits`, negated: the start piece, whose box spans `box_y`,
+    /// moves so its box's minimum y plus the ground level delta (1) is at `y`; with
+    /// `dimension_padding`, it must then fit inside the padded level height.
+    pub fn fits_padding(&self, y: i32, box_y: [i32; 2], heights: &GenerationHeights) -> bool {
+        let Some((bottom, top)) = self.dimension_padding else {
+            return true;
+        };
+        let dy = y.wrapping_sub(box_y[0].wrapping_add(1));
+        let (min_y, max_y) = (box_y[0].wrapping_add(dy), box_y[1].wrapping_add(dy));
+        min_y >= heights.level_min_y.wrapping_add(bottom)
+            && max_y <= heights.level_max_y().wrapping_sub(top)
     }
 }
 
@@ -648,7 +660,8 @@ impl<'a> JigsawLoader<'a> {
         })
     }
 
-    fn template(&mut self, id: &str) -> LoadResult<Arc<Template>> {
+    /// A structure template by id, loaded once.
+    pub(crate) fn template(&mut self, id: &str) -> LoadResult<Arc<Template>> {
         if let Some(t) = self.templates.get(id) {
             return Ok(t.clone());
         }

@@ -3593,11 +3593,13 @@ dependencies = [
 name = "spyglass-structure"
 version = "0.0.0"
 dependencies = [
+ "rayon",
  "serde_json",
  "spyglass-biome",
  "spyglass-data",
  "spyglass-oracle",
  "spyglass-rng",
+ "spyglass-terrain",
 ]
 
 [[package]]

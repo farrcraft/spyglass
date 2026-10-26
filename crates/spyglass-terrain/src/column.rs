@@ -81,7 +81,8 @@ impl Terrain {
         &self.bound
     }
 
-    fn counts(&self, heightmap: Heightmap, block: Block) -> bool {
+    /// Whether `heightmap` counts `block` (`Heightmap.Types.isOpaque`).
+    pub fn counts(&self, heightmap: Heightmap, block: Block) -> bool {
         match heightmap {
             Heightmap::WorldSurfaceWg => block != Block::Air,
             Heightmap::OceanFloorWg => block == Block::Default && self.default_block_blocks_motion,

@@ -1,9 +1,11 @@
 //! The biome check (`Structure.findValidGenerationPoint`) and the choice among a set's
-//! structures (`ChunkGenerator.createStructures`), as far as they can be decided without terrain.
-//! See `docs/specs/structure-placement.md`.
+//! structures (`ChunkGenerator.createStructures`): from the climate alone, or with the
+//! generator's terrain, which gives most types their real check position. See
+//! `docs/specs/structure-placement.md`.
 
 use spyglass_biome::{Biomes, Lookup};
 use spyglass_rng::{RandomSource, worldgen};
+use spyglass_terrain::{Heightmap, Terrain};
 
 use crate::biomes::BiomeSet;
 use crate::jigsaw::JigsawCheck;
@@ -44,16 +46,59 @@ impl Selection {
     }
 }
 
-/// Structure starts for one seed: [`Placements`] plus the biome source for the same seed.
+/// Structure starts for one seed: [`Placements`] plus the biome source for the same seed, and
+/// optionally its terrain.
 pub struct Starts<'a> {
     placements: &'a Placements<'a>,
     biomes: &'a Biomes<'a>,
+    terrain: Option<&'a Terrain>,
+}
+
+/// What a check found before its biome test: the conditions' verdict so far, and the test's
+/// position if spyglass can tell.
+struct Found {
+    /// `Rejected` if a condition fails (or terrain rejects the start); `Candidate` if one hangs
+    /// on a tie; `Passes` if every condition so far certainly holds.
+    before: Check,
+    /// The check's position (the game's stub).
+    at: Option<[i32; 3]>,
+}
+
+impl Found {
+    const REJECTED: Found = Found {
+        before: Check::Rejected,
+        at: None,
+    };
+
+    /// Conditions so far, with the position still unknown.
+    fn pending(before: Check) -> Found {
+        Found { before, at: None }
+    }
 }
 
 impl<'a> Starts<'a> {
-    /// Starts for the placements' seed; `biomes` must be for the same seed.
+    /// Starts for the placements' seed, from the climate alone; `biomes` must be for the same
+    /// seed. Types whose check position needs terrain are candidates.
     pub fn new(placements: &'a Placements<'a>, biomes: &'a Biomes<'a>) -> Self {
-        Starts { placements, biomes }
+        Starts {
+            placements,
+            biomes,
+            terrain: None,
+        }
+    }
+
+    /// Starts with the seed's Overworld terrain as well, so that most types are checked at
+    /// their real position, and rejected where terrain rejects them.
+    pub fn with_terrain(
+        placements: &'a Placements<'a>,
+        biomes: &'a Biomes<'a>,
+        terrain: &'a Terrain,
+    ) -> Self {
+        Starts {
+            placements,
+            biomes,
+            terrain: Some(terrain),
+        }
     }
 
     /// The placements.
@@ -121,31 +166,93 @@ impl<'a> Starts<'a> {
 
     /// One structure's biome check in `chunk`, by its type's rules.
     pub fn check(&self, structure: usize, chunk: [i32; 2]) -> Check {
+        let found = self.find(structure, chunk);
+        let s = &self.placements.sets().structures()[structure];
+        let (before, at) = match (found.before, found.at) {
+            (Check::Rejected, _) => return Check::Rejected,
+            // A mineshaft whose whole column is in its set passes wherever its check is.
+            (Check::Passes, None) if s.kind == StructureType::Mineshaft => return Check::Passes,
+            (before, None) => return precondition(before),
+            (before, Some(at)) => (before, at),
+        };
+        and(before, self.point(&s.biomes, at))
+    }
+
+    /// Where `structure`'s biome check in `chunk` is (`findGenerationPoint`'s stub), if
+    /// spyglass can tell: always for types at a fixed position, and with terrain for most
+    /// others. `None` if a condition fails before the check, or the position needs what
+    /// spyglass doesn't compute.
+    pub fn stub(&self, structure: usize, chunk: [i32; 2]) -> Option<[i32; 3]> {
+        self.find(structure, chunk).at
+    }
+
+    /// The conditions before the biome check, and its position, by the type's rules.
+    fn find(&self, structure: usize, chunk: [i32; 2]) -> Found {
         let sets = self.placements.sets();
         let s: &Structure = &sets.structures()[structure];
         let heights = sets.heights();
         let (min_x, min_z) = (chunk[0].wrapping_shl(4), chunk[1].wrapping_shl(4));
+        let (mid_x, mid_z) = (min_x.wrapping_add(8), min_z.wrapping_add(8));
         let level_min_y = heights.level_min_y;
         let level_max_y = level_min_y
             .wrapping_add(heights.level_height)
             .wrapping_sub(1);
+        let terrain = self.terrain;
         // couldValidBiomeExistInTerrainColumn: one block below the level, to its top.
         let terrain_column =
             |x: i32, z: i32| self.column(&s.biomes, x, z, level_min_y.wrapping_sub(1), level_max_y);
-        let on_top_of_chunk_center =
-            || precondition(terrain_column(min_x.wrapping_add(8), min_z.wrapping_add(8)));
+        // onTopOfChunkCenter: the chunk-centre pre-check, then the check at the centre's first
+        // occupied height.
+        let on_top_of_chunk_center = |heightmap: Heightmap| {
+            let before = terrain_column(mid_x, mid_z);
+            if before == Check::Rejected {
+                return Found::REJECTED;
+            }
+            let at = terrain.map(|t| {
+                let y = t.first_occupied_height(mid_x, mid_z, heightmap);
+                [mid_x, y, mid_z]
+            });
+            Found { before, at }
+        };
+        let fixed = |at: [i32; 3]| Found {
+            before: Check::Passes,
+            at: Some(at),
+        };
         match s.kind {
-            StructureType::Stronghold => self.point(&s.biomes, [min_x, 0, min_z]),
-            StructureType::Fortress => self.point(&s.biomes, [min_x, 64, min_z]),
-            StructureType::BuriedTreasure
-            | StructureType::DesertPyramid
-            | StructureType::JungleTemple
-            | StructureType::SwampHut
-            | StructureType::Igloo
-            | StructureType::OceanRuin
-            | StructureType::Shipwreck => on_top_of_chunk_center(),
+            StructureType::Stronghold => fixed([min_x, 0, min_z]),
+            StructureType::Fortress => fixed([min_x, 64, min_z]),
+            StructureType::BuriedTreasure | StructureType::OceanRuin => {
+                on_top_of_chunk_center(Heightmap::OceanFloorWg)
+            }
+            StructureType::Shipwreck if s.beached => {
+                on_top_of_chunk_center(Heightmap::WorldSurfaceWg)
+            }
+            StructureType::Shipwreck => on_top_of_chunk_center(Heightmap::OceanFloorWg),
+            StructureType::Igloo | StructureType::SwampHut => {
+                on_top_of_chunk_center(Heightmap::WorldSurfaceWg)
+            }
+            // SinglePieceStructure: the pre-check, then no start if the footprint's lowest
+            // corner is below the sea level.
+            StructureType::DesertPyramid | StructureType::JungleTemple => {
+                let before = terrain_column(mid_x, mid_z);
+                if before == Check::Rejected {
+                    return Found::REJECTED;
+                }
+                let Some(t) = terrain else {
+                    return Found::pending(before);
+                };
+                let (dx, dz) = if s.kind == StructureType::DesertPyramid {
+                    (21, 21)
+                } else {
+                    (12, 15)
+                };
+                if lowest_corner(t, min_x, min_z, dx, dz) < sets.sea_level() {
+                    return Found::REJECTED;
+                }
+                on_top_of_chunk_center(Heightmap::WorldSurfaceWg)
+            }
             StructureType::OceanMonument => {
-                match self.area(
+                let area = self.area(
                     sets.monument_surroundings(),
                     [
                         min_x.wrapping_add(9),
@@ -153,23 +260,64 @@ impl<'a> Starts<'a> {
                         min_z.wrapping_add(9),
                     ],
                     29,
-                ) {
-                    Check::Rejected => Check::Rejected,
-                    _ => on_top_of_chunk_center(),
+                );
+                if area == Check::Rejected {
+                    return Found::REJECTED;
+                }
+                let found = on_top_of_chunk_center(Heightmap::OceanFloorWg);
+                Found {
+                    before: and(area, found.before),
+                    ..found
                 }
             }
-            StructureType::WoodlandMansion | StructureType::EndCity => {
-                precondition(terrain_column(min_x.wrapping_add(7), min_z.wrapping_add(7)))
+            // WoodlandMansionStructure: the rotation from the context random, then the lowest
+            // corner of a 5 × 5 box rotated with it; below 60, no start.
+            StructureType::WoodlandMansion => {
+                let (x, z) = (min_x.wrapping_add(7), min_z.wrapping_add(7));
+                let before = terrain_column(x, z);
+                if before == Check::Rejected {
+                    return Found::REJECTED;
+                }
+                let Some(t) = terrain else {
+                    return Found::pending(before);
+                };
+                let mut random =
+                    worldgen::large_feature(self.placements.seed(), chunk[0], chunk[1]);
+                // Rotation.getRandom: none, clockwise 90, 180, counterclockwise 90.
+                let (dx, dz) = match random.next_int_bounded(4) {
+                    0 => (5, 5),
+                    1 => (-5, 5),
+                    2 => (-5, -5),
+                    _ => (5, -5),
+                };
+                let y = lowest_corner(t, x, z, dx, dz);
+                if y < 60 {
+                    return Found::REJECTED;
+                }
+                Found {
+                    before,
+                    at: Some([x, y, z]),
+                }
             }
-            // The check is at (midX, 50 + dy, minZ), with dy from the piece layout; y is in the
-            // level, so the column there is a sound test.
-            StructureType::Mineshaft => precondition(self.column(
-                &s.biomes,
-                min_x.wrapping_add(8),
-                min_z,
-                level_min_y,
-                level_max_y,
-            )),
+            // The End's terrain isn't computed: the column test only.
+            StructureType::EndCity => {
+                Found::pending(terrain_column(min_x.wrapping_add(7), min_z.wrapping_add(7)))
+            }
+            // The check is at (midX, 50 + dy, minZ), with dy from the piece layout, which isn't
+            // ported. y is in the level, so the level's column there decides it when its quarts
+            // are all in the set (it passes wherever the layout puts it) or none is.
+            StructureType::Mineshaft => {
+                let some = self.column(&s.biomes, mid_x, min_z, level_min_y, level_max_y);
+                if some != Check::Rejected
+                    && self.whole_column(&s.biomes, mid_x, min_z, level_min_y, level_max_y)
+                {
+                    return Found {
+                        before: Check::Passes,
+                        at: None,
+                    };
+                }
+                Found::pending(precondition(some))
+            }
             StructureType::Jigsaw => {
                 let jigsaw = s
                     .jigsaw
@@ -178,15 +326,53 @@ impl<'a> Starts<'a> {
                 let mut random =
                     worldgen::large_feature(self.placements.seed(), chunk[0], chunk[1]);
                 match jigsaw.check_position(chunk, heights, &mut random) {
-                    JigsawCheck::NoStart => Check::Rejected,
-                    JigsawCheck::At(pos) => self.point(&s.biomes, pos),
-                    JigsawCheck::Projected { x, z, .. } => {
-                        precondition(self.column(&s.biomes, x, z, level_min_y, level_max_y))
+                    JigsawCheck::NoStart => Found::REJECTED,
+                    JigsawCheck::At(pos) => fixed(pos),
+                    JigsawCheck::Projected {
+                        x,
+                        z,
+                        start_y,
+                        offset_y,
+                        box_y,
+                        heightmap,
+                    } => {
+                        let before = self.column(&s.biomes, x, z, level_min_y, level_max_y);
+                        if before == Check::Rejected {
+                            return Found::REJECTED;
+                        }
+                        let (Some(t), Some(heightmap)) = (terrain, heightmap_named(&heightmap))
+                        else {
+                            return Found::pending(before);
+                        };
+                        let y = start_y.wrapping_add(t.first_free_height(x, z, heightmap));
+                        if !jigsaw.fits_padding(y, box_y, heights) {
+                            return Found::REJECTED;
+                        }
+                        Found {
+                            before,
+                            at: Some([x, y.wrapping_add(offset_y), z]),
+                        }
                     }
                 }
             }
-            // Position from the template and terrain; not filtered yet.
-            StructureType::RuinedPortal | StructureType::NetherFossil => Check::Candidate,
+            // RuinedPortalStructure: no condition before the check, whose height needs terrain.
+            StructureType::RuinedPortal => {
+                let Some(t) = terrain else {
+                    return Found::pending(Check::Candidate);
+                };
+                let portal = s
+                    .ruined_portal
+                    .as_ref()
+                    .expect("ruined portals load their setups");
+                let mut random =
+                    worldgen::large_feature(self.placements.seed(), chunk[0], chunk[1]);
+                Found {
+                    before: Check::Passes,
+                    at: Some(portal.check_position(chunk, t, level_min_y, &mut random)),
+                }
+            }
+            // The Nether's terrain isn't computed.
+            StructureType::NetherFossil => Found::pending(Check::Candidate),
         }
     }
 
@@ -215,6 +401,13 @@ impl<'a> Starts<'a> {
             }
         }
         result
+    }
+
+    /// Whether every quart from `min_y` to `max_y` at `(x, z)` is certainly in the set.
+    fn whole_column(&self, set: &BiomeSet, x: i32, z: i32, min_y: i32, max_y: i32) -> bool {
+        let (qx, qz) = (x >> 2, z >> 2);
+        ((min_y >> 2)..=(max_y >> 2))
+            .all(|qy| classify(set, &self.biomes.biome_at(qx, qy, qz)) == Check::Passes)
     }
 
     /// `BiomeResolver.getBiomesWithin(x, y, z, radius)` all in `set`: every quart from
@@ -251,6 +444,34 @@ fn classify(set: &BiomeSet, lookup: &Lookup) -> Check {
     } else {
         Check::Candidate
     }
+}
+
+/// Both conditions: `Rejected` if either is, `Passes` if both are, else `Candidate`.
+fn and(a: Check, b: Check) -> Check {
+    match (a, b) {
+        (Check::Rejected, _) | (_, Check::Rejected) => Check::Rejected,
+        (Check::Passes, Check::Passes) => Check::Passes,
+        _ => Check::Candidate,
+    }
+}
+
+/// `Structure.getLowestY(context, x, z, dx, dz)`: the lowest first occupied
+/// `WORLD_SURFACE_WG` height of the corners `(x, z)`, `(x, z + dz)`, `(x + dx, z)` and
+/// `(x + dx, z + dz)` (`getCornerHeights`).
+fn lowest_corner(terrain: &Terrain, x: i32, z: i32, dx: i32, dz: i32) -> i32 {
+    let h = |x, z| terrain.first_occupied_height(x, z, Heightmap::WorldSurfaceWg);
+    let corners = [
+        h(x, z),
+        h(x, z.wrapping_add(dz)),
+        h(x.wrapping_add(dx), z),
+        h(x.wrapping_add(dx), z.wrapping_add(dz)),
+    ];
+    corners[0].min(corners[1]).min(corners[2].min(corners[3]))
+}
+
+/// The heightmaps the generator answers for, by their serialization key.
+fn heightmap_named(name: &str) -> Option<Heightmap> {
+    Heightmap::ALL.into_iter().find(|h| h.key() == name)
 }
 
 /// A climate-only precondition, before a check whose position needs terrain: the structure is

@@ -15,6 +15,7 @@ use crate::placement::{
     ConcentricRings, ExclusionZone, FrequencyReduction, Placement, PlacementKind, RandomSpread,
     SpreadType,
 };
+use crate::portal::RuinedPortal;
 
 const STRUCTURE_SET: &str = "worldgen/structure_set";
 const STRUCTURE: &str = "worldgen/structure";
@@ -92,6 +93,11 @@ pub struct Structure {
     pub biomes: BiomeSet,
     /// For [`StructureType::Jigsaw`], its start settings.
     pub jigsaw: Option<Jigsaw>,
+    /// For [`StructureType::Shipwreck`], `is_beached`: checked on `WORLD_SURFACE_WG` rather
+    /// than `OCEAN_FLOOR_WG`.
+    pub beached: bool,
+    /// For [`StructureType::RuinedPortal`], its setups and templates.
+    pub ruined_portal: Option<RuinedPortal>,
 }
 
 /// One weighted entry of a structure set (`StructureSet.StructureSelectionEntry`).
@@ -359,11 +365,19 @@ impl SetLoader<'_> {
             StructureType::Jigsaw => Some(self.jigsaw.jigsaw(obj, &root)?),
             _ => None,
         };
+        let ruined_portal = match kind {
+            StructureType::RuinedPortal => Some(RuinedPortal::load(obj, &root, &mut self.jigsaw)?),
+            _ => None,
+        };
+        let beached = kind == StructureType::Shipwreck
+            && obj.get("is_beached").and_then(Value::as_bool) == Some(true);
         self.structures.push(Structure {
             id: id.clone(),
             kind,
             biomes,
             jigsaw,
+            beached,
+            ruined_portal,
         });
         let i = self.structures.len() - 1;
         self.structure_index.insert(id, i);

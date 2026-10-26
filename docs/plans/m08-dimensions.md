@@ -205,7 +205,7 @@ Specs and ADRs that govern this: [noise.md](../specs/noise.md), [rng.md](../spec
 - [x] Biome names and palettes from the source.
 - [x] `World::open_dimension`; spawn origins for both.
 - [x] Golden biome tests in both dimensions.
-- [ ] `check-save` against a real save's Nether and End: the test world has no Nether or End chunks yet.
+- [x] `check-save` against a real save's Nether and End.
 
 ### Phase 4: terrain
 
@@ -281,6 +281,7 @@ Agreed on 2026-10-26, as recommended:
 
 ## Notes
 
+- 2026-10-26: `check-save` on the test world (seed `spyglass`, 26.3), after a visit to both dimensions: the Nether's 3,074,048 stored biome cells in 3,002 chunks and the End's 3,459,072 in 3,378 chunks agree with the harness, with no unexplained mismatches. 128 of the Nether's 384 tied cells hold a different tied biome than the harness's first, as ties allow. Phase 3 is complete.
 - 2026-10-26: Phase 5 done. Structure sets already resolved per dimension. New: the nether fossil's height provider and base-column scan, end cities on the mansion's rule, and ruined portals decided without terrain where their biomes are all or none of the source's (every Nether placement chunk's portal). Against the golden files: in the Nether, 26,142 stubs and 51,604 of 51,605 outcomes as the game's (one behind a tie), and 132 bastion layouts piece for piece; in the End, 17 stubs and all 510 outcomes. `/locate`: all 480 cases agree, and every one of the Nether's 48 and the End's 12 confirmed structure cases is exactly the game's answer. Dropping the fossil scan's air test fails 33,070 checks.
 - 2026-10-26: Phase 4 done. With legacy binding from phase 3, every height and block column in the Nether's and End's height golden files matches: 6,135,300 values in 30 files across the three dimensions. No terrain code changed beyond accepting legacy randomness.
 - 2026-10-26: Phase 3 done but for `check-save`, which needs a save with Nether and End chunks. Every golden biome cell matches: the Nether's 42,598,400 cells (8,064 tied, every tie set equal) and the End's 42,598,400, and the 30 spawn files. `BiomeSource` is multi-noise or the End's; biome names moved to `BiomeNames`, which structure loading takes instead of the parameter list. `World::open_dimension` reads each dimension's type from the preset. Terrain settings accept legacy randomness (refusing it only with aquifers, which no vanilla dimension combines), a phase 4 task done early because opening a world loads terrain.

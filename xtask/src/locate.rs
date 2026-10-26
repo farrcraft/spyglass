@@ -7,7 +7,7 @@
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -213,73 +213,12 @@ fn server(
     source: &Source<'_>,
     cases: &[Case],
 ) -> Result<Vec<Answer>> {
-    let dir = harness
-        .work
-        .join("locate-server")
-        .join(name.trim_end_matches(".json"));
-    if dir.exists() {
-        fs::remove_dir_all(&dir)?;
-    }
-    fs::create_dir_all(&dir)?;
-    fs::write(dir.join("eula.txt"), "eula=true\n")?;
-    // The world is the default level-name, "world". Port 0 binds any free port. Pausing when
-    // empty would stop the tick loop that runs console commands.
-    let seed = match source {
-        Source::Seed(seed) => format!("level-seed={seed}\n"),
-        Source::Save(save) => {
-            copy_save(save, &dir.join("world"))?;
-            String::new()
-        }
-    };
-    fs::write(
-        dir.join("server.properties"),
-        format!(
-            "{seed}server-ip=127.0.0.1\nserver-port=0\nonline-mode=false\n\
-             pause-when-empty-seconds=-1\nsync-chunk-writes=false\nspawn-protection=0\n"
-        ),
-    )?;
-
-    let mut java = Command::new(&harness.java);
-    java.args(["-Xmx4G", "--enable-native-access=ALL-UNNAMED"]);
-    // The game's libraries use sun.misc.Unsafe; the option exists from Java 23.
-    if harness.major >= 23 {
-        java.arg("--sun-misc-unsafe-memory-access=allow");
-    }
-    let mut child = java
-        .arg("-cp")
-        .arg(&harness.classpath)
-        .args(["net.minecraft.server.Main", "--nogui"])
-        .current_dir(&dir)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .with_context(|| format!("failed to start the server with {}", harness.java.display()))?;
-    let stdout = child.stdout.take().context("no server stdout")?;
-    let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        for line in BufReader::new(stdout).lines() {
-            let Ok(line) = line else { break };
-            if tx.send(line).is_err() {
-                break;
-            }
-        }
-    });
-    let deadline = Instant::now() + TIMEOUT;
-    let next = |what: &str| -> Result<String> {
-        let left = deadline.saturating_duration_since(Instant::now());
-        rx.recv_timeout(left)
-            .with_context(|| format!("the server stopped or timed out waiting for {what}"))
-    };
+    let dir = server_dir(harness, name, source)?;
+    let mut server = Server::start(harness, &dir)?;
 
     // "Done (12.345s)! For help, type "help"".
-    loop {
-        let line = next("startup")?;
-        if line.contains("]: Done (") {
-            break;
-        }
-    }
-    let mut stdin = child.stdin.take().context("no server stdin")?;
+    while !server.next("startup")?.contains("]: Done (") {}
+    let mut stdin = server.child.0.stdin.take().context("no server stdin")?;
     for (i, case) in cases.iter().enumerate() {
         let [x, y, z] = case.from;
         writeln!(stdin, "say spyglass-case-{i}")?;
@@ -297,7 +236,7 @@ fn server(
     let mut messages: Vec<Vec<String>> = vec![Vec::new(); cases.len()];
     let mut current: Option<usize> = None;
     loop {
-        let line = next("locate answers")?;
+        let line = server.next("locate answers")?;
         if let Some(rest) = line.split("[Server] spyglass-case-").nth(1) {
             if rest.trim() == "end" {
                 break;
@@ -312,10 +251,13 @@ fn server(
             && !message.starts_with("Locating element ")
         {
             let message = message.strip_prefix("System chat: ").unwrap_or(message);
-            messages[i].push(message.to_string());
+            messages
+                .get_mut(i)
+                .with_context(|| format!("the server echoed an unknown case marker {i}"))?
+                .push(message.to_string());
         }
     }
-    let status = child.wait()?;
+    let status = server.child.0.wait()?;
     if !status.success() {
         bail!("the server exited with {status}");
     }
@@ -324,6 +266,117 @@ fn server(
         .zip(cases)
         .map(|(lines, case)| parse(&lines, case))
         .collect()
+}
+
+/// A fresh server folder for `name`: the EULA, properties, and the world (a seed in the
+/// properties, or a copy of a save).
+fn server_dir(harness: &Harness, name: &str, source: &Source<'_>) -> Result<PathBuf> {
+    let dir = harness
+        .work
+        .join("locate-server")
+        .join(name.trim_end_matches(".json"));
+    if dir.exists() {
+        fs::remove_dir_all(&dir)?;
+    }
+    fs::create_dir_all(&dir)?;
+    fs::write(
+        dir.join("eula.txt"),
+        "eula=true
+",
+    )?;
+    // The world is the default level-name, "world". Port 0 binds any free port. Pausing when
+    // empty would stop the tick loop that runs console commands.
+    let seed = match source {
+        Source::Seed(seed) => format!(
+            "level-seed={seed}
+"
+        ),
+        Source::Save(save) => {
+            copy_save(save, &dir.join("world"))?;
+            String::new()
+        }
+    };
+    fs::write(
+        dir.join("server.properties"),
+        format!(
+            "{seed}server-ip=127.0.0.1
+server-port=0
+online-mode=false
+             pause-when-empty-seconds=-1
+sync-chunk-writes=false
+spawn-protection=0
+"
+        ),
+    )?;
+    Ok(dir)
+}
+
+/// A running server and its output lines, with a deadline for the whole run.
+struct Server {
+    child: KillOnDrop,
+    lines: mpsc::Receiver<String>,
+    deadline: Instant,
+}
+
+impl Server {
+    fn start(harness: &Harness, dir: &Path) -> Result<Server> {
+        let mut java = Command::new(&harness.java);
+        java.args(["-Xmx4G", "--enable-native-access=ALL-UNNAMED"]);
+        // The game's libraries use sun.misc.Unsafe; the option exists from Java 23.
+        if harness.major >= 23 {
+            java.arg("--sun-misc-unsafe-memory-access=allow");
+        }
+        let mut child = KillOnDrop(
+            java.arg("-cp")
+                .arg(&harness.classpath)
+                .args(["net.minecraft.server.Main", "--nogui"])
+                .current_dir(dir)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::inherit())
+                .spawn()
+                .with_context(|| {
+                    format!("failed to start the server with {}", harness.java.display())
+                })?,
+        );
+        let stdout = child.0.stdout.take().context("no server stdout")?;
+        let (tx, lines) = mpsc::channel();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines() {
+                let Ok(line) = line else { break };
+                if tx.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+        Ok(Server {
+            child,
+            lines,
+            deadline: Instant::now() + TIMEOUT,
+        })
+    }
+
+    /// The next output line, or an error naming `what` was awaited if the server stopped or
+    /// the deadline passed.
+    fn next(&self, what: &str) -> Result<String> {
+        let left = self.deadline.saturating_duration_since(Instant::now());
+        self.lines
+            .recv_timeout(left)
+            .with_context(|| format!("the server stopped or timed out waiting for {what}"))
+    }
+}
+
+/// A child process that's killed if it's still running when dropped, so an error part way
+/// through a run doesn't leave a 4 GB server behind.
+struct KillOnDrop(Child);
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        if let Ok(None) = self.0.try_wait() {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
 }
 
 /// The answer in a case's messages: `The nearest <id> is at [x, y, z] (n blocks away)`, where

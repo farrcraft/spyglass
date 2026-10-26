@@ -132,7 +132,8 @@ impl<'a> Starts<'a> {
         // couldValidBiomeExistInTerrainColumn: one block below the level, to its top.
         let terrain_column =
             |x: i32, z: i32| self.column(&s.biomes, x, z, level_min_y.wrapping_sub(1), level_max_y);
-        let on_top_of_chunk_center = || precondition(terrain_column(min_x + 8, min_z + 8));
+        let on_top_of_chunk_center =
+            || precondition(terrain_column(min_x.wrapping_add(8), min_z.wrapping_add(8)));
         match s.kind {
             StructureType::Stronghold => self.point(&s.biomes, [min_x, 0, min_z]),
             StructureType::Fortress => self.point(&s.biomes, [min_x, 64, min_z]),
@@ -146,7 +147,11 @@ impl<'a> Starts<'a> {
             StructureType::OceanMonument => {
                 match self.area(
                     sets.monument_surroundings(),
-                    [min_x + 9, sets.sea_level(), min_z + 9],
+                    [
+                        min_x.wrapping_add(9),
+                        sets.sea_level(),
+                        min_z.wrapping_add(9),
+                    ],
                     29,
                 ) {
                     Check::Rejected => Check::Rejected,
@@ -154,13 +159,17 @@ impl<'a> Starts<'a> {
                 }
             }
             StructureType::WoodlandMansion | StructureType::EndCity => {
-                precondition(terrain_column(min_x + 7, min_z + 7))
+                precondition(terrain_column(min_x.wrapping_add(7), min_z.wrapping_add(7)))
             }
             // The check is at (midX, 50 + dy, minZ), with dy from the piece layout; y is in the
             // level, so the column there is a sound test.
-            StructureType::Mineshaft => {
-                precondition(self.column(&s.biomes, min_x + 8, min_z, level_min_y, level_max_y))
-            }
+            StructureType::Mineshaft => precondition(self.column(
+                &s.biomes,
+                min_x.wrapping_add(8),
+                min_z,
+                level_min_y,
+                level_max_y,
+            )),
             StructureType::Jigsaw => {
                 let jigsaw = s
                     .jigsaw
@@ -211,7 +220,7 @@ impl<'a> Starts<'a> {
     /// `BiomeResolver.getBiomesWithin(x, y, z, radius)` all in `set`: every quart from
     /// `(p - radius) >> 2` to `(p + radius) >> 2` on each axis.
     fn area(&self, set: &BiomeSet, [x, y, z]: [i32; 3], radius: i32) -> Check {
-        let range = |p: i32| ((p - radius) >> 2)..=((p + radius) >> 2);
+        let range = |p: i32| (p.wrapping_sub(radius) >> 2)..=(p.wrapping_add(radius) >> 2);
         let mut result = Check::Passes;
         for qz in range(z) {
             for qx in range(x) {

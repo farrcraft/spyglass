@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use spyglass_noise::{NoiseStack, NormalNoise, NormalNoiseParameters};
+use spyglass_noise::{NoiseError, NoiseStack, NormalNoise, NormalNoiseParameters};
 use spyglass_rng::{
     PositionalRandomFactory, RandomSource, XoroshiroPositionalRandomFactory, XoroshiroRandomSource,
 };
@@ -86,7 +86,9 @@ pub struct Binder<'n> {
     noise_parameters: &'n HashMap<String, NormalNoiseParameters>,
     random: XoroshiroPositionalRandomFactory,
     noises: HashMap<String, Arc<NoiseStack>>,
-    bound: HashMap<*const DensityFunction, Sampler>,
+    /// Samplers by function identity. Each entry keeps its function alive, so its address can't
+    /// be reused by another function while the binder holds it.
+    bound: HashMap<*const DensityFunction, (Df, Sampler)>,
 }
 
 impl<'n> Binder<'n> {
@@ -116,10 +118,17 @@ impl<'n> Binder<'n> {
             .noise_parameters
             .get(id)
             .ok_or_else(|| error(LoadErrorKind::Invalid("noise wasn't loaded before binding")))?;
-        let normal = NormalNoise::new(parameters).map_err(|_| {
-            error(LoadErrorKind::Unsupported {
-                what: "noise normalization",
-                name: "legacy".to_string(),
+        let normal = NormalNoise::new(parameters).map_err(|e| {
+            error(match e {
+                NoiseError::LegacyNormalization => LoadErrorKind::Unsupported {
+                    what: "noise normalization",
+                    name: "legacy".to_string(),
+                },
+                NoiseError::BaseOctave => LoadErrorKind::Invalid("base_octave is outside -32..=32"),
+                NoiseError::OctaveCount => LoadErrorKind::Invalid("octave_count is outside 1..=32"),
+                NoiseError::AmplitudeModifiers => LoadErrorKind::Invalid(
+                    "amplitude_modifiers must be empty or have octave_count entries",
+                ),
             })
         })?;
         let stack = Arc::new(normal.create(&mut self.random.from_hash_of(id)));
@@ -130,7 +139,7 @@ impl<'n> Binder<'n> {
     /// Binds `function` (`compileSampler`).
     pub fn bind(&mut self, function: &Df) -> Result<Sampler, LoadError> {
         let key = Arc::as_ptr(function);
-        if let Some(s) = self.bound.get(&key) {
+        if let Some((_, s)) = self.bound.get(&key) {
             return Ok(s.clone());
         }
         let node = match &**function {
@@ -177,7 +186,7 @@ impl<'n> Binder<'n> {
             // The compiler deduplicates caches; on the point path the value is the input's.
             DensityFunction::Cache(a) => {
                 return self.bind(a).inspect(|s| {
-                    self.bound.insert(key, s.clone());
+                    self.bound.insert(key, (function.clone(), s.clone()));
                 });
             }
             DensityFunction::Lerp {
@@ -205,7 +214,7 @@ impl<'n> Binder<'n> {
             DensityFunction::BlendOffset => Node::Constant(0.0),
         };
         let sampler = Sampler::new(node);
-        self.bound.insert(key, sampler.clone());
+        self.bound.insert(key, (function.clone(), sampler.clone()));
         Ok(sampler)
     }
 

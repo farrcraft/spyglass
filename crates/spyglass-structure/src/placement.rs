@@ -2,6 +2,7 @@
 //! only on the seed, except for concentric rings, which also move towards preferred biomes.
 //! See `docs/specs/structure-placement.md`.
 
+use std::collections::HashSet;
 use std::f64::consts::PI;
 use std::sync::OnceLock;
 
@@ -366,8 +367,8 @@ impl Placements<'_> {
 
     /// `ChunkGeneratorStructureState.hasStructureChunkInRange`.
     fn has_structure_chunk_in_range(&self, set: usize, x: i32, z: i32, range: i32) -> bool {
-        (x - range..=x + range)
-            .any(|i| (z - range..=z + range).any(|j| self.is_structure_chunk(set, i, j)))
+        let around = |c: i32| c.wrapping_sub(range)..=c.wrapping_add(range);
+        around(x).any(|i| around(z).any(|j| self.is_structure_chunk(set, i, j)))
     }
 
     /// Every chunk in `min..=max` (chunk coordinates, inclusive) where set `set` may start, in
@@ -395,8 +396,9 @@ impl Placements<'_> {
                 .filter(inside)
                 .collect(),
         };
-        chunks.retain(|&[x, z]| self.is_structure_chunk(set, x, z));
-        chunks.dedup();
+        // Ring positions can repeat; keep each chunk's first.
+        let mut seen = HashSet::new();
+        chunks.retain(|&c @ [x, z]| seen.insert(c) && self.is_structure_chunk(set, x, z));
         chunks
     }
 }

@@ -11,7 +11,16 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use flate2::read::{GzDecoder, ZlibDecoder};
-use spyglass_data::nbt::{self, Tag};
+use spyglass_data::nbt;
+
+use crate::read_capped;
+
+/// The largest region file the format can address in its chunk sectors: the header and 1,024
+/// chunks of at most 255 sectors. Larger files are corrupt or crafted.
+const MAX_REGION_FILE: u64 = (2 + 1024 * 255) * 4096;
+/// The most one chunk's NBT (or its `.mcc` file) may hold before or after decompression. Real
+/// chunks are rarely over a megabyte; larger ones count as unreadable.
+const MAX_CHUNK: u64 = 32 << 20;
 
 /// How many chunks each data version generated, from one dimension's region files.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -93,16 +102,29 @@ pub fn chunk_versions(dir: &Path) -> std::io::Result<ChunkVersions> {
     })
 }
 
-/// Counts one region file's chunks by data version.
+/// Counts one region file's chunks by data version. Every chunk of a file too large for the
+/// format is unreadable.
 pub fn file_versions(path: &Path) -> std::io::Result<ChunkVersions> {
-    let bytes = std::fs::read(path)?;
     let mut counts = ChunkVersions::default();
+    let (bytes, oversized) = match read_capped(path, MAX_REGION_FILE) {
+        Ok(bytes) => (bytes, false),
+        Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
+            let mut header = vec![0; 4096];
+            std::fs::File::open(path)?.read_exact(&mut header)?;
+            (header, true)
+        }
+        Err(e) => return Err(e),
+    };
     if bytes.len() < 4096 {
         return Ok(counts);
     }
     for i in 0..1024 {
         let entry = u32::from_be_bytes(bytes[i * 4..i * 4 + 4].try_into().expect("4 bytes"));
         if entry == 0 {
+            continue;
+        }
+        if oversized {
+            counts.unreadable += 1;
             continue;
         }
         match chunk_version(path, &bytes, entry, i) {
@@ -120,14 +142,21 @@ fn chunk_version(path: &Path, bytes: &[u8], entry: u32, i: usize) -> Option<Opti
     let start = (entry >> 8) as usize * 4096;
     let header = bytes.get(start..start + 5)?;
     let length = u32::from_be_bytes(header[..4].try_into().ok()?) as usize;
+    // The data must fit in the sectors the location gives it.
+    if length > (entry & 0xFF) as usize * 4096 {
+        return None;
+    }
     let compression = header[4];
     let external;
     let data = if compression & 128 != 0 {
         // RegionFile.getExternalChunkPath: c.<x>.<z>.mcc beside the region file, with the
         // chunk's absolute coordinates.
         let (rx, rz) = region_coords(path)?;
-        let (x, z) = (rx * 32 + (i % 32) as i32, rz * 32 + (i / 32) as i32);
-        external = std::fs::read(path.with_file_name(format!("c.{x}.{z}.mcc"))).ok()?;
+        let (x, z) = (
+            rx.wrapping_mul(32).wrapping_add((i % 32) as i32),
+            rz.wrapping_mul(32).wrapping_add((i / 32) as i32),
+        );
+        external = read_capped(&path.with_file_name(format!("c.{x}.{z}.mcc")), MAX_CHUNK).ok()?;
         &external[..]
     } else {
         // The length counts the compression byte.
@@ -135,16 +164,24 @@ fn chunk_version(path: &Path, bytes: &[u8], entry: u32, i: usize) -> Option<Opti
     };
     let mut raw = Vec::new();
     match compression & 127 {
-        1 => GzDecoder::new(data).read_to_end(&mut raw).ok()?,
-        2 => ZlibDecoder::new(data).read_to_end(&mut raw).ok()?,
+        1 => GzDecoder::new(data)
+            .take(MAX_CHUNK + 1)
+            .read_to_end(&mut raw)
+            .ok()?,
+        2 => ZlibDecoder::new(data)
+            .take(MAX_CHUNK + 1)
+            .read_to_end(&mut raw)
+            .ok()?,
         3 => {
             raw.extend_from_slice(data);
             raw.len()
         }
         _ => return None,
     };
-    let (_, tag) = nbt::read(&raw).ok()?;
-    Some(tag.get("DataVersion").and_then(Tag::as_int))
+    if raw.len() as u64 > MAX_CHUNK {
+        return None;
+    }
+    nbt::read_root_int(&raw, "DataVersion").ok()
 }
 
 /// `(x, z)` from a file named `r.<x>.<z>.mca`.

@@ -1,7 +1,7 @@
 //! The `spyglass` command: a thin front end over the `spyglass` library (ADR 0014). Output is
 //! human-readable, or JSON with `--json` (`docs/specs/cli-json.md`).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use anyhow::{Context, Result, bail};
@@ -254,16 +254,22 @@ fn header(out: &Out<'_>, command: &str) -> serde_json::Map<String, Value> {
     if let Some(report) = out.report {
         map.insert(
             "world".into(),
-            json!({"name": report.save.name, "dir": report.save.dir}),
+            json!({"name": report.save.name, "dir": path_json(&report.save.dir)}),
         );
         map.insert("warnings".into(), warnings_json(report));
     }
     map
 }
 
+/// A path as a JSON string. Text that isn't valid Unicode is replaced (cli-json.md).
+fn path_json(path: &Path) -> Value {
+    Value::String(path.to_string_lossy().into_owned())
+}
+
 fn print_json(mut map: serde_json::Map<String, Value>, fields: Value) -> Result<()> {
-    if let Value::Object(fields) = fields {
-        map.extend(fields);
+    match fields {
+        Value::Object(fields) => map.extend(fields),
+        other => bail!("internal error: JSON fields must be an object, not {other}"),
     }
     println!("{}", serde_json::to_string_pretty(&Value::Object(map))?);
     Ok(())
@@ -562,7 +568,7 @@ fn save_json(report: &SaveReport) -> Value {
         |l: &spyglass::SaveLocation| json!({"dimension": l.dimension, "position": l.pos});
     json!({
         "name": save.name,
-        "dir": save.dir,
+        "dir": path_json(&save.dir),
         "data_version": save.data_version,
         "version_name": save.version_name,
         "seed": save.seed,
@@ -570,7 +576,7 @@ fn save_json(report: &SaveReport) -> Value {
         "data_packs": save.enabled_packs,
         "spawn": save.spawn.as_ref().map(location),
         "player": save.player.as_ref().map(location),
-        "bundle": report.bundle.as_ref().map(|b| b.dir.clone()),
+        "bundle": report.bundle.as_ref().map(|b| path_json(&b.dir)),
         "answerable": report.answerable(),
         "warnings": warnings_json(report),
     })
@@ -592,7 +598,7 @@ fn world_list(bundles: &std::path::Path, as_json: bool) -> Result<()> {
                     v
                 }
                 Err(e) => {
-                    json!({"launcher": found.launcher, "dir": found.dir, "error": e.to_string()})
+                    json!({"launcher": found.launcher, "dir": path_json(&found.dir), "error": e.to_string()})
                 }
             })
             .collect();

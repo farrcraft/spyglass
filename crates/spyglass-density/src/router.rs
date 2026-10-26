@@ -66,18 +66,8 @@ impl ClimateRouter {
             let value = router
                 .get(entry)
                 .ok_or_else(|| error("noise_router", LoadErrorKind::Missing(entry)))?;
-            // Router entries are references in the vanilla data; inline functions are named
-            // after the settings for error messages.
-            let f = match value.as_str() {
-                Some(name) => loader.function(name)?,
-                None => {
-                    return Err(error(
-                        &path,
-                        LoadErrorKind::Shape("a density function reference"),
-                    ));
-                }
-            };
-            functions.push(f);
+            // References in the vanilla data; data packs may write functions inline.
+            functions.push(loader.inline(&id, &path, value)?);
         }
         Ok(ClimateRouter {
             functions: functions.try_into().expect("six entries"),

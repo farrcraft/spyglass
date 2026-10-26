@@ -150,38 +150,28 @@ Six phases, each a commit or two that passes `cargo xtask check` and the oracle 
 
 ### 2. Bugs and hardening
 
-- [ ] C1 `Binder`: store the `Df` clone alongside the sampler (or key by an `Arc`-holding wrapper), and add a test that binds, drops and rebinds.
-- [ ] C2 Limits on reads from saves:
-  - `nbt::read_compressed_limited(bytes, max)`, used for `level.dat`, player and world-gen settings files; 64 MiB is generous.
-  - Region chunks: decode through `.take(16 MiB)`, clamp `length` to `(entry & 0xFF) * 4096`, and size-check `.mcc` with metadata before reading.
-  - Tests for each: an oversized gzip, a length past the sector count, and a huge `.mcc`.
-- [ ] C3 Packs:
-  - recurse on `entry.file_type()?.is_dir()`
-  - reject `file/` names with any non-`Normal` path component (reported as a warning, not a read)
-  - tests with a symlink cycle (where the OS allows) and a `file/../x` name
-- [ ] C4 Bad input:
-  - `find_biome_horizontal` and `find_closest_biome_3d` reject `increment <= 0` with an error, and the radius loops use wrapping arithmetic as the Java does
-  - move parameter validation from `density/load.rs` into `NormalNoise::new`, with `NoiseError` variants
-  - pass the real `NoiseError` through in `sampler.rs`
-- [ ] C5 `check.rs` and `jigsaw.rs`: use `wrapping_add`/`wrapping_sub` on block coordinates. Add a test at chunk ±134217727.
-- [ ] C6 `placement.rs`: sort before `dedup()`, or prove the order and replace `dedup` with a debug assertion. Check which against the game's `ChunkGeneratorStructureState` ring list, whose order the locate answer depends on.
-- [ ] C7 `mth::floor`: run `javap -c` on `Mth.floor` in the 26.3 jar. Match it, fix the doc and the test, and update `noise.md`.
-- [ ] C8 `xtask oracle locate`:
-  - a `KillOnDrop` guard around the server `Child`
-  - `messages.get_mut(i)` with an error for a bad marker
-  - split `server` into setup, run and collect
-- [ ] C9 Inline router entries: support them as the game's codec does (named after the noise settings for errors), with a handwritten test. If that isn't simple, fix the comment and document the limitation in `density-functions.md`.
-- [ ] C10 CLI paths: report non-UTF-8 paths with `to_string_lossy` in text and an error in JSON (decide which in the typed-output task); `print_json` handles every shape.
-- [ ] I6 Chunk versions:
-  - read `DataVersion` with a shallow root scan that skips other tags without building them
-  - the NBT reader builds error paths only on failure, from a segment stack
-  - time `world info` on the largest save before and after
+- [x] C1 `Binder`: each cache entry keeps its `Df` alive. Test: bind, drop and rebind 64 functions (it failed before the fix).
+- [x] C2 Limits on reads from saves:
+  - `nbt::read_compressed_limited`, used for every NBT file in a save, with 64 MiB on disk and decompressed
+  - region files capped at the format's maximum size; a chunk's length must fit its sectors (as `RegionFile` checks); chunks and `.mcc` files capped at 32 MiB stored and decompressed
+  - tests: an NBT bomb, and a region file with a short header, a length past its sectors, length 0, a missing `.mcc`, an offset past the end and a zlib bomb (it failed before the fix)
+- [x] C3 Packs: walked by `entry.file_type()`; a `file/` name that isn't a single file name is `Missing` and never read. Tests for both (the symlink cycle on Unix only). `Save::file_packs` removed (I1).
+- [x] C4 Bad input:
+  - `find_biome_horizontal` asserts a positive increment (as `find_closest_biome_3d` does for its steps) and its loops wrap as the Java's do
+  - `NormalNoise::new` checks the codec's ranges itself (`NoiseError::BaseOctave`, `OctaveCount`, `AmplitudeModifiers`), and `sampler.rs` passes each through
+- [x] C5 `check.rs`, `jigsaw.rs` and `placement.rs` (exclusion zones) wrap block and chunk arithmetic. The test at chunk ±134217727 waits for the synthetic-bundle tests in phase 6.
+- [x] C6 `structure_chunks_in`: repeated ring positions are dropped by a set, keeping order. Random-spread cells can't repeat.
+- [x] C7 `Mth.floor`: no change needed (see notes).
+- [x] C8 `xtask oracle locate`: `KillOnDrop` around the server, `get_mut` for markers, and `server` split into `server_dir`, `Server::start`/`next` and the run.
+- [x] C9 Inline router entries: supported through `Loader::inline`, with a test, and in `density-functions.md`.
+- [x] C10 CLI paths are lossy strings in JSON (in `cli-json.md`), and `print_json` refuses non-object fields. The typed-output task replaces both.
+- [x] I6 Chunk versions read with `nbt::read_root_int`, and the NBT reader keeps a path stack and renders it only for errors.
 
 ### 3. Crate split and codec
 
-- [ ] ADR: the `spyglass-extract` crate, and the read-only `spyglass-data`.
+- [x] ADR: the `spyglass-extract` crate, and the read-only `spyglass-data` ([ADR 0016](../adr/0016-extractor-crate-and-read-only-data.md)).
 - [ ] Create `crates/spyglass-extract` and move manifest, cache, java, datagen, bundler, extract, the bundle-writing code and the binary. Rename the binary path in docs and scripts (`cargo run -p spyglass-extract`).
-- [ ] Trim `spyglass-data`'s dependencies. Confirm with `cargo tree -p spyglass -e normal` that no `ureq`, `zip`, `clap` or `anyhow` remains.
+- [ ] Trim `spyglass-data`'s dependencies. Confirm with `cargo tree -p spyglass -e normal` that no `ureq`, `clap`, `anyhow`, `tempfile` or `directories` remains (`zip` stays, for `spyglass-world`'s zipped data packs).
 - [ ] Split `BundleError` into read errors (data) and `ExtractError` (extract); no `zip` type remains in `spyglass-data`.
 - [ ] `spyglass_data::codec`:
   - `LoadError::new(resource, path, kind)`
@@ -189,6 +179,7 @@ Six phases, each a commit or two that passes `cargo xtask check` and the oracle 
   - `full_id`
   - `registry_ids`
   - point every crate at them and delete the copies
+- [ ] `LoadError`/`LoadErrorKind` move from `spyglass-density` to `spyglass_data::codec`, used from there everywhere. `NormalNoise` errors map to `Invalid` with one message source.
 - [ ] `NOISE_SETTINGS` defined once; the `Resources` test double implemented once (for `HashMap<String, Value>`) and shared.
 - [ ] `extract::resolve` used by `xtask oracle`. Expose `JAVAC_EXE`. Share one `sha1_hex` for bytes and readers, and one `io_err`.
 - [ ] I7 data:
@@ -293,6 +284,10 @@ Agreed on 2026-10-25, as recommended:
 
 ## Notes
 
+- 2026-10-25: Phase 2 done.
+  - The 26.3 bytecode of `Mth.floor` is `Math.floor` then `d2i`, which is exactly `(int) Math.floor(d)`, so `mth::floor`, its doc and its test were right. The classic `i - 1` form the assessment had in mind isn't the current one.
+  - `world info` is about 2× faster on hermitcraft9 (1.18-era chunks, 2.3 GB), at about 3.7 s against 6.6 to 9.9 s, with byte-identical JSON. The largest save (4.7 GB, older chunks) is unchanged at about 8 s, so I/O and decompression bound it.
+  - `zip` stays in `spyglass-world`, which reads zipped data packs, so phase 3's dependency check expects it there, read-only.
 - 2026-10-25: Phase 1 done.
   - The rustup that winget installs makes `stable` the default toolchain. `rust-toolchain.toml` pins `stable` too, so the two setup scripts end up in the same state and `setup.ps1` needs no change.
   - Every spec is now marked Stable: each one's behavior is implemented and checked. The index gained a "Covers" column so its statuses carry information.

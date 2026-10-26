@@ -1,7 +1,7 @@
 //! What a save's enabled data packs contain, as far as spyglass can see.
 
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use crate::Save;
 
@@ -19,7 +19,8 @@ pub enum PackContents {
         /// Worldgen files.
         worldgen_files: usize,
     },
-    /// A `file/` pack whose zip or folder is missing or unreadable.
+    /// A `file/` pack whose zip or folder is missing or unreadable, or whose name isn't a single
+    /// file name (the game only lists the folder's own entries, so it can't find such a pack).
     Missing {
         /// Where it should be.
         path: PathBuf,
@@ -43,8 +44,10 @@ fn folder_worldgen_files(root: &Path) -> io::Result<usize> {
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
         for entry in std::fs::read_dir(&dir)? {
-            let path = entry?.path();
-            if path.is_dir() {
+            let entry = entry?;
+            let path = entry.path();
+            // The entry's own type: symlinks aren't followed, so a cycle can't loop forever.
+            if entry.file_type()?.is_dir() {
                 stack.push(path);
             } else if path
                 .strip_prefix(root)
@@ -79,7 +82,14 @@ impl Save {
                     None => PackContents::Uninspectable,
                     Some(file) => {
                         let path = self.dir.join("datapacks").join(file);
-                        let count = if path.is_dir() {
+                        let mut parts = Path::new(file).components();
+                        let single = matches!(
+                            (parts.next(), parts.next()),
+                            (Some(Component::Normal(_)), None)
+                        );
+                        let count = if !single {
+                            Err(io::ErrorKind::NotFound.into())
+                        } else if path.is_dir() {
                             folder_worldgen_files(&path)
                         } else {
                             zip_worldgen_files(&path)

@@ -138,6 +138,16 @@ impl<'r, R: Resources + ?Sized> Loader<'r, R> {
         Ok(p)
     }
 
+    /// A density function written inline in another resource, such as a noise router entry:
+    /// a number, a reference or an object, as anywhere else. Errors name `resource` and `path`.
+    pub fn inline(&mut self, resource: &str, path: &str, json: &Value) -> LoadResult<Df> {
+        let at = At {
+            resource,
+            path: path.to_string(),
+        };
+        self.parse_function(json, &at)
+    }
+
     /// Every noise loaded so far, by full id.
     pub fn noises(&self) -> &HashMap<String, NormalNoiseParameters> {
         &self.noises

@@ -342,7 +342,9 @@ impl HeightProvider {
                 if lo > hi {
                     lo
                 } else {
-                    random.next_int_bounded(hi - lo + 1) + lo
+                    random
+                        .next_int_bounded(hi.wrapping_sub(lo).wrapping_add(1))
+                        .wrapping_add(lo)
                 }
             }
         }

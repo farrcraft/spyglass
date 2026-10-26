@@ -195,6 +195,8 @@ impl Biomes<'_> {
     /// for every combination of those cells' outcomes, from the same random state, and every
     /// other outcome is listed in [`HorizontalSearch::alternatives`]. With more than
     /// [`MAX_REPLAYED_TIES`] such cells, nothing is replayed and the alternatives are unknown.
+    ///
+    /// `increment` must be positive: the game's loops never end otherwise.
     #[allow(clippy::too_many_arguments)]
     pub fn find_biome_horizontal<R: RandomSource + Clone>(
         &self,
@@ -207,6 +209,7 @@ impl Biomes<'_> {
         random: &mut R,
         find_closest: bool,
     ) -> HorizontalSearch {
+        assert!(increment > 0, "increment must be positive");
         let (qx, qy, qz, qr) = (x >> 2, y >> 2, z >> 2, radius >> 2);
         // The cells that can matter, in scan order: every hit, and every cell that could be one.
         let mut cells: Vec<(i32, i32, Lookup, bool)> = Vec::new();
@@ -219,7 +222,7 @@ impl Biomes<'_> {
                 let mut dx = -r;
                 while dx <= r {
                     if find_closest && dx.wrapping_abs() != r && !z_edge {
-                        dx += increment;
+                        dx = dx.wrapping_add(increment);
                         continue;
                     }
                     let (cx, cz) = (qx.wrapping_add(dx), qz.wrapping_add(dz));
@@ -234,11 +237,11 @@ impl Biomes<'_> {
                             break 'scan;
                         }
                     }
-                    dx += increment;
+                    dx = dx.wrapping_add(increment);
                 }
-                dz += increment;
+                dz = dz.wrapping_add(increment);
             }
-            r += increment;
+            r = r.wrapping_add(increment);
         }
 
         // The game's draws, given which cells match.

@@ -10,6 +10,7 @@ Scripts depend on this format, so it's versioned. Within a format version, field
 - Errors go to stderr as text, with a non-zero exit code and nothing on stdout.
 - Coordinates are blocks unless the field says `chunk`. A chunk is `[x, z]`.
 - Ids are full game ids, e.g. `minecraft:village_plains`.
+- Paths are strings. Characters that aren't valid Unicode are replaced with U+FFFD.
 - `seed` is the 64-bit seed after text seeds are hashed ([locate.md](locate.md#text-seeds)).
 
 Every `locate` object starts with:

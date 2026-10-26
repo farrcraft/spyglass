@@ -5,7 +5,9 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 use spyglass_data::bundle::BundleError;
-use spyglass_density::{Binder, DensityFunction, LoadErrorKind, Loader, Resources, Sampler};
+use spyglass_density::{
+    Binder, ClimateRouter, DensityFunction, LoadErrorKind, Loader, Resources, Sampler,
+};
 use spyglass_noise::Normalization;
 
 /// Resources from a map of `registry/id` to JSON.
@@ -129,6 +131,39 @@ fn errors_name_the_resource_and_path() {
         "{err}"
     );
     assert_eq!(err.path, "input");
+}
+
+#[test]
+fn router_entries_may_be_inline() {
+    let settings = |depth: Value| {
+        (
+            "worldgen/noise_settings/minecraft:test".to_string(),
+            json!({"noise_router": {
+                "temperature": "minecraft:t",
+                "vegetation": 0.25,
+                "continents": {"type": "minecraft:mul", "left": "t", "right": 2},
+                "erosion": -1,
+                "depth": depth,
+                "ridges": 0
+            }}),
+        )
+    };
+    let map = resources(vec![df("minecraft:t", json!(0.5)), settings(json!(3))]);
+    let climate = ClimateRouter::load(&map, "test")
+        .unwrap()
+        .sampler(0)
+        .unwrap();
+    assert_eq!(climate.sample(1, 2, 3), [0.5, 0.25, 1.0, -1.0, 3.0, 0.0]);
+
+    let map = resources(vec![
+        df("minecraft:t", json!(0.5)),
+        settings(json!({"type": "minecraft:abs"})),
+    ]);
+    let err = ClimateRouter::load(&map, "test").unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        r#"minecraft:test: noise_router.depth: missing field "input""#
+    );
 }
 
 #[test]
@@ -289,5 +324,17 @@ fn columns_fold_only_what_doesnt_depend_on_y() {
                 "({x}, {y}, {z})"
             );
         }
+    }
+}
+
+#[test]
+fn a_dropped_function_never_answers_for_a_new_one() {
+    let noises = HashMap::new();
+    let mut binder = Binder::new(&noises, 0);
+    // A new function of the same size is likely to land where the dropped one was; the binder
+    // must still bind the new one.
+    for i in 0..64 {
+        let f = Arc::new(DensityFunction::Constant(i as f32));
+        assert_eq!(binder.bind(&f).unwrap().sample(0, 0, 0), i as f32);
     }
 }

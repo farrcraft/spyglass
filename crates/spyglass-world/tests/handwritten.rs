@@ -7,7 +7,7 @@ use std::path::Path;
 use flate2::Compression;
 use flate2::write::{GzEncoder, ZlibEncoder};
 use spyglass_data::nbt::{self, Compound, Tag};
-use spyglass_world::{Layout, Save, WorldError, region};
+use spyglass_world::{Layout, PackContents, Save, WorldError, region};
 
 fn raw(root: &Tag) -> Vec<u8> {
     nbt::write("", root)
@@ -138,8 +138,10 @@ fn current_layout() {
         dir.path().join("dimensions/minecraft/the_nether/region")
     );
     assert_eq!(
-        save.file_packs()[0].1,
-        dir.path().join("datapacks/mine.zip")
+        save.packs()[1].1,
+        PackContents::Missing {
+            path: dir.path().join("datapacks/mine.zip")
+        }
     );
 }
 
@@ -234,6 +236,88 @@ fn before_1_16() {
     );
 }
 
+/// A pre-1.16 save in `dir` that enables `packs`.
+fn save_with_packs(dir: &Path, packs: &[&str]) -> Save {
+    write(
+        &dir.join("level.dat"),
+        &c([(
+            "Data",
+            c([
+                ("RandomSeed", Tag::Long(1)),
+                ("DataPacks", c([("Enabled", strings(packs))])),
+            ]),
+        )]),
+    );
+    Save::read(dir).unwrap()
+}
+
+fn touch(path: &Path) {
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, "{}").unwrap();
+}
+
+#[test]
+fn data_pack_contents() {
+    let dir = tempfile::tempdir().unwrap();
+    let packs = dir.path().join("datapacks");
+    touch(&packs.join("terrain/data/x/worldgen/noise/a.json"));
+    touch(&packs.join("terrain/overlay/data/x/tags/worldgen/biome/b.json"));
+    touch(&packs.join("terrain/data/x/function/c.mcfunction"));
+    touch(&packs.join("loot/data/x/loot_table/d.json"));
+    // A pack named outside datapacks/ isn't read, even when the path exists.
+    touch(&dir.path().join("escape/data/x/worldgen/noise/e.json"));
+    let save = save_with_packs(
+        dir.path(),
+        &[
+            "vanilla",
+            "file/terrain",
+            "file/loot",
+            "file/gone.zip",
+            "file/../escape",
+            "bundle",
+        ],
+    );
+    let contents: Vec<PackContents> = save.packs().into_iter().map(|(_, c)| c).collect();
+    assert_eq!(
+        contents,
+        [
+            PackContents::Vanilla,
+            PackContents::Files {
+                path: packs.join("terrain"),
+                worldgen_files: 2
+            },
+            PackContents::Files {
+                path: packs.join("loot"),
+                worldgen_files: 0
+            },
+            PackContents::Missing {
+                path: packs.join("gone.zip")
+            },
+            PackContents::Missing {
+                path: packs.join("../escape")
+            },
+            PackContents::Uninspectable,
+        ]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn data_pack_symlink_cycles_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let pack = dir.path().join("datapacks/loop");
+    touch(&pack.join("data/x/worldgen/noise/a.json"));
+    std::os::unix::fs::symlink(&pack, pack.join("data/x/again")).unwrap();
+    let save = save_with_packs(dir.path(), &["file/loop"]);
+    assert_eq!(
+        save.packs()[0].1,
+        PackContents::Files {
+            path: pack,
+            worldgen_files: 1
+        }
+    );
+}
+
 #[test]
 fn errors_name_the_file_and_field() {
     let dir = tempfile::tempdir().unwrap();
@@ -308,4 +392,53 @@ fn region_chunk_versions() {
             .total(),
         0
     );
+}
+
+#[test]
+fn region_edge_cases_are_unreadable_not_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    // Shorter than a header: no chunks.
+    std::fs::write(dir.path().join("r.5.5.mca"), [0_u8; 100]).unwrap();
+    assert_eq!(
+        region::file_versions(&dir.path().join("r.5.5.mca"))
+            .unwrap()
+            .total(),
+        0
+    );
+
+    let mut file = vec![0_u8; 8192];
+    let mut entry = |index: usize, sector: u32, sectors: u32| {
+        let e = (sector << 8) | sectors;
+        file[index * 4..index * 4 + 4].copy_from_slice(&e.to_be_bytes());
+    };
+    entry(0, 2, 1); // length past its one sector
+    entry(1, 3, 1); // length 0
+    entry(2, 4, 1); // external, but no .mcc file
+    entry(3, 5000, 1); // offset past the end of the file
+    // A zlib bomb: valid NBT, a 40 MiB byte array of zeros, in about 40 KiB.
+    let mut e = ZlibEncoder::new(Vec::new(), Compression::default());
+    e.write_all(&[7, 0, 0]).unwrap();
+    e.write_all(&(40_i32 << 20).to_be_bytes()).unwrap();
+    e.write_all(&vec![0; 40 << 20]).unwrap();
+    let bomb = e.finish().unwrap();
+    let bomb_sectors = (bomb.len() + 5).div_ceil(4096);
+    entry(4, 5, bomb_sectors as u32);
+    let mut sector = |data: &[u8], sectors: usize| {
+        let mut s = data.to_vec();
+        s.resize(sectors * 4096, 0);
+        file.extend(s);
+    };
+    sector(&[0, 0, 0x20, 0, 2], 1);
+    sector(&[0, 0, 0, 0, 2], 1);
+    sector(&[0, 0, 0, 1, 2 | 128], 1);
+    let mut body = ((bomb.len() + 1) as u32).to_be_bytes().to_vec();
+    body.push(2);
+    body.extend(bomb);
+    sector(&body, bomb_sectors);
+    let path = dir.path().join("r.0.0.mca");
+    std::fs::write(&path, &file).unwrap();
+
+    let counts = region::file_versions(&path).unwrap();
+    assert_eq!(counts.unreadable, 5);
+    assert_eq!(counts.total(), 5);
 }

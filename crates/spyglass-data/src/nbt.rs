@@ -146,125 +146,218 @@ pub enum NbtError {
     /// Bytes left after the root tag.
     #[error("{0} bytes after the root tag")]
     Trailing(usize),
+    /// More data than the reader's limit, after decompression.
+    #[error("more than {0} bytes uncompressed")]
+    TooLarge(u64),
 }
 
 /// Reads gzip-compressed NBT (`NbtIo.readCompressed`): the root tag's name and value.
 pub fn read_compressed(bytes: &[u8]) -> Result<(String, Tag), NbtError> {
+    read_compressed_limited(bytes, u64::MAX)
+}
+
+/// [`read_compressed`] for untrusted data: more than `max` bytes after decompression is an
+/// error, so a small file can't expand to fill memory.
+pub fn read_compressed_limited(bytes: &[u8], max: u64) -> Result<(String, Tag), NbtError> {
     let mut raw = Vec::new();
     GzDecoder::new(bytes)
+        .take(max.saturating_add(1))
         .read_to_end(&mut raw)
         .map_err(NbtError::Gzip)?;
+    if raw.len() as u64 > max {
+        return Err(NbtError::TooLarge(max));
+    }
     read(&raw)
 }
 
 /// Reads uncompressed NBT: one named root tag, and nothing after it.
 pub fn read(bytes: &[u8]) -> Result<(String, Tag), NbtError> {
-    let mut r = Reader { bytes, pos: 0 };
-    let id = r.u8("")?;
-    let name = r.string("")?;
-    let tag = r.payload(id, "", 0)?;
-    match bytes.len() - r.pos {
-        0 => Ok((name, tag)),
-        n => Err(NbtError::Trailing(n)),
+    let mut r = Reader::new(bytes);
+    let id = r.u8()?;
+    let name = r.string()?;
+    let tag = r.payload(id, 0)?;
+    r.finish()?;
+    Ok((name, tag))
+}
+
+/// The `TAG_Int` child `name` of uncompressed NBT's root compound, without building the tree:
+/// `None` if the root isn't a compound or has no such int. The rest of the data is still
+/// checked as [`read`] checks it, except that strings other than names aren't decoded.
+pub fn read_root_int(bytes: &[u8], name: &str) -> Result<Option<i32>, NbtError> {
+    let mut r = Reader::new(bytes);
+    let id = r.u8()?;
+    r.skip_string()?;
+    let mut found = None;
+    if id == 10 {
+        loop {
+            let child = r.u8()?;
+            if child == 0 {
+                break;
+            }
+            let (child_name, segment) = r.name()?;
+            r.path.push(segment);
+            if child_name != name {
+                r.skip(child, 1)?;
+            } else if child == 3 {
+                found = Some(r.i32()?);
+            } else {
+                // A repeated name keeps the last value, as in a compound.
+                found = None;
+                r.skip(child, 1)?;
+            }
+            r.path.pop();
+        }
+    } else {
+        r.skip(id, 0)?;
     }
+    r.finish()?;
+    Ok(found)
+}
+
+/// One step of the path to the tag being read: a compound child's name, as the range of its
+/// raw bytes in the input, or a list index. Paths are only rendered as text for errors.
+#[derive(Clone, Copy)]
+enum Segment {
+    Name(usize, usize),
+    Index(usize),
 }
 
 struct Reader<'b> {
     bytes: &'b [u8],
     pos: usize,
+    path: Vec<Segment>,
 }
 
-impl Reader<'_> {
-    fn take(&mut self, n: usize, path: &str) -> Result<&[u8], NbtError> {
+impl<'b> Reader<'b> {
+    fn new(bytes: &'b [u8]) -> Self {
+        Reader {
+            bytes,
+            pos: 0,
+            path: Vec::new(),
+        }
+    }
+
+    /// The path to the current tag, e.g. `blocks[3].pos`.
+    fn path(&self) -> String {
+        let mut out = String::new();
+        for &segment in &self.path {
+            if let Segment::Name(..) = segment
+                && !out.is_empty()
+            {
+                out.push('.');
+            }
+            out.push_str(&self.segment_text(segment));
+        }
+        out
+    }
+
+    /// A segment as text. Names were checked when read, so they always decode.
+    fn segment_text(&self, segment: Segment) -> String {
+        match segment {
+            Segment::Name(start, end) => {
+                decode_modified_utf8(&self.bytes[start..end]).unwrap_or_default()
+            }
+            Segment::Index(i) => format!("[{i}]"),
+        }
+    }
+
+    fn finish(&self) -> Result<(), NbtError> {
+        match self.bytes.len() - self.pos {
+            0 => Ok(()),
+            n => Err(NbtError::Trailing(n)),
+        }
+    }
+
+    fn take(&mut self, n: usize) -> Result<&'b [u8], NbtError> {
         let end = self.pos.checked_add(n).filter(|&e| e <= self.bytes.len());
-        let end = end.ok_or_else(|| NbtError::Truncated {
-            path: path.to_string(),
-        })?;
+        let end = end.ok_or_else(|| NbtError::Truncated { path: self.path() })?;
         let out = &self.bytes[self.pos..end];
         self.pos = end;
         Ok(out)
     }
 
-    fn array<const N: usize>(&mut self, path: &str) -> Result<[u8; N], NbtError> {
-        Ok(self
-            .take(N, path)?
-            .try_into()
-            .expect("take returns N bytes"))
+    fn array<const N: usize>(&mut self) -> Result<[u8; N], NbtError> {
+        Ok(self.take(N)?.try_into().expect("take returns N bytes"))
     }
 
-    fn u8(&mut self, path: &str) -> Result<u8, NbtError> {
-        Ok(self.array::<1>(path)?[0])
+    fn u8(&mut self) -> Result<u8, NbtError> {
+        Ok(self.array::<1>()?[0])
     }
 
-    fn i32(&mut self, path: &str) -> Result<i32, NbtError> {
-        Ok(i32::from_be_bytes(self.array(path)?))
+    fn i32(&mut self) -> Result<i32, NbtError> {
+        Ok(i32::from_be_bytes(self.array()?))
     }
 
-    fn len(&mut self, path: &str) -> Result<usize, NbtError> {
-        let len = self.i32(path)?;
+    fn len(&mut self) -> Result<usize, NbtError> {
+        let len = self.i32()?;
         usize::try_from(len).map_err(|_| NbtError::Length {
-            path: path.to_string(),
+            path: self.path(),
             len,
         })
     }
 
-    /// `DataInput.readUTF`: a `u16` byte length, then modified UTF-8: `U+0000` as two bytes, and
-    /// characters outside the BMP as two three-byte surrogates.
-    fn string(&mut self, path: &str) -> Result<String, NbtError> {
-        let len = usize::from(u16::from_be_bytes(self.array(path)?));
-        let bytes = self.take(len, path)?;
-        let bad = || NbtError::String {
-            path: path.to_string(),
-        };
-        let mut units = Vec::with_capacity(len);
-        let mut i = 0;
-        while i < bytes.len() {
-            let b = bytes[i];
-            let cont = |j: usize| match bytes.get(j) {
-                Some(&c) if c & 0xC0 == 0x80 => Ok(u16::from(c & 0x3F)),
-                _ => Err(bad()),
-            };
-            let (unit, width) = match b {
-                0x01..=0x7F => (u16::from(b), 1),
-                0xC0..=0xDF => (u16::from(b & 0x1F) << 6 | cont(i + 1)?, 2),
-                0xE0..=0xEF => (
-                    u16::from(b & 0x0F) << 12 | cont(i + 1)? << 6 | cont(i + 2)?,
-                    3,
-                ),
-                _ => return Err(bad()),
-            };
-            units.push(unit);
-            i += width;
-        }
-        String::from_utf16(&units).map_err(|_| bad())
+    /// A string's raw bytes: a `u16` byte length, then that many bytes.
+    fn raw_string(&mut self) -> Result<&'b [u8], NbtError> {
+        let len = usize::from(u16::from_be_bytes(self.array()?));
+        self.take(len)
     }
 
-    fn payload(&mut self, id: u8, path: &str, depth: usize) -> Result<Tag, NbtError> {
+    /// `DataInput.readUTF`.
+    fn string(&mut self) -> Result<String, NbtError> {
+        let bytes = self.raw_string()?;
+        decode_modified_utf8(bytes).ok_or_else(|| NbtError::String { path: self.path() })
+    }
+
+    fn skip_string(&mut self) -> Result<(), NbtError> {
+        self.raw_string().map(drop)
+    }
+
+    /// A compound child's name, and its path segment.
+    fn name(&mut self) -> Result<(String, Segment), NbtError> {
+        let bytes = self.raw_string()?;
+        let text =
+            decode_modified_utf8(bytes).ok_or_else(|| NbtError::String { path: self.path() })?;
+        Ok((text, Segment::Name(self.pos - bytes.len(), self.pos)))
+    }
+
+    fn check_depth(&self, depth: usize) -> Result<(), NbtError> {
         if depth > MAX_DEPTH {
-            return Err(NbtError::TooDeep {
-                path: path.to_string(),
-            });
+            return Err(NbtError::TooDeep { path: self.path() });
         }
+        Ok(())
+    }
+
+    fn unknown(&self, id: u8) -> NbtError {
+        NbtError::TagType {
+            path: self.path(),
+            id,
+        }
+    }
+
+    fn payload(&mut self, id: u8, depth: usize) -> Result<Tag, NbtError> {
+        self.check_depth(depth)?;
         Ok(match id {
-            1 => Tag::Byte(i8::from_be_bytes(self.array(path)?)),
-            2 => Tag::Short(i16::from_be_bytes(self.array(path)?)),
-            3 => Tag::Int(self.i32(path)?),
-            4 => Tag::Long(i64::from_be_bytes(self.array(path)?)),
-            5 => Tag::Float(f32::from_be_bytes(self.array(path)?)),
-            6 => Tag::Double(f64::from_be_bytes(self.array(path)?)),
+            1 => Tag::Byte(i8::from_be_bytes(self.array()?)),
+            2 => Tag::Short(i16::from_be_bytes(self.array()?)),
+            3 => Tag::Int(self.i32()?),
+            4 => Tag::Long(i64::from_be_bytes(self.array()?)),
+            5 => Tag::Float(f32::from_be_bytes(self.array()?)),
+            6 => Tag::Double(f64::from_be_bytes(self.array()?)),
             7 => {
-                let len = self.len(path)?;
-                Tag::ByteArray(self.take(len, path)?.iter().map(|&b| b as i8).collect())
+                let len = self.len()?;
+                Tag::ByteArray(self.take(len)?.iter().map(|&b| b as i8).collect())
             }
-            8 => Tag::String(self.string(path)?),
+            8 => Tag::String(self.string()?),
             9 => {
-                let element = self.u8(path)?;
-                let len = self.len(path)?;
+                let element = self.u8()?;
+                let len = self.len()?;
                 let mut items = Vec::with_capacity(len.min(self.bytes.len()));
                 // An empty list may say TAG_End as its type.
                 if element != 0 || len != 0 {
                     for i in 0..len {
-                        items.push(self.payload(element, &format!("{path}[{i}]"), depth + 1)?);
+                        self.path.push(Segment::Index(i));
+                        items.push(self.payload(element, depth + 1)?);
+                        self.path.pop();
                     }
                 }
                 Tag::List(items)
@@ -272,24 +365,21 @@ impl Reader<'_> {
             10 => {
                 let mut compound = Compound::new();
                 loop {
-                    let child = self.u8(path)?;
+                    let child = self.u8()?;
                     if child == 0 {
                         break;
                     }
-                    let name = self.string(path)?;
-                    let child_path = if path.is_empty() {
-                        name.clone()
-                    } else {
-                        format!("{path}.{name}")
-                    };
-                    let value = self.payload(child, &child_path, depth + 1)?;
+                    let (name, segment) = self.name()?;
+                    self.path.push(segment);
+                    let value = self.payload(child, depth + 1)?;
+                    self.path.pop();
                     compound.insert(name, value);
                 }
                 Tag::Compound(compound)
             }
             11 => {
-                let len = self.len(path)?;
-                let bytes = self.take(len.saturating_mul(4), path)?;
+                let len = self.len()?;
+                let bytes = self.take(len.saturating_mul(4))?;
                 Tag::IntArray(
                     bytes
                         .as_chunks::<4>()
@@ -300,8 +390,8 @@ impl Reader<'_> {
                 )
             }
             12 => {
-                let len = self.len(path)?;
-                let bytes = self.take(len.saturating_mul(8), path)?;
+                let len = self.len()?;
+                let bytes = self.take(len.saturating_mul(8))?;
                 Tag::LongArray(
                     bytes
                         .as_chunks::<8>()
@@ -311,14 +401,82 @@ impl Reader<'_> {
                         .collect(),
                 )
             }
-            _ => {
-                return Err(NbtError::TagType {
-                    path: path.to_string(),
-                    id,
-                });
-            }
+            _ => return Err(self.unknown(id)),
         })
     }
+
+    /// [`payload`](Self::payload) without building anything.
+    fn skip(&mut self, id: u8, depth: usize) -> Result<(), NbtError> {
+        self.check_depth(depth)?;
+        match id {
+            1 => self.take(1).map(drop),
+            2 => self.take(2).map(drop),
+            3 | 5 => self.take(4).map(drop),
+            4 | 6 => self.take(8).map(drop),
+            7 => {
+                let len = self.len()?;
+                self.take(len).map(drop)
+            }
+            8 => self.skip_string(),
+            9 => {
+                let element = self.u8()?;
+                let len = self.len()?;
+                if element != 0 || len != 0 {
+                    for i in 0..len {
+                        self.path.push(Segment::Index(i));
+                        self.skip(element, depth + 1)?;
+                        self.path.pop();
+                    }
+                }
+                Ok(())
+            }
+            10 => loop {
+                let child = self.u8()?;
+                if child == 0 {
+                    return Ok(());
+                }
+                let (_, segment) = self.name()?;
+                self.path.push(segment);
+                self.skip(child, depth + 1)?;
+                self.path.pop();
+            },
+            11 => {
+                let len = self.len()?;
+                self.take(len.saturating_mul(4)).map(drop)
+            }
+            12 => {
+                let len = self.len()?;
+                self.take(len.saturating_mul(8)).map(drop)
+            }
+            _ => Err(self.unknown(id)),
+        }
+    }
+}
+
+/// Java's modified UTF-8 (`DataInput.readUTF`): `U+0000` as two bytes, and characters outside
+/// the BMP as two three-byte surrogates. `None` if malformed.
+fn decode_modified_utf8(bytes: &[u8]) -> Option<String> {
+    let mut units = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        let cont = |j: usize| match bytes.get(j) {
+            Some(&c) if c & 0xC0 == 0x80 => Some(u16::from(c & 0x3F)),
+            _ => None,
+        };
+        let (unit, width) = match b {
+            0x01..=0x7F => (u16::from(b), 1),
+            0xC0..=0xDF => (u16::from(b & 0x1F) << 6 | cont(i + 1)?, 2),
+            0xE0..=0xEF => (
+                u16::from(b & 0x0F) << 12 | cont(i + 1)? << 6 | cont(i + 2)?,
+                3,
+            ),
+            _ => return None,
+        };
+        units.push(unit);
+        i += width;
+    }
+    String::from_utf16(&units).ok()
 }
 
 impl Tag {
@@ -529,6 +687,65 @@ mod tests {
     }
 
     #[test]
+    fn list_paths_name_the_index() {
+        // {a: [{}, {b: <truncated int>}]}
+        let mut b = named(10, "");
+        b.extend(named(9, "a"));
+        b.push(10);
+        b.extend(2_i32.to_be_bytes());
+        b.push(0);
+        b.extend(named(3, "b"));
+        b.extend([0, 0]);
+        match read(&b) {
+            Err(NbtError::Truncated { path }) => assert_eq!(path, "a[1].b"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn root_ints_without_the_tree() {
+        let root = Tag::Compound(Compound::from([
+            (
+                "Level".to_string(),
+                Tag::List(vec![Tag::Int(1), Tag::Int(2)]),
+            ),
+            ("Name".to_string(), Tag::String("x".into())),
+            ("DataVersion".to_string(), Tag::Int(5023)),
+            ("Short".to_string(), Tag::Short(4)),
+        ]));
+        let bytes = write("", &root);
+        assert_eq!(read_root_int(&bytes, "DataVersion").unwrap(), Some(5023));
+        // Only an int counts, and only a child of the root.
+        assert_eq!(read_root_int(&bytes, "Short").unwrap(), None);
+        assert_eq!(read_root_int(&bytes, "Missing").unwrap(), None);
+        assert_eq!(read_root_int(&write("", &Tag::Int(3)), "x").unwrap(), None);
+        // A repeated name keeps the last value.
+        let mut b = named(10, "");
+        b.extend(named(3, "v"));
+        b.extend(1_i32.to_be_bytes());
+        b.extend(named(3, "v"));
+        b.extend(2_i32.to_be_bytes());
+        b.push(0);
+        assert_eq!(read_root_int(&b, "v").unwrap(), Some(2));
+        assert_eq!(read(&b).unwrap().1.get("v"), Some(&Tag::Int(2)));
+        b.pop();
+        b.extend(named(8, "v"));
+        b.extend([0, 0, 0]);
+        assert_eq!(read_root_int(&b, "v").unwrap(), None);
+        // The rest is still checked.
+        assert!(matches!(
+            read_root_int(&bytes[..bytes.len() - 1], "DataVersion"),
+            Err(NbtError::Truncated { .. })
+        ));
+        let mut trailing = bytes.clone();
+        trailing.push(0);
+        assert!(matches!(
+            read_root_int(&trailing, "DataVersion"),
+            Err(NbtError::Trailing(1))
+        ));
+    }
+
+    #[test]
     fn errors_name_the_path() {
         let mut b = named(10, "");
         b.extend(named(10, "outer"));
@@ -568,5 +785,28 @@ mod tests {
             read_compressed(b"not gzip"),
             Err(NbtError::Gzip(_))
         ));
+    }
+
+    #[test]
+    fn limited_reads_stop_at_the_limit() {
+        // A megabyte of zeros inside a byte array compresses to about a kilobyte.
+        let mut b = named(7, "");
+        b.extend(1_000_000_i32.to_be_bytes());
+        b.resize(b.len() + 1_000_000, 0);
+        let gz = write_compressed_raw(&b);
+        assert!(gz.len() < 10_000);
+        assert!(matches!(
+            read_compressed_limited(&gz, 100_000),
+            Err(NbtError::TooLarge(100_000))
+        ));
+        assert!(read_compressed_limited(&gz, b.len() as u64).is_ok());
+    }
+
+    fn write_compressed_raw(bytes: &[u8]) -> Vec<u8> {
+        use flate2::{Compression, write::GzEncoder};
+        use std::io::Write;
+        let mut gz = GzEncoder::new(Vec::new(), Compression::default());
+        gz.write_all(bytes).unwrap();
+        gz.finish().unwrap()
     }
 }

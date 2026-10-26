@@ -62,7 +62,7 @@ What depends on y:
 
 ## The climate sampler
 
-`NoiseRouter.createClimateSampler` binds six router entries: `temperature`, `vegetation`, `continents`, `erosion`, `depth`, `ridges`, which feed the climate parameters temperature, humidity, continentalness, erosion, depth and weirdness. `Climate.Sampler.sample(qx, qy, qz)` evaluates each at block `(4·qx, 4·qy, 4·qz)` (`QuartPos.toBlock`, no centring), and `Climate.target` quantizes each with `quantizeCoord(f) = (long)(f · 10000.0f)`: an `f32` multiply, then truncation.
+`NoiseRouter.createClimateSampler` binds six router entries: `temperature`, `vegetation`, `continents`, `erosion`, `depth`, `ridges` (each any density function value: a reference in the vanilla data, but a number or an inline object is accepted too, as by the game's codec), which feed the climate parameters temperature, humidity, continentalness, erosion, depth and weirdness. `Climate.Sampler.sample(qx, qy, qz)` evaluates each at block `(4·qx, 4·qy, 4·qz)` (`QuartPos.toBlock`, no centring), and `Climate.target` quantizes each with `quantizeCoord(f) = (long)(f · 10000.0f)`: an `f32` multiply, then truncation.
 
 ## Testing
 

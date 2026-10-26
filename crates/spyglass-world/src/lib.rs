@@ -11,6 +11,7 @@ pub mod region;
 pub use packs::PackContents;
 
 use std::collections::BTreeMap;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
@@ -104,12 +105,31 @@ pub struct Save {
     pub player: Option<Location>,
 }
 
+/// The most a save's NBT files (`level.dat`, player and settings files) may hold, compressed or
+/// not. Real ones are kilobytes; the limit keeps a crafted file from filling memory.
+const MAX_NBT_FILE: u64 = 64 << 20;
+
+/// A whole file, unless it's longer than `max` bytes.
+pub(crate) fn read_capped(path: &Path, max: u64) -> io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)?
+        .take(max.saturating_add(1))
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > max {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("longer than {max} bytes"),
+        ));
+    }
+    Ok(bytes)
+}
+
 fn read_nbt(path: &Path) -> Result<Tag, WorldError> {
-    let bytes = std::fs::read(path).map_err(|source| WorldError::Io {
+    let bytes = read_capped(path, MAX_NBT_FILE).map_err(|source| WorldError::Io {
         path: path.to_path_buf(),
         source,
     })?;
-    nbt::read_compressed(&bytes)
+    nbt::read_compressed_limited(&bytes, MAX_NBT_FILE)
         .map(|(_, tag)| tag)
         .map_err(|source| WorldError::Nbt {
             path: path.to_path_buf(),
@@ -425,18 +445,6 @@ impl Save {
             (_, "minecraft:the_end") => self.dir.join("DIM1").join("region"),
             (_, _) => custom(),
         }
-    }
-
-    /// Data packs from the save's `datapacks/` folder: enabled entries named `file/<name>`,
-    /// with their paths (a zip or a folder).
-    pub fn file_packs(&self) -> Vec<(String, PathBuf)> {
-        self.enabled_packs
-            .iter()
-            .filter_map(|p| {
-                let name = p.strip_prefix("file/")?;
-                Some((p.clone(), self.dir.join("datapacks").join(name)))
-            })
-            .collect()
     }
 }
 

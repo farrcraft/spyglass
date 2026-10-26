@@ -13,12 +13,22 @@ const TARGET_DEVIATION: f64 = 0.333_333_333_333_333_3;
 /// The per-octave deviation factor in `NormalNoise.estimateDeviation`.
 const OCTAVE_DEVIATION: f64 = 0.270_224_783_124_521_1;
 
-/// Why a normal noise couldn't be built.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+/// Why a normal noise couldn't be built. The ranges are the game codec's, so parameters loaded
+/// from game data never fail them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum NoiseError {
     /// `normalize: "legacy"`, which no 26.3 noise uses, isn't ported yet.
     #[error("legacy noise normalization isn't supported yet")]
     LegacyNormalization,
+    /// `base_octave` outside -32..=32.
+    #[error("base_octave is outside -32..=32")]
+    BaseOctave,
+    /// `octave_count` outside 1..=32.
+    #[error("octave_count is outside 1..=32")]
+    OctaveCount,
+    /// `amplitude_modifiers` neither empty nor one per octave (`Parameters.validate`).
+    #[error("amplitude_modifiers must be empty or have octave_count entries")]
+    AmplitudeModifiers,
 }
 
 /// `NormalNoise.Normalization`.
@@ -87,6 +97,16 @@ impl NormalNoise {
     pub fn new(parameters: &NormalNoiseParameters) -> Result<Self, NoiseError> {
         if parameters.normalize == Normalization::Legacy {
             return Err(NoiseError::LegacyNormalization);
+        }
+        if !(-32..=32).contains(&parameters.base_octave) {
+            return Err(NoiseError::BaseOctave);
+        }
+        if !(1..=32).contains(&parameters.octave_count) {
+            return Err(NoiseError::OctaveCount);
+        }
+        let modifiers = parameters.amplitude_modifiers.len();
+        if modifiers != 0 && modifiers != parameters.octave_count as usize {
+            return Err(NoiseError::AmplitudeModifiers);
         }
         let octaves = build_octaves(parameters);
         // DoubleStream.sum(), which is compensated, over absAmplitude.
@@ -234,5 +254,24 @@ mod tests {
         let mut p = NormalNoiseParameters::new(0);
         p.normalize = Normalization::Legacy;
         assert_eq!(NormalNoise::new(&p), Err(NoiseError::LegacyNormalization));
+    }
+
+    #[test]
+    fn parameters_outside_the_codec_are_errors() {
+        let error = |f: fn(&mut NormalNoiseParameters)| {
+            let mut p = NormalNoiseParameters::new(0);
+            f(&mut p);
+            NormalNoise::new(&p).unwrap_err()
+        };
+        assert_eq!(error(|p| p.base_octave = -2000), NoiseError::BaseOctave);
+        assert_eq!(error(|p| p.octave_count = 0), NoiseError::OctaveCount);
+        assert_eq!(error(|p| p.octave_count = 5000), NoiseError::OctaveCount);
+        assert_eq!(
+            error(|p| {
+                p.octave_count = 3;
+                p.amplitude_modifiers = vec![1.0];
+            }),
+            NoiseError::AmplitudeModifiers
+        );
     }
 }

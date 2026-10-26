@@ -4,6 +4,7 @@
 mod args;
 mod json;
 mod locate;
+mod render;
 mod world;
 
 use std::process::ExitCode;
@@ -29,12 +30,16 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> Result<()> {
-    let what = match cli.command {
-        Command::Locate { what } => what,
-        Command::World { what } => return world::run(what),
-    };
-    let common = what.common();
-    let (world, seed, report) = match (&common.world, &common.seed) {
+    match cli.command {
+        Command::Locate { what } => run_locate(&what),
+        Command::World { what } => world::run(what),
+        Command::Render(args) => render::run(&args),
+    }
+}
+
+/// The world and seed `--seed` or `--world` name, and the save's report with `--world`.
+fn load(common: &Common) -> Result<(World, i64, Option<SaveReport>)> {
+    Ok(match (&common.world, &common.seed) {
         (Some(save), _) => {
             let dir = spyglass::find_save(save)?;
             let report = spyglass::inspect_save(&dir, &common.bundles, Scan::Quick)?;
@@ -44,14 +49,19 @@ fn run(cli: Cli) -> Result<()> {
         }
         (None, Some(seed)) => (open(common)?, spyglass::parse_seed(seed)?, None),
         (None, None) => bail!("give --seed or --world"),
-    };
+    })
+}
+
+fn run_locate(what: &Locate) -> Result<()> {
+    let common = what.common();
+    let (world, seed, report) = load(common)?;
     let session = world.session(seed)?;
     let out = Out {
         session: &session,
         json: common.json,
         report: report.as_ref(),
     };
-    match &what {
+    match what {
         Locate::Structure {
             target,
             from,
@@ -69,11 +79,7 @@ fn run(cli: Cli) -> Result<()> {
         }
         Locate::Spawn { .. } => locate::spawn(&out)?,
     }
-    if let (false, Some(report)) = (out.json, &report) {
-        for warning in &report.warnings {
-            println!("warning: {warning}");
-        }
-    }
+    out.warn();
     Ok(())
 }
 
@@ -94,6 +100,15 @@ struct Out<'a> {
 }
 
 impl Out<'_> {
+    /// Prints the save's warnings after a text answer.
+    fn warn(&self) {
+        if let (false, Some(report)) = (self.json, self.report) {
+            for warning in &report.warnings {
+                println!("warning: {warning}");
+            }
+        }
+    }
+
     /// Resolves `--from`.
     fn origin(&self, from: Origin) -> Result<[i32; 3]> {
         match from {
@@ -119,7 +134,7 @@ impl Out<'_> {
         }
     }
 
-    /// Prints a locate answer: the header for `command`, then `body`'s fields.
+    /// Prints an answer: the header for `command`, then `body`'s fields.
     fn print(&self, command: &str, body: impl Serialize) -> Result<()> {
         let world = self.session.world();
         json::print(&json::Answer {

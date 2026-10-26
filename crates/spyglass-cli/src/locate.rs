@@ -174,14 +174,7 @@ pub fn slime(out: &Out<'_>, from: [i32; 3], radius: i32) -> Result<()> {
 pub fn spawn(out: &Out<'_>) -> Result<()> {
     let origin = out.session.spawn_origin();
     if out.json {
-        return out.print(
-            "locate spawn",
-            json::SpawnAnswer {
-                chunk: origin.chunk,
-                position: origin.position.map(|[x, _, z]| Xz { x, z }),
-                platform_dependent: origin.platform_dependent,
-            },
-        );
+        return out.print("locate spawn", json::SpawnAnswer::new(&origin));
     }
     let [cx, cz] = origin.chunk;
     println!("World spawn{}", out.context(None));

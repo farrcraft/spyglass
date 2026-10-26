@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
-use spyglass::{LOCATE_BIOME_RADIUS, LOCATE_RADIUS};
+use spyglass::{DEFAULT_MAP_Y, LOCATE_BIOME_RADIUS, LOCATE_RADIUS};
 
 #[derive(Parser)]
 #[command(
@@ -28,6 +28,86 @@ pub enum Command {
         #[command(subcommand)]
         what: WorldCmd,
     },
+    /// Draw a map of a seed or world save as a PNG: biomes, and the layers you choose.
+    Render(Render),
+}
+
+/// `spyglass render` (`docs/specs/render.md`).
+#[derive(Args)]
+pub struct Render {
+    /// The PNG file to write.
+    #[arg(short, long)]
+    pub output: PathBuf,
+    /// The block at the image's centre, `x,z`, or `player` for the single player of `--world`.
+    /// Defaults to the player with `--world` (or else the save's spawn), otherwise 0,0.
+    #[arg(long, visible_alias = "center", allow_hyphen_values = true, value_parser = centre, conflicts_with = "min")]
+    pub centre: Option<Centre>,
+    /// The block at the image's top-left corner, `x,z`, instead of `--centre`. Must be a
+    /// multiple of `--scale`.
+    #[arg(long, allow_hyphen_values = true, value_parser = xz)]
+    pub min: Option<[i32; 2]>,
+    /// Width and height in pixels, e.g. `1920x1080`.
+    #[arg(long, default_value = "1024x1024", value_parser = size)]
+    pub size: [u32; 2],
+    /// Blocks per pixel: 1, 2, 4 and so on up to 256.
+    #[arg(long, default_value_t = 4)]
+    pub scale: u32,
+    /// The height biomes are drawn at. The map is a slice at this height, not the surface.
+    #[arg(long, default_value_t = DEFAULT_MAP_Y, allow_hyphen_values = true)]
+    pub y: i32,
+    /// Structures to mark: ids or `#tags`, separated by commas.
+    #[arg(long, value_delimiter = ',')]
+    pub structures: Vec<String>,
+    /// Biomes to keep bright, separated by commas; the rest are dimmed.
+    #[arg(long, value_delimiter = ',')]
+    pub highlight: Vec<String>,
+    /// Shade slime chunks (scales up to 16).
+    #[arg(long)]
+    pub slime: bool,
+    /// Mark the world spawn's origin.
+    #[arg(long)]
+    pub spawn: bool,
+    /// Show tied biome cells as a checker of the biomes the game may give.
+    #[arg(long)]
+    pub ties: bool,
+    /// Leave biomes out: a plain background under the other layers.
+    #[arg(long)]
+    pub no_biomes: bool,
+    #[command(flatten)]
+    pub common: Common,
+}
+
+/// Where a map is centred.
+#[derive(Clone, Copy)]
+pub enum Centre {
+    At([i32; 2]),
+    /// The single player of `--world`'s save.
+    Player,
+}
+
+fn centre(text: &str) -> Result<Centre, String> {
+    if text == "player" {
+        Ok(Centre::Player)
+    } else {
+        xz(text).map(Centre::At)
+    }
+}
+
+fn xz(text: &str) -> Result<[i32; 2], String> {
+    match text
+        .split(',')
+        .map(|p| p.trim().parse::<i32>())
+        .collect::<Result<Vec<_>, _>>()
+    {
+        Ok(parts) if parts.len() == 2 => Ok([parts[0], parts[1]]),
+        _ => Err(format!("expected x,z in blocks, got {text:?}")),
+    }
+}
+
+fn size(text: &str) -> Result<[u32; 2], String> {
+    text.split_once(['x', 'X'])
+        .and_then(|(w, h)| Some([w.trim().parse().ok()?, h.trim().parse().ok()?]))
+        .ok_or_else(|| format!("expected WIDTHxHEIGHT in pixels, got {text:?}"))
 }
 
 #[derive(Subcommand)]

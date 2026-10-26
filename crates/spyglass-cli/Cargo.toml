@@ -25,4 +25,5 @@ spyglass.workspace = true
 
 [dev-dependencies]
 spyglass-data.workspace = true
+spyglass-oracle.workspace = true
 tempfile.workspace = true

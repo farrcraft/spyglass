@@ -688,6 +688,7 @@ dependencies = [
  "serde_json",
  "spyglass",
  "spyglass-data",
+ "spyglass-oracle",
  "tempfile",
 ]
 

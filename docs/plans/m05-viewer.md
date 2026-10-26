@@ -108,9 +108,9 @@ Specs and ADRs that govern this: [ADR 0014](../adr/0014-public-api-world-and-ses
 
 ### Phase 2: `spyglass render`
 
-- [ ] `render` command and its arguments, reusing `Common`; `--world` centres on the player by default.
-- [ ] `--json` output and its section in `cli-json.md`.
-- [ ] Integration test: the command's PNG equals `Session::render`'s for the same request, on a fixture bundle.
+- [x] `render` command and its arguments, reusing `Common`; `--world` centres on the player by default (else the save's spawn).
+- [x] `--json` output and its section in `cli-json.md`.
+- [x] Integration test: the command's PNG equals `Session::render`'s for the same request, on a fixture bundle.
 
 ### Phase 3: viewer shell
 
@@ -157,7 +157,7 @@ Specs and ADRs that govern this: [ADR 0014](../adr/0014-public-api-world-and-ses
 ## Durable outputs
 
 - [x] `docs/specs/render.md` (new)
-- [ ] `docs/specs/cli-json.md`: `render`
+- [x] `docs/specs/cli-json.md`: `render`
 - [x] ADR: map rendering in the public API ([0017](../adr/0017-map-rendering-in-the-public-api.md))
 - [x] ADR: biome palette ([0018](../adr/0018-biome-palette.md))
 - [ ] ADR: GUI stack
@@ -165,6 +165,7 @@ Specs and ADRs that govern this: [ADR 0014](../adr/0014-public-api-world-and-ses
 
 ## Notes
 
+- 2026-10-25: Phase 2 done. `spyglass render` writes the PNG, then prints a summary, or with `--json` the area, layers and the features drawn (from `map_features`, which `render` also calls, so they match). Defaults: 1024 × 1024 pixels at scale 4 and y 64, biomes only. `-o` is required; there's no writing to stdout yet.
 - 2026-10-25: Phase 1 done. `cargo xtask bench` (release, one thread): a 256² `biome_map` tile is 10.6 ms at scale 1 (64 × 64 quarts, repeated), 158 ms at scale 4 and 164 ms at scale 64, matching the plan's estimate. A 1024² render at scale 16 with structures, slime chunks and spawn is 2.48 s, nearly all biome sampling; overlays are negligible. `Session::render` is single-threaded. The viewer spreads tiles over workers. If `spyglass render` of large images feels slow, the library can render in parallel strips (the grid makes strips independent).
 - 2026-10-25: The palette's fallback for unknown ids is a hash of the id, not colours from the bundle's biome JSON: those colours are sparse and mostly alike (ADR 0018). Biome sampling uses a new strided `Biomes::biome_grid`, not `biomes_in`, which fills every quart of a box and would sample 256 times more than needed at scale 64.
 - 2026-10-25: macOS support is best effort, not guaranteed: Windows and Linux are verified, macOS only when a Mac is available. The milestone's exit criterion says so.

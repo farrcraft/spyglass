@@ -5,7 +5,7 @@ use std::path::Path;
 
 use anyhow::Result;
 use serde::Serialize;
-use spyglass::{SaveLocation, SaveReport};
+use spyglass::{SaveLocation, SaveReport, SpawnOrigin};
 
 /// The `--json` format version.
 pub const FORMAT: u32 = 1;
@@ -136,6 +136,55 @@ pub struct SpawnAnswer {
     pub chunk: [i32; 2],
     pub position: Option<Xz>,
     pub platform_dependent: bool,
+}
+
+impl SpawnAnswer {
+    pub fn new(origin: &SpawnOrigin) -> Self {
+        SpawnAnswer {
+            chunk: origin.chunk,
+            position: origin.position.map(|[x, _, z]| Xz { x, z }),
+            platform_dependent: origin.platform_dependent,
+        }
+    }
+}
+
+/// `render`.
+#[derive(Serialize)]
+pub struct RenderAnswer<'a> {
+    pub output: String,
+    pub area: Area,
+    pub layers: RenderLayers<'a>,
+    pub structures: Vec<StructureMark<'a>>,
+    pub slime_chunks: Vec<[i32; 2]>,
+    pub spawn: Option<SpawnAnswer>,
+}
+
+#[derive(Serialize)]
+pub struct Area {
+    pub min: [i32; 2],
+    pub size: [u32; 2],
+    pub scale: u32,
+    pub y: i32,
+}
+
+#[derive(Serialize)]
+pub struct RenderLayers<'a> {
+    pub biomes: bool,
+    pub ties: bool,
+    pub highlight: &'a [String],
+    pub structures: &'a [String],
+    pub slime_chunks: bool,
+    pub spawn: bool,
+}
+
+/// A structure marker on a map.
+#[derive(Serialize)]
+pub struct StructureMark<'a> {
+    pub position: Xz,
+    pub chunk: [i32; 2],
+    pub set: &'a str,
+    pub structures: &'a [String],
+    pub certain: bool,
 }
 
 /// A save's summary: what it says, and what spyglass makes of it.

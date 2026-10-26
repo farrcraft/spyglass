@@ -147,6 +147,16 @@ fn a_default_world() {
 
     let text = spyglass(&["locate", "spawn", "--world", path]);
     assert!(String::from_utf8_lossy(&text.stdout).contains("(Test World, seed 12345"));
+
+    // A map of a save is centred on its player: block (100, -201) in pixel (4, 4).
+    let png = dir.path().join("map.png");
+    let png = png.to_str().unwrap();
+    let map = json(&[
+        "render", "--world", path, "--size", "8x8", "--scale", "16", "-o", png,
+    ]);
+    assert_eq!(map["command"], "render");
+    assert_eq!(map["world"]["name"], "Test World");
+    assert_eq!(map["area"]["min"], serde_json::json!([32, -272]));
 }
 
 #[test]

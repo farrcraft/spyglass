@@ -1,6 +1,6 @@
 # CLI JSON output
 
-Status: stable, format 1. Covers `spyglass locate` and `spyglass world` with `--json`.
+Status: stable, format 1. Covers `spyglass locate`, `spyglass render` and `spyglass world` with `--json`.
 
 Scripts depend on this format, so it's versioned. Within a format version, fields are only ever added. Removing or changing the meaning of a field bumps `format`. The CLI writes the JSON from the library's results ([ADR 0014](../adr/0014-public-api-world-and-session.md)); the library types themselves aren't the format.
 
@@ -13,15 +13,15 @@ Scripts depend on this format, so it's versioned. Within a format version, field
 - Paths are strings. Characters that aren't valid Unicode are replaced with U+FFFD.
 - `seed` is the 64-bit seed after text seeds are hashed ([locate.md](locate.md#text-seeds)).
 
-Every `locate` object starts with:
+Every `locate` and `render` object starts with:
 
-| Field       | Type   | Meaning                                                               |
-| ----------- | ------ | --------------------------------------------------------------------- |
-| `format`    | int    | This format's version: `1`.                                           |
-| `command`   | string | `locate structure`, `locate biome`, `locate slime` or `locate spawn`. |
-| `version`   | string | The game version of the bundle used, e.g. `26.3`.                     |
-| `dimension` | string | `minecraft:overworld`.                                                |
-| `seed`      | int    | The world seed.                                                       |
+| Field       | Type   | Meaning                                                                         |
+| ----------- | ------ | ------------------------------------------------------------------------------- |
+| `format`    | int    | This format's version: `1`.                                                     |
+| `command`   | string | `locate structure`, `locate biome`, `locate slime`, `locate spawn` or `render`. |
+| `version`   | string | The game version of the bundle used, e.g. `26.3`.                               |
+| `dimension` | string | `minecraft:overworld`.                                                          |
+| `seed`      | int    | The world seed.                                                                 |
 
 With `--world`, two more:
 
@@ -78,6 +78,19 @@ Each hit: `position` (`{x, y, z}`), `biome` (the biome there), `tied` (every bio
 | `chunk`              | `[x, z]`         | The chunk the game's spawn search starts from ([spawn.md](spawn.md)). The spawn is in the 11 × 11 chunks around it. |
 | `position`           | `{x, z}` or null | The climate search's best block; null if the dimension has no spawn targets.                                        |
 | `platform_dependent` | bool             | Whether the game's answer may differ by platform.                                                                   |
+
+## `render`
+
+The image is written to the file given; the JSON describes it ([render.md](render.md)).
+
+| Field          | Type              | Meaning                                                                                                                         |
+| -------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `output`       | string            | The PNG written.                                                                                                                |
+| `area`         | object            | `min` (`[x, z]`, the top-left pixel's corner block), `size` (`[width, height]` in pixels), `scale` (blocks per pixel) and `y`.  |
+| `layers`       | object            | What was drawn: `biomes`, `ties`, `slime_chunks` and `spawn` (bools), `highlight` and `structures` (the ids and tags as given). |
+| `structures`   | array             | The structure markers drawn, in drawing order. Each is a `locate structure` hit without `blocks_away`.                          |
+| `slime_chunks` | array of `[x, z]` | The slime chunks shaded, by z, then x. Empty unless asked for.                                                                  |
+| `spawn`        | object or null    | The spawn marker, as `locate spawn`'s fields; null if not asked for or not in view.                                             |
 
 ## `world info`
 

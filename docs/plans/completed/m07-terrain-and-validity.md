@@ -1,9 +1,9 @@
 # m07. Terrain, structure validity, jigsaw
 
-- Status: In progress
-- Milestone: [07. Terrain, structure validity, jigsaw](../roadmap/07-terrain-and-validity.md)
+- Status: Completed
+- Milestone: [07. Terrain, structure validity, jigsaw](../../roadmap/completed/07-terrain-and-validity.md)
 - Started: 2026-10-25
-- Completed: not yet
+- Completed: 2026-10-26
 
 ## Goal
 
@@ -19,19 +19,19 @@ From the code as of fa52e5c, the 26.3 bundle, and figures recorded in earlier pl
 
 - **26.3's noise router isn't 1.21's.** `noise_settings/overworld.json` routes `temperature`, `vegetation`, `continents`, `erosion`, `depth`, `ridges`, `final_density` and `chunk_surface_level` (an `interpolated` with 16 × 1 cells over `overworld/preliminary_surface_level`, which is a `find_top_surface` with `cell_height` 8). There's no `initial_density_without_jaggedness`, `vein_toggle` and the like. Aquifers have their own `aquifers` object (`barrier`, `exclusion`, `fluid_level_floodedness`, `fluid_level_spread`, `lava`, `surface_level`). `noise` holds only `min_y` −64 and `height` 384: cell sizes moved into each `interpolated` (`cell_size_xz` 4 and `cell_size_y` 8 for ten of them).
 - **Surface rules became material rules.** `material_rule` is `minecraft:overworld`, its own registry (`worldgen/material_rule/`, `worldgen/material_condition/`): a sequence of bedrock floor, copper and iron ore veins, then `above_preliminary_surface` → `overworld/surface`, then `overworld/underground`. It uses 14 rule and condition types (`sequence`, `condition`, `block`, `biome`, `noise_threshold`, `y_above`, `stone_depth`, `steep`, `hole`, `water`, `vertical_gradient`, `bandlands`, `not`, `ore_vein`). Which of it decides a heightmap is unknown: phase 1 settles it from the bytecode.
-- **What density can't do yet.** 28 of 26.3's 55 density functions load ([density-functions.md](../specs/density-functions.md)). The types `final_density` and the aquifers need beyond those: `sub`, `div`, `min`, `max`, `clamp`, the other unaries (`square`, `cube`, `half_negative`, `quarter_negative`, `squeeze`, `negate`), `range_choice`, `interval_select`, `interpolated`, `slice`, `find_top_surface`, `old_blended_noise`, `blend_density` and `beardifier`. `end_outer_islands` and `distance_to_point` are the End's (milestone 08), but should load.
+- **What density can't do yet.** 28 of 26.3's 55 density functions load ([density-functions.md](../../specs/density-functions.md)). The types `final_density` and the aquifers need beyond those: `sub`, `div`, `min`, `max`, `clamp`, the other unaries (`square`, `cube`, `half_negative`, `quarter_negative`, `squeeze`, `negate`), `range_choice`, `interval_select`, `interpolated`, `slice`, `find_top_surface`, `old_blended_noise`, `blend_density` and `beardifier`. `end_outer_islands` and `distance_to_point` are the End's (milestone 08), but should load.
 - **Point evaluation isn't enough.** The density spec ports only the point path, because the climate's volume and point paths agree. `interpolated` breaks that: chunk generation evaluates its input at cell corners and interpolates, so terrain needs the game's cell-based path (`NoiseChunk`, or its 26.3 successor), ported as the bytecode does it, order of float operations included.
 - **Structure checks don't see generated chunks.** They ask the generator for a column before any chunk exists (`ChunkGenerator.getBaseHeight`, `getBaseColumn`, `getFirstFreeHeight`, `getFirstOccupiedHeight`), and the `_WG` heightmaps. Phase 1 confirms what those evaluate in 26.3 (we expect: no beardifier, no blending, aquifers yes, surface part of the material rule no). The oracle compares those generator answers, not the heightmaps stored in chunks, which include structures' terrain adaptation and features.
-- **What terrain decides.** From [structure-placement.md](../specs/structure-placement.md#the-biome-check): the surface types (pyramid, temple, swamp hut, igloo) check the biome at `WORLD_SURFACE_WG`, the ocean types at `OCEAN_FLOOR_WG`, mansions over a rotated 5 × 5 box, projected jigsaws (villages, outposts and most others) at the heightmap under their start piece's centre, ruined portals at `findSuitableY` over noise columns, mineshafts in mesas from terrain. Plus the other rejections in that table: pyramid and temple below sea level, mansion below 60. Every one becomes a 3D biome lookup at a known position, so nearly every `Candidate` becomes `Passes` or `Rejected`; only tied cells and platform-dependent rings stay uncertain.
+- **What terrain decides.** From [structure-placement.md](../../specs/structure-placement.md#the-biome-check): the surface types (pyramid, temple, swamp hut, igloo) check the biome at `WORLD_SURFACE_WG`, the ocean types at `OCEAN_FLOOR_WG`, mansions over a rotated 5 × 5 box, projected jigsaws (villages, outposts and most others) at the heightmap under their start piece's centre, ruined portals at `findSuitableY` over noise columns, mineshafts in mesas from terrain. Plus the other rejections in that table: pyramid and temple below sea level, mansion below 60. Every one becomes a 3D biome lookup at a known position, so nearly every `Candidate` becomes `Passes` or `Rejected`; only tied cells and platform-dependent rings stay uncertain.
 - **Jigsaw today stops at the start piece.** `Jigsaw::check_position` draws the start height, rotation, start element and start jigsaw, and gives the check position; pieces beyond the start aren't assembled, and pool aliases that rename the start pool aren't supported (trial chambers use them).
 - **Per-seed costs today** (release, one thread, from m06-seed-search): binding a seed's climate 87 µs; one `biome_at` about 2.4 µs; a swamp-hut check 95 µs; a swamp-hut count within 1,000 of 0,0, 1.2 ms in a new session; a mixed search 3,700 seeds a second on one thread, 24,000 on 16. Terrain adds about 30 more noises to bind per seed, so it must be bound lazily, only for seeds and queries that need it.
-- **`spyglass-terrain` doesn't exist.** [architecture.md](../architecture.md#crates) plans it between density and structure, depending on density and data.
+- **`spyglass-terrain` doesn't exist.** [architecture.md](../../architecture.md#crates) plans it between density and structure, depending on density and data.
 
 ## Approach
 
 ### Layers
 
-- **`spyglass-density`**: every density-function type 26.3's overworld router and aquifers use; a volume path beside the point path, as the game's `sampleVolume` does it, with ranges to compile `min` and `max` as the game does ([ADR 0022](../adr/0022-terrain-crate-and-volume-evaluation.md)); a `TerrainRouter` beside `ClimateRouter`, bound lazily. 26.3 has one cache type, `cache`.
+- **`spyglass-density`**: every density-function type 26.3's overworld router and aquifers use; a volume path beside the point path, as the game's `sampleVolume` does it, with ranges to compile `min` and `max` as the game does ([ADR 0022](../../adr/0022-terrain-crate-and-volume-evaluation.md)); a `TerrainRouter` beside `ClimateRouter`, bound lazily. 26.3 has one cache type, `cache`.
 - **`spyglass-terrain`** (new; depends on rng, noise, density, data): the noise column for one `(x, z)` (final density, aquifer substance), and from it the generator queries the structure code needs: `base_height(x, z, heightmap)` for `WORLD_SURFACE_WG` and `OCEAN_FLOOR_WG`, `base_column(x, z)` (solid, fluid or air per y, for ruined portals), first free and first occupied heights. Columns are cached per seed by `(x, z)`, since several structures' checks share chunks. No material rule: no height query evaluates it.
 - **`spyglass-structure`**: `Starts` takes an optional terrain. With one, each type's check runs at its real position and its other terrain conditions apply; without, it answers as today. Jigsaw assembly (`JigsawPlacement.addPieces`) builds the pieces and the start's bounding box. The three-valued `Check` stays: a terrain answer is `Passes` or `Rejected` unless a tie or the platform leaves it open.
 - **`spyglass`**: `Session` gains heights (`Session::height_at(x, z, heightmap)`), and a confirmed mode for `locate_structure`, `structures_in` and search. Starts carry their bounds where known.
@@ -96,25 +96,25 @@ If the interpreter can't reach these, the architecture's flattened evaluation is
 - **Structure golden files**: format 2 adds, per try, the start's bounding box and piece count when `start` is true. Already there: the stub (now exact for every type with terrain) and `valid_biome`.
 - **Locate answers**: unchanged; the confirmed comparison requires the game's answer to be spyglass's first certain hit.
 
-Specs and ADRs that govern this: [density-functions.md](../specs/density-functions.md), [structure-placement.md](../specs/structure-placement.md), [locate.md](../specs/locate.md), [search.md](../specs/search.md), [oracle.md](../specs/oracle.md), [render.md](../specs/render.md), [ADR 0008](../adr/0008-game-derived-test-values-stay-local.md), [ADR 0010](../adr/0010-typed-loading-of-worldgen-json.md), [ADR 0011](../adr/0011-parse-json-numbers-from-their-text.md), [ADR 0013](../adr/0013-structure-templates-and-nbt.md), [ADR 0014](../adr/0014-public-api-world-and-session.md), [ADR 0021](../adr/0021-search-engine.md).
+Specs and ADRs that govern this: [density-functions.md](../../specs/density-functions.md), [structure-placement.md](../../specs/structure-placement.md), [locate.md](../../specs/locate.md), [search.md](../../specs/search.md), [oracle.md](../../specs/oracle.md), [render.md](../../specs/render.md), [ADR 0008](../../adr/0008-game-derived-test-values-stay-local.md), [ADR 0010](../../adr/0010-typed-loading-of-worldgen-json.md), [ADR 0011](../../adr/0011-parse-json-numbers-from-their-text.md), [ADR 0013](../../adr/0013-structure-templates-and-nbt.md), [ADR 0014](../../adr/0014-public-api-world-and-session.md), [ADR 0021](../../adr/0021-search-engine.md).
 
 ## Tasks
 
 ### Phase 1: the bytecode, the oracle and specs
 
-- [x] From the 26.3 bytecode, note in the specs (not in this plan): the chunk-level density path and its caches; what `getBaseHeight`, `getBaseColumn`, `getFirstFreeHeight` and `getFirstOccupiedHeight` evaluate (beardifier, blending, aquifers, material rule); `find_top_surface`; the aquifer; each structure type's terrain conditions; `addPieces` and bounding-box adjustment. In [terrain.md](../specs/terrain.md), [density-functions.md](../specs/density-functions.md) and [structure-placement.md](../specs/structure-placement.md), as drafts.
+- [x] From the 26.3 bytecode, note in the specs (not in this plan): the chunk-level density path and its caches; what `getBaseHeight`, `getBaseColumn`, `getFirstFreeHeight` and `getFirstOccupiedHeight` evaluate (beardifier, blending, aquifers, material rule); `find_top_surface`; the aquifer; each structure type's terrain conditions; `addPieces` and bounding-box adjustment. In [terrain.md](../../specs/terrain.md), [density-functions.md](../../specs/density-functions.md) and [structure-placement.md](../../specs/structure-placement.md), as drafts.
 - [x] Decide surface rules (see [Decisions](#decisions)) from what heightmaps need, and update the milestone's scope if they move. Out: no height query evaluates the material rule; the milestone's scope says so.
 - [x] Oracle: height golden files, structure format 2 with bounds and piece boxes; `cargo xtask oracle golden` regenerates them. `docs/specs/oracle.md` updated.
 - [x] Oracle probe additions: every named density function at points, final density chunk digests, aquifer substance at points. Moved to phases 2 and 3, where the tests that read them are written. The aquifer's are whole columns (`terrain.json`) rather than points.
 - [x] `docs/specs/terrain.md` (new): columns, aquifers, heightmaps, the generator queries, and what's out (features, carvers, beards).
-- [x] ADR: `spyglass-terrain` and its boundary with density and structure; how terrain is bound lazily per seed; whether a new dependency is needed (none expected). [0022](../adr/0022-terrain-crate-and-volume-evaluation.md), accepted 2026-10-26: it adds a volume evaluation path, which the plan didn't foresee.
+- [x] ADR: `spyglass-terrain` and its boundary with density and structure; how terrain is bound lazily per seed; whether a new dependency is needed (none expected). [0022](../../adr/0022-terrain-crate-and-volume-evaluation.md), accepted 2026-10-26: it adds a volume evaluation path, which the plan didn't foresee.
 
 ### Phase 2: density types
 
 - [x] Fix `mul`: the point path returns `+0.0` for a zero left operand when neither operand is constant, without evaluating the right.
 - [x] Ranges (`Interval`), and `min`/`max` compiled by them.
 - [x] Every missing type, loaded by its codec, with point values; `div` by a constant as the game compiles it. `interpolated`'s point value needs the volume path, so it loads but refuses to bind until phase 3; the End's two types load only.
-- [x] Hand-worked unit tests per type ([ADR 0008](../adr/0008-game-derived-test-values-stay-local.md)).
+- [x] Hand-worked unit tests per type ([ADR 0008](../../adr/0008-game-derived-test-values-stay-local.md)).
 - [x] Oracle probe: every named density function at the probe's blocks (`cargo xtask oracle probe`).
 - [x] Ignored probe test: every named function at every probed point, bit for bit; every one of the 55 loads. The 14 functions that reach `interpolated` or `distance_to_point` are skipped and listed until they can be bound.
 
@@ -158,9 +158,9 @@ Specs and ADRs that govern this: [density-functions.md](../specs/density-functio
 ### Phase 9: front ends and close-out
 
 - [x] CLI: `--confirm` on `locate` and `search`; `spyglass heights` (or a `locate` subcommand) for a column or region; bounds in output; `cli-json.md` updated; integration tests. Locate is confirmed by default (`--unconfirmed`), bounds are `--bounds`, and `render` gained `--confirm`, `--relief` and `--surface`.
-- [x] Viewer: confirmed markers, jigsaw bounds at close zoom, a height layer (shaded heights), and biomes sampled at the surface as an option ([render.md](../specs/render.md)).
+- [x] Viewer: confirmed markers, jigsaw bounds at close zoom, a height layer (shaded heights), and biomes sampled at the surface as an option ([render.md](../../specs/render.md)).
 - [x] Update architecture.md, README, getting-started.
-- [ ] `cargo xtask check` and `cargo xtask oracle-test`; move this plan and the milestone to `completed/`.
+- [x] `cargo xtask check` and `cargo xtask oracle-test`; move this plan and the milestone to `completed/`.
 
 ## Verification
 
@@ -178,7 +178,7 @@ Specs and ADRs that govern this: [density-functions.md](../specs/density-functio
 - [x] `docs/specs/locate.md`, `docs/specs/search.md`: confirmed mode
 - [x] `docs/specs/oracle.md`: probe additions, height files, structure format 2
 - [x] `docs/specs/cli-json.md`, `docs/specs/render.md`
-- [x] ADR: `spyglass-terrain` and lazy terrain binding ([0022](../adr/0022-terrain-crate-and-volume-evaluation.md))
+- [x] ADR: `spyglass-terrain` and lazy terrain binding ([0022](../../adr/0022-terrain-crate-and-volume-evaluation.md))
 - [x] `docs/architecture.md`, `README.md`, `docs/getting-started.md`
 
 ## Decisions
@@ -193,6 +193,7 @@ Agreed on 2026-10-25, as recommended:
 
 ## Notes
 
+- 2026-10-26: Completed. The manual check, in a 26.3 world created with seed `spyglass` (Default preset): `/locate` gave exactly spyglass's confirmed answers for `#minecraft:village` from 0,0, 2000,2000 and −3000,1000 and for `minecraft:swamp_hut` from 0,0. The saved structure starts in the save's chunks hold the same pieces as `Session::structure_layout`, box for box and in order, for the savanna (137 pieces), plains (130) and desert (62) villages, so the bounds are the pieces' union grown by 12, as the spec says. `cargo xtask check` and `cargo xtask oracle-test` pass.
 - 2026-10-26: Phase 9's front ends done; close-out waits on the manual in-game check in [Verification](#verification). Choices:
   - Library first: `Layers` gained `confirm`, `relief` and `surface`; `Session::height_map` (a `HeightMap` per area, like `BiomeMap`), `surface_biome_map` and `surface_biome_at`; `Image::shade` and `HeightMap::elevation`; `StructureStart::starting` (the structure that certainly starts, when known), so front ends know which layout to ask for. The render spec gives the relief formula and surface sampling.
   - Maps sample one column per pixel, so `Terrain::base_heights_on` samples a sparse grid chunk by chunk, each chunk's volume only as large as the box around its columns. The height golden test now samples every 5th column of every 5th row that way too, and matches.
@@ -204,7 +205,7 @@ Agreed on 2026-10-25, as recommended:
   - A confirmed swamp-hut count within 1,000 of 0,0 in a new session: 1.6 to 2.3 ms, 1.3 to 1.6 times the unconfirmed 1.2 to 1.6 ms (target 3 times).
   - A confirmed `#minecraft:village` locate from 0,0 in a new session: 2.9 to 3.5 ms (target 50). Faster than unconfirmed (49 to 52 ms), which runs to the 32-candidate cap; confirmed, the first village is certain.
   - The witch-hut query searched confirmed: 2,900 to 3,900 seeds a second on one thread and 24,800 to 29,000 on all, 95 to 100% of unconfirmed (target 25%). The unconfirmed first pass rejects nearly every seed before terrain is bound.
-  - One column in a bound session: 170 µs next to earlier columns, about 240 µs on its own; the target was 150 µs. Of an isolated column, about 185 µs is the `final_density` volume and about 140 µs the aquifer's surface levels (49 `find_top_surface` samples), which decide where the aquifer stops sampling and can't be skipped. The game takes about 500 µs. Agreed with the user: retire this target rather than flatten the density interpreter in this milestone, since every target that reflects use is met; flattening becomes its own later milestone, [09](../roadmap/09-fast-density.md).
+  - One column in a bound session: 170 µs next to earlier columns, about 240 µs on its own; the target was 150 µs. Of an isolated column, about 185 µs is the `final_density` volume and about 140 µs the aquifer's surface levels (49 `find_top_surface` samples), which decide where the aquifer stops sampling and can't be skipped. The game takes about 500 µs. Agreed with the user: retire this target rather than flatten the density interpreter in this milestone, since every target that reflects use is met; flattening becomes its own later milestone, [09](../../roadmap/09-fast-density.md).
   - Changes: surface levels are kept per seed and shared by every aquifer (exact: the terrain spec shows they don't depend on the region), which takes a nearby column's aquifer setup from 139 µs to 2 µs and a plains village's layout from about 85 ms to 65 ms. Sampling a column's density in 64-block segments from the top, to stop at the surface, was tried and dropped: four segments cost 205 µs against 184 µs for the whole column, since each volume call has a large fixed cost.
 - 2026-10-26: Phase 7 done. `Session` decides starts with `Starts::with_terrain` when asked to confirm; every front end still asks for unconfirmed answers until phase 9 gives them the option. Confirmed `/locate` against the oracle: in 212 of the 216 structure cases every hit is certain and the answer is exactly the game's; the other 4 are strongholds behind tie- or platform-dependent ring positions. Choices that differ from the plan's rough API:
   - Bounds are a separate call, `Session::structure_layout(structure, chunk)`, not a field of every `StructureStart`: a village takes about 200 ms to assemble, and a hit can name several structures, of which the one that starts isn't always known. The world loads its template pools on the first call.

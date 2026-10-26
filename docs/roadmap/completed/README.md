@@ -10,3 +10,4 @@ Milestones whose exit criteria are met. See [development-process.md](../../devel
 | 04  | [World saves](04-world-saves.md)                                    | 2026-10-25 |
 | 05  | [Viewer MVP](05-viewer-mvp.md)                                      | 2026-10-25 |
 | 06  | [Seed search](06-seed-search.md)                                    | 2026-10-25 |
+| 07  | [Terrain, structure validity, jigsaw](07-terrain-and-validity.md)   | 2026-10-26 |

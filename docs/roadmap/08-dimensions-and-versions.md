@@ -1,7 +1,7 @@
 # 08. Nether, End and multiple versions
 
 - Status: Planned
-- Depends on: [07](07-terrain-and-validity.md)
+- Depends on: [07](completed/07-terrain-and-validity.md)
 - Plans: none yet
 
 ## Goal

@@ -1,8 +1,8 @@
 # 07. Terrain, structure validity, jigsaw
 
-- Status: In progress
-- Depends on: [03](completed/03-structure-placement.md)
-- Plans: [m07-terrain-and-validity](../plans/m07-terrain-and-validity.md)
+- Status: Completed
+- Depends on: [03](03-structure-placement.md)
+- Plans: [m07-terrain-and-validity](../../plans/completed/m07-terrain-and-validity.md)
 
 ## Goal
 
@@ -18,6 +18,6 @@ Know whether structures actually generate, and how big they are.
 
 ## Exit criteria
 
-- [ ] Heightmaps match the oracle for the seed set.
-- [ ] Structure starts after validity checks, and their bounds where jigsaw is used, match the oracle.
-- [ ] Evaluation is fast enough to use as a late-stage search constraint; target set in the plan.
+- [x] Heightmaps match the oracle for the seed set.
+- [x] Structure starts after validity checks, and their bounds where jigsaw is used, match the oracle.
+- [x] Evaluation is fast enough to use as a late-stage search constraint; target set in the plan.

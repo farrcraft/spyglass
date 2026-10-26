@@ -15,18 +15,23 @@ fn saved_spawns_are_near_the_spawn_origin() {
         let Ok(quick) = spyglass::inspect_save(&found.dir, &bundles, Scan::Quick) else {
             continue;
         };
-        if !quick.answerable() {
+        if !quick.answerable_in(spyglass::Dimension::Overworld) {
             continue;
         }
         let report = spyglass::inspect_save(&found.dir, &bundles, Scan::Chunks).unwrap();
-        let upgraded = report
-            .warnings
-            .iter()
-            .any(|w| matches!(w, SaveWarning::OlderChunks { .. }));
+        let upgraded = report.warnings.iter().any(|w| {
+            matches!(
+                w,
+                SaveWarning::OlderChunks {
+                    dimension: spyglass::Dimension::Overworld,
+                    ..
+                }
+            )
+        });
         let Some(spawn) = report.save.spawn.as_ref().filter(|_| !upgraded) else {
             continue;
         };
-        let world = report.open_world().unwrap();
+        let world = report.open_world(spyglass::Dimension::Overworld).unwrap();
         let origin = world.session(report.save.seed).unwrap().spawn_origin();
         let [x, _, z] = spawn.block();
         let chunk = [x >> 4, z >> 4];

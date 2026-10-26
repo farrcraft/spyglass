@@ -79,6 +79,24 @@ fn point(biome: &str, temperature: f64) -> Value {
 /// third biome, `minecraft:forest`, has exactly plains' parameters, so every plains cell is a
 /// tie between the two.
 pub fn overworld(extra: &[(String, Value)], tie: bool) -> TestBundle {
+    TestBundle::new(&overworld_files(extra, tie, false))
+}
+
+/// The fixture Overworld and a fixture Nether: one biome, `minecraft:nether_wastes`, solid
+/// below y 64 of a 128-block level, with the Nether's coordinate scale (8) and a ceiling. The
+/// Default preset has no End.
+pub fn overworld_and_nether() -> TestBundle {
+    TestBundle::new(&overworld_files(&[], false, true))
+}
+
+/// The Default preset's Nether generator, as [`overworld_and_nether`] has it.
+pub fn nether_generator() -> Value {
+    json!({"type": "minecraft:noise", "settings": "minecraft:nether",
+        "biome_source": {"type": "minecraft:multi_noise", "preset": "minecraft:nether"}})
+}
+
+/// [`overworld`]'s files, with [`overworld_and_nether`]'s Nether if `nether`.
+fn overworld_files(extra: &[(String, Value)], tie: bool, nether: bool) -> Vec<(String, Value)> {
     let mut points = vec![
         point("minecraft:plains", -0.5),
         point("minecraft:desert", 0.5),
@@ -87,14 +105,19 @@ pub fn overworld(extra: &[(String, Value)], tie: bool) -> TestBundle {
         points.push(point("minecraft:forest", -0.5));
     }
     let constant = |v: f64| json!({"type": "minecraft:constant", "value": v});
+    let mut dimensions = json!({"minecraft:overworld": {"type": "minecraft:overworld",
+        "generator": {"type": "minecraft:noise", "settings": "minecraft:overworld",
+            "biome_source": {"type": "minecraft:multi_noise",
+                "preset": "minecraft:overworld"}}}});
+    if nether {
+        dimensions["minecraft:the_nether"] =
+            json!({"type": "minecraft:the_nether", "generator": nether_generator()});
+    }
     let mut files = vec![
         resource(
             "worldgen/world_preset",
             "normal",
-            json!({"dimensions": {"minecraft:overworld": {"type": "minecraft:overworld",
-                "generator": {"type": "minecraft:noise", "settings": "minecraft:overworld",
-                    "biome_source": {"type": "minecraft:multi_noise",
-                        "preset": "minecraft:overworld"}}}}}),
+            json!({ "dimensions": dimensions }),
         ),
         resource(
             "worldgen/multi_noise_biome_source_parameter_list",
@@ -142,11 +165,51 @@ pub fn overworld(extra: &[(String, Value)], tie: bool) -> TestBundle {
             }),
         ),
     ];
-    for biome in ["plains", "desert", "forest"] {
+    for biome in ["plains", "desert", "forest", "nether_wastes"] {
         files.push(resource("worldgen/biome", biome, json!({})));
     }
+    if nether {
+        files.extend([
+            resource(
+                "worldgen/multi_noise_biome_source_parameter_list",
+                "nether",
+                json!({"preset": "minecraft:nether"}),
+            ),
+            (
+                "reports/biome_parameters/minecraft/nether.json".to_string(),
+                json!({ "biomes": [point("minecraft:nether_wastes", 0.0)] }),
+            ),
+            resource(
+                "dimension_type",
+                "the_nether",
+                json!({"min_y": 0, "height": 256, "coordinate_scale": 8.0, "has_ceiling": true}),
+            ),
+            resource(
+                "worldgen/noise_settings",
+                "nether",
+                json!({
+                    "sea_level": 32,
+                    "noise": {"min_y": 0, "height": 128},
+                    "default_block": "minecraft:stone",
+                    "default_fluid": "minecraft:lava",
+                    "noise_router": {
+                        "final_density": {"type": "minecraft:gradient", "axis": "y",
+                            "from_coordinate": 0, "from_value": 1.0,
+                            "to_coordinate": 128, "to_value": -1.0},
+                        "temperature": constant(0.0),
+                        "vegetation": constant(0.0),
+                        "continents": constant(0.0),
+                        "erosion": constant(0.0),
+                        "depth": 0.0,
+                        "ridges": 0.0
+                    },
+                    "spawn_target": []
+                }),
+            ),
+        ]);
+    }
     files.extend(extra.iter().cloned());
-    TestBundle::new(&files)
+    files
 }
 
 /// A random-spread structure set of one structure, with salt 12345.

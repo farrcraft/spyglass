@@ -48,7 +48,7 @@ fn load(common: &Common) -> Result<(World, i64, Option<SaveReport>)> {
         (Some(save), _) => {
             let dir = spyglass::find_save(save)?;
             let report = spyglass::inspect_save(&dir, &common.bundles, Scan::Quick)?;
-            let world = report.open_world()?;
+            let world = report.open_world(spyglass::Dimension::Overworld)?;
             let seed = report.save.seed;
             (world, seed, Some(report))
         }

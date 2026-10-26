@@ -89,7 +89,7 @@ Every constraint is in one dimension: the Overworld, the Nether or the End of th
 
 Points, boxes, `at y` and every position a constraint counts are in its dimension's coordinates.
 
-**Anchors in other dimensions** are converted into the constraint's dimension as the game scales a teleport (`DimensionType.getTeleportationScale`): each coordinate `v` becomes `floor(v · from / to)` in `double`, where `from` and `to` are the two dimension types' `coordinate_scale` (1 for the Overworld and the End, 8 for the Nether, from the bundle). So:
+**Anchors in other dimensions** are converted into the constraint's dimension as the game scales a teleport (`DimensionType.getTeleportationScale`): each coordinate `v` becomes `floor(v · (from / to))` in `double`, where `from` and `to` are the two dimension types' `coordinate_scale` (1 for the Overworld and the End, 8 for the Nether, from the bundle), saturated to `i32` (`Game::convert`). Unlike a teleport, it isn't clamped to the world border, which matters only past 3,749,998 Nether blocks out. So:
 
 - `spawn` in a Nether constraint is the Overworld spawn's position divided by 8, rounded down: the block its portal links to.
 - A structure anchor in another dimension is converted the same way, from its own place, which is in its own dimension's coordinates.

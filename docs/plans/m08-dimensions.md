@@ -221,13 +221,13 @@ Specs and ADRs that govern this: [noise.md](../specs/noise.md), [rng.md](../spec
 
 ### Phase 6: the library and saves
 
-- [ ] The bundle-wide type: worlds opened lazily, queries resolved across them.
-- [ ] Save assessment per dimension (generator warnings, older chunks per dimension's regions); `open_world(dimension)`.
-- [ ] Renders and features per dimension; slime chunks only in the Overworld.
+- [x] The bundle-wide type: worlds opened lazily, queries resolved across them.
+- [x] Save assessment per dimension (generator warnings, older chunks per dimension's regions); `open_world(dimension)`.
+- [x] Renders and features per dimension; slime chunks only in the Overworld.
 
 ### Phase 7: cross-dimension search
 
-- [ ] Parser, canonical printer and resolution for dimensions and scaled anchors; round-trip and error tests.
+- [ ] Parser, canonical printer and resolution for dimensions and scaled anchors (inferring a target's dimension from what each dimension can place, and `Game::convert` for anchors); round-trip and error tests.
 - [ ] Evaluation and the fast path over sessions per dimension; the prefilter per dimension.
 - [ ] Soundness and equality tests on fixtures, extended to cross-dimension queries; `search.md` final.
 - [ ] Bench lines: a Nether fortress locate, a cross-dimension search, Nether and End binding.
@@ -281,6 +281,7 @@ Agreed on 2026-10-26, as recommended:
 
 ## Notes
 
+- 2026-10-26: Phase 6 done. `Game` opens each dimension's `World` on first use and keeps it; `Game::session(seed)` binds each dimension's session on first use; `Game::convert` scales anchors between the Overworld and the Nether (the End is unlinked). Inferring a search target's dimension stays with the parser in phase 7, where its rules (every structure placed versus some) are used. Saves are assessed per dimension: each of the Default preset's dimensions has its generator compared, so a superflat or Amplified world still has answers in the Nether and the End, and older chunks are counted per dimension. `open_world` takes a dimension and `open_game` refuses each blocked one. On this machine's saves, every Default 26.3 world stores all three generators and each matches. Maps refuse slime chunks and the spawn outside the Overworld, and terrain layers where the dimension type has a ceiling, so front ends follow one rule (`render.md`). The front ends pass the Overworld until phase 8.
 - 2026-10-26: `check-save` on the test world (seed `spyglass`, 26.3), after a visit to both dimensions: the Nether's 3,074,048 stored biome cells in 3,002 chunks and the End's 3,459,072 in 3,378 chunks agree with the harness, with no unexplained mismatches. 128 of the Nether's 384 tied cells hold a different tied biome than the harness's first, as ties allow. Phase 3 is complete.
 - 2026-10-26: Phase 5 done. Structure sets already resolved per dimension. New: the nether fossil's height provider and base-column scan, end cities on the mansion's rule, and ruined portals decided without terrain where their biomes are all or none of the source's (every Nether placement chunk's portal). Against the golden files: in the Nether, 26,142 stubs and 51,604 of 51,605 outcomes as the game's (one behind a tie), and 132 bastion layouts piece for piece; in the End, 17 stubs and all 510 outcomes. `/locate`: all 480 cases agree, and every one of the Nether's 48 and the End's 12 confirmed structure cases is exactly the game's answer. Dropping the fossil scan's air test fails 33,070 checks.
 - 2026-10-26: Phase 4 done. With legacy binding from phase 3, every height and block column in the Nether's and End's height golden files matches: 6,135,300 values in 30 files across the three dimensions. No terrain code changed beyond accepting legacy randomness.

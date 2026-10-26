@@ -85,7 +85,7 @@ fn a_default_world_has_no_warnings_and_opens() {
     assert_eq!(report.warnings, []);
     assert!(report.answerable());
     assert_eq!(report.bundle.as_ref().unwrap().dir, bundle.path());
-    let world = report.open_world().unwrap();
+    let world = report.open_world(spyglass::Dimension::Overworld).unwrap();
     assert_eq!(world.version(), "test");
 }
 
@@ -140,7 +140,7 @@ fn another_generator_blocks_answers() {
     ));
     assert!(!report.answerable());
     assert!(matches!(
-        report.open_world(),
+        report.open_world(spyglass::Dimension::Overworld),
         Err(spyglass::Error::Unsupported(_))
     ));
 }

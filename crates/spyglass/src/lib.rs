@@ -18,10 +18,15 @@
 //! a [`StructureQuery`] or [`BiomeQuery`], which every session of that world can reuse. Worlds,
 //! sessions and queries are `Send + Sync`, so one world can serve many threads.
 //!
+//! A [`World`] is one dimension: [`World::open`] the Overworld, [`World::open_dimension`] any of
+//! the three. A [`Game`] is the whole bundle, opening each dimension's world the first time it's
+//! asked for, for front ends that switch dimensions and questions that span them (ADR 0023).
+//!
 //! Answers say how sure they are. A biome cell can be tied, a structure start can depend on
 //! terrain (unless it's confirmed, which computes it), and some results depend on the platform
 //! the game runs on; each result type says which applies. See `docs/specs/locate.md`.
 
+mod game;
 mod render;
 mod save;
 mod search;
@@ -36,6 +41,7 @@ use spyglass_data::codec::{LoadError, full_id};
 use spyglass_structure::{Assembly, JigsawPools, Placements, Starts, StructureSets};
 use spyglass_terrain::{Terrain, TerrainSettings};
 
+pub use game::{Game, GameSession};
 pub use render::{
     BiomeMap, DEFAULT_MAP_Y, HeightMap, Image, Layers, MARKER_REACH, MAX_PIXELS, MAX_SCALE,
     MAX_SIDE, MAX_SLIME_SCALE, MAX_TERRAIN_SCALE, MapArea, MapFeatures, biome_colour,
@@ -144,6 +150,15 @@ pub enum Error {
     /// A map area or layers that can't be drawn: the message says why.
     #[error("{0}")]
     InvalidMap(String),
+    /// Two dimensions whose coordinates the game doesn't link, such as the End and the
+    /// Overworld.
+    #[error("{from} and {to} aren't linked by coordinates")]
+    NotLinked {
+        /// The dimension converted from.
+        from: Dimension,
+        /// The dimension converted to.
+        to: Dimension,
+    },
 }
 
 /// What went wrong below the API, for [`Error::Data`] and [`Error::Save`]. Its message is the
@@ -262,7 +277,7 @@ pub fn find_bundle(dir: impl AsRef<Path>, version: Option<&str>) -> Result<Bundl
 static WORLDS: AtomicU64 = AtomicU64::new(0);
 
 /// The world preset every [`World`] is a dimension of: the Default preset.
-const PRESET: &str = "minecraft:normal";
+pub(crate) const PRESET: &str = "minecraft:normal";
 
 /// One of the Default preset's dimensions (ADR 0023).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -288,6 +303,20 @@ impl Dimension {
         }
     }
 
+    /// The dimension's name in English prose, e.g. `the Nether`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Dimension::Overworld => "the Overworld",
+            Dimension::Nether => "the Nether",
+            Dimension::End => "the End",
+        }
+    }
+
+    /// The position in [`ALL`](Self::ALL).
+    pub(crate) fn index(self) -> usize {
+        self as usize
+    }
+
     /// The dimension with id `id` (with or without the `minecraft:` namespace).
     pub fn from_id(id: &str) -> Option<Dimension> {
         let id = full_id(id);
@@ -308,6 +337,8 @@ pub struct World {
     dimension: Dimension,
     /// The dimension type's `coordinate_scale`.
     coordinate_scale: f64,
+    /// The dimension type's `has_ceiling`.
+    has_ceiling: bool,
     source: BiomeSource,
     sets: StructureSets,
     spawn: SpawnTargets,
@@ -329,21 +360,18 @@ impl World {
     pub fn open_dimension(dir: impl Into<PathBuf>, dimension: Dimension) -> Result<World> {
         let bundle = Bundle::open(dir)?;
         let id = dimension.id();
+        // First, so that a preset without the dimension says so.
+        let dimension_type = dimension_type(&bundle, id)?;
         let source = BiomeSource::load(&bundle, PRESET, id)?;
         let sets = StructureSets::load(&bundle, PRESET, id, &source)?;
         let spawn = SpawnTargets::load(&bundle, source.noise_settings())?;
-        let dimension_type = dimension_type(&bundle, id)?;
         let terrain = TerrainSettings::load(&bundle, source.noise_settings(), &dimension_type)?;
         // Binding fails the same way for every seed, so a world that opens binds for all.
         Terrain::new(&terrain, 0)?;
-        let coordinate_scale = bundle
-            .resource(
-                "dimension_type",
-                dimension_type.trim_start_matches("minecraft:"),
-            )?
-            .get("coordinate_scale")
-            .and_then(serde_json::Value::as_f64)
-            .unwrap_or(1.0);
+        let DimensionType {
+            coordinate_scale,
+            has_ceiling,
+        } = DimensionType::load(&bundle, &dimension_type)?;
         let palette = source
             .biome_names()
             .names()
@@ -355,6 +383,7 @@ impl World {
             bundle,
             dimension,
             coordinate_scale,
+            has_ceiling,
             source,
             sets,
             spawn,
@@ -391,6 +420,12 @@ impl World {
     /// The dimension type's coordinate scale: 8 for the Nether, 1 for the others.
     pub fn coordinate_scale(&self) -> f64 {
         self.coordinate_scale
+    }
+
+    /// Whether the dimension type has a ceiling, as the Nether does. Its `WORLD_SURFACE_WG`
+    /// heights are then the ceiling's, so maps don't draw terrain layers there.
+    pub fn has_ceiling(&self) -> bool {
+        self.has_ceiling
     }
 
     /// Every biome the dimension can have.
@@ -477,6 +512,31 @@ fn dimension_type(bundle: &Bundle, dimension: &str) -> Result<String> {
         })
 }
 
+/// The fields of a dimension type that the API reads.
+struct DimensionType {
+    /// `coordinate_scale`, 1 if absent.
+    coordinate_scale: f64,
+    /// `has_ceiling`, false if absent.
+    has_ceiling: bool,
+}
+
+impl DimensionType {
+    /// Dimension type `id`, e.g. `minecraft:the_nether`.
+    fn load(bundle: &Bundle, id: &str) -> Result<DimensionType> {
+        let json = bundle.resource("dimension_type", id.trim_start_matches("minecraft:"))?;
+        Ok(DimensionType {
+            coordinate_scale: json
+                .get("coordinate_scale")
+                .and_then(serde_json::Value::as_f64)
+                .unwrap_or(1.0),
+            has_ceiling: json
+                .get("has_ceiling")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+        })
+    }
+}
+
 /// A `/locate structure` argument resolved by [`World::structure_query`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructureQuery {
@@ -512,6 +572,8 @@ impl BiomeQuery {
 const _: () = {
     const fn shareable<T: Send + Sync>() {}
     shareable::<World>();
+    shareable::<Game>();
+    shareable::<GameSession<'static>>();
     shareable::<Session<'static>>();
     shareable::<StructureQuery>();
     shareable::<BiomeQuery>();

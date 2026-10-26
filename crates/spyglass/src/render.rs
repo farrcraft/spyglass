@@ -12,7 +12,7 @@ use spyglass_biome::{BiomeId, Lookup};
 pub use palette::{biome_colour, structure_colour};
 
 use crate::{
-    BiomeAt, BiomeQuery, Error, Heightmap, Result, Session, SpawnOrigin, StructureQuery,
+    BiomeAt, BiomeQuery, Dimension, Error, Heightmap, Result, Session, SpawnOrigin, StructureQuery,
     StructureStart, World,
 };
 
@@ -203,6 +203,29 @@ impl Layers {
     /// Whether these layers need each pixel's terrain height.
     pub fn need_heights(&self) -> bool {
         self.relief || (self.biomes && self.surface)
+    }
+
+    /// Fails unless `world`'s dimension has every layer asked for
+    /// (`docs/specs/render.md#dimensions`): slime chunks and the spawn are the Overworld's, and
+    /// a dimension with a ceiling has no terrain layers.
+    pub fn check(&self, world: &World) -> Result<()> {
+        let overworld = world.dimension_kind() == Dimension::Overworld;
+        let refuse = |layer: &str| {
+            Err(invalid(format!(
+                "{layer} aren't drawn in {}",
+                world.dimension_kind().name()
+            )))
+        };
+        if self.slime_chunks && !overworld {
+            return refuse("slime chunks");
+        }
+        if self.spawn && !overworld {
+            return refuse("spawn markers");
+        }
+        if self.need_heights() && world.has_ceiling() {
+            return refuse("terrain layers (relief, surface biomes)");
+        }
+        Ok(())
     }
 }
 
@@ -678,6 +701,7 @@ impl Session<'_> {
     /// area, and slime chunks that overlap it.
     pub fn map_features(&self, area: &MapArea, layers: &Layers) -> Result<MapFeatures> {
         area.check()?;
+        layers.check(self.world)?;
         let mut features = MapFeatures::default();
         if !layers.structures.is_empty() {
             let mut targets = Vec::new();

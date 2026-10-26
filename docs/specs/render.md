@@ -1,6 +1,6 @@
 # Map rendering
 
-Status: stable. Covers map images of the Overworld from the `spyglass` crate's `render` module ([ADR 0017](../adr/0017-map-rendering-in-the-public-api.md)), which the viewer and `spyglass render` both use. Rendering adds no worldgen of its own: every pixel and marker comes from a query the API already answers ([locate.md](locate.md), [biome-lookup.md](biome-lookup.md)).
+Status: stable. Covers map images of each of the Default preset's dimensions from the `spyglass` crate's `render` module ([ADR 0017](../adr/0017-map-rendering-in-the-public-api.md)), which the viewer and `spyglass render` both use. Rendering adds no worldgen of its own: every pixel and marker comes from a query the API already answers ([locate.md](locate.md), [biome-lookup.md](biome-lookup.md)).
 
 ## Map areas
 
@@ -55,10 +55,18 @@ Markers have a fixed size in pixels at every scale. A marker can overlap an area
 
 `Session::map_features` returns the features an area would draw (structure starts, slime chunks, the spawn), so front ends and scripts can list or label them with exactly what the image shows.
 
+## Dimensions
+
+A session draws its own dimension: biomes and structures in all three. Some layers exist only in some dimensions, and asking for one elsewhere is an error (`Layers::check`, which `Session::map_features` and `Session::render` apply):
+
+- **Slime chunks** are the Overworld's: slimes spawn in them only there.
+- **The spawn** is the Overworld's world spawn. The Nether's and End's spawn origins are chunk (0, 0) by rule ([spawn.md](spawn.md)), not a place anyone spawns, so they aren't drawn.
+- **Terrain layers** (relief and surface biomes) aren't drawn in a dimension whose type has `has_ceiling` (the Nether). There, `WORLD_SURFACE_WG` finds the ceiling, about 128 everywhere ([terrain.md](terrain.md)), so relief would be flat and surface biomes a slice at the ceiling. The heights themselves stay available through `Session::height_map`. The End has no ceiling, and its terrain layers draw the islands over the void, where the height is the level's bottom.
+
 ## Images
 
 `Image` is 8-bit RGBA, rows top to bottom, alpha always 255. `Image::write_png` writes an 8-bit RGB PNG with no ancillary chunks, so a given spyglass build writes the same bytes for the same image.
 
 ## Testing
 
-On fixture bundles, without game data: a view equals itself assembled from tiles at every scale, layers on, terrain layers included at scales 1 to 4 on sloping fixture terrain; each pixel's biome equals `Session::biome_at` at its sample block, and at the surface at its column's height; each height equals `Session::height_at`; relief lightens exactly the pixels higher than a western or northern neighbour on rising ground; the features drawn are exactly those `structures_in`, `slime_chunks` and `spawn_origin` give for the area and its margin, confirmed or not; invalid areas, and terrain layers past scale 4, are errors. `spyglass render` writes the same bytes as `Session::render` for the same request. Ignored tests on the real bundle (`cargo xtask oracle-test`) check tiling and sampling there too, terrain layers and confirmed markers included, and `Biomes::biome_grid` against `biome_at`. The heights a map samples are checked against the game by the height golden test, which samples a sparse grid the same way ([terrain.md](terrain.md)).
+On fixture bundles, without game data: a view equals itself assembled from tiles at every scale, layers on, terrain layers included at scales 1 to 4 on sloping fixture terrain; each pixel's biome equals `Session::biome_at` at its sample block, and at the surface at its column's height; each height equals `Session::height_at`; relief lightens exactly the pixels higher than a western or northern neighbour on rising ground; the features drawn are exactly those `structures_in`, `slime_chunks` and `spawn_origin` give for the area and its margin, confirmed or not; invalid areas, and terrain layers past scale 4, are errors; on a fixture Nether, slime chunks, the spawn and terrain layers are errors and biomes draw. `spyglass render` writes the same bytes as `Session::render` for the same request. Ignored tests on the real bundle (`cargo xtask oracle-test`) check tiling and sampling there too, terrain layers and confirmed markers included, and `Biomes::biome_grid` against `biome_at`. The heights a map samples are checked against the game by the height golden test, which samples a sparse grid the same way ([terrain.md](terrain.md)).

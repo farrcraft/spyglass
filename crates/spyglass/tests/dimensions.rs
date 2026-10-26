@@ -59,3 +59,33 @@ fn each_dimension_opens() {
     assert_eq!(overworld.dimension_kind(), Dimension::Overworld);
     assert_eq!(overworld.coordinate_scale(), 1.0);
 }
+
+#[test]
+#[ignore = "needs a bundle: spyglass-extract 26.3"]
+fn a_game_spans_the_dimensions() {
+    let game = spyglass::Game::open(bundle()).unwrap();
+    assert_eq!(game.version(), "26.3");
+    let (o, n) = (Dimension::Overworld, Dimension::Nether);
+    assert_eq!(game.convert([-1001, 800], o, n).unwrap(), [-126, 100]);
+    assert!(game.convert([0, 0], o, Dimension::End).is_err());
+    let session = game.session(spyglass::parse_seed("spyglass").unwrap());
+    for d in Dimension::ALL {
+        assert_eq!(session.dimension(d).unwrap().world().dimension_kind(), d);
+    }
+    // Every dimension draws biomes and structures; the Nether has no terrain layers, and only
+    // the Overworld has slime chunks and the spawn.
+    let nether = game.world(n).unwrap();
+    let area = spyglass::MapArea::centred_on([0, 0], [64, 64], 16, 64).unwrap();
+    let layers = spyglass::Layers {
+        structures: vec![nether.structure_query("minecraft:fortress").unwrap()],
+        ..spyglass::Layers::default()
+    };
+    assert!(session.dimension(n).unwrap().render(&area, &layers).is_ok());
+    let relief = spyglass::Layers {
+        relief: true,
+        ..spyglass::Layers::default()
+    };
+    assert!(relief.check(nether).is_err());
+    assert!(relief.check(game.world(Dimension::End).unwrap()).is_ok());
+    assert!(relief.check(game.world(o).unwrap()).is_ok());
+}

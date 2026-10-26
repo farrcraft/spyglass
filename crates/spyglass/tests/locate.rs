@@ -53,7 +53,7 @@ fn locate_agrees_with_the_game() {
                     spyglass::inspect_save(dir, root.join("../bundles"), spyglass::Scan::Quick)
                         .unwrap();
                 assert_eq!(report.save.seed, seed, "{dir}");
-                report.open_world().unwrap()
+                report.open_world(spyglass::Dimension::Overworld).unwrap()
             });
             // The save's Overworld goes through the save; its other dimensions aren't opened
             // from saves yet, so their cases are skipped.

@@ -9,9 +9,9 @@ use std::thread;
 use eframe::egui::{self, Color32, Key, Pos2, Rect, Sense, TextureOptions, Vec2};
 use serde::{Deserialize, Serialize};
 use spyglass::{
-    BiomeQuery, BundleInfo, Evaluation, Heightmap, Image, LauncherSave, MAX_TERRAIN_SCALE,
-    SaveReport, Scan, SearchOutcome, SearchQuery, Session, SpawnOrigin, StructureLayout,
-    StructureQuery, StructureStart, World,
+    BiomeQuery, BundleInfo, Dimension, Evaluation, Heightmap, Image, LauncherSave,
+    MAX_TERRAIN_SCALE, SaveReport, Scan, SearchOutcome, SearchQuery, Session, SpawnOrigin,
+    StructureLayout, StructureQuery, StructureStart, World,
 };
 
 use crate::export::{Export, Source, visible_area};
@@ -369,13 +369,13 @@ impl App {
 
     /// Shows an inspected save: its world and seed, centred on its player or else its spawn.
     fn show_save(&mut self, ctx: &egui::Context, report: SaveReport) {
-        let bundle = match (&report.bundle, report.answerable()) {
+        let bundle = match (&report.bundle, report.answerable_in(Dimension::Overworld)) {
             (Some(bundle), true) => bundle.clone(),
             _ => {
                 let reasons: Vec<String> = report
                     .warnings
                     .iter()
-                    .filter(|w| w.blocks_answers())
+                    .filter(|w| w.blocks(Dimension::Overworld))
                     .map(ToString::to_string)
                     .collect();
                 self.save_error = Some(format!(

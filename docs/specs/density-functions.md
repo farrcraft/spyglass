@@ -1,6 +1,6 @@
 # Density functions
 
-Status: stable for every type's point and volume paths but the End's two, implemented in `spyglass-density` for 26.3 and checked against the game by the oracle's [probe files](oracle.md#probe-files).
+Status: stable for every type's point and volume paths, implemented in `spyglass-density` for 26.3 and checked against the game by the oracle's [probe files](oracle.md#probe-files).
 
 26.3 reworked density functions since 1.21. They are compiled into samplers (`DensityFunctionCompiler`, package `net.minecraft.world.level.levelgen.densityfunction`) that return `float`, after rewrite rules (`DfRewriteRule.INLINE_REFERENCE`, `SLICE_UNIFORM_AXES`). Older ports, which evaluate in `double`, don't apply. Ported from the 26.3 bytecode.
 
@@ -69,8 +69,6 @@ The types terrain needs ([terrain.md](terrain.md)), and the rest of 26.3's 44 ty
 | `distance_to_point`                            | `point` (three ints), `metric` (`euclidean`, `euclidean_squared`, `manhattan`, `chebyshev`)                                              | [Below](#distance_to_point)                                                                                                                                                                                                                                                                |
 | `end_outer_islands`                            | none                                                                                                                                     | [Below](#end_outer_islands)                                                                                                                                                                                                                                                                |
 
-Binding a function that reaches `distance_to_point` or `end_outer_islands` fails with an unsupported-type error until they're implemented, rather than giving a value the game wouldn't.
-
 **`Math.pow` and `Math.log`** aren't required by Java to be correctly rounded, and spyglass uses Rust's `powf` and `ln`. So `pow`, `log` and `pow`'s range bounds may differ from the game's in the last bit of the `f64`, before it's narrowed to `f32`. No vanilla function uses them. `Math.sqrt` is correctly rounded in both.
 
 #### `interpolated`
@@ -103,7 +101,7 @@ Its volume value equals its point value whenever `upper_bound`'s does, which hol
 
 #### `distance_to_point`
 
-Draft, from the 26.3 bytecode (`DistanceToPointFunction`). At block `(x, y, z)`, with `d = (float)(point − pos)` per axis (an `int` subtraction, wrapping, then widened), in `f32`:
+From the 26.3 bytecode (`DistanceToPointFunction`). At block `(x, y, z)`, with `d = (float)(point − pos)` per axis (an `int` subtraction, wrapping, then widened), in `f32`:
 
 - `euclidean`: `(float) sqrt((double)((dx·dx + dy·dy) + dz·dz))`;
 - `euclidean_squared`: `(dx·dx + dy·dy) + dz·dz`;
@@ -114,7 +112,7 @@ Its volume value is the point value at each block.
 
 #### `end_outer_islands`
 
-Draft, from the 26.3 bytecode (`EndIslandFunction`). Binding seeds `LegacyRandomSource(seed)` (always, whatever `legacy_random_source` says), skips 17,292 draws (`consumeCount`), then builds a [simplex noise](noise.md#simplex-simplexnoise) with zero offsets.
+From the 26.3 bytecode (`EndIslandFunction`). Binding seeds `LegacyRandomSource(seed)` (always, whatever `legacy_random_source` says), skips 17,292 draws (`consumeCount`), then builds a [simplex noise](noise.md#simplex-simplexnoise) with zero offsets.
 
 At block `(x, y, z)` the value is `(height(x / 8, z / 8) − 8) / 128` in `f32`, the divisions by 8 truncating toward zero; y isn't read. `height(x, z)`:
 
@@ -176,9 +174,9 @@ There's no central-island term: 26.3's `end/islands` adds the main island as `di
 
 ## Binding to a seed
 
-A loaded graph doesn't depend on the seed. Binding creates the seed's noises as `RandomState` does: a positional factory `XoroshiroRandomSource(seed).forkPositional()`, and for each noise id `NormalNoise.create(factory.fromHashOf(id))`, once per id (`getOrCreateNoise`). Only `legacy_random_source: false` is supported so far.
+A loaded graph doesn't depend on the seed. Binding creates the seed's noises as `RandomState` does: a positional factory `XoroshiroRandomSource(seed).forkPositional()`, and for each noise id `NormalNoise.create(factory.fromHashOf(id))`, once per id (`getOrCreateNoise`).
 
-Draft, from the 26.3 bytecode, for `legacy_random_source: true` (the Nether and the End). Legacy changes only where randomness comes from; every sampler is the same:
+With `legacy_random_source: true` (the Nether and the End), from the 26.3 bytecode: Legacy changes only where randomness comes from; every sampler is the same:
 
 - The factory is `LegacyRandomSource(seed).forkPositional()` ([rng.md](rng.md#legacy-legacyrandomsource)), for noises and for random factories (`fromHashOf(id).forkPositional()`, which the aquifer would use; neither dimension has one).
 - `old_blended_noise` is built from `LegacyRandomSource(seed)` itself, not `fromHashOf("minecraft:terrain")`.
@@ -232,4 +230,4 @@ What depends on y:
 
 ## Testing
 
-Committed tests use hand-written JSON ([ADR 0008](../adr/0008-game-derived-test-values-stay-local.md)): shorthands, sharing, cycles, error paths, codec defaults and validation, each type's values worked out by hand, the compile choices where they're visible (the zero short-circuit, `div` by a constant, `min` and `max` by range through signed zeros and NaN, `pow` by exponent), and column folding against per-cell evaluation. For the volume path: `interpolated`'s point and volume arithmetic worked out from the corners, columns against chunks and stepped volumes against block volumes, the volume-only signed zeros of `min`, `max` and `mul`, y-independent nodes, `find_top_surface`, and remembered against fresh values with points and volumes mixed. Unit tests cover `Interval`'s arithmetic and the spline and blended-noise ranges, and the noise crate covers Perlin's volume path. The ignored tests in `spyglass-density/tests/probe.rs` check every `density.json` case, including the column and chunk digests, and that every density function in the bundle loads. Functions that can't be bound yet are skipped and listed.
+Committed tests use hand-written JSON ([ADR 0008](../adr/0008-game-derived-test-values-stay-local.md)): shorthands, sharing, cycles, error paths, codec defaults and validation, each type's values worked out by hand, the compile choices where they're visible (the zero short-circuit, `div` by a constant, `min` and `max` by range through signed zeros and NaN, `pow` by exponent), and column folding against per-cell evaluation. For the volume path: `interpolated`'s point and volume arithmetic worked out from the corners, columns against chunks and stepped volumes against block volumes, the volume-only signed zeros of `min`, `max` and `mul`, y-independent nodes, `find_top_surface`, and remembered against fresh values with points and volumes mixed. Unit tests cover `Interval`'s arithmetic and the spline and blended-noise ranges, and the noise crate covers Perlin's volume path. The ignored tests in `spyglass-density/tests/probe.rs` check every `density.json` case, including the column and chunk digests, in all three dimensions, and that every density function in the bundle loads. In the Nether and the End they bind with legacy randomness, and include the router's inline entries. Functions that can't be bound are skipped and listed; in 26.3 there are none. For 26.3: 19,660 cases, 2,240 of them the Nether's and 2,760 the End's, all equal. Skipping 17,291 draws instead of 17,292 for the End's islands fails 548.

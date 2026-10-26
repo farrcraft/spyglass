@@ -303,8 +303,12 @@ impl Node {
                 });
                 spread_y(&surfaces, volume, out);
             }
-            // GradientFunction's samplers compute each coordinate's value as the point path does.
-            Node::Gradient { .. } | Node::GradientRepeat { .. } => {
+            // GradientFunction's, DistanceToPointFunction's and EndIslandFunction's samplers
+            // compute each position's value as the point path does.
+            Node::Gradient { .. }
+            | Node::GradientRepeat { .. }
+            | Node::DistanceToPoint { .. }
+            | Node::EndIslands(_) => {
                 for_each(volume, |i, x, y, z| {
                     out[i] = self.compute(f.point, Pos::new(x, y, z));
                 });

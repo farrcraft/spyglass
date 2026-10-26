@@ -99,6 +99,14 @@ final class Probe {
         {29999983, -29999983},
     };
     private static final String FINAL_DENSITY = "minecraft:overworld/final_density";
+    /** Dimensions probed besides the overworld, with the prefix of their named density functions. */
+    private static final String[][] OTHER_DIMENSIONS = {
+        {"minecraft:the_nether", "minecraft:nether/"}, {"minecraft:the_end", "minecraft:end/"},
+    };
+    /** The noise router's entries, which the Nether and End write inline. */
+    private static final String[] ROUTER = {
+        "temperature", "vegetation", "continents", "erosion", "depth", "ridges", "final_density",
+    };
 
     private Probe() {}
 
@@ -106,7 +114,11 @@ final class Probe {
         Files.createDirectories(outDir);
         write(outDir.resolve("rng.json"), game, rng());
         write(outDir.resolve("noise.json"), game, noise(game, seeds));
-        write(outDir.resolve("density.json"), game, density(game, seeds));
+        var density = density(game, seeds);
+        for (String[] dimension : OTHER_DIMENSIONS) {
+            density.addAll(otherDimension(game, seeds, dimension[0], dimension[1]));
+        }
+        write(outDir.resolve("density.json"), game, density);
         write(outDir.resolve("terrain.json"), game, terrain(game, seeds));
         return 0;
     }
@@ -441,6 +453,135 @@ final class Probe {
                     }
                     var cd = kase("climate_digest").seed(seed);
                     cd.json.add("pos", ints(new int[] {chunk[0], 0, chunk[1]}));
+                    cases.add(cd.longs(digest).json);
+                }
+            } finally {
+                state.releaseDensityBufferPool(pool);
+            }
+        }
+        return cases;
+    }
+
+    /** A router entry's function. */
+    private static net.minecraft.world.level.levelgen.densityfunction.DensityFunction routerEntry(
+            net.minecraft.world.level.levelgen.NoiseRouter router, String entry) {
+        return switch (entry) {
+            case "temperature" -> router.temperature();
+            case "vegetation" -> router.vegetation();
+            case "continents" -> router.continents();
+            case "erosion" -> router.erosion();
+            case "depth" -> router.depth();
+            case "ridges" -> router.ridges();
+            case "final_density" -> router.finalDensity();
+            default -> throw new IllegalArgumentException(entry);
+        };
+    }
+
+    /**
+     * The Nether's or the End's density, as {@link #density} probes the overworld's: the dimension's own named
+     * functions (those under {@code prefix}) and its router entries ({@code noise_router.<entry>}) at the probe's
+     * blocks and over column volumes, final density over chunks, and the climate sampler at quarts and as chunk
+     * digests over the dimension's height. Every case has the dimension.
+     */
+    private static JsonArray otherDimension(Game game, List<String> seedArgs, String dimension, String prefix) {
+        var cases = new JsonArray();
+        var stem = game.stem(dimension);
+        if (!(stem.generator() instanceof NoiseBasedChunkGenerator generator)) {
+            throw new IllegalStateException(dimension + " isn't noise-based");
+        }
+        var settings = generator.generatorSettings().value();
+        var noises = game.access.lookupOrThrow(Registries.NOISE);
+        var functions = game.access.lookupOrThrow(Registries.DENSITY_FUNCTION);
+        var named = functions.listElements()
+                .filter(h -> h.key().identifier().toString().startsWith(prefix))
+                .sorted(Comparator.comparing(h -> h.key().identifier().toString()))
+                .toList();
+        var all = new java.util.LinkedHashMap<String, net.minecraft.world.level.levelgen.densityfunction.DensityFunction>();
+        for (var holder : named) {
+            all.put(holder.key().identifier().toString(), holder.value());
+        }
+        for (String entry : ROUTER) {
+            all.put("noise_router." + entry, routerEntry(settings.noiseRouter(), entry));
+        }
+        int quartMinY = QuartPos.fromBlock(stem.type().value().minY());
+        int quartHeight = QuartPos.fromBlock(stem.type().value().height());
+        int minY = settings.noiseSettings().minY();
+        int height = settings.noiseSettings().height();
+        for (String seedArg : seedArgs) {
+            long seed = WorldOptions.parseSeed(seedArg)
+                    .orElseThrow(() -> new IllegalArgumentException("empty seed"));
+            var state = RandomState.create(noises, seed, settings);
+            for (var e : all.entrySet()) {
+                for (int[] b : BLOCKS) {
+                    var c = kase("density").seed(seed).name(e.getKey());
+                    c.json.addProperty("dimension", dimension);
+                    c.json.add("pos", ints(b));
+                    cases.add(c.floats(state.sampleBlockValueUncached(e.getValue(), b[0], b[1], b[2])).json);
+                }
+            }
+            var pool = state.acquireDensityBufferPool();
+            try {
+                for (var e : all.entrySet()) {
+                    for (int[] col : COLUMNS) {
+                        var context = SamplerContext.builder().enableCaches().useBufferArena(pool).build();
+                        var volume = new DensityVolume(1, height, 1, col[0], minY, col[1]);
+                        var buffer = DensityBuffer.createUnpooled(volume.size());
+                        state.samplersWithContext(context).get(e.getValue()).sampleVolume(buffer, volume);
+                        var c = kase("density_column").seed(seed).name(e.getKey());
+                        c.json.addProperty("dimension", dimension);
+                        c.json.add("pos", ints(new int[] {col[0], minY, col[1]}));
+                        c.json.addProperty("height", height);
+                        cases.add(c.longs(digest(buffer, volume.size())).json);
+                    }
+                }
+                for (int[] chunk : CHUNKS) {
+                    var context = SamplerContext.builder().enableCaches().useBufferArena(pool).build();
+                    var volume = new DensityVolume(16, height, 16, chunk[0] * 16, minY, chunk[1] * 16);
+                    var buffer = DensityBuffer.createUnpooled(volume.size());
+                    state.samplersWithContext(context).get(settings.noiseRouter().finalDensity())
+                            .sampleVolume(buffer, volume);
+                    var c = kase("density_chunk").seed(seed).name("noise_router.final_density");
+                    c.json.addProperty("dimension", dimension);
+                    c.json.add("pos", ints(new int[] {chunk[0] * 16, minY, chunk[1] * 16}));
+                    c.json.addProperty("height", height);
+                    cases.add(c.longs(digest(buffer, volume.size())).json);
+                }
+
+                var context = SamplerContext.builder().enableCaches().useBufferArena(pool).build();
+                Climate.Sampler sampler = state.createClimateSampler(context);
+                DensitySampler.Bound[] six = {sampler.temperature(), sampler.humidity(), sampler.continentalness(),
+                    sampler.erosion(), sampler.depth(), sampler.weirdness()};
+                for (int[] q : QUARTS) {
+                    float[] values = new float[6];
+                    for (int i = 0; i < 6; i++) {
+                        values[i] = six[i].sampleValue(QuartPos.toBlock(q[0]), QuartPos.toBlock(q[1]),
+                                QuartPos.toBlock(q[2]));
+                    }
+                    var c = kase("climate").seed(seed).method("floats");
+                    c.json.addProperty("dimension", dimension);
+                    c.json.add("pos", ints(q));
+                    cases.add(c.floats(values).json);
+                }
+                int size = QuartPos.fromBlock(16);
+                for (int[] chunk : CHUNKS) {
+                    int qx0 = QuartPos.fromBlock(chunk[0] * 16);
+                    int qz0 = QuartPos.fromBlock(chunk[1] * 16);
+                    long digest = 1;
+                    for (int qy = 0; qy < quartHeight; qy++) {
+                        for (int qz = 0; qz < size; qz++) {
+                            for (int qx = 0; qx < size; qx++) {
+                                for (DensitySampler.Bound bound : six) {
+                                    float v = bound.sampleValue(QuartPos.toBlock(qx0 + qx),
+                                            QuartPos.toBlock(quartMinY + qy), QuartPos.toBlock(qz0 + qz));
+                                    digest = digest * 1000003L + (Float.floatToRawIntBits(v) & 0xFFFFFFFFL);
+                                }
+                            }
+                        }
+                    }
+                    var cd = kase("climate_digest").seed(seed);
+                    cd.json.addProperty("dimension", dimension);
+                    cd.json.add("pos", ints(new int[] {chunk[0], quartMinY, chunk[1]}));
+                    cd.json.addProperty("height", quartHeight);
                     cases.add(cd.longs(digest).json);
                 }
             } finally {

@@ -17,9 +17,6 @@ const OCTAVE_DEVIATION: f64 = 0.270_224_783_124_521_1;
 /// from game data never fail them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum NoiseError {
-    /// `normalize: "legacy"`, which no 26.3 noise uses, isn't ported yet.
-    #[error("{}", self.reason())]
-    LegacyNormalization,
     /// `base_octave` outside -32..=32.
     #[error("{}", self.reason())]
     BaseOctave,
@@ -29,17 +26,30 @@ pub enum NoiseError {
     /// `amplitude_modifiers` neither empty nor one per octave (`Parameters.validate`).
     #[error("{}", self.reason())]
     AmplitudeModifiers,
+    /// The legacy Nether biome construction made a different number of octaves than there are
+    /// non-zero modifiers (`LegacyFbmInitializer`'s `IllegalStateException`).
+    #[error("{}", self.reason())]
+    LegacyOctaves,
+    /// The legacy Nether biome construction with an octave above frequency 1
+    /// (`LegacyFbmInitializer`'s "Positive octaves are temporarily disabled").
+    #[error("{}", self.reason())]
+    PositiveOctaves,
 }
 
 impl NoiseError {
     /// The message, as a static string, for errors that carry one.
     pub fn reason(self) -> &'static str {
         match self {
-            NoiseError::LegacyNormalization => "legacy noise normalization isn't supported yet",
             NoiseError::BaseOctave => "base_octave is outside -32..=32",
             NoiseError::OctaveCount => "octave_count is outside 1..=32",
             NoiseError::AmplitudeModifiers => {
                 "amplitude_modifiers must be empty or have octave_count entries"
+            }
+            NoiseError::LegacyOctaves => {
+                "the legacy Nether biome noise made the wrong number of octaves"
+            }
+            NoiseError::PositiveOctaves => {
+                "the legacy Nether biome noise can't have octaves above frequency 1"
             }
         }
     }
@@ -104,16 +114,19 @@ pub struct OctaveInfo {
 pub struct NormalNoise {
     octaves: Vec<OctaveInfo>,
     normalization_factor: f64,
-    /// The octaves' `|amplitude|`, summed as the game sums them.
+    /// The octaves' `|amplitude|`, summed as the game sums them (and adjusted for legacy
+    /// normalization).
     amplitude_sum: f64,
+    /// The parameters the legacy Nether biome construction reads.
+    base_octave: i32,
+    base_amplitude: f64,
+    /// One modifier per octave: the parameters', or all 1.
+    modifiers: Vec<f64>,
 }
 
 impl NormalNoise {
     /// `NormalNoise(Parameters)`.
     pub fn new(parameters: &NormalNoiseParameters) -> Result<Self, NoiseError> {
-        if parameters.normalize == Normalization::Legacy {
-            return Err(NoiseError::LegacyNormalization);
-        }
         if !(-32..=32).contains(&parameters.base_octave) {
             return Err(NoiseError::BaseOctave);
         }
@@ -126,11 +139,26 @@ impl NormalNoise {
         }
         let octaves = build_octaves(parameters);
         // DoubleStream.sum(), which is compensated, over absAmplitude.
-        let sum = java_double_stream_sum(octaves.iter().map(|o| o.amplitude.abs()));
+        let mut sum = java_double_stream_sum(octaves.iter().map(|o| o.amplitude.abs()));
+        let mut factor = normalization_factor(sum, &octaves);
+        let modifiers = if parameters.amplitude_modifiers.is_empty() {
+            vec![1.0; parameters.octave_count as usize]
+        } else {
+            parameters.amplitude_modifiers.clone()
+        };
+        if parameters.normalize == Normalization::Legacy && factor != 0.0 {
+            let parity = parity_normalization_factor(parameters.base_amplitude, &modifiers);
+            // dload sum; dload parity; dload factor; ddiv; dmul.
+            sum *= parity / factor;
+            factor = parity;
+        }
         Ok(NormalNoise {
-            normalization_factor: normalization_factor(sum, &octaves),
+            normalization_factor: factor,
             octaves,
             amplitude_sum: sum,
+            base_octave: parameters.base_octave,
+            base_amplitude: parameters.base_amplitude,
+            modifiers,
         })
     }
 
@@ -176,6 +204,95 @@ impl NormalNoise {
         }
         NoiseStack::new(layers)
     }
+
+    /// `createForLegacyNetherBiome(RandomSource)`: two [legacy stacks](legacy_fbm) from
+    /// `random` in turn, then one stack of the first's layers at their frequencies and the
+    /// second's at `INPUT_FACTOR` times theirs, every amplitude times
+    /// `(float)(normalizationFactor · base_amplitude)` in `f32`. Not interleaved.
+    pub fn create_for_legacy_nether_biome<R: RandomSource>(
+        &self,
+        random: &mut R,
+    ) -> Result<NoiseStack, NoiseError> {
+        let first = legacy_fbm(random, self.base_octave, &self.modifiers)?;
+        let second = legacy_fbm(random, self.base_octave, &self.modifiers)?;
+        let amplitude = (self.normalization_factor * self.base_amplitude) as f32;
+        let scaled = |layers: Vec<Layer>, factor: f64| {
+            layers.into_iter().map(move |l| Layer {
+                frequency: l.frequency * factor,
+                amplitude: l.amplitude * amplitude,
+                noise: l.noise,
+            })
+        };
+        Ok(NoiseStack::new(
+            scaled(first, 1.0)
+                .chain(scaled(second, INPUT_FACTOR))
+                .collect(),
+        ))
+    }
+}
+
+/// `LegacyFbmInitializer.createForLegacyNetherBiome`: the layers of one legacy stack, lowest
+/// frequency first. The octave at frequency 1 is always built first, kept only if it's in the
+/// stack; then octaves from the one below it down to the first, each built if its modifier
+/// isn't 0, else skipped by 262 draws.
+fn legacy_fbm<R: RandomSource>(
+    random: &mut R,
+    first_octave: i32,
+    modifiers: &[f64],
+) -> Result<Vec<Layer>, NoiseError> {
+    let n = modifiers.len() as i32;
+    let zero = first_octave.wrapping_neg();
+    let mut levels: Vec<Option<PerlinNoise>> = vec![None; modifiers.len()];
+    let at_zero = PerlinNoise::new(random);
+    if (0..n).contains(&zero) && modifiers[zero as usize] != 0.0 {
+        levels[zero as usize] = Some(at_zero);
+    }
+    for i in (0..zero).rev() {
+        if i < n && modifiers[i as usize] != 0.0 {
+            levels[i as usize] = Some(PerlinNoise::new(random));
+        } else {
+            random.consume_count(262);
+        }
+    }
+    let made = levels.iter().filter(|l| l.is_some()).count();
+    if made != modifiers.iter().filter(|&&m| m != 0.0).count() {
+        return Err(NoiseError::LegacyOctaves);
+    }
+    if zero < n - 1 {
+        return Err(NoiseError::PositiveOctaves);
+    }
+    // Math.pow(2, -zero) and pow(2, n - 1) / (pow(2, n) - 1), exact for these integers.
+    let mut frequency = exp2i(zero.wrapping_neg());
+    let mut value = exp2i(n - 1) / (exp2i(n) - 1.0);
+    let mut layers = Vec::new();
+    for (level, &modifier) in levels.into_iter().zip(modifiers) {
+        if let Some(noise) = level {
+            layers.push(Layer {
+                noise,
+                frequency,
+                amplitude: (value * modifier) as f32,
+            });
+        }
+        frequency *= 2.0;
+        value /= 2.0;
+    }
+    Ok(layers)
+}
+
+/// `NormalNoise.computeParityNormalizationFactor`: from the first and last octaves with a
+/// non-zero modifier.
+fn parity_normalization_factor(base_amplitude: f64, modifiers: &[f64]) -> f64 {
+    let (mut lo, mut hi) = (i32::MAX, i32::MIN);
+    for (i, &m) in modifiers.iter().enumerate() {
+        if m != 0.0 {
+            lo = lo.min(i as i32);
+            hi = hi.max(i as i32);
+        }
+    }
+    // parityExpectedDeviation(hi - lo): 0.1 * (1.0 + 1.0 / (double)(n + 1)), int arithmetic.
+    let n = hi.wrapping_sub(lo);
+    let deviation = 0.1 * (1.0 + 1.0 / f64::from(n.wrapping_add(1)));
+    base_amplitude * 0.5 * TARGET_DEVIATION / deviation
 }
 
 /// `NormalNoise.buildOctaves`.
@@ -274,10 +391,74 @@ mod tests {
     }
 
     #[test]
-    fn legacy_normalization_is_refused() {
-        let mut p = NormalNoiseParameters::new(0);
+    fn legacy_normalization_uses_the_parity_factor() {
+        // Octaves 1 and 2 of three non-zero: lo 1, hi 2, so the deviation is
+        // 0.1 · (1 + 1/3), and the factor 2 · 0.5 · (1/3) / that.
+        let mut p = NormalNoiseParameters::new(-4);
+        p.octave_count = 3;
+        p.base_amplitude = 2.0;
+        p.amplitude_modifiers = vec![0.0, 1.0, 0.5];
         p.normalize = Normalization::Legacy;
-        assert_eq!(NormalNoise::new(&p), Err(NoiseError::LegacyNormalization));
+        let legacy = NormalNoise::new(&p).unwrap();
+        let parity = 2.0 * 0.5 * TARGET_DEVIATION / (0.1 * (1.0 + 1.0 / 2.0));
+        assert_eq!(legacy.normalization_factor(), parity);
+        p.normalize = Normalization::Enabled;
+        let enabled = NormalNoise::new(&p).unwrap();
+        let sum = enabled.amplitude_sum * (parity / enabled.normalization_factor());
+        assert_eq!(legacy.amplitude_sum, sum);
+        assert_eq!(legacy.octaves(), enabled.octaves());
+    }
+
+    #[test]
+    fn the_legacy_nether_biome_stack() {
+        use spyglass_rng::LegacyRandomSource;
+        // 26.3's nether/temperature: base octave -7, two octaves.
+        let mut p = NormalNoiseParameters::new(-7);
+        p.octave_count = 2;
+        p.base_amplitude = 0.949_473_105_442_798_1;
+        let noise = NormalNoise::new(&p).unwrap();
+        let stack = noise
+            .create_for_legacy_nether_biome(&mut LegacyRandomSource::new(5))
+            .unwrap();
+        let layers = stack.layers();
+        assert_eq!(layers.len(), 4);
+        let amp = (noise.normalization_factor() * p.base_amplitude) as f32;
+        assert_eq!(amp, 1.111_111_2);
+        assert_eq!(layers[0].frequency, 1.0 / 128.0);
+        assert_eq!(layers[1].frequency, 1.0 / 64.0);
+        assert_eq!(layers[2].frequency, 1.0 / 128.0 * INPUT_FACTOR);
+        assert_eq!(layers[0].amplitude, (2.0_f64 / 3.0) as f32 * amp);
+        assert_eq!(layers[1].amplitude, (1.0_f64 / 3.0) as f32 * amp);
+        // Draws: the zero octave built and dropped, five skips of 262, then octaves 1 and 0;
+        // the same again for the second stack.
+        let mut r = LegacyRandomSource::new(5);
+        let _ = PerlinNoise::new(&mut r);
+        r.consume_count(5 * 262);
+        let one = PerlinNoise::new(&mut r);
+        let zero = PerlinNoise::new(&mut r);
+        assert_eq!(layers[0].noise.offset(), zero.offset());
+        assert_eq!(layers[1].noise.offset(), one.offset());
+        let _ = PerlinNoise::new(&mut r);
+        r.consume_count(5 * 262);
+        let one = PerlinNoise::new(&mut r);
+        assert_eq!(layers[3].noise.offset(), one.offset());
+    }
+
+    #[test]
+    fn legacy_nether_biome_layouts_it_cant_build_are_errors() {
+        use spyglass_rng::LegacyRandomSource;
+        let error = |base_octave, modifiers: Vec<f64>| {
+            let mut p = NormalNoiseParameters::new(base_octave);
+            p.octave_count = modifiers.len() as i32;
+            p.amplitude_modifiers = modifiers;
+            NormalNoise::new(&p)
+                .unwrap()
+                .create_for_legacy_nether_biome(&mut LegacyRandomSource::new(0))
+                .unwrap_err()
+        };
+        // The octave count is checked first: octave 2 (frequency 2) is never built.
+        assert_eq!(error(-1, vec![1.0, 1.0, 1.0]), NoiseError::LegacyOctaves);
+        assert_eq!(error(0, vec![1.0, 0.0]), NoiseError::PositiveOctaves);
     }
 
     #[test]

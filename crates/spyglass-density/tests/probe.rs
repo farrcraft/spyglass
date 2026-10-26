@@ -4,7 +4,7 @@
 //! Needs `cargo xtask oracle probe` and a bundle for the same version. Run with
 //! `cargo test --release -p spyglass-density -- --ignored`.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 
 use spyglass_data::bundle::Bundle;
@@ -24,6 +24,49 @@ fn quantize(f: f32) -> i64 {
     (f * 10000.0) as i64
 }
 
+/// A dimension of the Default preset's noise settings.
+fn noise_settings(dimension: &str) -> &'static str {
+    match dimension {
+        "minecraft:overworld" => "minecraft:overworld",
+        "minecraft:the_nether" => "minecraft:nether",
+        "minecraft:the_end" => "minecraft:end",
+        other => panic!("unknown dimension {other}"),
+    }
+}
+
+/// What a dimension's cases bind with: its climate router, and its random source.
+struct Dimension {
+    router: ClimateRouter,
+    settings: serde_json::Value,
+    id: &'static str,
+}
+
+impl Dimension {
+    fn load(bundle: &Bundle, dimension: &str) -> Dimension {
+        let id = noise_settings(dimension);
+        Dimension {
+            router: ClimateRouter::load(bundle, id).unwrap(),
+            settings: bundle
+                .resource(
+                    "worldgen/noise_settings",
+                    id.trim_start_matches("minecraft:"),
+                )
+                .unwrap(),
+            id,
+        }
+    }
+
+    /// Function `name`: a named function, or `noise_router.<entry>` from the noise settings.
+    fn function(&self, loader: &mut Loader<'_, Bundle>, name: &str) -> spyglass_density::Df {
+        match name.strip_prefix("noise_router.") {
+            Some(entry) => loader
+                .inline(self.id, name, &self.settings["noise_router"][entry])
+                .unwrap(),
+            None => loader.function(name).unwrap(),
+        }
+    }
+}
+
 #[test]
 #[ignore = "needs the oracle's probe files and a bundle: cargo xtask oracle probe"]
 fn every_density_value_matches_the_game() {
@@ -36,21 +79,31 @@ fn every_density_value_matches_the_game() {
         let file = ProbeFile::read(&path).unwrap();
         let bundle = bundle_for(&file.version);
         let mut loader = Loader::new(&bundle);
-        let router = ClimateRouter::load(&bundle, "minecraft:overworld").unwrap();
+        let mut dimensions: HashMap<String, Dimension> = HashMap::new();
         // None for functions spyglass can't bind yet, which are skipped and listed.
-        let mut samplers: HashMap<(i64, String), Option<Sampler>> = HashMap::new();
+        let mut samplers: HashMap<(String, i64, String), Option<Sampler>> = HashMap::new();
         let mut unsupported = BTreeSet::new();
         let mut climates = HashMap::new();
         let mut failures = Vec::new();
+        let mut counts: BTreeMap<String, usize> = BTreeMap::new();
         for case in &file.cases {
             let seed = case.seed.expect("density cases have a seed");
             let [x, y, z] = case.pos.expect("a position");
-            let failure = match case.test.as_str() {
-                "density" => {
-                    let id = case.name.clone().expect("a function id");
-                    let sampler = samplers.entry((seed, id.clone())).or_insert_with(|| {
-                        let f = loader.function(&id).unwrap();
-                        match Binder::new(loader.noises(), seed).bind(&f) {
+            let dimension = case
+                .dimension
+                .clone()
+                .unwrap_or_else(|| "minecraft:overworld".to_string());
+            *counts.entry(dimension.clone()).or_default() += 1;
+            let dim = dimensions
+                .entry(dimension.clone())
+                .or_insert_with(|| Dimension::load(&bundle, &dimension));
+            let mut sampler_for = |id: &str| {
+                samplers
+                    .entry((dimension.clone(), seed, id.to_string()))
+                    .or_insert_with(|| {
+                        let f = dim.function(&mut loader, id);
+                        let legacy = dim.router.legacy_random();
+                        match Binder::with_legacy_random(loader.noises(), seed, legacy).bind(&f) {
                             Ok(s) => Some(s),
                             Err(e) if matches!(*e.kind, LoadErrorKind::Unsupported { .. }) => {
                                 unsupported.insert(format!("{id}: {e}"));
@@ -58,7 +111,13 @@ fn every_density_value_matches_the_game() {
                             }
                             Err(e) => panic!("{id}: {e}"),
                         }
-                    });
+                    })
+                    .clone()
+            };
+            let failure = match case.test.as_str() {
+                "density" => {
+                    let id = case.name.clone().expect("a function id");
+                    let sampler = sampler_for(&id);
                     let Some(sampler) = sampler else { continue };
                     let (want, got) = (case.f32_bits()[0], sampler.sample(x, y, z).to_bits());
                     (want != got).then(|| {
@@ -72,8 +131,8 @@ fn every_density_value_matches_the_game() {
                 }
                 "climate" => {
                     let climate = climates
-                        .entry(seed)
-                        .or_insert_with(|| router.sampler(seed).unwrap());
+                        .entry((dimension.clone(), seed))
+                        .or_insert_with(|| dim.router.sampler(seed).unwrap());
                     let floats = climate.sample(x, y, z);
                     match case.method.as_deref() {
                         Some("floats") => {
@@ -104,13 +163,19 @@ fn every_density_value_matches_the_game() {
                 }
                 "climate_digest" => {
                     let climate = climates
-                        .entry(seed)
-                        .or_insert_with(|| router.sampler(seed).unwrap());
-                    // The chunk at (x, z), full overworld height (quart y -16..80), hashed as
-                    // the harness does: h = h * 1000003 + bits, y outermost, then z, then x.
+                        .entry((dimension.clone(), seed))
+                        .or_insert_with(|| dim.router.sampler(seed).unwrap());
+                    // The chunk at (x, z), the dimension's full height in quarts (from y and
+                    // the height where the case gives them, else the overworld's -16..80),
+                    // hashed as the harness does: h = h * 1000003 + bits, y outermost, then z,
+                    // then x.
                     let (qx0, qz0) = (x * 4, z * 4);
+                    let quarts = match case.height {
+                        Some(height) => y..y + height,
+                        None => -16..80,
+                    };
                     let mut digest: i64 = 1;
-                    for qy in -16..80 {
+                    for qy in quarts {
                         for qz in qz0..qz0 + 4 {
                             for qx in qx0..qx0 + 4 {
                                 for v in climate.sample(qx, qy, qz) {
@@ -128,17 +193,7 @@ fn every_density_value_matches_the_game() {
                 // the volume, hashed in its index order as the harness does.
                 "density_column" | "density_column_values" | "density_chunk" => {
                     let id = case.name.clone().expect("a function id");
-                    let sampler = samplers.entry((seed, id.clone())).or_insert_with(|| {
-                        let f = loader.function(&id).unwrap();
-                        match Binder::new(loader.noises(), seed).bind(&f) {
-                            Ok(s) => Some(s),
-                            Err(e) if matches!(*e.kind, LoadErrorKind::Unsupported { .. }) => {
-                                unsupported.insert(format!("{id}: {e}"));
-                                None
-                            }
-                            Err(e) => panic!("{id}: {e}"),
-                        }
-                    });
+                    let sampler = sampler_for(&id);
                     let Some(sampler) = sampler else { continue };
                     let height = case.height.expect("a height");
                     let width = if case.test == "density_chunk" { 16 } else { 1 };
@@ -187,7 +242,7 @@ fn every_density_value_matches_the_game() {
             failures[..failures.len().min(20)].join("\n")
         );
         println!(
-            "{}: all {} cases match, but for {} functions that can't be bound yet:",
+            "{}: all {} cases match ({counts:?}), but for {} functions that can't be bound yet:",
             path.display(),
             file.cases.len(),
             unsupported.len()

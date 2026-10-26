@@ -20,14 +20,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use spyglass_data::codec::{LoadError, LoadErrorKind};
 use spyglass_noise::mth::{self, exp2i};
 use spyglass_noise::{
-    Layer, NoiseError, NoiseStack, NormalNoise, NormalNoiseParameters, SmearedPerlinNoise, Volume,
+    Layer, NoiseStack, NormalNoise, NormalNoiseParameters, SimplexNoise, SmearedPerlinNoise, Volume,
 };
 use spyglass_rng::{
-    PositionalRandomFactory, RandomSource, XoroshiroPositionalRandomFactory, XoroshiroRandomSource,
+    LegacyPositionalRandomFactory, LegacyRandomSource, PositionalRandomFactory, RandomSource,
+    XoroshiroPositionalRandomFactory, XoroshiroRandomSource,
 };
 
 use crate::function::{
-    Axis, Binary, BlendedNoise, DensityFunction, Df, Round, Spline, Tiling, Unary,
+    Axis, Binary, BlendedNoise, DensityFunction, Df, DistanceMetric, Round, Spline, Tiling, Unary,
 };
 use crate::interval::{Interval, IntervalError};
 use crate::java;
@@ -176,6 +177,13 @@ pub(crate) enum Node {
         mirrored: bool,
     },
     Spline(BoundSpline),
+    /// `DistanceToPointFunction.Sampler`.
+    DistanceToPoint {
+        point: [i32; 3],
+        metric: DistanceMetric,
+    },
+    /// `EndIslandFunction.Sampler`.
+    EndIslands(Arc<SimplexNoise>),
 }
 
 #[derive(Debug)]
@@ -192,11 +200,28 @@ pub(crate) enum BoundSpline {
 /// Tells binders apart, so remembered values are never read by another binder's nodes.
 static BINDERS: AtomicU64 = AtomicU64::new(0);
 
+/// `RandomState`'s positional factory, which `legacy_random_source` chooses.
+#[derive(Debug, Clone)]
+enum WorldRandom {
+    /// `XoroshiroRandomSource(seed).forkPositional()`.
+    Xoroshiro(XoroshiroPositionalRandomFactory),
+    /// `LegacyRandomSource(seed).forkPositional()`.
+    Legacy(LegacyPositionalRandomFactory),
+}
+
+/// `Noises.TEMPERATURE_NETHER` and `VEGETATION_NETHER`, with the offsets their legacy sources
+/// add to the seed (`RandomState`'s `createNoiseSampler`).
+const NETHER_BIOME_NOISES: [(&str, i64); 2] = [
+    ("minecraft:nether/temperature", 0),
+    ("minecraft:nether/vegetation", 1),
+];
+
 /// Binds functions for one seed. Shared nodes stay shared, and each noise is created once, as
 /// `RandomState.getOrCreateNoise` does.
 pub struct Binder<'n> {
     noise_parameters: &'n HashMap<String, NormalNoiseParameters>,
-    random: XoroshiroPositionalRandomFactory,
+    seed: i64,
+    random: WorldRandom,
     noises: HashMap<String, Arc<NoiseStack>>,
     /// Samplers by function identity. Each entry keeps its function alive, so its address can't
     /// be reused by another function while the binder holds it.
@@ -208,13 +233,29 @@ pub struct Binder<'n> {
 }
 
 impl<'n> Binder<'n> {
-    /// A binder for `seed`, with noises from `noise_parameters` (full id → parameters). Only the
-    /// Xoroshiro random source (`legacy_random_source: false`) is supported.
+    /// A binder for `seed`, with noises from `noise_parameters` (full id → parameters), and the
+    /// Xoroshiro random source (`legacy_random_source: false`).
     pub fn new(noise_parameters: &'n HashMap<String, NormalNoiseParameters>, seed: i64) -> Self {
+        Self::with_legacy_random(noise_parameters, seed, false)
+    }
+
+    /// [`new`](Self::new), with the legacy random source if `legacy`
+    /// (`legacy_random_source: true`).
+    pub fn with_legacy_random(
+        noise_parameters: &'n HashMap<String, NormalNoiseParameters>,
+        seed: i64,
+        legacy: bool,
+    ) -> Self {
+        // RandomState: algorithm.newInstance(seed).forkPositional().
+        let random = if legacy {
+            WorldRandom::Legacy(LegacyRandomSource::new(seed).fork_positional())
+        } else {
+            WorldRandom::Xoroshiro(XoroshiroRandomSource::new(seed).fork_positional())
+        };
         Binder {
             noise_parameters,
-            // RandomState: XOROSHIRO.newInstance(seed).forkPositional().
-            random: XoroshiroRandomSource::new(seed).fork_positional(),
+            seed,
+            random,
             noises: HashMap::new(),
             bound: HashMap::new(),
             ranges: HashMap::new(),
@@ -230,24 +271,29 @@ impl<'n> Binder<'n> {
             .noise_parameters
             .get(id)
             .ok_or_else(|| error(LoadErrorKind::Invalid("noise wasn't loaded before binding")))?;
-        NormalNoise::new(parameters).map_err(|e| {
-            error(match e {
-                NoiseError::LegacyNormalization => LoadErrorKind::Unsupported {
-                    what: "noise normalization",
-                    name: "legacy".to_string(),
-                },
-                other => LoadErrorKind::Invalid(other.reason()),
-            })
-        })
+        NormalNoise::new(parameters).map_err(|e| error(LoadErrorKind::Invalid(e.reason())))
     }
 
-    /// `RandomState.getOrCreateNoise`, via `Noises.instantiate`.
+    /// `CompileContext.createNoiseSampler`: the Nether biome noises by their own rule, others by
+    /// `RandomState.getOrCreateNoise`, via `Noises.instantiate`. Each is made once per binder;
+    /// the game makes the Nether's anew each time, which gives the same noise.
     fn noise(&mut self, id: &str) -> Result<Arc<NoiseStack>, LoadError> {
         if let Some(n) = self.noises.get(id) {
             return Ok(n.clone());
         }
         let normal = self.normal_noise(id)?;
-        let stack = Arc::new(normal.create(&mut self.random.from_hash_of(id)));
+        let nether = NETHER_BIOME_NOISES.iter().find(|(n, _)| *n == id);
+        let stack = match (nether, &self.random) {
+            (Some(&(_, offset)), _) => {
+                let mut random = LegacyRandomSource::new(self.seed.wrapping_add(offset));
+                normal
+                    .create_for_legacy_nether_biome(&mut random)
+                    .map_err(|e| LoadError::new(id, "", LoadErrorKind::Invalid(e.reason())))?
+            }
+            (None, WorldRandom::Xoroshiro(f)) => normal.create(&mut f.from_hash_of(id)),
+            (None, WorldRandom::Legacy(f)) => normal.create(&mut f.from_hash_of(id)),
+        };
+        let stack = Arc::new(stack);
         self.noises.insert(id.to_string(), stack.clone());
         Ok(stack)
     }
@@ -458,17 +504,16 @@ impl<'n> Binder<'n> {
                 inv_xz: 1.0 / *cell_size_xz as f32,
                 inv_y: 1.0 / *cell_size_y as f32,
             },
-            DensityFunction::DistanceToPoint { .. } => {
-                return Err(unsupported(
-                    "density function type",
-                    "minecraft:distance_to_point",
-                ));
-            }
+            DensityFunction::DistanceToPoint { point, metric } => Node::DistanceToPoint {
+                point: *point,
+                metric: *metric,
+            },
+            // EndIslandFunction.compileSampler: createEndIslandRandom is LegacyRandomSource(seed)
+            // whatever the settings say, then 17292 draws skipped, then zero-offset simplex.
             DensityFunction::EndOuterIslands => {
-                return Err(unsupported(
-                    "density function type",
-                    "minecraft:end_outer_islands",
-                ));
+                let mut random = LegacyRandomSource::new(self.seed);
+                random.consume_count(17_292);
+                Node::EndIslands(Arc::new(SimplexNoise::new(&mut random, true)))
             }
         }))
     }
@@ -557,15 +602,32 @@ impl<'n> Binder<'n> {
     /// `BlendedNoise.compileSampler`: `lerp(clamp(main + 0.5, 0, 1), minLimit, maxLimit)`, the
     /// three noises sampled by `NoiseFunction.Sampler`.
     fn compile_blended(&mut self, p: &BlendedNoise) -> Result<Compiled, LoadError> {
-        // CompileContext.createRandom(NOISE_SEED), then createFbmSet.
-        let mut random = self.random.from_hash_of("minecraft:terrain");
+        // CompileContext.createRandom(NOISE_SEED): with legacy randomness LegacyRandomSource(seed)
+        // itself, else the factory's fromHashOf; then createFbmSet.
+        match &self.random {
+            WorldRandom::Xoroshiro(f) => {
+                let mut random = f.from_hash_of("minecraft:terrain");
+                self.compile_blended_with(p, &mut random)
+            }
+            WorldRandom::Legacy(_) => {
+                let mut random = LegacyRandomSource::new(self.seed);
+                self.compile_blended_with(p, &mut random)
+            }
+        }
+    }
+
+    fn compile_blended_with(
+        &mut self,
+        p: &BlendedNoise,
+        random: &mut impl RandomSource,
+    ) -> Result<Compiled, LoadError> {
         let xz_multiplier = 684.412 * p.xz_scale;
         let y_multiplier = 684.412 * p.y_scale;
         let smear = y_multiplier * p.smear_scale_multiplier;
         let main_smear = smear / p.y_factor;
-        let min_limit = create_fbm(&mut random, -15, smear, LIMIT_FACTOR);
-        let max_limit = create_fbm(&mut random, -15, smear, LIMIT_FACTOR);
-        let main = create_fbm(&mut random, -7, main_smear, 12.75);
+        let min_limit = create_fbm(random, -15, smear, LIMIT_FACTOR);
+        let max_limit = create_fbm(random, -15, smear, LIMIT_FACTOR);
+        let main = create_fbm(random, -7, main_smear, 12.75);
         let mut noise = |noise, xz_scale, y_scale| {
             self.sampler(Node::SmearedNoise {
                 noise: Arc::new(noise),
@@ -603,6 +665,47 @@ impl<'n> Binder<'n> {
     }
 }
 
+/// `DistanceMetric.compute` on `(float)(point - pos)` per axis (`DistanceToPointFunction.Sampler`):
+/// the subtraction in wrapping `i32`, the metric in `f32` (Euclidean's square root through
+/// `f64`).
+fn distance(metric: DistanceMetric, point: [i32; 3], pos: [i32; 3]) -> f32 {
+    let [dx, dy, dz] = [0, 1, 2].map(|i| point[i].wrapping_sub(pos[i]) as f32);
+    match metric {
+        // Mth.length: Mth.sqrt(lengthSquared), (float) Math.sqrt((double) f).
+        DistanceMetric::Euclidean => f64::from((dx * dx + dy * dy) + dz * dz).sqrt() as f32,
+        DistanceMetric::EuclideanSquared => (dx * dx + dy * dy) + dz * dz,
+        DistanceMetric::Manhattan => (dx.abs() + dy.abs()) + dz.abs(),
+        // Math.max(float, float): NaN can't occur from finite ints.
+        DistanceMetric::Chebyshev => dx.abs().max(dy.abs()).max(dz.abs()),
+    }
+}
+
+/// `EndIslandFunction.getHeightValue(noise, x, z)`, with `x` and `z` a block's divided by 8:
+/// the highest outer island over the 25 × 25 cells around `(x / 2, z / 2)`, from −100.
+fn end_island_height(noise: &SimplexNoise, x: i32, z: i32) -> f32 {
+    let (xs, zs, xr, zr) = (x / 2, z / 2, x % 2, z % 2);
+    let mut height = -100.0_f32;
+    for dx in -12..=12 {
+        for dz in -12..=12 {
+            let px = i64::from(xs.wrapping_add(dx));
+            let pz = i64::from(zs.wrapping_add(dz));
+            // lcmp/ifle: strictly beyond 64 cells; fcmpg/ifge: NaN fails the test.
+            if px * px + pz * pz > 4096 && noise.get(px as f64, pz as f64) < -0.9_f32 {
+                let size = ((px as f32).abs() * 3439.0 + (pz as f32).abs() * 147.0) % 13.0 + 9.0;
+                let fx = xr.wrapping_sub(dx.wrapping_mul(2)) as f32;
+                let fz = zr.wrapping_sub(dz.wrapping_mul(2)) as f32;
+                // Mth.sqrt(float): (float) Math.sqrt((double) f).
+                let length = f64::from(fx * fx + fz * fz).sqrt() as f32;
+                let v = 100.0 - length * size;
+                // Mth.clamp(float): v < min ? min : Math.min(v, max).
+                let v = if v < -100.0 { -100.0 } else { v.min(80.0) };
+                height = height.max(v);
+            }
+        }
+    }
+    height
+}
+
 /// What a function compiles to: a new node, or a sampler that already exists (an input passed
 /// through, or a `min` or `max` operand chosen by range).
 enum Compiled {
@@ -638,17 +741,6 @@ fn create_fbm(
         })
         .collect();
     NoiseStack::new(layers)
-}
-
-fn unsupported(what: &'static str, name: &str) -> LoadError {
-    LoadError::new(
-        name,
-        "",
-        LoadErrorKind::Unsupported {
-            what,
-            name: name.to_string(),
-        },
-    )
 }
 
 impl From<IntervalError> for LoadError {
@@ -1013,6 +1105,9 @@ impl Node {
                 let upper = upper_bound.eval_at(memo, x, 0, z);
                 find_surface(memo, density, x, z, upper, *lower_bound, *cell_height)
             }
+            Node::DistanceToPoint { point, metric } => distance(*metric, *point, [x, y, z]),
+            // EndIslandFunction.Sampler.sampleValue: (getHeightValue(x / 8, z / 8) - 8) / 128.
+            Node::EndIslands(noise) => (end_island_height(noise, x / 8, z / 8) - 8.0) / 128.0,
             // ClampedSampler.compute: fromValue + (clamp(c, min, max) - from) * factor.
             Node::Gradient {
                 axis,
@@ -1108,6 +1203,8 @@ impl Node {
             Node::Interpolated { input, .. } => input.depends_on_y,
             Node::FindTopSurface { .. } => false,
             Node::Gradient { axis, .. } | Node::GradientRepeat { axis, .. } => *axis == Axis::Y,
+            Node::DistanceToPoint { .. } => true,
+            Node::EndIslands(_) => false,
             Node::Spline(spline) => spline.depends_on_y(),
         }
     }

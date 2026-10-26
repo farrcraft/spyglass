@@ -6,7 +6,7 @@ use crate::mth;
 use crate::volume::Volume;
 
 /// `GradientNoise.GRADIENT`: the 16 gradient vectors (12 cube edges, 4 repeated).
-const GRADIENT: [[i32; 3]; 16] = [
+pub(crate) const GRADIENT: [[i32; 3]; 16] = [
     [1, 1, 0],
     [-1, 1, 0],
     [1, -1, 0],

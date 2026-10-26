@@ -351,6 +351,13 @@ Floating-point inputs (`point`) are hex `f64` bits too, so nothing depends on de
 - `density_column`: every named function through the volume path, over a column of blocks as `NoiseBasedChunkGenerator.iterateNoiseColumn` samples `final_density` (a 1 × `height` × 1 volume from block `pos`, the noise settings' `min_y` and `height`, in a fresh caching context with nothing blending and no structures), at eight columns, hashed as above over the buffer in its index order (y fastest, then x, then z). For `minecraft:overworld/final_density`, `density_column_values` has the column's floats too, from the bottom up;
 - `density_chunk`: `final_density` over each of the four chunks, 16 × `height` × 16 blocks from `pos`, hashed the same way.
 
+Then the same for the Nether and the End, each case with a `dimension` (cases without one are the overworld's), with each dimension's noise settings and seeded `RandomState`:
+
+- `density` and `density_column` for the dimension's own named functions (`minecraft:nether/…`, `minecraft:end/…`) and for its noise router's seven entries, written inline in its settings and named `noise_router.<entry>` (e.g. `noise_router.final_density`);
+- `density_chunk` for `noise_router.final_density`;
+- `climate` with method `floats` at the same quarts;
+- `climate_digest` per chunk, over the dimension's full height: `pos` is `[chunk x, quart min y, chunk z]` and `height` the height in quarts.
+
 **`terrain.json`** has, for each golden seed and each of the eight columns, the aquifer as `iterateNoiseColumn` builds it (a `NoiseChunk` over the 1 × `height` × 1 column from `pos`, with no beardifier and nothing blending, and the generator's fluid picker): `aquifer_column`, with `computeSubstance` asked about every block from the top down, the `text` value holding one letter per block from the bottom up (`s` for nothing, i.e. the default block, `a` air, `w` water, `l` lava). `method` `final_density` passes each block's density from the column's `final_density`; `fixed` passes one `density` (hex `f64` bits) everywhere: −1, −0.02 and 0, for fluid levels, barriers and the boundary.
 
 ## Independent check: real world saves
@@ -372,7 +379,3 @@ CI isn't set up yet. When it is:
 - Let `cargo xtask oracle golden` download the server jar from Mojang during the run. Nothing derived from the game is committed or stored as an artifact that outlives the run.
 - Cache the jar cache directory (`--cache-dir`) keyed by the jar's SHA-1 from the version JSON, so the 60 MB download happens once per version.
 - Generating the golden set takes about a minute on a few cores. Golden files could be cached the same way, keyed by jar SHA-1 plus a hash of `oracle/`.
-
-## Open questions
-
-- Nether and End probe sections: legacy noises, simplex noise and the Nether's and End's density functions. Added with the tests that read them.

@@ -29,11 +29,13 @@ pub const CLIMATE_ENTRIES: [&str; 6] = [
 pub struct ClimateRouter {
     functions: [Df; 6],
     noises: HashMap<String, NormalNoiseParameters>,
+    /// `legacy_random_source`.
+    legacy: bool,
 }
 
 impl ClimateRouter {
     /// Loads `noise_settings` (e.g. `minecraft:overworld`) and the six climate entries of its
-    /// `noise_router`. Settings with `legacy_random_source: true` aren't supported yet.
+    /// `noise_router`, and which random source binding uses (`legacy_random_source`).
     pub fn load<R: Resources + ?Sized>(
         resources: &R,
         noise_settings: &str,
@@ -43,15 +45,15 @@ impl ClimateRouter {
         let json = resources
             .resource(NOISE_SETTINGS, &id)
             .map_err(|e| error("", e.into()))?;
-        if json.get("legacy_random_source").and_then(|v| v.as_bool()) == Some(true) {
-            return Err(error(
-                "legacy_random_source",
-                LoadErrorKind::Unsupported {
-                    what: "random source",
-                    name: "legacy".to_string(),
-                },
-            ));
-        }
+        let legacy = match json.get("legacy_random_source") {
+            None => false,
+            Some(v) => v.as_bool().ok_or_else(|| {
+                error(
+                    "legacy_random_source",
+                    LoadErrorKind::Invalid("expected true or false"),
+                )
+            })?,
+        };
         let router = json
             .get("noise_router")
             .ok_or_else(|| error("", LoadErrorKind::Missing("noise_router")))?;
@@ -66,6 +68,7 @@ impl ClimateRouter {
         Ok(ClimateRouter {
             functions: [t?, h?, c?, e?, d?, w?],
             noises: loader.noises().clone(),
+            legacy,
         })
     }
 
@@ -79,9 +82,14 @@ impl ClimateRouter {
         &self.noises
     }
 
+    /// Whether binding uses the legacy random source (`legacy_random_source`).
+    pub fn legacy_random(&self) -> bool {
+        self.legacy
+    }
+
     /// The climate sampler for `seed`.
     pub fn sampler(&self, seed: i64) -> Result<ClimateSampler, LoadError> {
-        let mut binder = Binder::new(&self.noises, seed);
+        let mut binder = Binder::with_legacy_random(&self.noises, seed, self.legacy);
         let [t, h, c, e, d, w] = self.functions.each_ref().map(|f| binder.bind(f));
         Ok(ClimateSampler([t?, h?, c?, e?, d?, w?]))
     }

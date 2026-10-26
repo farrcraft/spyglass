@@ -56,7 +56,7 @@ A list of layers `(noise, frequency: f64, amplitude: f32)`, all Perlin or all sm
 
 ### Legacy normalization
 
-Draft, from the 26.3 bytecode (`NormalNoise` constructor); no 26.3 noise uses it. With `normalize: "legacy"` and a non-zero standard factor:
+From the 26.3 bytecode (`NormalNoise` constructor). No 26.3 noise uses it, so only hand-worked tests check it. With `normalize: "legacy"` and a non-zero standard factor:
 
 - `parity = base_amplitude · 0.5 · 0.3333333333333333 / (0.1 · (1.0 + 1.0 / (double)(hi − lo + 1)))`, left to right, where `lo` and `hi` are the first and last octave indices `i` in `0..octave_count` with a non-zero modifier (1 when the list is empty), and `hi − lo + 1` is an `int` sum.
 - `sum = sum · (parity / factor)`, the division first; then the factor is `parity`.
@@ -65,7 +65,7 @@ The range is computed from the adjusted `sum`.
 
 ### The Nether biome noises
 
-Draft, from the 26.3 bytecode (`RandomState`'s compile context, `NormalNoise.createForLegacyNetherBiome`, `LegacyFbmInitializer`). `minecraft:nether/temperature` and `minecraft:nether/vegetation`, when a density function's `noise` refers to them by id, aren't made by `create`. The key decides, not `legacy_random_source`:
+From the 26.3 bytecode (`RandomState`'s compile context, `NormalNoise.createForLegacyNetherBiome`, `LegacyFbmInitializer`). `minecraft:nether/temperature` and `minecraft:nether/vegetation`, when a density function's `noise` refers to them by id, aren't made by `create`. The key decides, not `legacy_random_source`:
 
 - The source is `LegacyRandomSource(seed + 0)` for temperature and `LegacyRandomSource(seed + 1)` for vegetation (wrapping), with no positional factory.
 - `amps` = the modifiers, or `octave_count` ones when the list is empty; `n` = their count; `zero = −base_octave`.
@@ -81,7 +81,7 @@ Its range is the parameters' `range()` as usual. For 26.3's two noises (`base_oc
 
 ## Simplex (`SimplexNoise`)
 
-Draft, from the 26.3 bytecode. The End's outer islands use it ([density-functions.md](density-functions.md#end_outer_islands)). In 26.3 it's a `GradientNoise`, like Perlin, and returns `f32`.
+From the 26.3 bytecode. The End's outer islands use it ([density-functions.md](density-functions.md#end_outer_islands)). In 26.3 it's a `GradientNoise`, like Perlin, and returns `f32`.
 
 **Construction** from a random source, with an offset scale `S` (256, or 0 when made with zero offsets, as the End's is): `offsetX`, `offsetY` and `offsetZ` are each `nextDouble() · S`, drawn in that order even when `S` is 0 (they're then `+0.0`); then the permutation, exactly as Perlin's. `permute(i) = perms[i & 255] & 255`.
 

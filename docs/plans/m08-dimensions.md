@@ -192,11 +192,11 @@ Specs and ADRs that govern this: [noise.md](../specs/noise.md), [rng.md](../spec
 
 ### Phase 2: legacy randomness and new noise
 
-- [ ] `legacy` normalization and the legacy `NormalNoise` constructor, with hand-worked tests.
-- [ ] Simplex noise, with hand-worked tests and probe points.
-- [ ] Binding with `legacy_random_source: true`: the positional factory and every special case.
-- [ ] `distance_to_point` and `end_outer_islands`, point and volume paths.
-- [ ] Ignored probe tests: every Nether and End function at points and columns, chunk digests, bit for bit.
+- [x] `legacy` normalization and the legacy `NormalNoise` constructor, with hand-worked tests.
+- [x] Simplex noise, with hand-worked tests and probe points.
+- [x] Binding with `legacy_random_source: true`: the positional factory and every special case.
+- [x] `distance_to_point` and `end_outer_islands`, point and volume paths.
+- [x] Ignored probe tests: every Nether and End function at points and columns, chunk digests, bit for bit.
 
 ### Phase 3: biomes
 
@@ -280,6 +280,7 @@ Agreed on 2026-10-26, as recommended:
 
 ## Notes
 
+- 2026-10-26: Phase 2 done. All 19,660 density probe cases match bit for bit: 14,660 in the Overworld, 2,240 in the Nether and 2,760 in the End, now including the router's inline entries. Every density function in the 26.3 bundle binds. Skipping 17,291 draws instead of 17,292 for the End's islands fails 548 cases. The binder takes a legacy flag (`Binder::with_legacy_random`) and the climate router reads it; terrain settings still refuse legacy until phase 4. Legacy normalization is ported but only hand-tested, since no 26.3 noise uses it.
 - 2026-10-26: Phase 1 done. The golden set now covers all three dimensions (biomes, structures, spawn, heights), and `oracle locate` asks Nether and End cases with `execute in` (locate format 2, a dimension per case; the Rust comparison skips other dimensions until phase 5). Specs have drafts for everything below. From the 26.3 bytecode, beyond the plan's expectations:
   - Legacy randomness changes less than in 1.21: the positional factory, `old_blended_noise` from `LegacyRandomSource(seed)`, and nothing else. **There's no shift override any more.** The Nether biome noises have their own construction, keyed on their ids, not on the legacy flag. `end_outer_islands` is always legacy-seeded.
   - **Biomes don't depend on y** in the Nether (only temperature and vegetation, with `y_scale` 0) or the End (`end/islands` is y-independent). So every Nether and End biome check is decided from the climate. Fortresses, bastions and the Nether's ruined portals need no terrain to decide; nether fossils and end cities need terrain only for their y and terrain rejections.

@@ -877,23 +877,113 @@ fn find_top_surface_over_a_volume() {
 }
 
 #[test]
-fn types_without_a_point_path_load_but_dont_bind() {
-    let map = resources(vec![
-        df(
+fn distances_to_a_point() {
+    let point = |metric: &str| {
+        let map = resources(vec![df(
             "minecraft:d",
-            json!({"type": "distance_to_point", "point": [1, 2, 3], "metric": "manhattan"}),
+            json!({"type": "distance_to_point", "point": [1, 2, 3], "metric": metric}),
+        )]);
+        bind_one(&map, "d")
+    };
+    // From (-2, -2, 3) the point is (3, 4, 0) away; from (4, 2, -1), (-3, 0, 4).
+    for (metric, a, b) in [
+        ("euclidean", 5.0, 5.0),
+        ("euclidean_squared", 25.0, 25.0),
+        ("manhattan", 7.0, 7.0),
+        ("chebyshev", 4.0, 4.0),
+    ] {
+        let s = point(metric);
+        assert_eq!(s.sample(-2, -2, 3), a, "{metric}");
+        assert_eq!(s.sample(4, 2, -1), b, "{metric}");
+        assert!(s.depends_on_y());
+        let volume = Volume::blocks([3, 4, 2], [-2, -3, 1]);
+        let points: Vec<f32> = positions(&volume)
+            .into_iter()
+            .map(|(x, y, z)| s.sample(x, y, z))
+            .collect();
+        assert_eq!(s.sample_volume(&volume), points, "{metric}");
+    }
+    // Euclidean: (float) Math.sqrt of the float sum, so √2 rounds once, to f32.
+    assert_eq!(point("euclidean").sample(0, 1, 3), 2.0_f64.sqrt() as f32);
+}
+
+#[test]
+fn end_islands_near_the_origin() {
+    // Within 64 cells (512 blocks) of the origin no outer island counts, so the height is -100
+    // and the value (-100 - 8) / 128 for every seed; y is ignored.
+    let map = resources(vec![df(
+        "minecraft:e",
+        json!({"type": "end_outer_islands"}),
+    )]);
+    for seed in [0, 7, -12_345] {
+        let mut loader = Loader::new(&map);
+        let f = loader.function("e").unwrap();
+        let s = Binder::new(loader.noises(), seed).bind(&f).unwrap();
+        assert!(!s.depends_on_y());
+        for (x, y, z) in [(0, 0, 0), (-7, 100, 7), (100, -64, -150)] {
+            assert_eq!(
+                s.sample(x, y, z),
+                -0.84375,
+                "seed {seed} at ({x}, {y}, {z})"
+            );
+        }
+        let volume = Volume::blocks([2, 3, 2], [-1, 0, -1]);
+        assert_eq!(s.sample_volume(&volume), vec![-0.84375; 12]);
+    }
+}
+
+#[test]
+fn legacy_binding_uses_legacy_sources() {
+    use spyglass_noise::{NormalNoise, NormalNoiseParameters};
+    use spyglass_rng::{LegacyRandomSource, PositionalRandomFactory, RandomSource};
+    let noise = json!({"base_octave": -7, "octave_count": 2, "base_amplitude": 0.9});
+    let map = resources(vec![
+        ("worldgen/noise/minecraft:n".to_string(), noise.clone()),
+        (
+            "worldgen/noise/minecraft:nether/temperature".to_string(),
+            noise.clone(),
         ),
-        df("minecraft:e", json!({"type": "end_outer_islands"})),
+        df(
+            "minecraft:a",
+            json!({"type": "noise", "noise": "n", "xz_scale": 1, "y_scale": 1}),
+        ),
+        df(
+            "minecraft:t",
+            json!({"type": "noise", "noise": "nether/temperature", "xz_scale": 1, "y_scale": 0}),
+        ),
     ]);
     let mut loader = Loader::new(&map);
-    for id in ["d", "e"] {
-        let f = loader.function(id).unwrap();
-        let err = Binder::new(loader.noises(), 0).bind(&f).unwrap_err();
-        assert!(
-            matches!(*err.kind, LoadErrorKind::Unsupported { .. }),
-            "{err}"
-        );
-    }
+    let (a, t) = (loader.function("a").unwrap(), loader.function("t").unwrap());
+    let mut p = NormalNoiseParameters::new(-7);
+    p.octave_count = 2;
+    p.base_amplitude = 0.9;
+    let normal = NormalNoise::new(&p).unwrap();
+    let seed = 42;
+    let mut legacy = Binder::with_legacy_random(loader.noises(), seed, true);
+    // An ordinary noise: NormalNoise.create from the legacy factory's fromHashOf(id).
+    let factory = LegacyRandomSource::new(seed).fork_positional();
+    let expected = normal.create(&mut factory.from_hash_of("minecraft:n"));
+    assert_eq!(
+        legacy.bind(&a).unwrap().sample(10, 20, 30),
+        expected.get(10.0, 20.0, 30.0)
+    );
+    // The Nether's temperature: its own construction from LegacyRandomSource(seed), with or
+    // without legacy randomness.
+    let nether = normal
+        .create_for_legacy_nether_biome(&mut LegacyRandomSource::new(seed))
+        .unwrap();
+    let want = nether.get(10.0, 0.0, 30.0);
+    assert_eq!(legacy.bind(&t).unwrap().sample(10, 20, 30), want);
+    let mut xoroshiro = Binder::new(loader.noises(), seed);
+    assert_eq!(xoroshiro.bind(&t).unwrap().sample(10, 20, 30), want);
+    assert_ne!(
+        xoroshiro.bind(&a).unwrap().sample(10, 20, 30),
+        expected.get(10.0, 20.0, 30.0)
+    );
+}
+
+#[test]
+fn bad_parameters_are_errors() {
     let zero_cells = load_error(
         json!({"type": "interpolated", "input": 1, "cell_size_xz": 0, "cell_size_y": 8}),
     );

@@ -62,8 +62,10 @@ pub struct Case {
     pub height: Option<i32>,
     /// A density the case was evaluated with, as hex `f64` bits.
     pub density: Option<String>,
-    /// A name hashed by `seedFromHashOf`, or a noise id.
+    /// A name hashed by `seedFromHashOf`, or a noise or density function id.
     pub name: Option<String>,
+    /// The dimension, for density cases outside the overworld.
+    pub dimension: Option<String>,
     /// A sample point, as hex `f64` bits.
     #[serde(default)]
     pub point: Vec<String>,

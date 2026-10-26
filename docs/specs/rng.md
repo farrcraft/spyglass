@@ -42,7 +42,7 @@ The source for `legacy_random_source: false`, which the overworld uses.
 - `fork()`: a source seeded with `nextLong()`. `forkPositional()`: a factory seeded with `nextLong()`.
 - **Positional factory** (`seed`): `at(x, y, z)` is a source seeded with `getSeed(x, y, z) ^ seed`; `fromHashOf(name)` uses `String.hashCode()` (not MD5): `(long)hash ^ seed`, the hash sign-extended; `fromSeed(s)` ignores the factory's seed. An identifier is hashed as its full text, e.g. `minecraft:aquifer`.
 
-With `legacy_random_source: true`, `RandomState`'s positional factory is `LegacyRandomSource(seed).forkPositional()`, so its seed is that source's first `nextLong()` (draft, from the 26.3 bytecode; [noise.md](noise.md#in-a-world) and [density-functions.md](density-functions.md#binding-to-a-seed) say which noises use it).
+With `legacy_random_source: true`, `RandomState`'s positional factory is `LegacyRandomSource(seed).forkPositional()`, so its seed is that source's first `nextLong()` (from the 26.3 bytecode; [noise.md](noise.md#in-a-world) and [density-functions.md](density-functions.md#binding-to-a-seed) say which noises use it).
 
 ## Worldgen seeding (`WorldgenRandom`)
 

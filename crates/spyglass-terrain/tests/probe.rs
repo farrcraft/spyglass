@@ -19,12 +19,12 @@ fn bundle_for(version: &str) -> Bundle {
 }
 
 /// The harness's letters: `s` for the default block, else air, water or lava.
-fn letter(block: Option<Block>) -> char {
+fn letter(block: Block) -> char {
     match block {
-        None => 's',
-        Some(Block::Air) => 'a',
-        Some(Block::Water) => 'w',
-        Some(Block::Lava) => 'l',
+        Block::Default => 's',
+        Block::Air => 'a',
+        Block::Water => 'w',
+        Block::Lava => 'l',
     }
 }
 
@@ -39,7 +39,8 @@ fn every_aquifer_block_matches_the_game() {
     for path in files {
         let file = ProbeFile::read(&path).unwrap();
         let bundle = bundle_for(&file.version);
-        let settings = TerrainSettings::load(&bundle, "minecraft:overworld").unwrap();
+        let settings =
+            TerrainSettings::load(&bundle, "minecraft:overworld", "minecraft:overworld").unwrap();
         let mut bound: HashMap<i64, BoundTerrain> = HashMap::new();
         let mut failures = Vec::new();
         for case in &file.cases {
@@ -113,7 +114,8 @@ fn every_aquifer_block_matches_the_game() {
 #[ignore = "needs a bundle: spyglass-extract 26.3"]
 fn surface_levels_over_a_volume_are_their_points() {
     let bundle = bundle_for("26.3");
-    let settings = TerrainSettings::load(&bundle, "minecraft:overworld").unwrap();
+    let settings =
+        TerrainSettings::load(&bundle, "minecraft:overworld", "minecraft:overworld").unwrap();
     for seed in [0, 1, -4_893_098_694_207_956_070] {
         let terrain = settings.bind(seed).unwrap();
         let surface = &terrain.aquifer.as_ref().unwrap().surface_level;

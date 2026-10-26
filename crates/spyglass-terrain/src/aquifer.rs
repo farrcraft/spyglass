@@ -11,10 +11,13 @@ use spyglass_rng::{PositionalRandomFactory, RandomSource, XoroshiroPositionalRan
 /// `DimensionType.WAY_BELOW_MIN_Y`: a fluid level below any world, so no block is under it.
 pub const WAY_BELOW_MIN_Y: i32 = -32512;
 
-/// A block the aquifer can choose. The noise settings' default block (stone in the Overworld)
-/// is `None` where a block is optional, as the game's `null` is.
+/// A block of the generator's column: the noise settings' default block, or what the aquifer
+/// fills an open block with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Block {
+    /// The noise settings' `default_block` (`minecraft:stone` in the Overworld): what the
+    /// aquifer's `null` stands for.
+    Default,
     /// `minecraft:air`.
     Air,
     /// `minecraft:water`.
@@ -241,18 +244,18 @@ impl<'s> Aquifer<'s> {
         ((dy * self.grid_size[2] + dz) * self.grid_size[0] + dx) as usize
     }
 
-    /// `computeSubstance(x, y, z, density)`: `None` for the default block, else the fluid or air
-    /// that fills the block.
-    pub fn substance(&mut self, x: i32, y: i32, z: i32, density: f64) -> Option<Block> {
+    /// `computeSubstance(x, y, z, density)`: the default block (the game's `null`), or the fluid
+    /// or air that fills the block.
+    pub fn substance(&mut self, x: i32, y: i32, z: i32, density: f64) -> Block {
         if density > 0.0 {
-            return None;
+            return Block::Default;
         }
         let global = self.picker.status(y);
         if y > self.skip_sampling_above_y {
-            return Some(global.at(y));
+            return global.at(y);
         }
         if global.at(y) == Block::Lava {
-            return Some(Block::Lava);
+            return Block::Lava;
         }
         // The nearest three of the twelve candidate centres, x outermost, then y, then z. A
         // centre takes a slot at or beyond its distance, so on ties the later one wins.
@@ -274,31 +277,31 @@ impl<'s> Aquifer<'s> {
         let sim12 = similarity(d1, d2);
         let state = s1.at(y);
         if sim12 <= 0.0 {
-            return Some(state);
+            return state;
         }
         if state == Block::Water && self.picker.status(y - 1).at(y - 1) == Block::Lava {
-            return Some(state);
+            return state;
         }
         // The barrier noise, sampled at most once, when a pressure first needs it.
         let mut barrier = f64::NAN;
         let s2 = self.status(i2);
         if density + sim12 * self.pressure(x, y, z, &mut barrier, s1, s2) > 0.0 {
-            return None;
+            return Block::Default;
         }
         let s3 = self.status(i3);
         let sim13 = similarity(d1, d3);
         if sim13 > 0.0
             && density + sim12 * sim13 * self.pressure(x, y, z, &mut barrier, s1, s3) > 0.0
         {
-            return None;
+            return Block::Default;
         }
         let sim23 = similarity(d2, d3);
         if sim23 > 0.0
             && density + sim12 * sim23 * self.pressure(x, y, z, &mut barrier, s2, s3) > 0.0
         {
-            return None;
+            return Block::Default;
         }
-        Some(state)
+        state
     }
 
     /// A cell's centre: `positionalRandomFactory.at(cell)`, then offsets of `nextInt(10)`,
@@ -691,10 +694,10 @@ mod tests {
         upwards.reverse();
         assert_eq!(answers, upwards);
         // The column isn't trivial: air, water and at least one barrier of stone.
-        for kind in [Some(Block::Air), Some(Block::Water), None] {
+        for kind in [Block::Air, Block::Water, Block::Default] {
             assert!(answers.contains(&kind), "no {kind:?} in {answers:?}");
         }
         // A solid block is the default block, whatever the aquifer would hold there.
-        assert_eq!(down.substance(21, 0, -5, 0.01), None);
+        assert_eq!(down.substance(21, 0, -5, 0.01), Block::Default);
     }
 }

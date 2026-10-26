@@ -16,6 +16,7 @@ enum Input {
     Structures,
     Spawn,
     Locate,
+    Heights,
 }
 
 impl Input {
@@ -28,6 +29,7 @@ impl Input {
             Input::Structures => ("oracle-out", Some("structures")),
             Input::Spawn => ("oracle-out", Some("spawn")),
             Input::Locate => ("oracle-out", Some("locate")),
+            Input::Heights => ("oracle-out", Some("heights")),
         };
         let Ok(versions) = std::fs::read_dir(root.join(base)) else {
             return false;
@@ -47,6 +49,7 @@ impl Input {
             Input::Structures => "cargo xtask oracle structures",
             Input::Spawn => "cargo xtask oracle spawn",
             Input::Locate => "cargo xtask oracle locate",
+            Input::Heights => "cargo xtask oracle heights",
         }
     }
 }
@@ -83,6 +86,11 @@ const TESTS: &[(&str, &str, &[Input])] = &[
         "spyglass-terrain",
         "surface_levels_over_a_volume_are_their_points",
         &[Input::Bundle],
+    ),
+    (
+        "spyglass-terrain",
+        "every_height_matches_the_game",
+        &[Input::Heights, Input::Bundle],
     ),
     (
         "spyglass-oracle",

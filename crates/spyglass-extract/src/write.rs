@@ -15,6 +15,7 @@ use zip::result::ZipError;
 pub const JAR_DIRS: &[&str] = &[
     "data/minecraft/worldgen/",
     "data/minecraft/tags/worldgen/",
+    "data/minecraft/tags/block/",
     "data/minecraft/dimension_type/",
     "data/minecraft/structure/",
 ];
@@ -259,7 +260,8 @@ mod tests {
                 ("data/minecraft/worldgen/noise/a.json", b"{\"a\": 1}\n"),
                 ("data/minecraft/worldgen/biome/plains.json", b"{}"),
                 ("data/minecraft/tags/worldgen/biome/is_ocean.json", b"[]"),
-                ("data/minecraft/tags/block/logs.json", b"not copied"),
+                ("data/minecraft/tags/block/logs.json", b"{}"),
+                ("data/minecraft/tags/item/logs.json", b"not copied"),
                 ("data/minecraft/dimension_type/overworld.json", b"{}"),
                 ("data/minecraft/structure/igloo/top.nbt", b"\x1f\x8b"),
                 ("data/minecraft/recipe/bread.json", b"not copied"),
@@ -306,6 +308,7 @@ mod tests {
             [
                 "data/minecraft/dimension_type/overworld.json",
                 "data/minecraft/structure/igloo/top.nbt",
+                "data/minecraft/tags/block/logs.json",
                 "data/minecraft/tags/worldgen/biome/is_ocean.json",
                 "data/minecraft/worldgen/biome/plains.json",
                 "data/minecraft/worldgen/noise/a.json",

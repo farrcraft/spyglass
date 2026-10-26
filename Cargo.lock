@@ -3478,6 +3478,7 @@ dependencies = [
  "spyglass-oracle",
  "spyglass-search",
  "spyglass-structure",
+ "spyglass-terrain",
  "spyglass-world",
  "tempfile",
  "thiserror 2.0.21",
@@ -3603,6 +3604,7 @@ dependencies = [
 name = "spyglass-terrain"
 version = "0.0.0"
 dependencies = [
+ "rayon",
  "serde_json",
  "spyglass-data",
  "spyglass-density",

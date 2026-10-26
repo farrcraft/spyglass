@@ -41,6 +41,7 @@ spyglass-oracle = { path = "crates/spyglass-oracle" }
 spyglass-rng = { path = "crates/spyglass-rng" }
 spyglass-search = { path = "crates/spyglass-search" }
 spyglass-structure = { path = "crates/spyglass-structure" }
+spyglass-terrain = { path = "crates/spyglass-terrain" }
 spyglass-world = { path = "crates/spyglass-world" }
 
 anyhow = "1.0.104"

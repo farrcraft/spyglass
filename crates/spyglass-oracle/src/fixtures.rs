@@ -112,12 +112,23 @@ pub fn overworld(extra: &[(String, Value)], tie: bool) -> TestBundle {
         ),
         resource("worldgen/density_function", "zero", json!(0.0)),
         resource(
+            "tags/block",
+            "blocks_motion_in_heightmap",
+            json!({"values": ["minecraft:stone"]}),
+        ),
+        resource(
             "worldgen/noise_settings",
             "overworld",
             json!({
                 "sea_level": 63,
                 "noise": {"min_y": -64, "height": 384},
+                "default_block": "minecraft:stone",
+                "default_fluid": "minecraft:water",
                 "noise_router": {
+                    // A flat seabed: stone below y 50, then water to the sea level.
+                    "final_density": {"type": "minecraft:gradient", "axis": "y",
+                        "from_coordinate": 0, "from_value": 1.0,
+                        "to_coordinate": 100, "to_value": -1.0},
                     "temperature": {"type": "minecraft:gradient", "axis": "x",
                         "from_coordinate": -1000, "from_value": -1.0,
                         "to_coordinate": 1001, "to_value": 1.0},

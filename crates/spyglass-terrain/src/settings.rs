@@ -12,6 +12,7 @@ use spyglass_rng::{
 };
 
 use crate::aquifer::{AquiferSamplers, Block, FluidPicker};
+use crate::tags::block_tag;
 
 /// `DimensionType.MIN_Y` and `MAX_Y`: the range every noise setting's y must stay in.
 const DIMENSION_MIN_Y: i32 = -2032;
@@ -40,6 +41,13 @@ pub struct TerrainSettings {
     pub default_block: String,
     /// `default_fluid`.
     pub default_fluid: Block,
+    /// Whether `default_block` is in `#minecraft:blocks_motion_in_heightmap`, so counts for
+    /// `OCEAN_FLOOR_WG`.
+    pub default_block_blocks_motion: bool,
+    /// The dimension type's `min_y`: the level's bottom, which queries are clamped to.
+    pub level_min_y: i32,
+    /// The dimension type's `height`.
+    pub level_height: i32,
     final_density: Df,
     /// `aquifers`, absent where the dimension has none (the aquifer is then disabled).
     aquifers: Option<[Df; 6]>,
@@ -61,11 +69,13 @@ pub struct BoundTerrain {
 
 impl TerrainSettings {
     /// Loads `noise_settings` (e.g. `minecraft:overworld`): the noise range, sea level, default
-    /// block and fluid, the router's `final_density` and the `aquifers` functions. Settings with
+    /// block and fluid, the router's `final_density` and the `aquifers` functions; and from
+    /// `dimension_type` (e.g. `minecraft:overworld`), the level's range. Settings with
     /// `legacy_random_source: true` aren't supported yet.
     pub fn load<R: Resources + ?Sized>(
         resources: &R,
         noise_settings: &str,
+        dimension_type: &str,
     ) -> Result<Self, LoadError> {
         let id = full_id(noise_settings);
         let root = At::root(&id);
@@ -107,6 +117,9 @@ impl TerrainSettings {
                     }));
                 }
             };
+        let default_block_blocks_motion =
+            block_tag(resources, "minecraft:blocks_motion_in_heightmap")?.contains(&default_block);
+        let (level_min_y, level_height) = level_range(resources, dimension_type)?;
         let mut loader = Loader::new(resources);
         let router = field(settings, "noise_router", &root)?;
         let router = object(router, &root.child("noise_router"))?;
@@ -133,6 +146,9 @@ impl TerrainSettings {
             sea_level,
             default_block,
             default_fluid,
+            default_block_blocks_motion,
+            level_min_y,
+            level_height,
             final_density,
             aquifers,
             noises: loader.noises().clone(),
@@ -183,6 +199,19 @@ impl TerrainSettings {
             fluid_picker: self.fluid_picker(),
         })
     }
+}
+
+/// A dimension type's `min_y` and `height`.
+fn level_range<R: Resources + ?Sized>(resources: &R, id: &str) -> Result<(i32, i32), LoadError> {
+    let id = full_id(id);
+    let root = At::root(&id);
+    let json = resources
+        .resource("dimension_type", &id)
+        .map_err(|e| root.error(e.into()))?;
+    let dimension = object(&json, &root)?;
+    let min_y = int(field(dimension, "min_y", &root)?, &root.child("min_y"))?;
+    let height = int(field(dimension, "height", &root)?, &root.child("height"))?;
+    Ok((min_y, height))
 }
 
 /// `NoiseSettings.CODEC`: `min_y` and `height` in the dimension range, both multiples of 16,

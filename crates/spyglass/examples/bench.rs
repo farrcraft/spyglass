@@ -95,6 +95,18 @@ fn main() -> spyglass::Result<()> {
         let session = world.session(*seeds.next().unwrap()).unwrap();
         black_box(session.spawn_origin());
     });
+    report("height_at one column, new session", 10, || {
+        let session = world.session(*seeds.next().unwrap()).unwrap();
+        black_box(session.height_at([100, -200], spyglass::Heightmap::WorldSurfaceWg));
+    });
+    let heights = world.session(SEEDS[0])?;
+    heights.height_at([0, 0], spyglass::Heightmap::WorldSurfaceWg);
+    report("height_at one column, bound", 20, || {
+        black_box(heights.height_at([100, -200], spyglass::Heightmap::WorldSurfaceWg));
+    });
+    report("heights_in 40 x 25 columns", 3, || {
+        black_box(heights.heights_in([0, 0], [39, 24], spyglass::Heightmap::OceanFloorWg));
+    });
     // Seed search: one constraint of each kind, judged in a new session (what a search's
     // full check costs per seed), then whole searches.
     let kinds = [

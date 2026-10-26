@@ -27,12 +27,14 @@ mod save;
 mod search;
 
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use spyglass_biome::{BiomeId, BiomeSource, Biomes, SearchVolume, SpawnSearch, SpawnTargets};
 use spyglass_data::bundle::{Bundle, BundleError};
 use spyglass_data::codec::{LoadError, full_id};
 use spyglass_structure::{Placements, Starts, StructureSets};
+use spyglass_terrain::{Terrain, TerrainSettings};
 
 pub use render::{
     BiomeMap, DEFAULT_MAP_Y, Image, Layers, MARKER_REACH, MAX_PIXELS, MAX_SCALE, MAX_SIDE,
@@ -47,6 +49,7 @@ pub use search::{
     SearchOutcome, SearchProgress, SearchQuery, SeedSource,
 };
 pub use spyglass_structure::LOCATE_RADIUS;
+pub use spyglass_terrain::Heightmap;
 
 /// A search query's syntax tree, from [`SearchQuery::query`] (`docs/specs/search.md`).
 pub mod query {
@@ -265,6 +268,7 @@ pub struct World {
     source: BiomeSource,
     sets: StructureSets,
     spawn: SpawnTargets,
+    terrain: TerrainSettings,
     /// Each biome's map colour, by [`BiomeId`].
     palette: Vec<[u8; 3]>,
 }
@@ -277,6 +281,10 @@ impl World {
         let source = BiomeSource::overworld(&bundle)?;
         let sets = StructureSets::overworld(&bundle, &source)?;
         let spawn = SpawnTargets::load(&bundle, source.noise_settings())?;
+        let terrain =
+            TerrainSettings::load(&bundle, source.noise_settings(), "minecraft:overworld")?;
+        // Binding fails the same way for every seed, so a world that opens binds for all.
+        Terrain::new(&terrain, 0)?;
         let palette = source
             .parameters()
             .names()
@@ -290,6 +298,7 @@ impl World {
             source,
             sets,
             spawn,
+            terrain,
             palette,
         })
     }
@@ -324,6 +333,7 @@ impl World {
             spawn: self.spawn.with_seed(seed)?,
             biomes,
             placements,
+            terrain: OnceLock::new(),
         })
     }
 
@@ -419,6 +429,8 @@ pub struct Session<'w> {
     biomes: Biomes<'w>,
     placements: Placements<'w>,
     spawn: SpawnSearch,
+    /// Bound on first use: most queries never need terrain.
+    terrain: OnceLock<Terrain>,
 }
 
 /// The biome at a position.
@@ -534,6 +546,32 @@ impl<'w> Session<'w> {
                 Vec::new()
             },
         }
+    }
+
+    /// The seed's terrain, bound the first time it's asked for.
+    fn terrain(&self) -> &Terrain {
+        self.terrain.get_or_init(|| {
+            Terrain::new(&self.world.terrain, self.seed)
+                .expect("terrain binds for every seed once it binds for one, as World::open checks")
+        })
+    }
+
+    /// The generator's height at block column `(x, z)` (`ChunkGenerator.getBaseHeight`): one
+    /// above the highest block `heightmap` counts, before structures, carvers, features or
+    /// surface blocks change the column. This is what structures are placed by. The first call
+    /// binds the seed's terrain.
+    pub fn height_at(&self, [x, z]: [i32; 2], heightmap: Heightmap) -> i32 {
+        self.terrain().base_height(x, z, heightmap)
+    }
+
+    /// [`height_at`](Self::height_at) for every column from `min` to `max` inclusive, z outer
+    /// and x inner. Empty if `max` is below `min` on either axis.
+    pub fn heights_in(&self, min: [i32; 2], max: [i32; 2], heightmap: Heightmap) -> Vec<i32> {
+        let size = [max[0] - min[0] + 1, max[1] - min[1] + 1];
+        if size[0] <= 0 || size[1] <= 0 {
+            return Vec::new();
+        }
+        self.terrain().base_heights(min, size, heightmap)
     }
 
     /// The biome at block `(x, y, z)`: its quart's, as the game stores it. This isn't always the

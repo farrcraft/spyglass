@@ -18,4 +18,5 @@ spyglass-noise.workspace = true
 spyglass-rng.workspace = true
 
 [dev-dependencies]
+rayon.workspace = true
 spyglass-oracle.workspace = true

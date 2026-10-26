@@ -2,7 +2,7 @@
 //! desert east of it, and structure sets chosen to exercise each kind of locate answer. No game
 //! data (ADR 0008), so these always run.
 
-use spyglass::{Error, World};
+use spyglass::{Error, Heightmap, World};
 use spyglass_oracle::fixtures;
 
 #[test]
@@ -13,6 +13,23 @@ fn biomes_follow_the_temperature_gradient() {
     assert_eq!(session.biome_at([-500, 64, 0]).biome, "minecraft:plains");
     assert_eq!(session.biome_at([500, 64, 123]).biome, "minecraft:desert");
     assert!(session.biome_at([500, 64, 123]).tied.is_empty());
+}
+
+#[test]
+fn heights_follow_the_flat_seabed() {
+    let fixture = fixtures::structured_overworld(false);
+    let world = World::open(fixture.path()).unwrap();
+    let session = world.session(7).unwrap();
+    // Stone below y 50, water to the sea level at 63.
+    assert_eq!(session.height_at([-30, 900], Heightmap::WorldSurfaceWg), 63);
+    assert_eq!(session.height_at([-30, 900], Heightmap::OceanFloorWg), 50);
+    let region = session.heights_in([-3, 5], [20, 6], Heightmap::OceanFloorWg);
+    assert_eq!(region, vec![50; 24 * 2]);
+    assert!(
+        session
+            .heights_in([1, 1], [0, 5], Heightmap::OceanFloorWg)
+            .is_empty()
+    );
 }
 
 #[test]

@@ -13,6 +13,7 @@ A bundle is a directory, by default `bundles/<version id>/`:
 | `bundle.json`                         | The extractor (below).                                                       | 1          |
 | `data/minecraft/worldgen/**`          | The inner game jar, same path.                                               | 1,144      |
 | `data/minecraft/tags/worldgen/**`     | The inner game jar, same path.                                               | 123        |
+| `data/minecraft/tags/block/**`        | The inner game jar, same path: block tags, for heightmaps.                   | 297        |
 | `data/minecraft/dimension_type/**`    | The inner game jar, same path.                                               | 4          |
 | `data/minecraft/structure/**`         | The inner game jar, same path: structure templates, gzip-compressed NBT.     | 1,511      |
 | `reports/biome_parameters/minecraft/` | The data generator's `--reports` output: `overworld.json` and `nether.json`. | 2          |
@@ -24,7 +25,7 @@ Rules:
 - Paths use `/` and are relative to the bundle root, both on disk and in `bundle.json`.
 - Nothing else is in the bundle directory. A file that isn't listed in `bundle.json` makes the bundle invalid.
 
-The set of included directories is part of the format. Adding one changes this spec and the extractor's version, but not `format`. Structure templates were added this way ([ADR 0013](../adr/0013-structure-templates-and-nbt.md)). A bundle extracted before then has none, and loaders that need templates say so and ask for it to be extracted again.
+The set of included directories is part of the format. Adding one changes this spec and the extractor's version, but not `format`. Structure templates were added this way ([ADR 0013](../adr/0013-structure-templates-and-nbt.md)), then block tags. A bundle extracted before then has none, and loaders that need them say so and ask for it to be extracted again.
 
 ## `bundle.json`
 

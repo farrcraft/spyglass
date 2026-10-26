@@ -82,7 +82,7 @@ Non-jigsaw structures' pieces (strongholds, mansions, monuments, mineshafts and 
 
 Set now, revisited once after phase 4's first measurement (any change recorded in Notes with the numbers behind it). Release, one thread, on the 26.3 bundle, in a new session:
 
-- `height_at` for one column: at most 150 µs, binding included; 1,000 columns in one chunk-aligned region: at most 30 ms.
+- `height_at` for one column in a bound session: at most 150 µs; binding a seed's terrain: at most 400 µs; 1,000 columns in one chunk-aligned region: at most 30 ms. (Revised after phase 4's measurement, see Notes: the first target included binding, which alone costs more than 150 µs.)
 - A confirmed swamp-hut count within 1,000 of 0,0: at most 3× the unconfirmed cost (1.2 ms today, so 3.6 ms).
 - A confirmed `#minecraft:village` locate from 0,0: at most 50 ms.
 - The m06 witch-hut query (`require 2 minecraft:swamp_hut within 400 of 0,0`) searched with `confirm` on all cores: at least a quarter of the unconfirmed rate.
@@ -127,9 +127,9 @@ Specs and ADRs that govern this: [density-functions.md](../specs/density-functio
 ### Phase 4: `spyglass-terrain` and heightmaps
 
 - [x] Create the crate (`[lints] workspace = true`; architecture table updated). Done in phase 3, with the noise settings terrain needs (`TerrainSettings`).
-- [ ] Columns, `base_height` for both heightmaps, `base_column`, first free and first occupied heights; a per-seed column cache.
-- [ ] Ignored golden test: every height in the height golden files, and the block columns, listed in `xtask/src/oracle_test.rs` with a new `Heights` input. Exit criterion 1.
-- [ ] `Session::height_at` and `heights_in`, bound lazily. First speed measurement against the targets.
+- [x] Columns, `base_height` for both heightmaps, `base_column`, first free and first occupied heights, and `base_heights` for a box, chunk by chunk. The per-seed column cache moves to phase 5, where structure checks are what share columns.
+- [x] Ignored golden test: every height in the height golden files, and the block columns, listed in `xtask/src/oracle_test.rs` with a new `Heights` input. Exit criterion 1.
+- [x] `Session::height_at` and `heights_in`, bound lazily. First speed measurement against the targets.
 
 ### Phase 5: validity
 
@@ -192,6 +192,10 @@ Agreed on 2026-10-25, as recommended:
 
 ## Notes
 
+- 2026-10-26: Phase 4 done. Exit criterion 1 is met: every height in the ten golden files (both heightmaps, 81,920 columns each) and every block of their sampled columns matches, 2,041,000 values, through both the chunk-wise path and, for every 13th column, a column's own. `OCEAN_FLOOR_WG` needs `#minecraft:blocks_motion_in_heightmap`, so bundles now include `data/minecraft/tags/block/` (297 files); older bundles must be extracted again. First measurement (release, one thread, `cargo xtask bench`):
+  - Binding a seed's terrain: 321 µs, mostly creating its noises. One column in a bound session: 243 µs in the bench (one column, repeated), 430 µs on average over 300 varied columns, of which the density volume is 262 µs, the aquifer's surface-level prefill 141 µs and the scan the rest. One column in a new session: 552 µs in the bench. The game: about 500 µs.
+  - 1,000 columns (40 × 25 from 0,0): 462 ms column by column, 24 ms chunk by chunk (one density volume and one aquifer per chunk, which share cell corners and surface levels). `heights_in` uses the chunk path.
+  - So the 150 µs target with binding included can't be met: binding alone exceeds it. Split into 150 µs per bound column (missed by 1.6 to 2.9×, for phase 8) and 400 µs for binding (met). The region target is met.
 - 2026-10-26: Phase 3 done. The aquifer (`spyglass-terrain`, with `TerrainSettings` loading and binding final density and the aquifer functions with one binder) matches the game block for block in 320 probe columns: 8 columns × 10 seeds, with each column's own density and with densities −1, −0.02 and 0. A mutation that drops the `sim13 > 0` condition fails 160; one that breaks ties the other way fails none (no ties in these columns), so a unit test pins the tie rule. From the bytecode, beyond the spec's phase 1 draft: pressure compares the two statuses' blocks at y, not their fluids; each of the last two pressure terms needs its own positive similarity; the aquifer prefills surface levels over its region as a quart-stepped volume at y 0, which equals points for 26.3 (checked by an ignored test). The terrain spec's open questions are all settled.
   - `cargo xtask oracle-test` listed the density loading test under an old name, so `--exact` skipped it silently; fixed, and the two terrain tests added. All 28 pass.
 - 2026-10-26: Phase 3's volume path done. Every type has a volume path (`Sampler::sample_volume`, over the noise crate's new `Volume`), and `interpolated` binds, so 53 of the 55 bundled functions bind (the End's two don't). The probe gained column digests for every named function (8 columns × 10 seeds), full `final_density` columns and `final_density` chunk digests (4 chunks × 10 seeds); all 14,660 density cases match, and a mutation of `fillCell`'s y accumulation fails 604 of them. From the bytecode:

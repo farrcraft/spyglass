@@ -52,8 +52,9 @@ fn locate_agrees_with_the_game() {
                 let (hits, complete, certain): (Vec<[Option<i32>; 3]>, bool, bool) =
                     match case["kind"].as_str().unwrap() {
                         "structure" => {
+                            let query = session.world().structure_query(target).unwrap();
                             let r = session
-                                .locate_structure(target, from, spyglass::LOCATE_RADIUS)
+                                .locate_structure(&query, from, spyglass::LOCATE_RADIUS)
                                 .unwrap();
                             (
                                 r.hits
@@ -68,8 +69,9 @@ fn locate_agrees_with_the_game() {
                             )
                         }
                         _ => {
+                            let query = session.world().biome_query(target).unwrap();
                             let r = session
-                                .locate_biome(target, from, spyglass::LOCATE_BIOME_RADIUS)
+                                .locate_biome(&query, from, spyglass::LOCATE_BIOME_RADIUS)
                                 .unwrap();
                             let certain = r.hits.last().is_some_and(|h| h.certain);
                             (

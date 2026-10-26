@@ -176,24 +176,9 @@ fn main() -> ExitCode {
 }
 
 fn open(common: &Common) -> Result<World> {
-    let dir = match (&common.bundle, &common.game_version) {
-        (Some(dir), _) => dir.clone(),
-        (None, Some(version)) => common.bundles.join(version),
-        (None, None) => {
-            let found = spyglass::bundles_in(&common.bundles).with_context(|| {
-                format!(
-                    "no bundles in {}; extract one with spyglass-extract",
-                    common.bundles.display()
-                )
-            })?;
-            match found.into_iter().next() {
-                Some(b) => b.dir,
-                None => bail!(
-                    "no bundles in {}; extract one with spyglass-extract",
-                    common.bundles.display()
-                ),
-            }
-        }
+    let dir = match &common.bundle {
+        Some(dir) => dir.clone(),
+        None => spyglass::find_bundle(&common.bundles, common.game_version.as_deref())?.dir,
     };
     World::open(&dir).with_context(|| format!("loading the bundle in {}", dir.display()))
 }
@@ -342,7 +327,8 @@ fn run(cli: Cli) -> Result<()> {
 
 fn structure(out: &Out<'_>, target: &str, from: [i32; 3], radius: i32) -> Result<()> {
     let (session, as_json) = (out.session, out.json);
-    let found = session.locate_structure(target, from, radius)?;
+    let query = session.world().structure_query(target)?;
+    let found = session.locate_structure(&query, from, radius)?;
     if as_json {
         let hits: Vec<Value> = found
             .hits
@@ -412,7 +398,8 @@ fn structure(out: &Out<'_>, target: &str, from: [i32; 3], radius: i32) -> Result
 
 fn biome(out: &Out<'_>, biome: &str, from: [i32; 3], radius: i32) -> Result<()> {
     let (session, as_json) = (out.session, out.json);
-    let found = session.locate_biome(biome, from, radius)?;
+    let query = session.world().biome_query(biome)?;
+    let found = session.locate_biome(&query, from, radius)?;
     if as_json {
         let hits: Vec<Value> = found
             .hits
@@ -462,23 +449,7 @@ fn biome(out: &Out<'_>, biome: &str, from: [i32; 3], radius: i32) -> Result<()> 
 fn slime(out: &Out<'_>, from: [i32; 3], radius: i32) -> Result<()> {
     let (session, as_json) = (out.session, out.json);
     let centre = [from[0] >> 4, from[2] >> 4];
-    let min = [
-        centre[0].saturating_sub(radius),
-        centre[1].saturating_sub(radius),
-    ];
-    let max = [
-        centre[0].saturating_add(radius),
-        centre[1].saturating_add(radius),
-    ];
-    let mut chunks = session.slime_chunks(min, max);
-    let distance = |[x, z]: [i32; 2]| {
-        let (dx, dz) = (
-            i64::from(x) - i64::from(centre[0]),
-            i64::from(z) - i64::from(centre[1]),
-        );
-        dx * dx + dz * dz
-    };
-    chunks.sort_by_key(|&c| (distance(c), c[1], c[0]));
+    let chunks = session.slime_chunks_near(centre, radius);
     if as_json {
         return print_json(
             header(out, "locate slime"),
@@ -583,9 +554,10 @@ fn save_json(report: &SaveReport) -> Value {
 }
 
 fn world_list(bundles: &std::path::Path, as_json: bool) -> Result<()> {
+    let inspector = spyglass::SaveInspector::new(bundles)?;
     let mut rows = Vec::new();
     for found in spyglass::launcher_saves() {
-        let report = spyglass::inspect_save(&found.dir, bundles, Scan::Quick);
+        let report = inspector.inspect(&found.dir, Scan::Quick);
         rows.push((found, report));
     }
     if as_json {

@@ -21,6 +21,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Time the public API's main operations in a release build (`crates/spyglass/examples/bench.rs`).
+    Bench {
+        /// The bundle to use [default: bundles/26.3].
+        bundle: Option<PathBuf>,
+    },
     /// Run every check in .pre-commit-config.yaml against the whole repo, as CI does.
     Check,
     /// Report whether this machine is ready to work on spyglass. Never installs anything.
@@ -57,6 +62,7 @@ enum Cmd {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
+        Cmd::Bench { bundle } => bench(bundle.as_deref()),
         Cmd::Check => check(),
         Cmd::Doctor { game_version, java } => doctor(&game_version, java.as_deref()),
         Cmd::JdkStatus { game_version } => jdk_status(&game_version),
@@ -104,6 +110,26 @@ fn command(program: &str) -> Command {
         }
     }
     cmd
+}
+
+fn bench(bundle: Option<&Path>) -> Result<()> {
+    let mut cmd = command("cargo");
+    cmd.args([
+        "run",
+        "--quiet",
+        "--release",
+        "-p",
+        "spyglass",
+        "--example",
+        "bench",
+    ]);
+    if let Some(bundle) = bundle {
+        cmd.arg("--").arg(bundle);
+    }
+    if !cmd.status().context("failed to run cargo")?.success() {
+        bail!("the benchmark failed");
+    }
+    Ok(())
 }
 
 /// First line of a command's stdout, or `None` if it can't run or fails.

@@ -182,21 +182,17 @@ Six phases, each a commit or two that passes `cargo xtask check` and the oracle 
 
 ### 4. Public API
 
-- [ ] `StructureQuery` and `BiomeId` handles. The resolvers do the existence check once and parse tags once. String conveniences stay for one-off calls.
-- [ ] `Placements` borrows the `Biomes`. Spawn becomes lazy. Climate and spawn share one noise binding per seed.
-- [ ] Measure the cost of creating one `Session` and of one cached `locate_structure` call before and after. Record the numbers in the notes.
-- [ ] `const _: () = { fn assert<T: Send + Sync>() {} assert::<World>(); assert::<Session<'static>>(); };` or an equivalent test.
-- [ ] `Error`:
-  - `#[non_exhaustive]`
-  - `Io` and `AmbiguousSave`
-  - opaque data and save errors with `source()`
-  - fix the misused variants in `save.rs`
-  - the CLI's messages unchanged, checked by its tests
-- [ ] `spyglass::find_bundle(dir, version)`: newest by data version, or by `BundleInfo.version`. The CLI uses it.
-- [ ] `Session::slime_chunks_near(from, radius)`: nearest first, the order `cli-json.md` specifies. The CLI uses it.
-- [ ] `Session::structures_in`: keep it with a test (the viewer will want it), or remove it until the viewer plan needs it.
-- [ ] `generator_warning` and `inspect_save` reuse one open `Bundle` per version in `world list`. When `bundles/` is missing, say so instead of reporting `NoBundle`.
-- [ ] A superseding ADR for 0014 if the handles change its decision. Update `locate.md` and `cli-json.md` if any output changes (none expected).
+- [x] `World::structure_query` and `World::biome_query` resolve a name once into a `StructureQuery` or `BiomeQuery`; `locate_structure`, `structures_in` and `locate_biome` take them. A query used with another world's session is `Error::OtherWorld`. No string conveniences: one path, and resolving is a single call.
+- [x] Binding a seed: measured at 0.1 ms per session (climate and spawn together), so `Placements` keeps its clone of `Biomes` (six `Arc`s), spawn stays eager and the two noise bindings stay separate. Not worth the complexity.
+- [x] Before/after numbers in the notes.
+- [x] A compile-time `Send + Sync` check for `World`, `Session`, the queries and `Error`.
+- [x] `Error` is `#[non_exhaustive]`, with `Io`, `NoBundle`, `AmbiguousSave` and `OtherWorld`; bundle, load and save failures are `Data(Cause)`/`Save(Cause)`, an opaque `Cause`. `save.rs` uses `AmbiguousSave` and `Io`; `Unknown`'s doc includes world saves. The CLI's tests pass unchanged.
+- [x] `spyglass::find_bundle(dir, version)`: newest, or the one whose `BundleInfo.version` matches. The CLI uses it, so `--game-version` matches the bundle's version, not its folder name.
+- [x] `Session::slime_chunks_near(centre, radius)`, used by the CLI.
+- [ ] `Session::structures_in`: kept (the viewer needs it); its test comes with phase 6's synthetic-bundle tests.
+- [x] `SaveInspector` reads each bundle's world presets once, for `world list`; `inspect_save` is one inspector, one save. A missing `bundles/` has no bundles, and each save's `NoBundle` warning says to extract one.
+- [x] ADR 0014's decision stands (handles refine its methods); `locate.md` describes the queries.
+- [x] `cargo xtask bench` (`crates/spyglass/examples/bench.rs`), brought forward from phase 5 to measure this phase.
 
 ### 5. Density performance
 
@@ -277,6 +273,11 @@ Agreed on 2026-10-25, as recommended:
 
 ## Notes
 
+- 2026-10-25: Phase 4 done. `cargo xtask bench`, medians in ms, before → after:
+  - `World::open` 334 → 330; `World::session` 0.10 → 0.10
+  - village locate 459, or 505 when resolved from text → 363 resolved, 385 from text (the text path re-parses tags; the runs are noisy by about 20%)
+  - stronghold locate in a new session 3,175 → 2,437; cherry grove locate 102 → 71; 65,536 `biome_at` 422 → 423. Nothing on these paths changed, so the differences are run-to-run noise: compare only within one run, or repeat.
+  - Everything that's slow is density evaluation, which phase 5 targets.
 - 2026-10-25: Phase 3 done. A fresh `spyglass-extract 26.3` writes a `bundle.json` byte-identical to the existing bundle's.
 - 2026-10-25: Phase 2 done.
   - The 26.3 bytecode of `Mth.floor` is `Math.floor` then `d2i`, which is exactly `(int) Math.floor(d)`, so `mth::floor`, its doc and its test were right. The classic `i - 1` form the assessment had in mind isn't the current one.

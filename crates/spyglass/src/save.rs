@@ -1,8 +1,10 @@
 //! World saves through the public API: reading a save, matching it to a bundle, and saying what
 //! makes it unpredictable. See `docs/specs/world-saves.md`.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 use spyglass_data::bundle::Bundle;
@@ -258,14 +260,10 @@ pub fn find_save(path_or_name: &str) -> Result<PathBuf> {
             what: "world save",
             id: path_or_name.to_string(),
         }),
-        many => Err(Error::Unsupported(format!(
-            "{} saves are called {path_or_name:?}; give a path: {}",
-            many.len(),
-            many.iter()
-                .map(|s| s.dir.display().to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        ))),
+        many => Err(Error::AmbiguousSave {
+            name: path_or_name.to_string(),
+            matches: many.iter().map(|s| s.dir.clone()).collect(),
+        }),
     }
 }
 
@@ -280,17 +278,73 @@ pub enum Scan {
 }
 
 /// Reads the save in `dir` and assesses it against the bundles in `bundles` (e.g. `bundles/`).
+/// To assess several saves, a [`SaveInspector`] reads each bundle once.
 pub fn inspect_save(
     dir: impl AsRef<Path>,
     bundles: impl AsRef<Path>,
     scan: Scan,
 ) -> Result<SaveReport> {
-    let save = spyglass_world::Save::read(dir.as_ref())?;
+    SaveInspector::new(bundles)?.inspect(dir, scan)
+}
+
+/// A bundle's world presets: each id and its overworld generator, normalized.
+type Presets = Vec<(String, Value)>;
+
+/// Assesses saves against one bundles folder. Each bundle's world presets are read once, the
+/// first time a save needs them.
+pub struct SaveInspector {
+    bundles: Vec<BundleInfo>,
+    /// Each bundle's overworld generators by preset id, normalized, by bundle folder.
+    presets: Mutex<HashMap<PathBuf, Arc<Presets>>>,
+}
+
+impl SaveInspector {
+    /// An inspector for the bundles in `bundles` (e.g. `bundles/`). A missing folder has none,
+    /// so every save gets [`SaveWarning::NoBundle`].
+    pub fn new(bundles: impl AsRef<Path>) -> Result<Self> {
+        Ok(SaveInspector {
+            bundles: bundles_in(bundles)?,
+            presets: Mutex::new(HashMap::new()),
+        })
+    }
+
+    /// The overworld generators of `bundle`'s world presets.
+    fn presets(&self, bundle: &BundleInfo) -> Result<Arc<Presets>> {
+        let mut cache = self.presets.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(p) = cache.get(&bundle.dir) {
+            return Ok(p.clone());
+        }
+        let opened = Bundle::open(&bundle.dir)?;
+        let mut presets = Vec::new();
+        for id in opened.registry_ids("worldgen/world_preset") {
+            let preset = opened.resource("worldgen/world_preset", &id)?;
+            if let Some(generator) = preset
+                .get("dimensions")
+                .and_then(|d| d.get(OVERWORLD))
+                .and_then(|d| d.get("generator"))
+            {
+                presets.push((id, normalize(generator)));
+            }
+        }
+        let presets = Arc::new(presets);
+        cache.insert(bundle.dir.clone(), presets.clone());
+        Ok(presets)
+    }
+
+    /// Reads the save in `dir` and assesses it.
+    pub fn inspect(&self, dir: impl AsRef<Path>, scan: Scan) -> Result<SaveReport> {
+        inspect(self, dir.as_ref(), scan)
+    }
+}
+
+fn inspect(inspector: &SaveInspector, dir: &Path, scan: Scan) -> Result<SaveReport> {
+    let save = spyglass_world::Save::read(dir)?;
     let bundle = match save.data_version {
-        Some(v) => bundles_in(bundles)
-            .unwrap_or_default()
-            .into_iter()
-            .find(|b| i64::from(b.data_version) == i64::from(v)),
+        Some(v) => inspector
+            .bundles
+            .iter()
+            .find(|b| i64::from(b.data_version) == i64::from(v))
+            .cloned(),
         None => None,
     };
     let mut warnings = Vec::new();
@@ -300,7 +354,8 @@ pub fn inspect_save(
             version_name: save.version_name.clone(),
         });
     }
-    if let Some(w) = generator_warning(&save, bundle.as_ref())? {
+    let presets = bundle.as_ref().map(|b| inspector.presets(b)).transpose()?;
+    if let Some(w) = generator_warning(&save, presets.as_deref().map(Vec::as_slice)) {
         warnings.push(w);
     }
     if !save.generate_structures {
@@ -324,12 +379,11 @@ pub fn inspect_save(
         warnings.push(SaveWarning::Modded);
     }
     if scan == Scan::Chunks {
-        let chunks = region::chunk_versions(&save.region_dir(OVERWORLD)).map_err(|source| {
-            Error::Bundle(spyglass_data::bundle::BundleError::Io {
+        let chunks =
+            region::chunk_versions(&save.region_dir(OVERWORLD)).map_err(|source| Error::Io {
                 path: save.region_dir(OVERWORLD),
                 source,
-            })
-        })?;
+            })?;
         let older = chunks.older_than(save.data_version.unwrap_or(i32::MAX));
         if older > 0 {
             warnings.push(SaveWarning::OlderChunks {
@@ -386,15 +440,16 @@ fn normalize(value: &Value) -> Value {
 }
 
 /// The warning for the save's overworld generator, if it isn't the Default preset's.
+/// `presets` are the bundle's, as [`SaveInspector::presets`] gives them; `None` without a bundle.
 fn generator_warning(
     save: &spyglass_world::Save,
-    bundle: Option<&BundleInfo>,
-) -> Result<Option<SaveWarning>> {
+    presets: Option<&[(String, Value)]>,
+) -> Option<SaveWarning> {
     let Some(generator) = save.generators.get(OVERWORLD) else {
-        return Ok(Some(SaveWarning::UnsupportedGenerator {
+        return Some(SaveWarning::UnsupportedGenerator {
             preset: None,
             generator: "none".into(),
-        }));
+        });
     };
     let describe = || {
         if let Some(legacy) = generator.get("legacy_generator") {
@@ -410,33 +465,21 @@ fn generator_warning(
             None => kind.to_string(),
         }
     };
-    let Some(bundle) = bundle else {
-        // Without a bundle there are no presets to compare with; the missing bundle already
-        // blocks answers.
-        return Ok(None);
-    };
-    let bundle = Bundle::open(&bundle.dir)?;
+    // Without a bundle there are no presets to compare with; the missing bundle already blocks
+    // answers.
+    let presets = presets?;
     let ours = normalize(generator);
-    let mut matched = None;
-    for id in bundle.registry_ids("worldgen/world_preset") {
-        let preset = bundle.resource("worldgen/world_preset", &id)?;
-        let theirs = preset
-            .get("dimensions")
-            .and_then(|d| d.get(OVERWORLD))
-            .and_then(|d| d.get("generator"))
-            .map(normalize);
-        if theirs.as_ref() == Some(&ours) {
-            matched = Some(id);
-            break;
-        }
-    }
-    Ok(match matched.as_deref() {
+    let matched = presets
+        .iter()
+        .find(|(_, theirs)| *theirs == ours)
+        .map(|(id, _)| id.clone());
+    match matched.as_deref() {
         Some(SUPPORTED_PRESET) => None,
         _ => Some(SaveWarning::UnsupportedGenerator {
             preset: matched,
             generator: describe(),
         }),
-    })
+    }
 }
 
 #[cfg(test)]

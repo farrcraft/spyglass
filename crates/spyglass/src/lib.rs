@@ -6,12 +6,17 @@
 //! ```no_run
 //! let world = spyglass::World::open("bundles/26.3")?;
 //! let session = world.session(spyglass::parse_seed("spyglass")?)?;
-//! let villages = session.locate_structure("#minecraft:village", [0, 64, 0], spyglass::LOCATE_RADIUS)?;
+//! let village = world.structure_query("#minecraft:village")?;
+//! let villages = session.locate_structure(&village, [0, 64, 0], spyglass::LOCATE_RADIUS)?;
 //! if let Some(hit) = villages.hits.first() {
 //!     println!("{:?} certain: {}", hit.start.position, hit.start.certain);
 //! }
 //! # Ok::<(), spyglass::Error>(())
 //! ```
+//!
+//! Names (`#minecraft:village`, `minecraft:cherry_grove`) are resolved once against a world into
+//! a [`StructureQuery`] or [`BiomeQuery`], which every session of that world can reuse. Worlds,
+//! sessions and queries are `Send + Sync`, so one world can serve many threads.
 //!
 //! Answers say how sure they are. A biome cell can be tied, a structure start can need terrain
 //! spyglass doesn't compute yet, and some results depend on the platform the game runs on;
@@ -19,16 +24,17 @@
 
 mod save;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use spyglass_biome::{BiomeId, BiomeSource, Biomes, SpawnSearch, SpawnTargets};
 use spyglass_data::bundle::{Bundle, BundleError};
-use spyglass_data::codec::LoadError;
+use spyglass_data::codec::{LoadError, full_id};
 use spyglass_structure::{Placements, Starts, StructureSets};
 
 pub use save::{
-    LauncherSave, PackConcern, SaveInfo, SaveLocation, SaveReport, SaveWarning, Scan, find_save,
-    inspect_save, launcher_saves,
+    LauncherSave, PackConcern, SaveInfo, SaveInspector, SaveLocation, SaveReport, SaveWarning,
+    Scan, find_save, inspect_save, launcher_saves,
 };
 pub use spyglass_structure::LOCATE_RADIUS;
 
@@ -39,32 +45,90 @@ const BIOME_HORIZONTAL_STEP: i32 = 32;
 /// `/locate biome`'s vertical step in blocks.
 const BIOME_VERTICAL_STEP: i32 = 64;
 
-/// Why a request failed.
+/// Why a request failed. More kinds may be added.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum Error {
-    /// The bundle couldn't be read.
+    /// A bundle couldn't be read, or its data couldn't be loaded. The message names the file
+    /// and, for JSON, the path in it.
     #[error(transparent)]
-    Bundle(#[from] BundleError),
-    /// The bundle's data couldn't be loaded.
+    Data(Cause),
+    /// A world save couldn't be read. The message names the file and the field.
     #[error(transparent)]
-    Load(#[from] LoadError),
-    /// A structure, structure tag or biome the bundle doesn't have.
+    Save(Cause),
+    /// A file or folder couldn't be read.
+    #[error("I/O error on {path}: {source}")]
+    Io {
+        /// The file or folder.
+        path: PathBuf,
+        /// The underlying error.
+        source: std::io::Error,
+    },
+    /// A structure, structure tag, biome or world save that doesn't exist.
     #[error("unknown {what} {id:?}")]
     Unknown {
-        /// What was looked up: `structure`, `structure tag` or `biome`.
+        /// What was looked up: `structure`, `structure tag`, `biome` or `world save`.
         what: &'static str,
-        /// The id as given.
+        /// The id or name as given.
         id: String,
+    },
+    /// No bundle to use: none in the folder, or none for the version asked for.
+    #[error(
+        "no bundle{} in {}; extract one with spyglass-extract",
+        .version.as_ref().map_or(String::new(), |v| format!(" for {v}")),
+        .dir.display()
+    )]
+    NoBundle {
+        /// The bundles folder.
+        dir: PathBuf,
+        /// The game version asked for, if any.
+        version: Option<String>,
+    },
+    /// Several launcher saves have the folder name given.
+    #[error(
+        "{} saves are called {name:?}; give a path: {}",
+        .matches.len(),
+        .matches.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
+    )]
+    AmbiguousSave {
+        /// The name given.
+        name: String,
+        /// Every save with that folder name.
+        matches: Vec<PathBuf>,
     },
     /// Seed text the game would treat differently from spyglass, or none.
     #[error("{0}")]
     Seed(&'static str),
-    /// A world save couldn't be read.
-    #[error(transparent)]
-    Save(#[from] spyglass_world::WorldError),
     /// spyglass can't answer for a world save; the reasons are listed.
     #[error("spyglass can't answer for this world: {0}")]
     Unsupported(String),
+    /// A query was resolved against a different [`World`] than the session's.
+    #[error("{0:?} was resolved against another world; resolve it with this session's world")]
+    OtherWorld(String),
+}
+
+/// What went wrong below the API, for [`Error::Data`] and [`Error::Save`]. Its message is the
+/// whole explanation; its type is deliberately opaque, so the layers below can change.
+#[derive(Debug, thiserror::Error)]
+#[error(transparent)]
+pub struct Cause(Box<dyn std::error::Error + Send + Sync>);
+
+impl From<BundleError> for Error {
+    fn from(e: BundleError) -> Self {
+        Error::Data(Cause(Box::new(e)))
+    }
+}
+
+impl From<LoadError> for Error {
+    fn from(e: LoadError) -> Self {
+        Error::Data(Cause(Box::new(e)))
+    }
+}
+
+impl From<spyglass_world::WorldError> for Error {
+    fn from(e: spyglass_world::WorldError) -> Self {
+        Error::Save(Cause(Box::new(e)))
+    }
 }
 
 /// A result, or an [`Error`].
@@ -110,13 +174,19 @@ pub struct BundleInfo {
 }
 
 /// The bundles in `dir`'s subdirectories (e.g. `bundles/`), newest first by data version.
-/// Subdirectories that aren't bundles are skipped.
-pub fn bundles_in(dir: impl AsRef<std::path::Path>) -> Result<Vec<BundleInfo>> {
+/// Subdirectories that aren't bundles are skipped. A missing `dir` has none.
+pub fn bundles_in(dir: impl AsRef<Path>) -> Result<Vec<BundleInfo>> {
     let dir = dir.as_ref();
-    let entries = std::fs::read_dir(dir).map_err(|source| BundleError::Io {
-        path: dir.to_path_buf(),
-        source,
-    })?;
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(source) => {
+            return Err(Error::Io {
+                path: dir.to_path_buf(),
+                source,
+            });
+        }
+    };
     let mut found: Vec<BundleInfo> = entries
         .flatten()
         .filter_map(|entry| {
@@ -136,8 +206,25 @@ pub fn bundles_in(dir: impl AsRef<std::path::Path>) -> Result<Vec<BundleInfo>> {
     Ok(found)
 }
 
+/// The bundle in `dir` (e.g. `bundles/`) for game version `version` (e.g. `26.3`), or the newest
+/// one if `version` is `None`.
+pub fn find_bundle(dir: impl AsRef<Path>, version: Option<&str>) -> Result<BundleInfo> {
+    let dir = dir.as_ref();
+    bundles_in(dir)?
+        .into_iter()
+        .find(|b| version.is_none_or(|v| b.version == v))
+        .ok_or_else(|| Error::NoBundle {
+            dir: dir.to_path_buf(),
+            version: version.map(str::to_string),
+        })
+}
+
+/// Tells worlds apart, so a query resolved against one isn't used with another.
+static WORLDS: AtomicU64 = AtomicU64::new(0);
+
 /// One dimension of a version bundle, loaded once: everything that doesn't depend on the seed.
 pub struct World {
+    id: u64,
     bundle: Bundle,
     dimension: String,
     source: BiomeSource,
@@ -154,6 +241,7 @@ impl World {
         let sets = StructureSets::overworld(&bundle, &source)?;
         let spawn = SpawnTargets::load(&bundle, source.noise_settings())?;
         Ok(World {
+            id: WORLDS.fetch_add(1, Ordering::Relaxed),
             bundle,
             dimension: "minecraft:overworld".to_string(),
             source,
@@ -196,17 +284,13 @@ impl World {
     }
 
     fn exists(&self, registry: &str, id: &str) -> bool {
-        let id = if id.contains(':') {
-            id.to_string()
-        } else {
-            format!("minecraft:{id}")
-        };
-        Bundle::resource_path(registry, &id)
+        Bundle::resource_path(registry, &full_id(id))
             .is_ok_and(|path| self.bundle.manifest().files.contains_key(&path))
     }
 
-    /// The structures a `/locate structure` argument names.
-    fn targets(&self, argument: &str) -> Result<Vec<usize>> {
+    /// Resolves a `/locate structure` argument, a structure id or a `#tag`, for this world's
+    /// sessions. Reads the bundle's tags, so resolve once and reuse the query.
+    pub fn structure_query(&self, argument: &str) -> Result<StructureQuery> {
         let (registry, what, id) = match argument.strip_prefix('#') {
             Some(tag) => ("tags/worldgen/structure", "structure tag", tag),
             None => ("worldgen/structure", "structure", argument),
@@ -217,9 +301,70 @@ impl World {
                 id: argument.to_string(),
             });
         }
-        Ok(self.sets.resolve(&self.bundle, argument)?)
+        Ok(StructureQuery {
+            world: self.id,
+            argument: argument.to_string(),
+            targets: self.sets.resolve(&self.bundle, argument)?,
+        })
+    }
+
+    /// Resolves a biome id for this world's sessions. A biome that exists but that this
+    /// dimension can't have resolves, and is never found.
+    pub fn biome_query(&self, biome: &str) -> Result<BiomeQuery> {
+        if !self.exists("worldgen/biome", biome) {
+            return Err(Error::Unknown {
+                what: "biome",
+                id: biome.to_string(),
+            });
+        }
+        Ok(BiomeQuery {
+            world: self.id,
+            id: biome.to_string(),
+            biome: self.source.parameters().id(&full_id(biome)),
+        })
     }
 }
+
+/// A `/locate structure` argument resolved by [`World::structure_query`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StructureQuery {
+    world: u64,
+    argument: String,
+    targets: Vec<usize>,
+}
+
+impl StructureQuery {
+    /// The argument as given, e.g. `#minecraft:village`.
+    pub fn argument(&self) -> &str {
+        &self.argument
+    }
+}
+
+/// A biome resolved by [`World::biome_query`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BiomeQuery {
+    world: u64,
+    id: String,
+    /// `None` if the dimension can't have the biome.
+    biome: Option<BiomeId>,
+}
+
+impl BiomeQuery {
+    /// The biome id as given, e.g. `minecraft:cherry_grove`.
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+}
+
+// Front ends share one world across threads: the viewer's tile renderers, and seed search.
+const _: () = {
+    const fn shareable<T: Send + Sync>() {}
+    shareable::<World>();
+    shareable::<Session<'static>>();
+    shareable::<StructureQuery>();
+    shareable::<BiomeQuery>();
+    shareable::<Error>();
+};
 
 /// A [`World`] bound to a seed. Cheap to create; per-seed data that takes a while (stronghold
 /// rings) is computed on first use and kept.
@@ -374,19 +519,27 @@ impl<'w> Session<'w> {
         }
     }
 
-    /// `/locate structure <argument>` run at `from`: `argument` is a structure id or a
-    /// `#tag`, and `radius` is how many rings of placement cells to search
-    /// ([`LOCATE_RADIUS`] in the game). Follows the game's search order and distance; see
-    /// `docs/specs/locate.md`.
+    /// Fails unless `world` is this session's world's id.
+    fn check_world(&self, world: u64, name: &str) -> Result<()> {
+        if world == self.world.id {
+            Ok(())
+        } else {
+            Err(Error::OtherWorld(name.to_string()))
+        }
+    }
+
+    /// `/locate structure <argument>` run at `from`, and `radius` is how many rings of
+    /// placement cells to search ([`LOCATE_RADIUS`] in the game). Follows the game's search
+    /// order and distance; see `docs/specs/locate.md`.
     pub fn locate_structure(
         &self,
-        argument: &str,
+        query: &StructureQuery,
         from: [i32; 3],
         radius: i32,
     ) -> Result<StructureLocate> {
-        let targets = self.world.targets(argument)?;
+        self.check_world(query.world, &query.argument)?;
         let starts = Starts::new(&self.placements, &self.biomes);
-        let search = starts.locate(&targets, from, radius);
+        let search = starts.locate(&query.targets, from, radius);
         let hits = search
             .hits
             .iter()
@@ -411,15 +564,16 @@ impl<'w> Session<'w> {
         })
     }
 
-    /// Every chunk in `min..=max` (chunk coordinates, inclusive) where a structure that
-    /// `argument` names (an id or `#tag`) may start, by set, then in each set's chunk order.
+    /// Every chunk in `min..=max` (chunk coordinates, inclusive) where a structure that `query`
+    /// names may start, by set, then in each set's chunk order.
     pub fn structures_in(
         &self,
-        argument: &str,
+        query: &StructureQuery,
         min: [i32; 2],
         max: [i32; 2],
     ) -> Result<Vec<StructureStart>> {
-        let targets = self.world.targets(argument)?;
+        self.check_world(query.world, &query.argument)?;
+        let targets = &query.targets;
         let starts = Starts::new(&self.placements, &self.biomes);
         let sets = &self.world.sets;
         let mut out = Vec::new();
@@ -428,7 +582,7 @@ impl<'w> Session<'w> {
                 continue;
             }
             for chunk in self.placements.structure_chunks_in(i, min, max) {
-                if let Some((structures, certain)) = starts.targets_at(i, chunk, &targets) {
+                if let Some((structures, certain)) = starts.targets_at(i, chunk, targets) {
                     let offset = set.placement.locate_offset;
                     let position = [
                         chunk[0].wrapping_shl(4).wrapping_add(offset[0]),
@@ -446,19 +600,14 @@ impl<'w> Session<'w> {
     /// ([`LOCATE_BIOME_RADIUS`] in the game) in the game's order: a spiral of columns 32 blocks
     /// apart, and heights 64 apart from `from`'s outwards. A biome that exists but that this
     /// dimension can't have finds nothing.
-    pub fn locate_biome(&self, biome: &str, from: [i32; 3], radius: i32) -> Result<BiomeLocate> {
-        if !self.world.exists("worldgen/biome", biome) {
-            return Err(Error::Unknown {
-                what: "biome",
-                id: biome.to_string(),
-            });
-        }
-        let full = if biome.contains(':') {
-            biome.to_string()
-        } else {
-            format!("minecraft:{biome}")
-        };
-        let target = self.world.source.parameters().id(&full);
+    pub fn locate_biome(
+        &self,
+        query: &BiomeQuery,
+        from: [i32; 3],
+        radius: i32,
+    ) -> Result<BiomeLocate> {
+        self.check_world(query.world, &query.id)?;
+        let target = query.biome;
         let heights = self.world.sets.heights();
         let min_y = heights.level_min_y;
         let max_y = min_y.wrapping_add(heights.level_height).wrapping_sub(1);
@@ -499,6 +648,23 @@ impl<'w> Session<'w> {
             .flat_map(|z| (min[0]..=max[0]).map(move |x| [x, z]))
             .filter(|&c| self.is_slime_chunk(c))
             .collect()
+    }
+
+    /// Every slime chunk within `radius` chunks of chunk `centre` on both axes (a square),
+    /// nearest first by Euclidean distance in chunks, then by z, then x.
+    pub fn slime_chunks_near(&self, centre: [i32; 2], radius: i32) -> Vec<[i32; 2]> {
+        let around = |c: i32| [c.saturating_sub(radius), c.saturating_add(radius)];
+        let ([x0, x1], [z0, z1]) = (around(centre[0]), around(centre[1]));
+        let mut chunks = self.slime_chunks([x0, z0], [x1, z1]);
+        let distance = |[x, z]: [i32; 2]| {
+            let (dx, dz) = (
+                i64::from(x) - i64::from(centre[0]),
+                i64::from(z) - i64::from(centre[1]),
+            );
+            dx * dx + dz * dz
+        };
+        chunks.sort_by_key(|&c| (distance(c), c[1], c[0]));
+        chunks
     }
 
     /// Where the world spawn search starts.

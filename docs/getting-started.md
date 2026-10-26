@@ -143,6 +143,7 @@ Project-level commands live in the `xtask` crate and run as `cargo xtask <comman
 
 | Command                   | What it does                                              |
 | ------------------------- | --------------------------------------------------------- |
+| `cargo xtask bench`       | Times the public API's main operations (release build).   |
 | `cargo xtask check`       | Every check in the pre-commit config, on all files.       |
 | `cargo xtask doctor`      | Reports whether this machine is ready.                    |
 | `cargo xtask linux-check` | Checks a fresh clone on a clean Linux machine, in Docker. |

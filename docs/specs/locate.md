@@ -17,7 +17,7 @@ Status: stable. Covers `/locate structure` and `/locate biome` in the Overworld 
 
 `LocateCommand` calls `ChunkGenerator.findNearestMapStructure(level, holders, pos, 100, false)`, with `pos` the command source's block position.
 
-**Targets.** The argument is a structure id or a `#tag`. A tag's entries are expanded in order, nested tags in place, duplicates kept at their first position; optional entries that don't exist are skipped. Structures that no set the dimension can generate are dropped. The targets are grouped by the sets that place them, in order of first appearance.
+**Targets.** The argument is a structure id or a `#tag`. The API resolves it once per world (`World::structure_query`, likewise `World::biome_query`), and sessions of that world reuse the result; an unknown id or tag is an error then, not at each search. A tag's entries are expanded in order, nested tags in place, duplicates kept at their first position; optional entries that don't exist are skipped. Structures that no set the dimension can generate are dropped. The targets are grouped by the sets that place them, in order of first appearance.
 
 **"Generated" in a chunk.** `getStructureGeneratingAt` asks `StructureCheck`, which rejects a chunk if the placement's frequency restriction or `findValidGenerationPoint` fails, and otherwise generates the chunk's structure starts. So the game's answer is a chunk where its real choice ([structure-placement.md](structure-placement.md#choosing-a-structure)) is one of the targets, after the biome check, the exclusion zone and terrain validity. spyglass decides this per chunk from the selection:
 

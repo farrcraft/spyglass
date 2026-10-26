@@ -14,5 +14,5 @@ workspace = true
 anyhow.workspace = true
 clap.workspace = true
 serde_json.workspace = true
-spyglass-data.workspace = true
+spyglass-extract.workspace = true
 spyglass-world.workspace = true

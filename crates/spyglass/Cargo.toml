@@ -13,7 +13,6 @@ workspace = true
 [dependencies]
 spyglass-biome.workspace = true
 spyglass-data.workspace = true
-spyglass-density.workspace = true
 spyglass-structure.workspace = true
 spyglass-world.workspace = true
 serde_json.workspace = true

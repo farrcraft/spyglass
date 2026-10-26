@@ -10,10 +10,9 @@ use serde_json::{Map, Value};
 use spyglass_data::bundle::Bundle;
 use spyglass_data::codec;
 use spyglass_data::nbt::{self, Tag};
-use spyglass_density::{LoadError, LoadErrorKind};
 use spyglass_rng::{LegacyRandomSource, RandomSource};
 
-use crate::load::{At, LoadResult, full_id};
+use spyglass_data::codec::{At, LoadError, LoadErrorKind, LoadResult, full_id};
 
 const TEMPLATE_POOL: &str = "worldgen/template_pool";
 
@@ -653,11 +652,7 @@ impl<'a> JigsawLoader<'a> {
         if let Some(t) = self.templates.get(id) {
             return Ok(t.clone());
         }
-        let error = |kind: LoadErrorKind| LoadError {
-            resource: id.to_string(),
-            path: String::new(),
-            kind: Box::new(kind),
-        };
+        let error = |kind: LoadErrorKind| LoadError::new(id, "", kind);
         let bytes = self
             .bundle
             .structure_template(id)

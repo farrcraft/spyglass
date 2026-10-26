@@ -43,7 +43,8 @@ pub enum BundlerError {
 /// One line of `versions.list` or `libraries.list`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
-    /// SHA-256 of the jar, as listed.
+    /// SHA-256 of the jar, as listed. Not checked: the server jar holding it was already
+    /// verified by SHA-1 against the version JSON, which covers these bytes.
     pub sha256: String,
     /// Version id or Maven coordinates, e.g. `com.mojang:brigadier:1.3.11`.
     pub id: String,

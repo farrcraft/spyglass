@@ -170,22 +170,15 @@ Six phases, each a commit or two that passes `cargo xtask check` and the oracle 
 ### 3. Crate split and codec
 
 - [x] ADR: the `spyglass-extract` crate, and the read-only `spyglass-data` ([ADR 0016](../adr/0016-extractor-crate-and-read-only-data.md)).
-- [ ] Create `crates/spyglass-extract` and move manifest, cache, java, datagen, bundler, extract, the bundle-writing code and the binary. Rename the binary path in docs and scripts (`cargo run -p spyglass-extract`).
-- [ ] Trim `spyglass-data`'s dependencies. Confirm with `cargo tree -p spyglass -e normal` that no `ureq`, `clap`, `anyhow`, `tempfile` or `directories` remains (`zip` stays, for `spyglass-world`'s zipped data packs).
-- [ ] Split `BundleError` into read errors (data) and `ExtractError` (extract); no `zip` type remains in `spyglass-data`.
-- [ ] `spyglass_data::codec`:
-  - `LoadError::new(resource, path, kind)`
-  - `At` and the field helpers
-  - `full_id`
-  - `registry_ids`
-  - point every crate at them and delete the copies
-- [ ] `LoadError`/`LoadErrorKind` move from `spyglass-density` to `spyglass_data::codec`, used from there everywhere. `NormalNoise` errors map to `Invalid` with one message source.
-- [ ] `NOISE_SETTINGS` defined once; the `Resources` test double implemented once (for `HashMap<String, Value>`) and shared.
-- [ ] `extract::resolve` used by `xtask oracle`. Expose `JAVAC_EXE`. Share one `sha1_hex` for bytes and readers, and one `io_err`.
-- [ ] I7 data:
-  - `cache.rs` validates that the SHA-1 is 40 hex characters and caps the download at `size + 1`
-  - a doc comment on why `Entry::sha256` is unchecked
-- [ ] `deny.toml`, the xtask doctor/linux-check, setup scripts, getting-started, the README and `bundle-format.md`/`data-sources.md` updated for the new crate.
+- [x] `crates/spyglass-extract`: manifest, cache, java, datagen, bundler, extract, `write` (the bundle-writing half of `bundle`, with `WriteError`) and the binary. `cargo run -p spyglass-extract` in docs and `xtask linux-check`.
+- [x] `spyglass-data` depends on `flate2`, `serde`, `serde_json`, `sha1` and `thiserror` only. `cargo tree -p spyglass -e normal` has no `ureq`, `clap`, `anyhow`, `tempfile` or TLS; `zip` and `directories` remain, from `spyglass-world`.
+- [x] `BundleError` keeps reading errors only; `Zip` and `Exists` are `WriteError`'s.
+- [x] `spyglass_data::codec`: `LoadError` (with `new`), `LoadErrorKind`, `LoadResult`, `At`, `field`, `object`, `id`, `float`, `double`, `int`, `int_in`, `int_field`, `out_of_range`, `full_id`; `Bundle::registry_ids`. Every copy deleted; `spyglass-structure` no longer depends on `spyglass-density`.
+- [x] `NoiseError::reason` is the one message source; the density loader maps through it.
+- [x] `NOISE_SETTINGS` is `spyglass_density::NOISE_SETTINGS`; `Resources` is implemented for `HashMap<String, Value>`, the one test double.
+- [x] `extract::resolve` serves the extractor and `xtask oracle`; `java::JAVAC_EXE` is public; one `bundle::sha1_hex` for bytes and files. The three `io_err` helpers stay: each builds its own module's error type.
+- [x] I7 data: the cache refuses a SHA-1 that isn't 40 hex digits (`CacheError::BadSha1`) and stops a download one byte past its size; `Entry::sha256` says why it isn't checked.
+- [x] Docs: README, architecture.md, getting-started, `bundle-format.md`, `data-sources.md`.
 
 ### 4. Public API
 
@@ -284,6 +277,7 @@ Agreed on 2026-10-25, as recommended:
 
 ## Notes
 
+- 2026-10-25: Phase 3 done. A fresh `spyglass-extract 26.3` writes a `bundle.json` byte-identical to the existing bundle's.
 - 2026-10-25: Phase 2 done.
   - The 26.3 bytecode of `Mth.floor` is `Math.floor` then `d2i`, which is exactly `(int) Math.floor(d)`, so `mth::floor`, its doc and its test were right. The classic `i - 1` form the assessment had in mind isn't the current one.
   - `world info` is about 2× faster on hermitcraft9 (1.18-era chunks, 2.3 GB), at about 3.7 s against 6.6 to 9.9 s, with byte-identical JSON. The largest save (4.7 GB, older chunks) is unchanged at about 8 s, so I/O and decompression bound it.

@@ -10,7 +10,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const JAVA_EXE: &str = if cfg!(windows) { "java.exe" } else { "java" };
-const JAVAC_EXE: &str = if cfg!(windows) { "javac.exe" } else { "javac" };
+/// The Java compiler's file name in a JDK's `bin`.
+pub const JAVAC_EXE: &str = if cfg!(windows) { "javac.exe" } else { "javac" };
 
 /// How deep to look below a scanned folder for a Java home. The official launcher nests homes as
 /// `<component>/<platform>/<component>/`, and macOS homes add `jre.bundle/Contents/Home`.

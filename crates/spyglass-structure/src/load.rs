@@ -5,8 +5,9 @@ use std::collections::HashMap;
 use serde_json::{Map, Value};
 use spyglass_biome::{BiomeSource, ParameterList};
 use spyglass_data::bundle::Bundle;
-use spyglass_data::codec;
-use spyglass_density::{LoadError, LoadErrorKind};
+use spyglass_data::codec::{
+    self, At, LoadErrorKind, LoadResult, field, full_id, id, int_field, int_in, object,
+};
 
 use crate::biomes::{BiomeSet, Tags};
 use crate::jigsaw::{GenerationHeights, Jigsaw, JigsawLoader};
@@ -17,101 +18,6 @@ use crate::placement::{
 
 const STRUCTURE_SET: &str = "worldgen/structure_set";
 const STRUCTURE: &str = "worldgen/structure";
-
-pub(crate) type LoadResult<T> = Result<T, LoadError>;
-
-/// An id with the default namespace made explicit, as `Identifier.parse` reads it.
-pub(crate) fn full_id(id: &str) -> String {
-    if id.contains(':') {
-        id.to_string()
-    } else {
-        format!("minecraft:{id}")
-    }
-}
-
-/// A position in the JSON being parsed, for error messages.
-pub(crate) struct At<'a> {
-    resource: &'a str,
-    path: String,
-}
-
-impl At<'_> {
-    pub(crate) fn root(resource: &str) -> At<'_> {
-        At {
-            resource,
-            path: String::new(),
-        }
-    }
-
-    pub(crate) fn child(&self, segment: &str) -> At<'_> {
-        At {
-            resource: self.resource,
-            path: if self.path.is_empty() {
-                segment.to_string()
-            } else if segment.starts_with('[') {
-                format!("{}{segment}", self.path)
-            } else {
-                format!("{}.{segment}", self.path)
-            },
-        }
-    }
-
-    pub(crate) fn error(&self, kind: LoadErrorKind) -> LoadError {
-        LoadError {
-            resource: self.resource.to_string(),
-            path: self.path.clone(),
-            kind: Box::new(kind),
-        }
-    }
-}
-
-fn field<'v>(
-    obj: &'v Map<String, Value>,
-    name: &'static str,
-    at: &At<'_>,
-) -> LoadResult<&'v Value> {
-    obj.get(name)
-        .ok_or_else(|| at.error(LoadErrorKind::Missing(name)))
-}
-
-fn object<'v>(json: &'v Value, at: &At<'_>) -> LoadResult<&'v Map<String, Value>> {
-    json.as_object()
-        .ok_or_else(|| at.error(LoadErrorKind::Shape("an object")))
-}
-
-fn id<'v>(json: &'v Value, at: &At<'_>) -> LoadResult<&'v str> {
-    json.as_str()
-        .ok_or_else(|| at.error(LoadErrorKind::Shape("an id")))
-}
-
-/// `Codec.intRange(min, max)`.
-fn int_in(json: &Value, min: i32, max: i32, at: &At<'_>) -> LoadResult<i32> {
-    let v = codec::int_of(json).ok_or_else(|| at.error(LoadErrorKind::Shape("an integer")))?;
-    if (min..=max).contains(&v) {
-        Ok(v)
-    } else {
-        Err(at.error(LoadErrorKind::OutOfRange {
-            value: json.to_string(),
-            min: min.to_string(),
-            max: max.to_string(),
-        }))
-    }
-}
-
-/// An optional `intRange` field with a default.
-fn int_field(
-    obj: &Map<String, Value>,
-    name: &'static str,
-    range: (i32, i32),
-    default: Option<i32>,
-    at: &At<'_>,
-) -> LoadResult<i32> {
-    match (obj.get(name), default) {
-        (Some(v), _) => int_in(v, range.0, range.1, &at.child(name)),
-        (None, Some(d)) => Ok(d),
-        (None, None) => Err(at.error(LoadErrorKind::Missing(name))),
-    }
-}
 
 /// The type a structure's `type` names (`StructureType`). Each has its own placement logic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -249,7 +155,7 @@ impl StructureSets {
         biomes: &ParameterList,
     ) -> LoadResult<Self> {
         let (heights, sea_level) = dimension_heights(bundle, preset, dimension)?;
-        let ids = registry_ids(bundle, STRUCTURE_SET);
+        let ids = bundle.registry_ids(STRUCTURE_SET);
         let index: HashMap<String, usize> = ids
             .iter()
             .enumerate()
@@ -381,23 +287,6 @@ fn dimension_heights(
         },
         sea_level,
     ))
-}
-
-/// The ids of every entry in a registry, from the bundle's file list, sorted.
-fn registry_ids(bundle: &Bundle, registry: &str) -> Vec<String> {
-    let mut ids: Vec<String> = bundle
-        .manifest()
-        .files
-        .keys()
-        .filter_map(|path| {
-            let rest = path.strip_prefix("data/")?;
-            let (namespace, rest) = rest.split_once('/')?;
-            let name = rest.strip_prefix(registry)?.strip_prefix('/')?;
-            Some(format!("{namespace}:{}", name.strip_suffix(".json")?))
-        })
-        .collect();
-    ids.sort();
-    ids
 }
 
 struct SetLoader<'a> {

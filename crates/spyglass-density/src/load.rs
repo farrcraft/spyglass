@@ -6,10 +6,11 @@ use std::sync::Arc;
 
 use serde_json::{Map, Value};
 use spyglass_data::bundle::{Bundle, BundleError};
-use spyglass_data::codec;
+use spyglass_data::codec::{
+    At, LoadErrorKind, LoadResult, double, field, float, full_id, int, out_of_range,
+};
 use spyglass_noise::{NormalNoiseParameters, Normalization};
 
-use crate::error::{LoadError, LoadErrorKind};
 use crate::function::{Axis, DensityFunction, Df, Gradient, Spline};
 
 /// Registry paths, as the game's data packs lay them out.
@@ -28,12 +29,12 @@ impl Resources for Bundle {
     }
 }
 
-/// An id with the default namespace made explicit, as `Identifier.parse` reads it.
-pub(crate) fn full_id(id: &str) -> String {
-    if id.contains(':') {
-        id.to_string()
-    } else {
-        format!("minecraft:{id}")
+/// Resources keyed `<registry>/<full id>`, e.g. `worldgen/noise/minecraft:temperature`: for
+/// tests and other hand-built data.
+impl Resources for HashMap<String, Value> {
+    fn resource(&self, registry: &str, id: &str) -> Result<Value, BundleError> {
+        let key = format!("{registry}/{id}");
+        self.get(&key).cloned().ok_or(BundleError::NotFound(key))
     }
 }
 
@@ -45,37 +46,6 @@ pub struct Loader<'r, R: Resources + ?Sized> {
     /// Named functions being loaded, outermost first, for cycle detection.
     loading: Vec<String>,
 }
-
-/// A position in the JSON being parsed, for error messages.
-struct At<'a> {
-    resource: &'a str,
-    path: String,
-}
-
-impl At<'_> {
-    fn child(&self, segment: &str) -> At<'_> {
-        At {
-            resource: self.resource,
-            path: if self.path.is_empty() {
-                segment.to_string()
-            } else if segment.starts_with('[') {
-                format!("{}{segment}", self.path)
-            } else {
-                format!("{}.{segment}", self.path)
-            },
-        }
-    }
-
-    fn error(&self, kind: LoadErrorKind) -> LoadError {
-        LoadError {
-            resource: self.resource.to_string(),
-            path: self.path.clone(),
-            kind: Box::new(kind),
-        }
-    }
-}
-
-type LoadResult<T> = Result<T, LoadError>;
 
 impl<'r, R: Resources + ?Sized> Loader<'r, R> {
     /// A loader reading from `resources`.
@@ -97,16 +67,9 @@ impl<'r, R: Resources + ?Sized> Loader<'r, R> {
         if let Some(start) = self.loading.iter().position(|l| *l == id) {
             let mut cycle = self.loading[start..].to_vec();
             cycle.push(id.clone());
-            return Err(At {
-                resource: &id,
-                path: String::new(),
-            }
-            .error(LoadErrorKind::Cycle(cycle)));
+            return Err(At::root(&id).error(LoadErrorKind::Cycle(cycle)));
         }
-        let at = At {
-            resource: &id,
-            path: String::new(),
-        };
+        let at = At::root(&id);
         let json = self
             .resources
             .resource(DENSITY_FUNCTION, &id)
@@ -125,10 +88,7 @@ impl<'r, R: Resources + ?Sized> Loader<'r, R> {
         if let Some(p) = self.noises.get(&id) {
             return Ok(p.clone());
         }
-        let at = At {
-            resource: &id,
-            path: String::new(),
-        };
+        let at = At::root(&id);
         let json = self
             .resources
             .resource(NOISE, &id)
@@ -141,10 +101,7 @@ impl<'r, R: Resources + ?Sized> Loader<'r, R> {
     /// A density function written inline in another resource, such as a noise router entry:
     /// a number, a reference or an object, as anywhere else. Errors name `resource` and `path`.
     pub fn inline(&mut self, resource: &str, path: &str, json: &Value) -> LoadResult<Df> {
-        let at = At {
-            resource,
-            path: path.to_string(),
-        };
+        let at = At::new(resource, path);
         self.parse_function(json, &at)
     }
 
@@ -296,38 +253,6 @@ impl<'r, R: Resources + ?Sized> Loader<'r, R> {
             }
             _ => Err(at.error(LoadErrorKind::Shape("a number or a spline object"))),
         }
-    }
-}
-
-fn field<'v>(
-    obj: &'v Map<String, Value>,
-    name: &'static str,
-    at: &At<'_>,
-) -> LoadResult<&'v Value> {
-    obj.get(name)
-        .ok_or_else(|| at.error(LoadErrorKind::Missing(name)))
-}
-
-/// `Codec.FLOAT`.
-fn float(json: &Value, at: &At<'_>) -> LoadResult<f32> {
-    codec::f32_of(json).ok_or_else(|| at.error(LoadErrorKind::Shape("a number")))
-}
-
-/// `Codec.DOUBLE`.
-fn double(json: &Value, at: &At<'_>) -> LoadResult<f64> {
-    codec::f64_of(json).ok_or_else(|| at.error(LoadErrorKind::Shape("a number")))
-}
-
-/// `Codec.INT`.
-fn int(json: &Value, at: &At<'_>) -> LoadResult<i32> {
-    codec::int_of(json).ok_or_else(|| at.error(LoadErrorKind::Shape("an integer")))
-}
-
-fn out_of_range(json: &Value, min: impl ToString, max: impl ToString) -> LoadErrorKind {
-    LoadErrorKind::OutOfRange {
-        value: json.to_string(),
-        min: min.to_string(),
-        max: max.to_string(),
     }
 }
 

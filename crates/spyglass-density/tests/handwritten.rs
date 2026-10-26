@@ -4,30 +4,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde_json::{Value, json};
-use spyglass_data::bundle::BundleError;
-use spyglass_density::{
-    Binder, ClimateRouter, DensityFunction, LoadErrorKind, Loader, Resources, Sampler,
-};
+use spyglass_data::codec::LoadErrorKind;
+use spyglass_density::{Binder, ClimateRouter, DensityFunction, Loader, Sampler};
 use spyglass_noise::Normalization;
 
-/// Resources from a map of `registry/id` to JSON.
-struct Map(HashMap<String, Value>);
-
-impl Map {
-    fn new(entries: &[(&str, Value)]) -> Self {
-        Map(entries
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.clone()))
-            .collect())
-    }
-}
-
-impl Resources for Map {
-    fn resource(&self, registry: &str, id: &str) -> Result<Value, BundleError> {
-        let key = format!("{registry}/{id}");
-        self.0.get(&key).cloned().ok_or(BundleError::NotFound(key))
-    }
-}
+/// Resources from `registry/id` keys.
+type Map = HashMap<String, Value>;
 
 fn df(id: &str, value: Value) -> (String, Value) {
     (format!("worldgen/density_function/{id}"), value)
@@ -39,8 +21,8 @@ fn bind_one(map: &Map, id: &str) -> Sampler {
     Binder::new(loader.noises(), 0).bind(&f).unwrap()
 }
 
-fn resources(entries: Vec<(String, Value)>) -> Map {
-    Map(entries.into_iter().collect())
+fn resources<K: Into<String>>(entries: Vec<(K, Value)>) -> Map {
+    entries.into_iter().map(|(k, v)| (k.into(), v)).collect()
 }
 
 #[test]
@@ -240,7 +222,7 @@ fn splines_follow_the_cubic_hermite_form() {
 
 #[test]
 fn noise_parameters_have_the_codec_defaults() {
-    let map = Map::new(&[
+    let map = resources(vec![
         ("worldgen/noise/minecraft:plain", json!({"base_octave": -3})),
         (
             "worldgen/noise/minecraft:full",

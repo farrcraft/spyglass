@@ -14,7 +14,6 @@ workspace = true
 serde_json.workspace = true
 spyglass-biome.workspace = true
 spyglass-data.workspace = true
-spyglass-density.workspace = true
 spyglass-rng.workspace = true
 
 [dev-dependencies]

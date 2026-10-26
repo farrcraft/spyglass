@@ -8,7 +8,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use spyglass_data::bundle::Bundle;
-use spyglass_density::{Binder, ClimateRouter, LoadErrorKind, Loader, Sampler};
+use spyglass_data::codec::LoadErrorKind;
+use spyglass_density::{Binder, ClimateRouter, Loader, Sampler};
 use spyglass_oracle::probe::{ProbeFile, probe_files};
 
 fn bundle_for(version: &str) -> Bundle {

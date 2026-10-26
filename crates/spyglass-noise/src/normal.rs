@@ -18,17 +18,31 @@ const OCTAVE_DEVIATION: f64 = 0.270_224_783_124_521_1;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum NoiseError {
     /// `normalize: "legacy"`, which no 26.3 noise uses, isn't ported yet.
-    #[error("legacy noise normalization isn't supported yet")]
+    #[error("{}", self.reason())]
     LegacyNormalization,
     /// `base_octave` outside -32..=32.
-    #[error("base_octave is outside -32..=32")]
+    #[error("{}", self.reason())]
     BaseOctave,
     /// `octave_count` outside 1..=32.
-    #[error("octave_count is outside 1..=32")]
+    #[error("{}", self.reason())]
     OctaveCount,
     /// `amplitude_modifiers` neither empty nor one per octave (`Parameters.validate`).
-    #[error("amplitude_modifiers must be empty or have octave_count entries")]
+    #[error("{}", self.reason())]
     AmplitudeModifiers,
+}
+
+impl NoiseError {
+    /// The message, as a static string, for errors that carry one.
+    pub fn reason(self) -> &'static str {
+        match self {
+            NoiseError::LegacyNormalization => "legacy noise normalization isn't supported yet",
+            NoiseError::BaseOctave => "base_octave is outside -32..=32",
+            NoiseError::OctaveCount => "octave_count is outside 1..=32",
+            NoiseError::AmplitudeModifiers => {
+                "amplitude_modifiers must be empty or have octave_count entries"
+            }
+        }
+    }
 }
 
 /// `NormalNoise.Normalization`.

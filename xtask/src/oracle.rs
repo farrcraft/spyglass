@@ -9,9 +9,9 @@ use std::process::Command;
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Subcommand};
-use spyglass_data::bundler::Bundler;
-use spyglass_data::cache::{self, JarCache};
-use spyglass_data::{java, manifest};
+use spyglass_extract::bundler::Bundler;
+use spyglass_extract::cache::{self, JarCache};
+use spyglass_extract::{extract, java};
 
 use crate::repo_root;
 
@@ -338,23 +338,20 @@ impl Harness {
 }
 
 fn build(common: &Common) -> Result<Harness> {
-    let manifest = manifest::fetch_manifest().context("fetching the version manifest")?;
-    let version = manifest::fetch_version(manifest.resolve(&common.game_version)?)?;
-    let Some(server) = &version.downloads.server else {
-        bail!("{} has no server download", version.id);
-    };
-    let Some(major) = version.java_version.as_ref().map(|j| j.major_version) else {
-        bail!("{} doesn't state a Java version", version.id);
-    };
+    let resolved = extract::resolve(&common.game_version)?;
+    let (server, major) = (&resolved.download, resolved.java_major);
 
     let cache = match &common.cache_dir {
         Some(dir) => JarCache::new(dir),
         None => JarCache::open_default()?,
     };
-    println!("server jar for {}: {}", version.id, server.url);
+    println!("server jar for {}: {}", resolved.version, server.url);
     let jar = cache.get(server)?;
 
-    let work = repo_root().join("target").join("oracle").join(&version.id);
+    let work = repo_root()
+        .join("target")
+        .join("oracle")
+        .join(&resolved.version);
     let jars = unpack(&jar, &server.sha1, &work.join("classpath"))?;
 
     let jdk = java::discover(common.java.as_deref())
@@ -371,7 +368,7 @@ fn build(common: &Common) -> Result<Harness> {
 
     let classpath = std::env::join_paths(std::iter::once(classes).chain(jars))?;
     Ok(Harness {
-        version: version.id,
+        version: resolved.version,
         java: jdk.executable,
         major,
         classpath,
@@ -436,7 +433,7 @@ fn compile(
     }
     fs::create_dir_all(classes)?;
     println!("compiling the oracle harness");
-    let javac = jdk_bin.join(if cfg!(windows) { "javac.exe" } else { "javac" });
+    let javac = jdk_bin.join(java::JAVAC_EXE);
     let status = Command::new(&javac)
         .args(["--release", &major.to_string(), "-Xlint:all", "-Werror"])
         .arg("-d")

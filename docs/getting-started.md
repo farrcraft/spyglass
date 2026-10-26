@@ -99,7 +99,7 @@ Both skip the install if a matching JDK is already there. On Linux, install your
 cargo build                 # whole workspace
 cargo test                  # all tests (or: cargo nextest run, as the hooks do)
 cargo test -p spyglass-rng  # one crate
-cargo run -p spyglass-data --bin spyglass-extract
+cargo run -p spyglass-extract
 ```
 
 ## 4. Checks and git hooks
@@ -205,8 +205,8 @@ For a ready-made Linux environment, open the repo in VS Code with the Dev Contai
 Most crates need a **version bundle**: the game's worldgen data for one version, extracted from the server jar on your machine ([specs/bundle-format.md](specs/bundle-format.md)). It needs a Java runtime matching that version (see [Java](#java)).
 
 ```sh
-cargo run -p spyglass-data --bin spyglass-extract -- 26.3     # or: latest, latest-snapshot
-cargo run -p spyglass-data --bin spyglass-extract -- verify bundles/26.3
+cargo run -p spyglass-extract -- 26.3     # or: latest, latest-snapshot
+cargo run -p spyglass-extract -- verify bundles/26.3
 ```
 
 The extractor downloads the server jar (about 60 MB, once, into your per-user cache) and checks its SHA-1. It copies the worldgen JSON out of the jar and runs the game's data generator for the biome parameter lists that only exist in code, then writes `bundles/<version>/` with a `bundle.json` listing every file's hash. That takes about 10 seconds. `verify` rechecks a bundle against its `bundle.json`.

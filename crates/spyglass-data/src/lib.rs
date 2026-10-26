@@ -1,11 +1,6 @@
-//! Per-version worldgen data bundles and the extractor that builds them from the user's own server jar.
+//! Reading per-version worldgen data bundles, the JSON codec helpers every loader shares, and
+//! NBT. Bundles are built by `spyglass-extract` (ADR 0016).
 
 pub mod bundle;
-pub mod bundler;
-pub mod cache;
 pub mod codec;
-pub mod datagen;
-pub mod extract;
-pub mod java;
-pub mod manifest;
 pub mod nbt;

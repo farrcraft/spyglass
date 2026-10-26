@@ -418,21 +418,7 @@ fn generator_warning(
     let bundle = Bundle::open(&bundle.dir)?;
     let ours = normalize(generator);
     let mut matched = None;
-    let prefix = "data/";
-    for path in bundle.manifest().files.keys() {
-        let Some(rest) = path.strip_prefix(prefix) else {
-            continue;
-        };
-        let Some((namespace, rest)) = rest.split_once('/') else {
-            continue;
-        };
-        let Some(name) = rest
-            .strip_prefix("worldgen/world_preset/")
-            .and_then(|n| n.strip_suffix(".json"))
-        else {
-            continue;
-        };
-        let id = format!("{namespace}:{name}");
+    for id in bundle.registry_ids("worldgen/world_preset") {
         let preset = bundle.resource("worldgen/world_preset", &id)?;
         let theirs = preset
             .get("dimensions")

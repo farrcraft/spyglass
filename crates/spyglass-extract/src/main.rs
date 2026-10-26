@@ -5,8 +5,8 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use spyglass_data::bundle;
-use spyglass_data::cache::JarCache;
-use spyglass_data::extract::{self, ExtractError, Step};
+use spyglass_extract::cache::JarCache;
+use spyglass_extract::extract::{self, ExtractError, Step};
 
 #[derive(Parser)]
 #[command(version, about, args_conflicts_with_subcommands = true)]

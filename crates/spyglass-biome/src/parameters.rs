@@ -3,7 +3,7 @@
 
 use serde_json::Value;
 use spyglass_data::codec;
-use spyglass_density::{LoadError, LoadErrorKind};
+use spyglass_data::codec::{LoadError, LoadErrorKind};
 
 /// `Climate.quantizeCoord`: `(long)(f * 10000.0f)`, an `f32` multiply, then truncation. Rust's
 /// `as` saturates and maps NaN to 0, as Java's `(long)` does.
@@ -133,11 +133,7 @@ impl ParameterList {
     /// with each value written as `unquantizeCoord` of its long. See
     /// `docs/specs/biome-lookup.md`. `resource` names the report in errors.
     pub fn from_report(json: &Value, resource: &str) -> Result<Self, LoadError> {
-        let error = |path: String, kind| LoadError {
-            resource: resource.to_string(),
-            path,
-            kind: Box::new(kind),
-        };
+        let error = |path: String, kind| LoadError::new(resource, path, kind);
         let entries = json
             .get("biomes")
             .ok_or_else(|| error(String::new(), LoadErrorKind::Missing("biomes")))?

@@ -5,14 +5,12 @@
 //! `RandomState` does, and a [`Sampler`] evaluates the result at a block position with the
 //! game's `float` arithmetic. See `docs/specs/density-functions.md`.
 
-mod error;
 mod function;
 mod load;
 mod router;
 mod sampler;
 
-pub use error::{LoadError, LoadErrorKind};
 pub use function::{Axis, DensityFunction, Df, Gradient, Spline};
 pub use load::{Loader, Resources};
-pub use router::{CLIMATE_ENTRIES, ClimateRouter, ClimateSampler};
+pub use router::{CLIMATE_ENTRIES, ClimateRouter, ClimateSampler, NOISE_SETTINGS};
 pub use sampler::{Binder, Sampler};

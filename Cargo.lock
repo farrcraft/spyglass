@@ -626,7 +626,6 @@ dependencies = [
  "serde_json",
  "spyglass-biome",
  "spyglass-data",
- "spyglass-density",
  "spyglass-oracle",
  "spyglass-structure",
  "spyglass-world",
@@ -661,17 +660,12 @@ dependencies = [
 name = "spyglass-data"
 version = "0.0.0"
 dependencies = [
- "anyhow",
- "clap",
- "directories",
  "flate2",
  "serde",
  "serde_json",
  "sha1",
  "tempfile",
  "thiserror",
- "ureq",
- "zip",
 ]
 
 [[package]]
@@ -683,7 +677,22 @@ dependencies = [
  "spyglass-noise",
  "spyglass-oracle",
  "spyglass-rng",
+]
+
+[[package]]
+name = "spyglass-extract"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "directories",
+ "serde",
+ "serde_json",
+ "spyglass-data",
+ "tempfile",
  "thiserror",
+ "ureq",
+ "zip",
 ]
 
 [[package]]
@@ -720,7 +729,6 @@ dependencies = [
  "serde_json",
  "spyglass-biome",
  "spyglass-data",
- "spyglass-density",
  "spyglass-rng",
  "tempfile",
 ]
@@ -1021,7 +1029,7 @@ dependencies = [
  "anyhow",
  "clap",
  "serde_json",
- "spyglass-data",
+ "spyglass-extract",
  "spyglass-world",
 ]
 

@@ -6,7 +6,7 @@ use std::process::{Command, ExitCode};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use spyglass_data::{java, manifest};
+use spyglass_extract::{java, manifest};
 
 mod linux_check;
 mod locate;

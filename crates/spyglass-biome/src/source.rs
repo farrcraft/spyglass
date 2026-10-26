@@ -5,7 +5,8 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 use spyglass_data::bundle::Bundle;
-use spyglass_density::{ClimateRouter, ClimateSampler, LoadError, LoadErrorKind};
+use spyglass_data::codec::{LoadError, LoadErrorKind, full_id};
+use spyglass_density::{ClimateRouter, ClimateSampler};
 use spyglass_rng::RandomSource;
 
 use crate::parameters::{BiomeId, ParameterList, TargetPoint};
@@ -17,15 +18,6 @@ const PARAMETER_LIST: &str = "worldgen/multi_noise_biome_source_parameter_list";
 /// The most tied cells [`Biomes::find_biome_horizontal`] replays every combination of; beyond
 /// it, a result is reported as tie-dependent without checking.
 pub const MAX_REPLAYED_TIES: usize = 12;
-
-/// An id with the default namespace made explicit.
-pub(crate) fn full_id(id: &str) -> String {
-    if id.contains(':') {
-        id.to_string()
-    } else {
-        format!("minecraft:{id}")
-    }
-}
 
 /// A multi-noise biome source: a dimension's climate router and parameter list, independent of
 /// the seed.
@@ -47,11 +39,7 @@ impl BiomeSource {
     /// be `minecraft:noise` with a `minecraft:multi_noise` biome source that names a parameter
     /// list preset; its noise settings must be a reference.
     pub fn load(bundle: &Bundle, preset: &str, dimension: &str) -> Result<Self, LoadError> {
-        let error = |resource: &str, path: &str, kind| LoadError {
-            resource: resource.to_string(),
-            path: path.to_string(),
-            kind: Box::new(kind),
-        };
+        let error = |resource: &str, path: &str, kind| LoadError::new(resource, path, kind);
         let json = bundle
             .resource(WORLD_PRESET, preset)
             .map_err(|e| error(preset, "", e.into()))?;

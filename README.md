@@ -44,7 +44,7 @@ cargo test
 With a version bundle extracted, ask a seed where things are, as the game's `/locate` would:
 
 ```sh
-cargo run -p spyglass-data --bin spyglass-extract -- 26.3
+cargo run -p spyglass-extract -- 26.3
 cargo run --release -p spyglass-cli -- locate structure '#minecraft:village' --seed 12345
 cargo run --release -p spyglass-cli -- locate structure '#minecraft:village' --world "My World" --from player
 ```
@@ -53,19 +53,20 @@ See [docs/getting-started.md](docs/getting-started.md) for the full walkthrough,
 
 ## Crates
 
-| Crate                | Role                                                        |
-| -------------------- | ----------------------------------------------------------- |
-| `spyglass-rng`       | Bit-exact ports of the game's RNGs.                         |
-| `spyglass-noise`     | Bit-exact ports of the game's noise.                        |
-| `spyglass-data`      | Version bundles, the manifest client and the extractor CLI. |
-| `spyglass-oracle`    | Test support: reads the oracle's golden files.              |
-| `spyglass-density`   | Loads and evaluates density-function graphs.                |
-| `spyglass-biome`     | Climate sampling and biome lookup.                          |
-| `spyglass-structure` | Structure placement and validity checks.                    |
-| `spyglass-world`     | Reads your world saves.                                     |
-| `spyglass`           | The public API that every front end uses.                   |
-| `spyglass-cli`       | The `spyglass` command, with `--json` for scripts.          |
-| `spyglass-viewer`    | Native map app (a placeholder for now).                     |
+| Crate                | Role                                                |
+| -------------------- | --------------------------------------------------- |
+| `spyglass-rng`       | Bit-exact ports of the game's RNGs.                 |
+| `spyglass-noise`     | Bit-exact ports of the game's noise.                |
+| `spyglass-data`      | Reads version bundles; shared JSON and NBT readers. |
+| `spyglass-extract`   | Builds version bundles from your own server jar.    |
+| `spyglass-oracle`    | Test support: reads the oracle's golden files.      |
+| `spyglass-density`   | Loads and evaluates density-function graphs.        |
+| `spyglass-biome`     | Climate sampling and biome lookup.                  |
+| `spyglass-structure` | Structure placement and validity checks.            |
+| `spyglass-world`     | Reads your world saves.                             |
+| `spyglass`           | The public API that every front end uses.           |
+| `spyglass-cli`       | The `spyglass` command, with `--json` for scripts.  |
+| `spyglass-viewer`    | Native map app (a placeholder for now).             |
 
 Planned: `spyglass-terrain` (heightmaps and surface rules) and `spyglass-search` (parallel, ranked seed search).
 

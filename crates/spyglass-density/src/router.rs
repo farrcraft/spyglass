@@ -5,13 +5,13 @@ use std::collections::HashMap;
 
 use spyglass_noise::NormalNoiseParameters;
 
-use crate::error::{LoadError, LoadErrorKind};
 use crate::function::Df;
-use crate::load::{Loader, Resources, full_id};
+use crate::load::{Loader, Resources};
 use crate::sampler::{Binder, Sampler};
+use spyglass_data::codec::{LoadError, LoadErrorKind, full_id};
 
 /// The registry path of noise settings.
-const NOISE_SETTINGS: &str = "worldgen/noise_settings";
+pub const NOISE_SETTINGS: &str = "worldgen/noise_settings";
 
 /// The router entries a climate sampler uses, in `Climate.Sampler`'s order, with the parameter
 /// each feeds: `vegetation` is humidity and `ridges` is weirdness.
@@ -39,11 +39,7 @@ impl ClimateRouter {
         noise_settings: &str,
     ) -> Result<Self, LoadError> {
         let id = full_id(noise_settings);
-        let error = |path: &str, kind| LoadError {
-            resource: id.clone(),
-            path: path.to_string(),
-            kind: Box::new(kind),
-        };
+        let error = |path: &str, kind| LoadError::new(&id, path, kind);
         let json = resources
             .resource(NOISE_SETTINGS, &id)
             .map_err(|e| error("", e.into()))?;

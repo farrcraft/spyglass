@@ -4,10 +4,11 @@
 
 use serde_json::Value;
 use spyglass_data::bundle::Bundle;
-use spyglass_density::LoadErrorKind;
 
 use crate::check::{Check, Starts};
-use crate::load::{At, LoadResult, StructureSets, full_id};
+use spyglass_data::codec::{At, LoadErrorKind, LoadResult, full_id};
+
+use crate::load::StructureSets;
 use crate::placement::PlacementKind;
 
 const STRUCTURE: &str = "worldgen/structure";

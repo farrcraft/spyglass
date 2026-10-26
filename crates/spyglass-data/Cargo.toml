@@ -1,6 +1,6 @@
 [package]
 name = "spyglass-data"
-description = "Per-version worldgen data bundles and the extractor that builds them from the user's own server jar."
+description = "Reading per-version worldgen data bundles, shared JSON codec helpers, and NBT."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,14 +11,11 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
-anyhow.workspace = true
-clap.workspace = true
-directories.workspace = true
 flate2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha1.workspace = true
-tempfile.workspace = true
 thiserror.workspace = true
-ureq.workspace = true
-zip.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

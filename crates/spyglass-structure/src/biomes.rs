@@ -5,9 +5,8 @@ use std::collections::HashMap;
 use serde_json::Value;
 use spyglass_biome::{BiomeId, ParameterList};
 use spyglass_data::bundle::Bundle;
-use spyglass_density::{LoadError, LoadErrorKind};
 
-use crate::load::{At, LoadResult, full_id};
+use spyglass_data::codec::{At, LoadError, LoadErrorKind, LoadResult, full_id};
 
 const BIOME: &str = "worldgen/biome";
 const BIOME_TAG: &str = "tags/worldgen/biome";
@@ -142,11 +141,7 @@ impl<'a> Tags<'a> {
         let json = self
             .bundle
             .resource(BIOME_TAG, &id)
-            .map_err(|e| LoadError {
-                resource: format!("#{id}"),
-                path: String::new(),
-                kind: Box::new(e.into()),
-            })?;
+            .map_err(|e| LoadError::new(format!("#{id}"), "", e.into()))?;
         self.loading.push(id.clone());
         let resource = format!("#{id}");
         let root = At::root(&resource);

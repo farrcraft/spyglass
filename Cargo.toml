@@ -35,6 +35,7 @@ spyglass = { path = "crates/spyglass" }
 spyglass-biome = { path = "crates/spyglass-biome" }
 spyglass-data = { path = "crates/spyglass-data" }
 spyglass-density = { path = "crates/spyglass-density" }
+spyglass-extract = { path = "crates/spyglass-extract" }
 spyglass-noise = { path = "crates/spyglass-noise" }
 spyglass-oracle = { path = "crates/spyglass-oracle" }
 spyglass-rng = { path = "crates/spyglass-rng" }

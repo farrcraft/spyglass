@@ -23,7 +23,7 @@ use std::path::PathBuf;
 
 use spyglass_biome::{BiomeId, BiomeSource, Biomes, SpawnSearch, SpawnTargets};
 use spyglass_data::bundle::{Bundle, BundleError};
-use spyglass_density::LoadError;
+use spyglass_data::codec::LoadError;
 use spyglass_structure::{Placements, Starts, StructureSets};
 
 pub use save::{

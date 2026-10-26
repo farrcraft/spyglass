@@ -52,7 +52,7 @@ UTF-8 JSON, pretty-printed with two-space indent, keys in the order below, and a
 | `data_version` | `world_version` from the inner jar's `version.json`. World saves record the same number in `level.dat` as `DataVersion`. |
 | `jar_sha1`     | SHA-1 of the downloaded server jar (the outer bundler jar), lowercase hex, as in the version JSON.                       |
 | `java_version` | `JAVA_VERSION` from the `release` file of the runtime that ran the data generator.                                       |
-| `extractor`    | The version of `spyglass-data` that built the bundle.                                                                    |
+| `extractor`    | The version of `spyglass-extract` that built the bundle.                                                                 |
 | `files`        | Every other file in the bundle, path → SHA-1 of its bytes in lowercase hex, sorted by path (byte order).                 |
 
 `bundle.json` contains nothing that varies between runs, such as timestamps or absolute paths. Extracting the same jar with the same extractor gives a byte-identical bundle. The data generator's reports are deterministic (checked for 26.3 on 2026-10-25), and are written with LF line endings on every platform.

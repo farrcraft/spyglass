@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use anyhow::{Context, Result, bail, ensure};
 use clap::Args;
-use spyglass_data::manifest;
+use spyglass_extract::manifest;
 
 use crate::{command, first_line, repo_root};
 
@@ -185,7 +185,7 @@ pub fn run(args: &LinuxCheck) -> Result<()> {
     let out = c.capture(
         USER,
         &format!(
-            "cargo run -q -p spyglass-data --bin spyglass-extract -- {} --out /tmp/no-java",
+            "cargo run -q -p spyglass-extract -- {} --out /tmp/no-java",
             version.id
         ),
     )?;
@@ -216,8 +216,8 @@ pub fn run(args: &LinuxCheck) -> Result<()> {
 
     step(&format!("extract {}", version.id));
     c.must(&format!(
-        "cargo run -q -p spyglass-data --bin spyglass-extract -- {id} \
-         && cargo run -q -p spyglass-data --bin spyglass-extract -- verify bundles/{id}",
+        "cargo run -q -p spyglass-extract -- {id} \
+         && cargo run -q -p spyglass-extract -- verify bundles/{id}",
         id = version.id
     ))?;
 

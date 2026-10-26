@@ -4,13 +4,11 @@
 
 use std::collections::{HashMap, HashSet};
 
-use spyglass_density::{Binder, Df, LoadError, LoadErrorKind, Loader, Resources, Sampler};
+use spyglass_data::codec::{LoadError, LoadErrorKind, full_id};
+use spyglass_density::{Binder, Df, Loader, NOISE_SETTINGS, Resources, Sampler};
 use spyglass_noise::NormalNoiseParameters;
 
 use crate::parameters::{Parameter, quantize};
-use crate::source::full_id;
-
-const NOISE_SETTINGS: &str = "worldgen/noise_settings";
 
 /// `Mth.square(2048L)`: how much one unit of climate fitness outweighs squared distance.
 const FITNESS_WEIGHT: i64 = 2048 * 2048;
@@ -32,11 +30,7 @@ impl SpawnTargets {
         noise_settings: &str,
     ) -> Result<Self, LoadError> {
         let id = full_id(noise_settings);
-        let error = |path: String, kind| LoadError {
-            resource: id.clone(),
-            path,
-            kind: Box::new(kind),
-        };
+        let error = |path: String, kind| LoadError::new(&id, path, kind);
         let json = resources
             .resource(NOISE_SETTINGS, &id)
             .map_err(|e| error(String::new(), e.into()))?;
@@ -258,22 +252,10 @@ fn trig_offset(angle: f32, trig: fn(f64) -> f64, radius: f32) -> (i32, Option<i3
 mod tests {
     use super::*;
     use serde_json::{Value, json};
-    use spyglass_data::bundle::BundleError;
-
-    /// Resources from `registry/id` keys.
-    struct Map(HashMap<String, Value>);
-
-    impl Resources for Map {
-        fn resource(&self, registry: &str, id: &str) -> Result<Value, BundleError> {
-            let key = format!("{registry}/{id}");
-            self.0.get(&key).cloned().ok_or(BundleError::NotFound(key))
-        }
-    }
-
     /// Noise settings `minecraft:test` with `spawn_target`, a constant `minecraft:c` (0.3) and
     /// `minecraft:gx`, which rises from 0 at x = 0 to 1 at x = 4096.
-    fn resources(spawn_target: Value) -> Map {
-        Map(HashMap::from([
+    fn resources(spawn_target: Value) -> HashMap<String, Value> {
+        HashMap::from([
             (
                 "worldgen/noise_settings/minecraft:test".to_string(),
                 json!({"spawn_target": spawn_target}),
@@ -287,7 +269,7 @@ mod tests {
                 json!({"type": "gradient", "axis": "x", "from_coordinate": 0, "from_value": 0,
                        "to_coordinate": 4096, "to_value": 1}),
             ),
-        ]))
+        ])
     }
 
     fn search(spawn_target: Value) -> SpawnSearch {
@@ -361,10 +343,10 @@ mod tests {
         let e = error(json!({"c": 0.0}));
         assert_eq!(e.path, "spawn_target");
         let e = SpawnTargets::load(
-            &Map(HashMap::from([(
+            &HashMap::from([(
                 "worldgen/noise_settings/minecraft:test".to_string(),
                 json!({}),
-            )])),
+            )]),
             "test",
         )
         .unwrap_err();

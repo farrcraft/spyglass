@@ -9,8 +9,8 @@ use spyglass_rng::{
     PositionalRandomFactory, RandomSource, XoroshiroPositionalRandomFactory, XoroshiroRandomSource,
 };
 
-use crate::error::{LoadError, LoadErrorKind};
 use crate::function::{Axis, DensityFunction, Df, Spline};
+use spyglass_data::codec::{LoadError, LoadErrorKind};
 
 /// A density function bound to a seed's noises, ready to evaluate.
 #[derive(Debug, Clone)]
@@ -109,11 +109,7 @@ impl<'n> Binder<'n> {
         if let Some(n) = self.noises.get(id) {
             return Ok(n.clone());
         }
-        let error = |kind| LoadError {
-            resource: id.to_string(),
-            path: String::new(),
-            kind: Box::new(kind),
-        };
+        let error = |kind| LoadError::new(id, "", kind);
         let parameters = self
             .noise_parameters
             .get(id)
@@ -124,11 +120,7 @@ impl<'n> Binder<'n> {
                     what: "noise normalization",
                     name: "legacy".to_string(),
                 },
-                NoiseError::BaseOctave => LoadErrorKind::Invalid("base_octave is outside -32..=32"),
-                NoiseError::OctaveCount => LoadErrorKind::Invalid("octave_count is outside 1..=32"),
-                NoiseError::AmplitudeModifiers => LoadErrorKind::Invalid(
-                    "amplitude_modifiers must be empty or have octave_count entries",
-                ),
+                other => LoadErrorKind::Invalid(other.reason()),
             })
         })?;
         let stack = Arc::new(normal.create(&mut self.random.from_hash_of(id)));

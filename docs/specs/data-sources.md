@@ -15,7 +15,7 @@ Everything spyglass knows about a game version comes from Mojang's own distribut
 
 ### Jar cache
 
-Downloaded server jars live in a per-user cache (`spyglass_data::cache`), never inside the repo: the platform cache folder for `spyglass` (`%LOCALAPPDATA%\spyglass\cache` on Windows, `~/Library/Caches/spyglass` on macOS, `~/.cache/spyglass` on Linux), or a directory given explicitly. Jars are stored by content as `jars/<sha1>.jar`. Before use, a jar's size and SHA-1 are checked against the version JSON's `downloads.server`. A missing or mismatched jar is downloaded again, into a `.part` file that is renamed only once it verifies. The extractor and the oracle share the cache.
+Downloaded server jars live in a per-user cache (`spyglass_extract::cache`), never inside the repo: the platform cache folder for `spyglass` (`%LOCALAPPDATA%\spyglass\cache` on Windows, `~/Library/Caches/spyglass` on macOS, `~/.cache/spyglass` on Linux), or a directory given explicitly. Jars are stored by content as `jars/<sha1>.jar`. Before use, a jar's size and SHA-1 are checked against the version JSON's `downloads.server`. A missing or mismatched jar is downloaded again, into a `.part` file that is renamed only once it verifies. The extractor and the oracle share the cache.
 
 ### Bundler layout
 
@@ -24,11 +24,11 @@ The server jar is a bundler. The game itself and its libraries are jars inside i
 - `META-INF/versions.list`: the game, one line, e.g. `26.3/server-26.3.jar`, stored at `META-INF/versions/26.3/server-26.3.jar`;
 - `META-INF/libraries.list`: the libraries (39 for 26.3), under `META-INF/libraries/`.
 
-`spyglass_data::bundler` reads both lists and unpacks the jars. List paths that are absolute or contain `..` are rejected. The outer jar's SHA-1 is verified, so the inner SHA-256 values aren't checked again.
+`spyglass_extract::bundler` reads both lists and unpacks the jars. List paths that are absolute or contain `..` are rejected. The outer jar's SHA-1 is verified, so the inner SHA-256 values aren't checked again.
 
 ## Java runtime
 
-Running the data generator needs a Java runtime whose major version equals the version JSON's `javaVersion.majorVersion`. A runtime is enough; a JDK isn't needed. `spyglass_data::java` searches, in order, and uses the first exact match:
+Running the data generator needs a Java runtime whose major version equals the version JSON's `javaVersion.majorVersion`. A runtime is enough; a JDK isn't needed. `spyglass_extract::java` searches, in order, and uses the first exact match:
 
 1. an explicit path (`--java`), either a Java home or the executable;
 2. `JAVA_HOME`;

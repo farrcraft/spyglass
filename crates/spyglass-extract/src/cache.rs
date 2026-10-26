@@ -5,10 +5,10 @@
 //! `docs/specs/data-sources.md`.
 
 use std::fs::{self, File};
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use sha1::{Digest, Sha1};
+use spyglass_data::bundle;
 
 use crate::manifest::Download;
 
@@ -33,6 +33,14 @@ pub enum CacheError {
         url: String,
         /// The underlying error.
         source: ureq::Error,
+    },
+    /// The version JSON's SHA-1 isn't 40 hex digits, so it can't name a cache file.
+    #[error("{url}: malformed SHA-1 {sha1:?}")]
+    BadSha1 {
+        /// The jar's download URL.
+        url: String,
+        /// The SHA-1 as given.
+        sha1: String,
     },
     /// A jar's size or SHA-1 didn't match the version JSON.
     #[error("{url}: expected {expected}, got {actual}")]
@@ -99,7 +107,9 @@ impl JarCache {
                         url: download.url.clone(),
                         source,
                     })?;
-            let mut body = response.body_mut().with_config().limit(u64::MAX).reader();
+            // One byte over the expected size is enough to fail verification.
+            let limit = download.size.saturating_add(1);
+            let mut body = response.body_mut().with_config().limit(limit).reader();
             io::copy(&mut body, out)
                 .map(drop)
                 .map_err(|source| CacheError::Http {
@@ -115,6 +125,12 @@ impl JarCache {
         download: &Download,
         fetch: impl FnOnce(&mut dyn Write) -> Result<(), CacheError>,
     ) -> Result<PathBuf, CacheError> {
+        if download.sha1.len() != 40 || !download.sha1.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(CacheError::BadSha1 {
+                url: download.url.clone(),
+                sha1: download.sha1.clone(),
+            });
+        }
         let path = self.path_for(download);
         if path.is_file() && verify(&path, download).is_ok() {
             return Ok(path);
@@ -163,21 +179,9 @@ pub fn verify(path: &Path, download: &Download) -> Result<(), CacheError> {
 
 /// Lower-case hex SHA-1 of a file.
 pub fn sha1_hex(path: &Path) -> Result<String, CacheError> {
-    let mut file = File::open(path).map_err(io_err(path))?;
-    let mut hasher = Sha1::new();
-    let mut buf = vec![0; 1 << 16];
-    loop {
-        let n = file.read(&mut buf).map_err(io_err(path))?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buf[..n]);
-    }
-    Ok(hasher
-        .finalize()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect())
+    File::open(path)
+        .and_then(bundle::sha1_hex)
+        .map_err(io_err(path))
 }
 
 #[cfg(test)]
@@ -247,6 +251,18 @@ mod tests {
 
         cache.get_with(&dl, write_content).unwrap();
         assert_eq!(fs::read(&path).unwrap(), CONTENT);
+    }
+
+    #[test]
+    fn refuses_a_malformed_sha1() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = JarCache::new(tmp.path());
+        for sha1 in ["../../evil", "abc", &"g".repeat(40)] {
+            let err = cache
+                .get_with(&download(sha1), |_| panic!("nothing is fetched"))
+                .unwrap_err();
+            assert!(matches!(err, CacheError::BadSha1 { .. }), "{err}");
+        }
     }
 
     #[test]

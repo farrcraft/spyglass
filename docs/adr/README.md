@@ -28,3 +28,5 @@ Start from [template.md](template.md). Files are named `NNNN-kebab-case-title.md
 | [0020](0020-search-query-language.md)                         | A line-oriented query language for seed search                        | Accepted |
 | [0021](0021-search-engine.md)                                 | The seed search engine: staged checks on rayon, deterministic ranking | Accepted |
 | [0022](0022-terrain-crate-and-volume-evaluation.md)           | Terrain in its own crate, with the game's volume evaluation           | Accepted |
+| [0023](0023-dimensions-in-the-public-api.md)                  | Dimensions in the public API                                          | Accepted |
+| [0024](0024-dimensions-in-the-search-language.md)             | Dimensions in the search language                                     | Accepted |

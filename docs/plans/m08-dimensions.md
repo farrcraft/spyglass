@@ -142,7 +142,7 @@ The Nether is the existing `multi_noise` path once binding works. The End is a n
 
 ### Cross-dimension search
 
-The language gains a dimension per constraint and coordinate scaling between dimensions. Proposed, to settle in phase 1 with an ADR that supersedes the dimension-free parts of [ADR 0020](../adr/0020-search-query-language.md):
+The language gains a dimension per constraint and coordinate scaling between dimensions. Decided in [ADR 0024](../adr/0024-dimensions-in-the-search-language.md), extending [ADR 0020](../adr/0020-search-query-language.md):
 
 - **A constraint's dimension is inferred from what it counts.** Fortresses, bastions and nether fossils are the Nether's; end cities the End's; biome ids are each dimension's own.
 - **When the target can't decide, the dimension is explicit.** Examples are a tag spanning dimensions (the ruined portal ids are in one set) and `spawn`. The keyword is to be chosen; `in` is taken by boxes, so something like `nether: require minecraft:ruined_portal_nether within 200 of spawn`.
@@ -178,7 +178,7 @@ Specs and ADRs that govern this: [noise.md](../specs/noise.md), [rng.md](../spec
 
 ### Phase 1: the bytecode, the oracle and specs
 
-- [ ] From the 26.3 bytecode, note in the specs as drafts:
+- [x] From the 26.3 bytecode, note in the specs as drafts:
   - `RandomState`'s legacy branch;
   - `NormalNoise` legacy normalization;
   - `SimplexNoise`;
@@ -186,9 +186,9 @@ Specs and ADRs that govern this: [noise.md](../specs/noise.md), [rng.md](../spec
   - `distance_to_point`;
   - `TheEndBiomeSource`;
   - the fortress, bastion, nether fossil, Nether ruined portal and end city generation points.
-- [ ] Oracle: `structures`, `spawn` and `heights` per dimension; Nether and End in `GOLDEN_DIMENSIONS`; Nether biome levels; probe sections; locate cases. Then run `cargo xtask oracle golden`. `oracle.md` updated.
-- [ ] ADR: dimensions in the public API (`World::open_dimension`, the bundle-wide type, saves).
-- [ ] ADR: the query language's dimensions and coordinate scaling (supersedes the relevant part of ADR 0020); `search.md` drafted.
+- [x] Oracle: `structures`, `spawn` and `heights` per dimension; Nether and End in `GOLDEN_DIMENSIONS`; Nether biome levels; probe sections; locate cases. Then run `cargo xtask oracle golden`. `oracle.md` updated. The probe sections move to phase 2, with the tests that read them, as in m07.
+- [x] ADR: dimensions in the public API (`World::open_dimension`, the bundle-wide type, saves): [0023](../adr/0023-dimensions-in-the-public-api.md).
+- [x] ADR: the query language's dimensions and coordinate scaling: [0024](../adr/0024-dimensions-in-the-search-language.md), extending ADR 0020 rather than superseding it, since its decisions stand. `search.md` drafted.
 
 ### Phase 2: legacy randomness and new noise
 
@@ -261,7 +261,7 @@ Specs and ADRs that govern this: [noise.md](../specs/noise.md), [rng.md](../spec
 - [ ] `docs/specs/terrain.md`, `docs/specs/structure-placement.md`, `docs/specs/locate.md`: both dimensions
 - [ ] `docs/specs/search.md`: dimensions and scaled anchors
 - [ ] `docs/specs/world-saves.md`, `docs/specs/render.md`, `docs/specs/cli-json.md`, `docs/specs/oracle.md`
-- [ ] ADRs: dimensions in the API; the query language's dimensions
+- [x] ADRs: dimensions in the API ([0023](../adr/0023-dimensions-in-the-public-api.md)); the query language's dimensions ([0024](../adr/0024-dimensions-in-the-search-language.md))
 - [ ] `docs/architecture.md`, `README.md`, `docs/getting-started.md`
 
 ## Decisions
@@ -280,5 +280,11 @@ Agreed on 2026-10-26, as recommended:
 
 ## Notes
 
+- 2026-10-26: Phase 1 done. The golden set now covers all three dimensions (biomes, structures, spawn, heights), and `oracle locate` asks Nether and End cases with `execute in` (locate format 2, a dimension per case; the Rust comparison skips other dimensions until phase 5). Specs have drafts for everything below. From the 26.3 bytecode, beyond the plan's expectations:
+  - Legacy randomness changes less than in 1.21: the positional factory, `old_blended_noise` from `LegacyRandomSource(seed)`, and nothing else. **There's no shift override any more.** The Nether biome noises have their own construction, keyed on their ids, not on the legacy flag. `end_outer_islands` is always legacy-seeded.
+  - **Biomes don't depend on y** in the Nether (only temperature and vegetation, with `y_scale` 0) or the End (`end/islands` is y-independent). So every Nether and End biome check is decided from the climate. Fortresses, bastions and the Nether's ruined portals need no terrain to decide; nether fossils and end cities need terrain only for their y and terrain rejections.
+  - `SimplexNoise` returns `f32` in 26.3. `end_outer_islands` lost its central-island term, which `end/islands` now adds in data with `distance_to_point`.
+  - Every `ruined_portals` placement chunk in the Nether gets a Nether portal: the six Overworld portals fail their biome checks there.
+  - The Nether's heights are 128 everywhere at the origin (the ceiling) and the End's 0 off the islands, as expected.
 - 2026-10-26: Started, with the decisions agreed as recommended.
 - 2026-10-26: Drafted from milestone 08, the code at 0ef3687, the 26.3 bundle's Nether and End data, and 26.2 and 26.4-snapshot-5 bundles extracted for comparison (in `bundles/`, gitignored).

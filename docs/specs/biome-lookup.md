@@ -14,6 +14,21 @@ A multi-noise biome source (`MultiNoiseBiomeSource`) picks a biome at quart (1:4
 
 `BiomeSource::overworld` is `minecraft:normal`, `minecraft:overworld`: noise settings `minecraft:overworld`, parameter list `minecraft:overworld`.
 
+## The End's source
+
+Draft, from the 26.3 bytecode (`TheEndBiomeSource`). The End's preset names biome source `minecraft:the_end`, with no fields. Its biomes, in order: `the_end`, `end_highlands`, `end_midlands`, `small_end_islands`, `end_barrens`. It has no parameter list and no ties.
+
+For quart `(qx, qy, qz)`: `bx = qx << 2`, `bz = qz << 2`, section `sx = bx >> 4`, `sz = bz >> 4`.
+
+- If `(long)sx² + (long)sz² ≤ 4096`, the biome is `the_end`.
+- Otherwise `e` is the router's `erosion` (`end/islands`) at block `((sx·2 + 1)·8, qy << 2, (sz·2 + 1)·8)`, the point path, widened to `f64`. Then `e > 0.25` is `end_highlands`, else `e ≥ −0.0625` is `end_midlands`, else `e < −0.21875` is `small_end_islands`, else (and for NaN) `end_barrens`.
+
+`end/islands` doesn't depend on y, so neither does the End's biome.
+
+## The Nether
+
+The Nether's source is `multi_noise` with the `minecraft:nether` preset, five biomes, read and searched as the Overworld's. Its router gives only `temperature` and `vegetation` ([noise.md](noise.md#the-nether-biome-noises)), with `y_scale` 0, and 0 for the other four, so its biomes don't depend on y either.
+
 ## Parameter list
 
 The report is `{"biomes": [...]}`. Each entry is `{"biome": id, "parameters": {...}}` with `temperature`, `humidity`, `continentalness`, `erosion`, `depth` and `weirdness`, each a `[min, max]` pair or one number for both, and a number `offset`. 26.3's overworld list has 7,594 entries over 56 biomes. **List order matters**: it decides the answer for a tied cell (below).

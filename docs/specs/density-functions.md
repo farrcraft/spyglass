@@ -66,9 +66,10 @@ The types terrain needs ([terrain.md](terrain.md)), and the rest of 26.3's 44 ty
 | `beardifier`                                   | none                                                                                                                                     | 0, with no structures (terrain before chunks exist never has any)                                                                                                                                                                                                                          |
 | `blend_density`                                | `input`                                                                                                                                  | `input`, with nothing blending                                                                                                                                                                                                                                                             |
 | `gradient` tilings `repeat`, `mirrored_repeat` | as `gradient`                                                                                                                            | `from_value + (float) floorMod(c − from, r) · factor` with the int `r = to − from`, negative when `to < from` (`floorMod` and `floorDiv` follow its sign); mirrored: `q = floorDiv(c − from, r)`, `rem = (c − from) − q·r`, and `rem` or `r − rem` by the parity of `q`. Unused in vanilla |
-| `distance_to_point`, `end_outer_islands`       | `point` (three ints), `metric` (`euclidean`, `euclidean_squared`, `manhattan`, `chebyshev`); none                                        | The End's (milestone 08 on the [roadmap](../roadmap/README.md)): they load, and are specified when they're implemented                                                                                                                                                                     |
+| `distance_to_point`                            | `point` (three ints), `metric` (`euclidean`, `euclidean_squared`, `manhattan`, `chebyshev`)                                              | [Below](#distance_to_point)                                                                                                                                                                                                                                                                |
+| `end_outer_islands`                            | none                                                                                                                                     | [Below](#end_outer_islands)                                                                                                                                                                                                                                                                |
 
-Binding a function that reaches `distance_to_point` or `end_outer_islands` fails with an unsupported-type error, rather than giving a value the game wouldn't.
+Binding a function that reaches `distance_to_point` or `end_outer_islands` fails with an unsupported-type error until they're implemented, rather than giving a value the game wouldn't.
 
 **`Math.pow` and `Math.log`** aren't required by Java to be correctly rounded, and spyglass uses Rust's `powf` and `ln`. So `pow`, `log` and `pow`'s range bounds may differ from the game's in the last bit of the `f64`, before it's narrowed to `f32`. No vanilla function uses them. `Math.sqrt` is correctly rounded in both.
 
@@ -94,11 +95,34 @@ Its volume value equals its point value whenever `upper_bound`'s does, which hol
 
 #### `old_blended_noise`
 
-`BlendedNoise`, built from the seed's positional factory with `fromHashOf("minecraft:terrain")` (`CompileContext.createRandom`):
+`BlendedNoise`, built from the seed's positional factory with `fromHashOf("minecraft:terrain")` (`CompileContext.createRandom`), or from `LegacyRandomSource(seed)` with legacy randomness ([below](#binding-to-a-seed)):
 
 - `xzMult = 684.412 · xz_scale`, `yMult = 684.412 · y_scale`, `smear = yMult · smear_scale_multiplier`, `mainSmear = smear / y_factor`, in `f64`.
 - Three stacks of [smeared Perlin noise](noise.md#smeared-perlin-smearedperlinnoise) from that one random, in order, each layer's noise taking the next draws: `minLimit` (first octave −15, `smear`, amplitude factor `0.9999847412109375`), `maxLimit` (the same), `main` (first octave −7, `mainSmear`, 12.75). A stack with first octave `o` has `n = 1 − o` layers (`createFbm`); layer `i` from the first has frequency `2^−i`, amplitude `factor / (2^n − 1) · 2^i` as `f32`, and smear scale `s · 2^−i`.
 - It compiles to existing samplers: `lerp(clamp(main + 0.5f, 0, 1), minLimit, maxLimit)` with the `lerp` type's rule above, each stack sampled as `noise` with no shifts. `minLimit` and `maxLimit` have scales `xzMult` and `yMult`; `main` has `xzMult / xz_factor` and `yMult / y_factor`, divided once, so it samples at `(X · (xzMult / xz_factor), …)`.
+
+#### `distance_to_point`
+
+Draft, from the 26.3 bytecode (`DistanceToPointFunction`). At block `(x, y, z)`, with `d = (float)(point − pos)` per axis (an `int` subtraction, wrapping, then widened), in `f32`:
+
+- `euclidean`: `(float) sqrt((double)((dx·dx + dy·dy) + dz·dz))`;
+- `euclidean_squared`: `(dx·dx + dy·dy) + dz·dz`;
+- `manhattan`: `(|dx| + |dy|) + |dz|`;
+- `chebyshev`: `max(max(|dx|, |dy|), |dz|)`.
+
+Its volume value is the point value at each block.
+
+#### `end_outer_islands`
+
+Draft, from the 26.3 bytecode (`EndIslandFunction`). Binding seeds `LegacyRandomSource(seed)` (always, whatever `legacy_random_source` says), skips 17,292 draws (`consumeCount`), then builds a [simplex noise](noise.md#simplex-simplexnoise) with zero offsets.
+
+At block `(x, y, z)` the value is `(height(x / 8, z / 8) − 8) / 128` in `f32`, the divisions by 8 truncating toward zero; y isn't read. `height(x, z)`:
+
+1. `xs = x / 2`, `zs = z / 2`, `xr = x % 2`, `zr = z % 2` (truncating `int` division and remainder); `h = −100f`.
+2. For `dx` from −12 to 12, then `dz` from −12 to 12: `px = (long)(xs + dx)`, `pz = (long)(zs + dz)`, the sums in wrapping `i32`. Skip unless `px² + pz² > 4096` and `noise.get((double)px, (double)pz) < −0.9f`.
+3. Otherwise `size = (|(float)px| · 3439f + |(float)pz| · 147f) % 13f + 9f` (`%` is Java's `frem`), `fx = (float)(xr − dx · 2)`, `fz = (float)(zr − dz · 2)`, `v = 100f − (float) sqrt((double)(fx·fx + fz·fz)) · size`, clamped to `[−100, 80]`; `h = max(h, v)`.
+
+There's no central-island term: 26.3's `end/islands` adds the main island as `distance_to_point` in data. The volume value is the point value, filled up each column.
 
 ### Ranges
 
@@ -152,7 +176,16 @@ Its volume value equals its point value whenever `upper_bound`'s does, which hol
 
 ## Binding to a seed
 
-A loaded graph doesn't depend on the seed. Binding creates the seed's noises as `RandomState` does: a positional factory `XoroshiroRandomSource(seed).forkPositional()`, and for each noise id `NormalNoise.create(factory.fromHashOf(id))`, once per id (`getOrCreateNoise`). Only `legacy_random_source: false` is supported.
+A loaded graph doesn't depend on the seed. Binding creates the seed's noises as `RandomState` does: a positional factory `XoroshiroRandomSource(seed).forkPositional()`, and for each noise id `NormalNoise.create(factory.fromHashOf(id))`, once per id (`getOrCreateNoise`). Only `legacy_random_source: false` is supported so far.
+
+Draft, from the 26.3 bytecode, for `legacy_random_source: true` (the Nether and the End). Legacy changes only where randomness comes from; every sampler is the same:
+
+- The factory is `LegacyRandomSource(seed).forkPositional()` ([rng.md](rng.md#legacy-legacyrandomsource)), for noises and for random factories (`fromHashOf(id).forkPositional()`, which the aquifer would use; neither dimension has one).
+- `old_blended_noise` is built from `LegacyRandomSource(seed)` itself, not `fromHashOf("minecraft:terrain")`.
+- `end_outer_islands` is seeded from `LegacyRandomSource(seed)` whatever the flag says ([below](#end_outer_islands)).
+- `minecraft:nether/temperature` and `minecraft:nether/vegetation` are built by their own rule whatever the flag says ([noise.md](noise.md#the-nether-biome-noises)), and aren't remembered per id.
+
+26.3 has no other legacy case: 1.21's override of the shift noise is gone.
 
 ## Point and volume evaluation
 

@@ -39,3 +39,7 @@ The grammar and the meaning of each constraint are in [specs/search.md](../specs
 - **A general expression language** (boolean `and`/`or`/`not` over predicates): more powerful, but harder to explain, to score (what does a preferred `or` earn?) and to stage cheapest first. Required plus preferred covers the milestone's queries; nesting can come later.
 - **A parser generator or combinator crate** (`pest`, `nom`, `chumsky`): a dependency and its build cost for a grammar of a dozen rules, and error messages we'd still have to shape.
 - **CLI flags only** (`--require-structure …`): no file form, no way to edit a query in the viewer, and awkward for regions and anchors.
+
+## See also
+
+- [ADR 0024](0024-dimensions-in-the-search-language.md): dimensions in the language.

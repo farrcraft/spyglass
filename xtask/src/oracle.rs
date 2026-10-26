@@ -51,13 +51,14 @@ pub enum OracleCmd {
     /// `oracle-out/<version>/probe/`.
     Probe(Common),
     /// Write structure golden files (placement chunks, what the game tries there, ring
-    /// positions, slime chunks) for the golden seeds into `oracle-out/<version>/structures/`.
+    /// positions, slime chunks) for the golden seeds and dimensions into
+    /// `oracle-out/<version>/structures/`.
     Structures(Common),
     /// Write spawn golden files (the spawn origin and the climate search behind it) for the
-    /// golden seeds into `oracle-out/<version>/spawn/`.
+    /// golden seeds and dimensions into `oracle-out/<version>/spawn/`.
     Spawn(Common),
     /// Write height golden files (the generator's worldgen heightmaps and block columns) for the
-    /// golden seeds into `oracle-out/<version>/heights/`.
+    /// golden seeds and dimensions into `oracle-out/<version>/heights/`.
     Heights {
         #[command(flatten)]
         common: Common,
@@ -125,7 +126,16 @@ const GOLDEN_REGIONS: &[(&str, i32, i32, i32)] = &[
     ("border-neg", -29_999_984, -29_999_984, 64),
 ];
 
-const GOLDEN_DIMENSIONS: &[&str] = &["minecraft:overworld"];
+const GOLDEN_DIMENSIONS: &[&str] = &[
+    "minecraft:overworld",
+    "minecraft:the_nether",
+    "minecraft:the_end",
+];
+
+/// A dimension's folder in `oracle-out`: its id's path, e.g. `the_nether`.
+fn dimension_dir(dimension: &str) -> &str {
+    dimension.rsplit(':').next().unwrap_or(dimension)
+}
 
 pub fn run(cmd: OracleCmd) -> Result<()> {
     match cmd {
@@ -210,7 +220,7 @@ fn golden(common: &Common, threads: Option<usize>) -> Result<()> {
 fn golden_jobs(biomes: &Path) -> Vec<Job> {
     let mut jobs = Vec::new();
     for dimension in GOLDEN_DIMENSIONS {
-        let dim_dir = dimension.rsplit(':').next().unwrap_or(dimension);
+        let dim_dir = dimension_dir(dimension);
         for seed in GOLDEN_SEEDS {
             for &(name, x, z, size) in GOLDEN_REGIONS {
                 jobs.push(Job {
@@ -291,49 +301,50 @@ impl Harness {
         self.run(&args)
     }
 
-    /// Writes `oracle-out/<version>/structures/overworld/`, replacing what was there.
+    /// Writes `oracle-out/<version>/structures/<dimension>/` for each golden dimension, replacing
+    /// what was there.
     fn structures(&self) -> Result<()> {
-        let dir = repo_root()
-            .join("oracle-out")
-            .join(&self.version)
-            .join("structures");
-        if dir.exists() {
-            fs::remove_dir_all(&dir)?;
-        }
-        let mut args: Vec<OsString> = vec!["structures".into(), dir.join("overworld").into()];
-        args.extend(GOLDEN_SEEDS.iter().map(OsString::from));
-        self.run(&args)
+        self.per_dimension("structures", &[])
     }
 
-    /// Writes `oracle-out/<version>/spawn/overworld/`, replacing what was there.
+    /// Writes `oracle-out/<version>/spawn/<dimension>/` for each golden dimension, replacing
+    /// what was there.
     fn spawn(&self) -> Result<()> {
-        let dir = repo_root()
-            .join("oracle-out")
-            .join(&self.version)
-            .join("spawn");
-        if dir.exists() {
-            fs::remove_dir_all(&dir)?;
-        }
-        let mut args: Vec<OsString> = vec!["spawn".into(), dir.join("overworld").into()];
-        args.extend(GOLDEN_SEEDS.iter().map(OsString::from));
-        self.run(&args)
+        self.per_dimension("spawn", &[])
     }
 
-    /// Writes `oracle-out/<version>/heights/overworld/`, replacing what was there.
+    /// Writes `oracle-out/<version>/heights/<dimension>/` for each golden dimension, replacing
+    /// what was there.
     fn heights(&self, threads: Option<usize>) -> Result<()> {
+        let mut extra: Vec<OsString> = Vec::new();
+        if let Some(threads) = threads {
+            extra.extend(["--threads".into(), threads.to_string().into()]);
+        }
+        self.per_dimension("heights", &extra)
+    }
+
+    /// Runs harness command `kind` for the golden seeds once per golden dimension, into
+    /// `oracle-out/<version>/<kind>/<dimension>/`, after removing `<kind>/`.
+    fn per_dimension(&self, kind: &str, extra: &[OsString]) -> Result<()> {
         let dir = repo_root()
             .join("oracle-out")
             .join(&self.version)
-            .join("heights");
+            .join(kind);
         if dir.exists() {
             fs::remove_dir_all(&dir)?;
         }
-        let mut args: Vec<OsString> = vec!["heights".into(), dir.join("overworld").into()];
-        if let Some(threads) = threads {
-            args.extend(["--threads".into(), threads.to_string().into()]);
+        for dimension in GOLDEN_DIMENSIONS {
+            let mut args: Vec<OsString> = vec![
+                kind.into(),
+                dir.join(dimension_dir(dimension)).into(),
+                "--dimension".into(),
+                (*dimension).into(),
+            ];
+            args.extend(extra.iter().cloned());
+            args.extend(GOLDEN_SEEDS.iter().map(OsString::from));
+            self.run(&args)?;
         }
-        args.extend(GOLDEN_SEEDS.iter().map(OsString::from));
-        self.run(&args)
+        Ok(())
     }
 
     fn biomes(&self, jobs: &[Job], threads: Option<usize>) -> Result<()> {

@@ -2,7 +2,7 @@
 //!
 //! `ChunkGenerator.findNearestMapStructure` needs a live level, so instead of the standalone
 //! harness this runs the server from the same jar on a throwaway world per seed, and sends
-//! `execute positioned ... run locate ...` on its console. See docs/specs/oracle.md.
+//! `execute in ... positioned ... run locate ...` on its console. See docs/specs/oracle.md.
 
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
@@ -26,11 +26,57 @@ const SEEDS: &[&str] = &[
     "2514887864703934023",
 ];
 
-/// Where each case is run from, as block positions.
-const FROM: &[[i32; 3]] = &[[0, 64, 0], [1500, 64, -2500], [-20000, -30, 7000]];
+/// One dimension's cases: where they're run from (block positions in that dimension), and the
+/// `/locate structure` and `/locate biome` arguments.
+struct Cases {
+    dimension: &'static str,
+    from: &'static [[i32; 3]],
+    structures: &'static [&'static str],
+    biomes: &'static [&'static str],
+}
 
-/// `/locate structure` arguments: every Overworld kind, as ids or tags.
-const STRUCTURES: &[&str] = &[
+const DIMENSIONS: &[Cases] = &[
+    Cases {
+        dimension: "minecraft:overworld",
+        from: &[[0, 64, 0], [1500, 64, -2500], [-20000, -30, 7000]],
+        structures: OVERWORLD_STRUCTURES,
+        biomes: OVERWORLD_BIOMES,
+    },
+    // The Overworld's places divided by 8, roughly, at heights inside the Nether.
+    Cases {
+        dimension: "minecraft:the_nether",
+        from: &[[0, 64, 0], [190, 40, -310], [-2500, 100, 875]],
+        structures: &[
+            "minecraft:fortress",
+            "minecraft:bastion_remnant",
+            "minecraft:nether_fossil",
+            "minecraft:ruined_portal_nether",
+        ],
+        biomes: &[
+            "minecraft:nether_wastes",
+            "minecraft:soul_sand_valley",
+            "minecraft:crimson_forest",
+            "minecraft:warped_forest",
+            "minecraft:basalt_deltas",
+        ],
+    },
+    // The main island, the outer islands, and far out.
+    Cases {
+        dimension: "minecraft:the_end",
+        from: &[[0, 64, 0], [1500, 64, -2500], [-20000, 64, 7000]],
+        structures: &["minecraft:end_city"],
+        biomes: &[
+            "minecraft:the_end",
+            "minecraft:end_highlands",
+            "minecraft:end_midlands",
+            "minecraft:small_end_islands",
+            "minecraft:end_barrens",
+        ],
+    },
+];
+
+/// `/locate structure` arguments in the Overworld: every kind, as ids or tags.
+const OVERWORLD_STRUCTURES: &[&str] = &[
     "#minecraft:village",
     "minecraft:stronghold",
     "minecraft:mansion",
@@ -51,8 +97,8 @@ const STRUCTURES: &[&str] = &[
     "#minecraft:abandoned_camp",
 ];
 
-/// `/locate biome` arguments: common, rare, and underground (the search is 3D).
-const BIOMES: &[&str] = &[
+/// `/locate biome` arguments in the Overworld: common, rare, and underground (the search is 3D).
+const OVERWORLD_BIOMES: &[&str] = &[
     "minecraft:plains",
     "minecraft:cherry_grove",
     "minecraft:mushroom_fields",
@@ -75,7 +121,7 @@ enum Source<'a> {
 
 /// With no `worlds`, writes `oracle-out/<version>/locate/<seed>.json` for each seed, replacing
 /// the folder. With `worlds`, writes `world-<folder>.json` for each save, from a copy of it,
-/// with the player's position as an extra origin.
+/// with the player's position as an extra origin in the player's dimension.
 pub fn run(harness: &Harness, worlds: &[PathBuf]) -> Result<()> {
     let out = repo_root()
         .join("oracle-out")
@@ -85,27 +131,23 @@ pub fn run(harness: &Harness, worlds: &[PathBuf]) -> Result<()> {
         fs::remove_dir_all(&out)?;
     }
     fs::create_dir_all(&out)?;
-    let mut jobs: Vec<(String, Source<'_>, Vec<[i32; 3]>, Value)> = Vec::new();
+    let mut jobs: Vec<(String, Source<'_>, Vec<Case>, Value)> = Vec::new();
     if worlds.is_empty() {
         for seed in SEEDS {
             jobs.push((
                 format!("{seed}.json"),
                 Source::Seed(seed),
-                FROM.to_vec(),
+                cases(None),
                 json!(seed),
             ));
         }
     }
     for world in worlds {
         let save = Save::read(world).with_context(|| format!("reading {}", world.display()))?;
-        let mut from = FROM.to_vec();
-        if let Some(player) = save
+        let player = save
             .player
             .as_ref()
-            .filter(|p| p.dimension == "minecraft:overworld")
-        {
-            from.push(player.pos.map(|v| v.floor() as i32));
-        }
+            .map(|p| (p.dimension.as_str(), p.pos.map(|v| v.floor() as i32)));
         let folder = world
             .file_name()
             .context("a save folder")?
@@ -114,20 +156,20 @@ pub fn run(harness: &Harness, worlds: &[PathBuf]) -> Result<()> {
         jobs.push((
             format!("world-{folder}.json"),
             Source::Save(world),
-            from,
+            cases(player),
             json!(save.seed.to_string()),
         ));
     }
-    for (name, source, from, seed) in jobs {
+    for (name, source, cases, seed) in jobs {
         let t0 = Instant::now();
         let file = out.join(&name);
-        let cases = cases(&from);
         let answers = server(harness, &name, &source, &cases)?;
         let rows: Vec<Value> = cases
             .iter()
             .zip(answers)
             .map(|(case, answer)| {
                 json!({
+                    "dimension": case.dimension,
                     "kind": case.kind,
                     "target": case.target,
                     "from": case.from,
@@ -138,10 +180,9 @@ pub fn run(harness: &Harness, worlds: &[PathBuf]) -> Result<()> {
             })
             .collect();
         let mut root = json!({
-            "format": 1,
+            "format": 2,
             "version": harness.version,
             "seed": seed,
-            "dimension": "minecraft:overworld",
             "cases": rows,
         });
         if let Source::Save(dir) = source {
@@ -169,27 +210,40 @@ fn copy_save(from: &Path, to: &Path) -> Result<()> {
 }
 
 struct Case {
+    dimension: &'static str,
     kind: &'static str,
     target: &'static str,
     from: [i32; 3],
 }
 
-fn cases(origins: &[[i32; 3]]) -> Vec<Case> {
+/// Every dimension's cases from its origins, plus `extra`'s origin in its dimension (a
+/// save's player).
+fn cases(extra: Option<(&str, [i32; 3])>) -> Vec<Case> {
     let mut cases = Vec::new();
-    for &from in origins {
-        for &target in STRUCTURES {
-            cases.push(Case {
-                kind: "structure",
-                target,
-                from,
-            });
+    for d in DIMENSIONS {
+        let mut origins = d.from.to_vec();
+        if let Some((dimension, at)) = extra
+            && dimension == d.dimension
+        {
+            origins.push(at);
         }
-        for &target in BIOMES {
-            cases.push(Case {
-                kind: "biome",
-                target,
-                from,
-            });
+        for from in origins {
+            for &target in d.structures {
+                cases.push(Case {
+                    dimension: d.dimension,
+                    kind: "structure",
+                    target,
+                    from,
+                });
+            }
+            for &target in d.biomes {
+                cases.push(Case {
+                    dimension: d.dimension,
+                    kind: "biome",
+                    target,
+                    from,
+                });
+            }
         }
     }
     cases
@@ -224,8 +278,8 @@ fn server(
         writeln!(stdin, "say spyglass-case-{i}")?;
         writeln!(
             stdin,
-            "execute positioned {x} {y} {z} run locate {} {}",
-            case.kind, case.target
+            "execute in {} positioned {x} {y} {z} run locate {} {}",
+            case.dimension, case.kind, case.target
         )?;
     }
     writeln!(stdin, "say spyglass-case-end")?;
@@ -385,10 +439,11 @@ impl Drop for KillOnDrop {
 fn parse(lines: &[String], case: &Case) -> Result<Answer> {
     let [message] = lines else {
         bail!(
-            "expected one message for locate {} {} from {:?}, got {lines:?}",
+            "expected one message for locate {} {} from {:?} in {}, got {lines:?}",
             case.kind,
             case.target,
-            case.from
+            case.from,
+            case.dimension
         );
     };
     let Some(rest) = message.strip_prefix("The nearest ") else {

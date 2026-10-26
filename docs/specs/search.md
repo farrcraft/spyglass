@@ -1,6 +1,6 @@
 # Seed search
 
-Status: stable. Implemented in `spyglass-search` and `spyglass`, and checked by tests (these are spyglass's semantics, not the game's). Covers the query language, how each constraint is evaluated and scored, seed sources and their order, and what makes results deterministic. The language is [ADR 0020](../adr/0020-search-query-language.md); the engine is [ADR 0021](../adr/0021-search-engine.md).
+Status: stable. Implemented in `spyglass-search` and `spyglass`, and checked by tests (these are spyglass's semantics, not the game's). Covers the query language, how each constraint is evaluated and scored, seed sources and their order, and what makes results deterministic. The language is [ADR 0020](../adr/0020-search-query-language.md), with dimensions from [ADR 0024](../adr/0024-dimensions-in-the-search-language.md) ([below](#dimensions), a draft until it's implemented); the engine is [ADR 0021](../adr/0021-search-engine.md).
 
 A query describes a world as a list of constraints. A **required** constraint must be met for a seed to be reported; a **preferred** one adds to the seed's score. A search evaluates seeds from a source in a fixed order and keeps the best ones.
 
@@ -14,7 +14,7 @@ UTF-8 text, one constraint per line. Blank lines are ignored.
 
 - Tokens are separated by spaces or tabs.
 - A **comment** runs from a `#` to the end of the line when the `#` is the first non-blank character of the line, or is followed by a space, a tab or the end of the line. Otherwise `#` begins a structure tag.
-- **Keywords** are lowercase: `require`, `prefer`, `weight`, `no`, `cluster`, `within`, `of`, `each`, `other`, `in`, `to`, `spawn`, `slime`, `biome`, `covers`, `at`, `y`, `step`. A keyword is never read as an id; write such an id with its namespace (`minecraft:spawn`).
+- **Keywords** are lowercase: `require`, `prefer`, `weight`, `no`, `cluster`, `within`, `of`, `each`, `other`, `in`, `to`, `spawn`, `slime`, `biome`, `covers`, `at`, `y`, `step`, and the dimensions `overworld`, `nether` and `end`. A keyword is never read as an id; write such an id with its namespace (`minecraft:spawn`).
 - An **integer** is decimal digits, with a leading `-` where a signed value is allowed (coordinates and `y`).
 - A **point** is `X,Z`: two integers and a comma, no spaces.
 - A **percentage** is an integer followed by `%`.
@@ -24,8 +24,9 @@ UTF-8 text, one constraint per line. Blank lines are ignored.
 
 ```text
 line        = statement
-statement   = "require" constraint
-            | "prefer" constraint [ "weight" INT ]
+statement   = "require" [ dimension ] constraint
+            | "prefer" [ dimension ] constraint [ "weight" INT ]
+dimension   = "overworld" | "nether" | "end"
 
 constraint  = [ count ] STRUCTURE region
             | "cluster" INT STRUCTURE "within" INT "of" "each" "other" place
@@ -56,7 +57,7 @@ Anything else is an error naming the line and column.
 
 ### Canonical form
 
-Every query has a canonical text, which parses back to the same query: one constraint per line in the original order, single spaces, no comments, ids with their namespace, the count only when it isn't 1, `at y` and `step` only when they aren't the defaults, `weight` only when it isn't 1, and a newline after each line. Front ends show this text where they echo a query (`--json`, the viewer's results).
+Every query has a canonical text, which parses back to the same query: one constraint per line in the original order, single spaces, no comments, ids with their namespace, the count only when it isn't 1, `at y` and `step` only when they aren't the defaults, `weight` only when it isn't 1, the dimension only when it isn't the [inferred](#dimensions) one, and a newline after each line. Front ends show this text where they echo a query (`--json`, the viewer's results).
 
 ### Example
 
@@ -75,6 +76,36 @@ prefer biome minecraft:plains within 0 of spawn
 ```
 
 The last line asks for the spawn to be in plains: a disc of radius 0 holds only its centre.
+
+## Dimensions
+
+Draft: decided in [ADR 0024](../adr/0024-dimensions-in-the-search-language.md), not yet implemented.
+
+Every constraint is in one dimension: the Overworld, the Nether or the End of the Default preset.
+
+- **Inferred.** A structure or tag's dimension is the one whose biome source can place every structure it names (its set applies there, [structure-placement.md](structure-placement.md)). A biome's is the one whose biome source has it. Slime counts and `spawn` constraints are the Overworld's.
+- **Explicit.** A dimension written after `require` or `prefer` sets it. It's required when inference fails (a tag whose structures are placed in more than one dimension), and an error when it contradicts the target ("fortresses aren't placed in the Overworld").
+- **Overworld only.** Slime chunks and structures placed on concentric rings (strongholds) are errors in another dimension.
+
+Points, boxes, `at y` and every position a constraint counts are in its dimension's coordinates.
+
+**Anchors in other dimensions** are converted into the constraint's dimension as the game scales a teleport (`DimensionType.getTeleportationScale`): each coordinate `v` becomes `floor(v · from / to)` in `double`, where `from` and `to` are the two dimension types' `coordinate_scale` (1 for the Overworld and the End, 8 for the Nether, from the bundle). So:
+
+- `spawn` in a Nether constraint is the Overworld spawn's position divided by 8, rounded down: the block its portal links to.
+- A structure anchor in another dimension is converted the same way, from its own place, which is in its own dimension's coordinates.
+- The End isn't linked to the other dimensions by coordinates. An anchor between the End and another dimension, and `spawn` in an End constraint, are errors.
+
+For example:
+
+```text
+# A fortress at the spawn's portal, with a bastion near it.
+require minecraft:fortress within 100 of spawn
+prefer minecraft:bastion_remnant within 200 of minecraft:fortress within 1000 of spawn
+```
+
+Both lines are in the Nether, which fortresses and bastions infer, and `spawn` there is the Overworld spawn's portal position. In `require nether #minecraft:ruined_portal within 300 of spawn`, the ruined portal tag names Overworld and Nether portals, so `nether` picks the Nether's.
+
+Every query written before dimensions existed infers the Overworld throughout, so it keeps its meaning and canonical text.
 
 ## Positions and regions
 

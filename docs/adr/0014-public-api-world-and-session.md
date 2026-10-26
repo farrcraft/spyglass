@@ -45,3 +45,7 @@ And these rules for the API:
 - **Re-export the lower crates' types:** less code now, but `BiomeId`s and indices leak, and every internal change becomes an API change.
 - **`serde` on library types, JSON = the types:** convenient, but couples the scripted format to Rust refactors and adds `serde` to every result type.
 - **A single best answer per query:** simpler to use, but wrong without warning where the game's answer depends on terrain, ties or the platform.
+
+## See also
+
+- [ADR 0023](0023-dimensions-in-the-public-api.md): opening the Nether and the End, and a bundle-wide `Game` over a bundle's worlds.

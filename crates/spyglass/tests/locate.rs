@@ -15,6 +15,14 @@ fn ints(v: &Value) -> Vec<Option<i32>> {
         .collect()
 }
 
+/// Whether a case is in the Overworld: format 1 files have only Overworld cases, and no
+/// dimension per case. Cases in other dimensions aren't compared yet.
+fn in_overworld(case: &Value) -> bool {
+    case["dimension"]
+        .as_str()
+        .is_none_or(|d| d == "minecraft:overworld")
+}
+
 #[test]
 #[ignore = "needs oracle-out/<version>/locate and bundles/<version>: cargo xtask oracle locate"]
 fn locate_agrees_with_the_game() {
@@ -48,7 +56,7 @@ fn locate_agrees_with_the_game() {
                 .as_array()
                 .unwrap()
                 .iter()
-                .filter(|c| c["kind"] == "structure");
+                .filter(|c| c["kind"] == "structure" && in_overworld(c));
             for case in structure_cases {
                 let target = case["target"].as_str().unwrap();
                 let from: Vec<i32> = ints(&case["from"]).into_iter().flatten().collect();
@@ -88,6 +96,9 @@ fn locate_agrees_with_the_game() {
                 }
             }
             for case in json["cases"].as_array().unwrap() {
+                if !in_overworld(case) {
+                    continue;
+                }
                 cases += 1;
                 let target = case["target"].as_str().unwrap();
                 let from: Vec<i32> = ints(&case["from"]).into_iter().flatten().collect();

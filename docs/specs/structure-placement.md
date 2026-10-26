@@ -221,6 +221,27 @@ A start's box (`StructureStart.getBoundingBox`) is the box around its pieces' bo
 
 Not covered: single-piece structures (whose boxes would come from `makeBoundingBox`: the pyramid's 21 × 15 × 21 at y 64, the temple's 12 × 10 × 15, the swamp hut's 7 × 7 × 9, rotated by the piece's random direction; the buried treasure's one block at `(minX + 9, 90, minZ + 9)`; the monument's 58 × 23 × 58 from `(minX − 29, 39, minZ − 29)`), mansions, strongholds, mineshafts and ocean-ruin clusters.
 
+## The Nether and the End
+
+Draft, from the 26.3 bytecode; to be checked against the structure golden files for both dimensions.
+
+- **Which sets apply** works as in the Overworld. The Nether gets `nether_complexes` (fortress weight 2, bastion 3), `nether_fossils` and `ruined_portals`; the End gets `end_cities`. No ring placement applies in either, and none of their sets has an exclusion zone or frequency.
+- **Biomes don't depend on y** in either dimension ([biome-lookup.md](biome-lookup.md#the-ends-source)), so every biome check is decided by its x and z from the climate alone. Terrain gives only the stub's y and terrain's own rejections.
+- **Columns** hold blocks from y 0 to 127 (both noise ranges), in a level of 0 to 255. A Nether column is netherrack, lava up to y 31 and air from y 32; an End column is end stone and air.
+- **Fortress:** always passes. Its biome tag is every Nether biome.
+- **Bastion:** a jigsaw at constant height 33, not projected. Rotation and start element are drawn, and it's decided by the biome at its start piece's centre.
+- **Nether fossil:**
+  1. `x = minX + R.nextInt(16)`, `z = minZ + R.nextInt(16)`, then the height provider (26.3: `R.nextInt(94) + 32`, from 32 to `below_top 2` = 125 in the generator's range).
+  2. Scan the base column at `(x, z)`: while `y > sea level` (32), take `top` at y, step down one, and stop if `top` is air and the block below is soul sand or has a sturdy top face.
+  3. If the scan ended at or below sea level, there's no start; the stub is `(x, y, z)`.
+  4. Its biome check is soul sand valley at `(x, z)`.
+
+  In 26.3's columns this is the first y from the start − 1 down to 33 with netherrack at y and air above.
+
+- **Ruined portal (`in_nether`):** as [above](#with-terrain), with one setup and no air pocket. Lava counts for `findSuitableY`, so in the Nether its y is always 27 to 100. Its tag is every Nether biome, so it always passes.
+- **The shared `ruined_portals` set** applies in both the Overworld and the Nether. In the Nether the six Overworld portals fail their biome checks and the pick draws again, so every placement chunk gets a Nether portal.
+- **End city:** the mansion's footprint rule, as in the table. A corner over the void has base height 0, so its first occupied height is −1, below 60. The main island is `the_end`, which isn't in its biomes.
+
 ## Slime chunks
 
 `Slime.checkSlimeSpawnRules`: chunk `(x, z)` is a slime chunk when `WorldgenRandom.seedSlimeChunk(x, z, seed, 987234911)` then `nextInt(10) == 0` ([rng.md](rng.md#worldgen-seeding-worldgenrandom)).

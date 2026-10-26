@@ -46,13 +46,58 @@ A list of layers `(noise, frequency: f64, amplitude: f32)`, all Perlin or all sm
 
 **Octaves** (`buildOctaves`): `frequency = 2^base_octave`, `amplitude = base_amplitude`, times `2^(count−1) / (2^count − 1)` unless normalization is disabled. For each `i` in `0..octave_count`: the modifier is 1 if the list is empty, else `amplitude_modifiers[i]`. A non-zero modifier adds the octave `(index base_octave + i, frequency, amplitude · modifier)`. Then `frequency *= 2` and `amplitude *= 0.5`. The game computes the powers with `Math.pow(2.0, n)` and `Math.pow(0.5, n)`, which are exact for these integer `n`. spyglass builds them from the exponent bits.
 
-**Normalization factor:** `sum` = the octaves' `|amplitude|` summed with `DoubleStream.sum()`, which uses **Kahan compensation** (`Collectors.sumWithCompensation`; the result is the running sum minus the compensation). `deviation = sqrt(Σ (0.2702247831245211 · |amplitude|)²)`, a plain loop. The factor is 0 if `deviation` is 0, else `sum · (1/3) / (deviation · sqrt(2))`. `legacy` normalization recomputes it differently. It isn't ported yet, and spyglass refuses it with an error.
+**Normalization factor:** `sum` = the octaves' `|amplitude|` summed with `DoubleStream.sum()`, which uses **Kahan compensation** (`Collectors.sumWithCompensation`; the result is the running sum minus the compensation). `deviation = sqrt(Σ (0.2702247831245211 · |amplitude|)²)`, a plain loop. The factor is 0 if `deviation` is 0, else `sum · (1/3) / (deviation · sqrt(2))`. `legacy` normalization recomputes it differently, [below](#legacy-normalization).
 
 **Range** (`range()`): `±(float)(sum · 0.3333333333333333 · 6.0)`, with the same `sum`. Density functions use it to compile `min` and `max` ([density-functions.md](density-functions.md#ranges)).
 
 **Creation** from a random source (`create`): fork two positional factories, `first` then `second`. For each octave, in order, make `PerlinNoise(first.fromHashOf("octave_" + index))` and `PerlinNoise(second.fromHashOf(same))`, both with amplitude `(float)(factor · octave amplitude)`. The first is at the octave's frequency, the second at `frequency · 1.0181268882175227`. The layers alternate first, second. The result is a noise stack.
 
-**In a world:** `RandomState` seeds a positional factory from the world seed (`XoroshiroRandomSource(seed).forkPositional()` when `legacy_random_source` is false). Each noise is `NormalNoise.create(factory.fromHashOf(noise id))`, with the id in full, e.g. `minecraft:temperature`.
+**In a world:** `RandomState` seeds a positional factory from the world seed: `XoroshiroRandomSource(seed).forkPositional()` when `legacy_random_source` is false, `LegacyRandomSource(seed).forkPositional()` when it's true ([rng.md](rng.md#legacy-legacyrandomsource)). Each noise is `NormalNoise.create(factory.fromHashOf(noise id))`, with the id in full, e.g. `minecraft:temperature`, except the two Nether biome noises [below](#the-nether-biome-noises). The same `create` serves both factories.
+
+### Legacy normalization
+
+Draft, from the 26.3 bytecode (`NormalNoise` constructor); no 26.3 noise uses it. With `normalize: "legacy"` and a non-zero standard factor:
+
+- `parity = base_amplitude · 0.5 · 0.3333333333333333 / (0.1 · (1.0 + 1.0 / (double)(hi − lo + 1)))`, left to right, where `lo` and `hi` are the first and last octave indices `i` in `0..octave_count` with a non-zero modifier (1 when the list is empty), and `hi − lo + 1` is an `int` sum.
+- `sum = sum · (parity / factor)`, the division first; then the factor is `parity`.
+
+The range is computed from the adjusted `sum`.
+
+### The Nether biome noises
+
+Draft, from the 26.3 bytecode (`RandomState`'s compile context, `NormalNoise.createForLegacyNetherBiome`, `LegacyFbmInitializer`). `minecraft:nether/temperature` and `minecraft:nether/vegetation`, when a density function's `noise` refers to them by id, aren't made by `create`. The key decides, not `legacy_random_source`:
+
+- The source is `LegacyRandomSource(seed + 0)` for temperature and `LegacyRandomSource(seed + 1)` for vegetation (wrapping), with no positional factory.
+- `amps` = the modifiers, or `octave_count` ones when the list is empty; `n` = their count; `zero = −base_octave`.
+- Two stacks, `first` then `second`, are built from the **same** source in turn. Each:
+  1. Construct a `PerlinNoise` from the source: always, as the zero octave. Keep it as layer `zero` only if `0 ≤ zero < n` and `amps[zero] ≠ 0`.
+  2. For `i` from `zero − 1` down to 0: if `i < n` and `amps[i] ≠ 0`, construct layer `i`'s `PerlinNoise`; otherwise skip exactly 262 draws (`consumeCount(262)`), not a constructed and discarded noise, which can take more.
+  3. `zero < n − 1` (a positive octave) is an error.
+  4. Layers in index order, from `freq = 2^−zero` and `val = 2^(n−1) / (2^n − 1)`: each kept layer at frequency `freq` with amplitude `(float)(val · amps[i])`; then `freq *= 2`, `val /= 2`.
+- `amp = (float)(factor · base_amplitude)`, with the standard normalization factor of the noise's parameters.
+- The noise is one stack: `first`'s layers at frequency `f · 1.0` and amplitude `a · amp` (in `f32`), then `second`'s at `f · 1.0181268882175227` and `a · amp`. They aren't interleaved, unlike `create`'s.
+
+Its range is the parameters' `range()` as usual. For 26.3's two noises (`base_octave` −7, two octaves, `base_amplitude` 0.9494731054427981), each stack builds and drops the zero octave, skips 5 × 262 draws, then builds layers 1 and 0.
+
+## Simplex (`SimplexNoise`)
+
+Draft, from the 26.3 bytecode. The End's outer islands use it ([density-functions.md](density-functions.md#end_outer_islands)). In 26.3 it's a `GradientNoise`, like Perlin, and returns `f32`.
+
+**Construction** from a random source, with an offset scale `S` (256, or 0 when made with zero offsets, as the End's is): `offsetX`, `offsetY` and `offsetZ` are each `nextDouble() · S`, drawn in that order even when `S` is 0 (they're then `+0.0`); then the permutation, exactly as Perlin's. `permute(i) = perms[i & 255] & 255`.
+
+**Gradients** are Perlin's table; simplex uses only the first 12 (`g % 12`). `dot(g, x, y, z) = (gx·x + gy·y) + gz·z` in `f64`, the z term always added.
+
+**Corner** `corner(g, x, y, z, base)`: `t = ((base − x·x) − y·y) − z·z`; 0 if `t < 0` (NaN goes on), else `t = t·t` and the result is `(t·t) · dot(g, x, y, z)`.
+
+**2D** `get(x, y)`, all `f64` unless said, with `F2 = 0.5 · (sqrt(3) − 1)` and `G2 = (3 − sqrt(3)) / 6` (`Math.sqrt`, computed once):
+
+1. `xx = x + offsetX`, `yy = y + offsetY`; `s = (xx + yy) · F2`; `i = floor(xx + s)`, `j = floor(yy + s)` (`Mth.floor`); `t = (double)(i + j) · G2`, the sum in wrapping `i32`.
+2. `x0 = xx − ((double)i − t)`, `y0 = yy − ((double)j − t)`. `(i1, j1)` is `(1, 0)` if `x0 > y0`, else `(0, 1)`.
+3. `x1 = (x0 − i1) + G2`, `y1 = (y0 − j1) + G2`; `x2 = (x0 − 1) + 2·G2`, `y2 = (y0 − 1) + 2·G2`.
+4. With `ii = i & 255`, `jj = j & 255`: gradients `permute(ii + permute(jj)) % 12`, `permute(ii + i1 + permute(jj + j1)) % 12`, `permute(ii + 1 + permute(jj + 1)) % 12`.
+5. The result is `(float)(70 · ((n0 + n1) + n2))`, each `n` a corner with z 0 and base 0.5.
+
+3D isn't used by vanilla worldgen and isn't ported.
 
 ## Parity descriptions
 

@@ -25,13 +25,13 @@ import net.minecraft.world.level.levelgen.WorldOptions;
  * probe &lt;out dir&gt; &lt;seed&gt;...
  *     Raw values from the random sources and noises (rng.json, noise.json), for the Rust ports'
  *     tests. Noise cases are written for each seed; random-source cases use a fixed seed list.
- * structures &lt;out dir&gt; &lt;seed&gt;...
- *     One structure golden file per seed (&lt;seed&gt;.json): overworld placement chunks, what the game
- *     tries in each, ring positions and slime chunks, in fixed chunk regions.
- * spawn &lt;out dir&gt; &lt;seed&gt;...
- *     One spawn golden file per seed (&lt;seed&gt;.json): the overworld spawn origin, the climate
+ * structures &lt;out dir&gt; [--dimension ID] &lt;seed&gt;...
+ *     One structure golden file per seed (&lt;seed&gt;.json): the dimension's placement chunks, what
+ *     the game tries in each, ring positions and slime chunks, in fixed chunk regions.
+ * spawn &lt;out dir&gt; [--dimension ID] &lt;seed&gt;...
+ *     One spawn golden file per seed (&lt;seed&gt;.json): the dimension's spawn origin, the climate
  *     search's phases and its fitness at fixed positions.
- * heights &lt;out dir&gt; [--threads N] &lt;seed&gt;...
+ * heights &lt;out dir&gt; [--dimension ID] [--threads N] &lt;seed&gt;...
  *     One height golden file per seed (&lt;seed&gt;.json): the generator's worldgen heightmaps at
  *     every column of fixed block regions, and its block columns at a sample of positions.
  * </pre>
@@ -55,15 +55,12 @@ public final class Main {
             status = switch (args[0]) {
                 case "biomes" -> biomes(game, Path.of(args[1]), intOption(args, "--threads",
                         Runtime.getRuntime().availableProcessors()));
-                case "check-save" -> CheckSave.run(game, Path.of(args[1]),
-                        option(args, "--dimension", "minecraft:overworld")) == 0 ? 0 : 1;
+                case "check-save" -> CheckSave.run(game, Path.of(args[1]), dimension(args)) == 0 ? 0 : 1;
                 case "probe" -> Probe.run(game, Path.of(args[1]), List.of(args).subList(2, args.length));
-                case "structures" -> Structures.run(game, Path.of(args[1]), "minecraft:overworld",
-                        List.of(args).subList(2, args.length));
-                case "spawn" -> Spawn.run(game, Path.of(args[1]), "minecraft:overworld",
-                        List.of(args).subList(2, args.length));
-                case "heights" -> Heights.run(game, Path.of(args[1]), "minecraft:overworld",
-                        positional(args), intOption(args, "--threads", Runtime.getRuntime().availableProcessors()));
+                case "structures" -> Structures.run(game, Path.of(args[1]), dimension(args), positional(args));
+                case "spawn" -> Spawn.run(game, Path.of(args[1]), dimension(args), positional(args));
+                case "heights" -> Heights.run(game, Path.of(args[1]), dimension(args), positional(args),
+                        intOption(args, "--threads", Runtime.getRuntime().availableProcessors()));
                 default -> {
                     usage();
                     yield 2;
@@ -135,6 +132,11 @@ public final class Main {
         return out;
     }
 
+    /** {@code --dimension}, the overworld by default. */
+    private static String dimension(String[] args) {
+        return option(args, "--dimension", "minecraft:overworld");
+    }
+
     private static String option(String[] args, String name, String fallback) {
         for (int i = 2; i + 1 < args.length; i++) {
             if (args[i].equals(name)) {
@@ -150,8 +152,9 @@ public final class Main {
 
     private static void usage() {
         System.err.println("usage: biomes <jobs file> [--threads N] | check-save <world dir> [--dimension ID]"
-                + " | probe <out dir> <seed>... | structures <out dir> <seed>... | spawn <out dir> <seed>..."
-                + " | heights <out dir> [--threads N] <seed>...");
+                + " | probe <out dir> <seed>... | structures <out dir> [--dimension ID] <seed>..."
+                + " | spawn <out dir> [--dimension ID] <seed>... | heights <out dir> [--dimension ID] [--threads N]"
+                + " <seed>...");
         System.exit(2);
     }
 }

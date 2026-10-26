@@ -1,6 +1,6 @@
 # CLI JSON output
 
-Status: stable, format 1. Covers `spyglass locate`, `spyglass render` and `spyglass world` with `--json`.
+Status: stable, format 1. Covers `spyglass locate`, `spyglass render`, `spyglass search` and `spyglass world` with `--json`.
 
 Scripts depend on this format, so it's versioned. Within a format version, fields are only ever added. Removing or changing the meaning of a field bumps `format`. The CLI writes the JSON from the library's results ([ADR 0014](../adr/0014-public-api-world-and-session.md)); the library types themselves aren't the format.
 
@@ -91,6 +91,43 @@ The image is written to the file given; the JSON describes it ([render.md](rende
 | `structures`   | array             | The structure markers drawn, in drawing order. Each is a `locate structure` hit without `blocks_away`.                          |
 | `slime_chunks` | array of `[x, z]` | The slime chunks shaded, by z, then x. Empty unless asked for.                                                                  |
 | `spawn`        | object or null    | The spawn marker, as `locate spawn`'s fields; null if not asked for or not in view.                                             |
+
+## `search`
+
+The best seeds for a query ([search.md](search.md)). A search is over many seeds, so its object has no `seed`, `world` or `warnings`: it starts with `format`, `command` (`search`), `version` and `dimension`, then:
+
+| Field             | Type        | Meaning                                                                                                  |
+| ----------------- | ----------- | -------------------------------------------------------------------------------------------------------- |
+| `query`           | string      | The query's canonical text, one constraint per line.                                                     |
+| `source`          | object      | `kind`: `all`, `range` (with `first` and `last`, both included) or `list` (with `count`).                |
+| `from`            | int         | The first index searched.                                                                                |
+| `certain`         | bool        | Whether only seeds whose required constraints are certainly met were reported, ranked by the worst case. |
+| `top`             | int         | How many seeds were kept.                                                                                |
+| `next`            | int or null | The first index not searched; `--from` it to continue. Null when the source is finished.                 |
+| `evaluated`       | int         | Indices searched: `next − from`, or to the end of the source.                                            |
+| `prefiltered`     | int         | Seeds rejected by structure placement alone.                                                             |
+| `checked`         | int         | Seeds checked further.                                                                                   |
+| `reported`        | int         | Seeds that met the required constraints, whether or not they made the list.                              |
+| `elapsed_seconds` | number      | How long the search took. The only field that differs between runs of the same search.                   |
+| `hits`            | array       | The best seeds, best first: by `score`, then by `index`.                                                 |
+
+Each hit has `index`, `seed`, `score`, `verdict` (`met` or `possibly`) and `constraints`, one per line of the query, each with:
+
+| Field        | Type   | Meaning                                                                                  |
+| ------------ | ------ | ---------------------------------------------------------------------------------------- |
+| `constraint` | string | The constraint's canonical line.                                                         |
+| `required`   | bool   | Whether it's `require`.                                                                  |
+| `outcome`    | string | `met`, `possibly` or `failed`.                                                           |
+| `best`       | int    | Its satisfaction in the best case, 0 to 1000.                                            |
+| `worst`      | int    | Its satisfaction in the worst case.                                                      |
+| `features`   | array  | What it matched. Each has a `kind` and that kind's fields, as below. Empty for `covers`. |
+
+Feature kinds; more may be added within format 1:
+
+- `structure`: a `locate structure` hit without `blocks_away`.
+- `slime_chunk`: `chunk`.
+- `biome`: `position` (`x`, `y`, `z`), `biome`, `tied` (as `locate biome`) and `certain`.
+- `spawn`: `locate spawn`'s fields.
 
 ## `world info`
 

@@ -155,9 +155,9 @@ Specs and ADRs that govern this: [ADR 0014](../adr/0014-public-api-world-and-ses
 
 ### Phase 6: `spyglass search`
 
-- [ ] Command and arguments; progress on stderr; Ctrl-C prints the best so far.
-- [ ] Human-readable output, and `--json` with its section in `cli-json.md`.
-- [ ] Integration test on a fixture bundle: the command's hits equal `World::search`'s.
+- [x] Command and arguments; progress on stderr; Ctrl-C prints the best so far.
+- [x] Human-readable output, and `--json` with its section in `cli-json.md`.
+- [x] Integration test on a fixture bundle: the command's hits equal `World::search`'s.
 
 ### Phase 7: the viewer
 
@@ -186,7 +186,7 @@ Specs and ADRs that govern this: [ADR 0014](../adr/0014-public-api-world-and-ses
 
 - [ ] `docs/specs/search.md` (new)
 - [x] `docs/specs/structure-placement.md`: lower-48-bit results
-- [ ] `docs/specs/cli-json.md`: `search`
+- [x] `docs/specs/cli-json.md`: `search`
 - [x] ADR: the query language ([0020](../adr/0020-search-query-language.md))
 - [x] ADR: the search engine ([0021](../adr/0021-search-engine.md))
 - [ ] `docs/architecture.md`, `README.md`, `docs/getting-started.md`
@@ -204,6 +204,7 @@ Agreed on 2026-10-25, as recommended:
 
 ## Notes
 
+- 2026-10-25: Phase 6 done. A first real search, `require 2 minecraft:swamp_hut within 400 of 0,0`, over the first 4,194,304 seeds of `All` (64 values of the lower 48 bits): 146 s on all cores, the prefilter skipped 18 of the 64 (1,179,648 seeds), 3,014,656 were checked and 10,626 reported. The top hit's two huts agree with `spyglass locate structure`. Checking is about 20,000 seeds a second across the machine, nearly all of it binding sessions and the huts' biome checks: phase 8's subject. The run also showed `reported` counting only seeds that reached the top list's threshold; `check` now says `Failed`, `Below` or `Scored`, so the count is every reported seed and doesn't depend on timing.
 - 2026-10-25: Phases 4 and 5 done. `SeedPlacements` answers placement from the lower 48 bits, and `Placements` now asks it first; the structure golden tests and `/locate` checks still pass, and on 26.3 it decides every random-spread set exactly (every exclusion zone there is against a random-spread set). Over 200 fixture seeds and 6 queries the prefilter never rejected a seed `evaluate` reports, and `check` equalled `evaluate` at six thresholds in both modes; the same holds for 40 seeds and 5 queries on 26.3 (an ignored test). The runner works in rounds of 1,024-index batches, 4 per thread, merged in rank order; the threshold it passes to `check` is the current Nth score, ties included, so pruning can't change the list. Indices are counted in `u128` inside the runner so `All`'s 2⁶⁴ seeds have an end. `largest_group` moved to `spyglass-search`, which the prefilter needs too, with a brute-force test over every subset of 12 points.
 - 2026-10-25: Phases 2 and 3 done. `Session::evaluate` takes 9.2 ms in a new session on 26.3 for four constraints (two swamp-hut counts, villages, cherry grove presence within 500), most of it the cherry grove's 3,000 biome samples. Places are now limited to 65,536 blocks on a side (radius 32,767): without it a count like `slime within 30000000 of spawn` would enumerate 10¹³ chunks. The real bundle caught the spec's example using `minecraft:village`, which is only a tag (`#minecraft:village`). The fixture world with structures moved from the public API's tests into `spyglass_oracle::fixtures::structured_overworld`, for the search tests to share. Evaluations keep both cases' scores, so `certain` is an option of the search, not of evaluating a seed.
 - 2026-10-25: Phase 1 done. Writing the grammar settled three things the draft left open. The weight goes at the end of the line (`weight N`), since `prefer 3 …` would otherwise be ambiguous between a weight and a count. A cluster is N starts every two at most D apart, which stays in integers, unlike a common centre. Each constraint is evaluated in a best and a worst case, which gives the three outcomes and the two scoring modes. The engine's layering changed too: per-seed evaluation lives in `spyglass` (`Session::evaluate`, plain, and `Session::check`, fast, over shared per-constraint functions), and `spyglass-search` holds the language, the placement prefilter and the runner, so constraint semantics aren't written twice (ADR 0021).

@@ -1,6 +1,7 @@
 //! The command line: commands, their options, and `--from`.
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand};
 use spyglass::{DEFAULT_MAP_Y, LOCATE_BIOME_RADIUS, LOCATE_RADIUS};
@@ -30,6 +31,96 @@ pub enum Command {
     },
     /// Draw a map of a seed or world save as a PNG: biomes, and the layers you choose.
     Render(Render),
+    /// Find the seeds that fit a query best: required and preferred structures, biomes, slime
+    /// chunks and spawn.
+    Search(Search),
+}
+
+/// `spyglass search` (`docs/specs/search.md`).
+#[derive(Args)]
+pub struct Search {
+    /// The query, e.g. `require 2 minecraft:swamp_hut within 600 of spawn`; one constraint per
+    /// line.
+    #[arg(
+        short,
+        long,
+        conflicts_with = "query_file",
+        required_unless_present = "query_file"
+    )]
+    pub query: Option<String>,
+    /// A file with the query.
+    #[arg(long)]
+    pub query_file: Option<PathBuf>,
+    /// How many seeds to keep.
+    #[arg(long, default_value_t = 10, value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..=10_000))]
+    pub top: usize,
+    /// Search this many seeds, then stop. Without it or `--time`, every seed is searched until
+    /// Ctrl-C.
+    #[arg(long)]
+    pub count: Option<u64>,
+    /// Stop after this long: e.g. `90s`, `10m` or `2h`.
+    #[arg(long, value_parser = duration)]
+    pub time: Option<Duration>,
+    /// The index in the seed source to start at: a search's `next` continues it.
+    #[arg(long, default_value_t = 0)]
+    pub from: u64,
+    /// Search the seeds from A to B, both included, e.g. `-2147483648..2147483647` for every
+    /// text seed. Without it or `--seeds`, every 64-bit seed is searched.
+    #[arg(long, allow_hyphen_values = true, value_parser = range, conflicts_with = "seeds")]
+    pub range: Option<[i64; 2]>,
+    /// Search the seeds in a file, one per line, numbers or text as `--seed` takes them.
+    #[arg(long)]
+    pub seeds: Option<PathBuf>,
+    /// Worker threads; all cores by default.
+    #[arg(long)]
+    pub threads: Option<usize>,
+    /// Report only seeds whose required constraints are met whatever terrain decides, and rank
+    /// by the worst case.
+    #[arg(long)]
+    pub certain: bool,
+    /// Game version of the bundle to use, from `--bundles`. Defaults to the newest there.
+    #[arg(long)]
+    pub game_version: Option<String>,
+    /// A bundle directory to use instead of choosing one from `--bundles`.
+    #[arg(long, conflicts_with = "game_version")]
+    pub bundle: Option<PathBuf>,
+    /// Where bundles are, one directory per version.
+    #[arg(long, default_value = "bundles")]
+    pub bundles: PathBuf,
+    /// Print JSON (docs/specs/cli-json.md) instead of text.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// `A..B`, both included.
+fn range(text: &str) -> Result<[i64; 2], String> {
+    text.split_once("..")
+        .and_then(|(a, b)| Some([a.trim().parse().ok()?, b.trim().parse().ok()?]))
+        .filter(|[a, b]| a <= b)
+        .ok_or_else(|| format!("expected A..B with A at most B, got {text:?}"))
+}
+
+/// A number and a unit: `ms`, `s`, `m` or `h`; seconds without one.
+fn duration(text: &str) -> Result<Duration, String> {
+    let split = text
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(text.len());
+    let (number, unit) = text.split_at(split);
+    let n: u64 = number
+        .parse()
+        .map_err(|_| format!("expected a duration like 90s, 10m or 2h, got {text:?}"))?;
+    let seconds = |s: u64| Duration::from_secs(s);
+    Ok(match unit {
+        "ms" => Duration::from_millis(n),
+        "" | "s" => seconds(n),
+        "m" => seconds(n * 60),
+        "h" => seconds(n * 3600),
+        _ => {
+            return Err(format!(
+                "unknown unit {unit:?} in {text:?}: use ms, s, m or h"
+            ));
+        }
+    })
 }
 
 /// `spyglass render` (`docs/specs/render.md`).

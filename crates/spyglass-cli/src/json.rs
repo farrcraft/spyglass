@@ -266,3 +266,68 @@ pub enum ListedSave<'a> {
         error: String,
     },
 }
+
+/// `search`'s answer. Unlike the others, it has no `seed`: it's about many.
+#[derive(Serialize)]
+pub struct SearchAnswer<'a> {
+    pub format: u32,
+    pub command: &'a str,
+    pub version: &'a str,
+    pub dimension: &'a str,
+    pub query: &'a str,
+    pub source: Source,
+    pub from: u64,
+    pub certain: bool,
+    pub top: usize,
+    pub next: Option<u64>,
+    pub evaluated: u64,
+    pub prefiltered: u64,
+    pub checked: u64,
+    pub reported: u64,
+    pub elapsed_seconds: f64,
+    pub hits: Vec<SearchHit<'a>>,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Source {
+    All,
+    Range { first: i64, last: i64 },
+    List { count: usize },
+}
+
+#[derive(Serialize)]
+pub struct SearchHit<'a> {
+    pub index: u64,
+    pub seed: i64,
+    pub score: u64,
+    pub verdict: &'static str,
+    pub constraints: Vec<ConstraintAnswer<'a>>,
+}
+
+#[derive(Serialize)]
+pub struct ConstraintAnswer<'a> {
+    pub constraint: &'a str,
+    pub required: bool,
+    pub outcome: &'static str,
+    pub best: u32,
+    pub worst: u32,
+    pub features: Vec<FeatureAnswer<'a>>,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FeatureAnswer<'a> {
+    Structure(StructureMark<'a>),
+    SlimeChunk {
+        chunk: [i32; 2],
+    },
+    Biome {
+        position: Xyz,
+        biome: &'a str,
+        tied: &'a [String],
+        certain: bool,
+    },
+    Spawn(SpawnAnswer),
+    Other,
+}

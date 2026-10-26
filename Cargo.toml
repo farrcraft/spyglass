@@ -54,6 +54,8 @@ png = "0.18.1"
 rayon = "1.12.0"
 rfd = "0.17.2"
 clap = { version = "4.6.7", features = ["derive"] }
+# Ctrl-C ends a search and prints the best so far (ADR 0021).
+ctrlc = "3.5.2"
 serde = { version = "1.0.229", features = ["derive"] }
 # arbitrary_precision keeps each number's text, so loaders parse it as the game's codecs do;
 # float_roundtrip makes derived f64 parsing correctly rounded (ADRs 0010, 0011).

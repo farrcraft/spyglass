@@ -114,6 +114,18 @@ fn merge(top: &mut Vec<Hit>, hits: Vec<Hit>, n: usize) {
     top.truncate(n);
 }
 
+/// A seed's fate in a search's per-seed check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Checked {
+    /// A required constraint failed: not reported.
+    Failed,
+    /// Reported, but its score is below the threshold it was checked with, so it can't make
+    /// the top list.
+    Below,
+    /// Reported, with this score, at least the threshold.
+    Scored(u64),
+}
+
 /// What one batch found.
 #[derive(Default)]
 struct Batch {
@@ -123,13 +135,13 @@ struct Batch {
     top: Vec<Hit>,
 }
 
-/// Runs a search. `accepts` is the prefilter; `check(seed, threshold)` gives a seed's score if
-/// it's reported and scores at least `threshold`. `progress` is called after each round of
-/// batches with the state so far, and stops the search by returning `Break`.
+/// Runs a search. `accepts` is the prefilter; `check(seed, threshold)` says whether a seed is
+/// reported and, if its score is at least `threshold`, what it is. `progress` is called after
+/// each round of batches with the state so far, and stops the search by returning `Break`.
 pub fn run<E: Send>(
     options: &RunOptions,
     accepts: impl Fn(i64) -> bool + Sync,
-    check: impl Fn(i64, u64) -> Result<Option<u64>, E> + Sync,
+    check: impl Fn(i64, u64) -> Result<Checked, E> + Sync,
     mut progress: impl FnMut(&Progress) -> ControlFlow<()>,
 ) -> Result<Progress, E> {
     let start = Instant::now();
@@ -191,9 +203,13 @@ pub fn run<E: Send>(
                             continue;
                         }
                         batch.checked += 1;
-                        if let Some(score) = check(seed, threshold)? {
-                            batch.reported += 1;
-                            merge(&mut batch.top, vec![Hit { index, seed, score }], top_n);
+                        match check(seed, threshold)? {
+                            Checked::Failed => {}
+                            Checked::Below => batch.reported += 1,
+                            Checked::Scored(score) => {
+                                batch.reported += 1;
+                                merge(&mut batch.top, vec![Hit { index, seed, score }], top_n);
+                            }
                         }
                     }
                     Ok(batch)
@@ -260,16 +276,20 @@ mod tests {
     }
 
     /// A made-up score: reported when the seed is odd, scored by a hash of it.
-    fn score(seed: i64, threshold: u64) -> Result<Option<u64>, Infallible> {
+    fn score(seed: i64, threshold: u64) -> Result<Checked, Infallible> {
         let s = (seed as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 54; // 0 to 1023
-        Ok((seed & 1 == 1 && s >= threshold).then_some(s))
+        Ok(match (seed & 1 == 1, s >= threshold) {
+            (false, _) => Checked::Failed,
+            (true, false) => Checked::Below,
+            (true, true) => Checked::Scored(s),
+        })
     }
 
     fn brute_force(source: &SeedSource, from: u64, count: u64, n: usize) -> Vec<Hit> {
         let mut top = Vec::new();
         for index in from..from + count {
             let seed = source.seed(index);
-            if let Some(score) = score(seed, 0).unwrap() {
+            if let Checked::Scored(score) = score(seed, 0).unwrap() {
                 merge(&mut top, vec![Hit { index, seed, score }], n);
             }
         }
@@ -292,6 +312,9 @@ mod tests {
             assert_eq!(out.top, expected, "{threads} threads");
             assert_eq!((out.evaluated, out.next), (70_000, Some(70_123)));
             assert_eq!(out.checked, 70_000);
+            // Every odd seed is reported, pruned or not.
+            let odd = (123..70_123).filter(|i| source.seed(*i) & 1 == 1).count();
+            assert_eq!(out.reported, odd as u64);
         }
     }
 
@@ -397,7 +420,7 @@ mod tests {
         let mut top = Vec::new();
         for index in u64::MAX - 5..=u64::MAX {
             let seed = SeedSource::All.seed(index);
-            if let Some(score) = score(seed, 0).unwrap() {
+            if let Checked::Scored(score) = score(seed, 0).unwrap() {
                 merge(&mut top, vec![Hit { index, seed, score }], 10);
             }
         }
@@ -421,7 +444,7 @@ mod tests {
                 if seed == 50 {
                     Err("bad seed")
                 } else {
-                    Ok(None)
+                    Ok(Checked::Failed)
                 }
             },
             |_| ControlFlow::Continue(()),

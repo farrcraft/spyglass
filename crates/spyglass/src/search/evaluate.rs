@@ -5,7 +5,7 @@ use std::cell::OnceCell;
 
 use spyglass_biome::BiomeId;
 use spyglass_search::{
-    Anchor, Count, Importance, Kind, Place, Region, Sampling, distance_sqr, largest_group,
+    Anchor, Checked, Count, Importance, Kind, Place, Region, Sampling, distance_sqr, largest_group,
 };
 
 use super::{Resolved, SearchQuery, Target};
@@ -72,8 +72,9 @@ pub struct ConstraintResult {
     pub features: Vec<Feature>,
 }
 
-/// Something a constraint matched.
+/// Something a constraint matched. More kinds may be added.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Feature {
     /// A structure start, or a chunk where one may be.
     Structure(StructureStart),
@@ -175,8 +176,8 @@ impl Session<'_> {
 }
 
 impl Session<'_> {
-    /// The fast path a search calls: `Some(score)` if this seed is reported and its score is at
-    /// least `threshold`, else `None`. The same answer as [`Session::evaluate`], with required
+    /// The fast path a search calls: whether this seed is reported and, if its score is at least
+    /// `threshold`, what it is. The same answer as [`Session::evaluate`], with required
     /// constraints checked cheapest first and stopping at the first that fails, and preferred
     /// constraints skipped once the score can no longer reach `threshold`.
     pub(crate) fn check(
@@ -184,7 +185,7 @@ impl Session<'_> {
         query: &SearchQuery,
         certain: bool,
         threshold: u64,
-    ) -> Result<Option<u64>> {
+    ) -> Result<Checked> {
         self.check_world(query.world, query.to_string().trim_end())?;
         let judge = Judge {
             session: self,
@@ -202,7 +203,7 @@ impl Session<'_> {
                 Outcome::Failed => false,
             };
             if !kept {
-                return Ok(None);
+                return Ok(Checked::Failed);
             }
         }
         let weight = |i: usize| match constraints[i].importance {
@@ -219,13 +220,17 @@ impl Session<'_> {
                 continue;
             };
             if score + remaining < threshold {
-                return Ok(None);
+                return Ok(Checked::Below);
             }
             let result = judge.constraint(&constraints[i].kind, &query.resolved[i]);
             remaining -= w * 1000;
             score += w * u64::from(if certain { result.worst } else { result.best });
         }
-        Ok((score >= threshold).then_some(score))
+        Ok(if score >= threshold {
+            Checked::Scored(score)
+        } else {
+            Checked::Below
+        })
     }
 }
 

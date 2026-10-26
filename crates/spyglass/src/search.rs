@@ -292,6 +292,7 @@ impl World {
 #[cfg(test)]
 mod tests {
     use spyglass_oracle::fixtures;
+    use spyglass_search::Checked;
 
     use super::*;
 
@@ -326,11 +327,15 @@ mod tests {
                 }
                 for certain in [false, true] {
                     reported += usize::from(e.reported(certain));
-                    let expected = e.reported(certain).then(|| e.score(certain));
                     for threshold in [0, 1, 500, 1000, 1500, 2501] {
+                        let expected = match (e.reported(certain), e.score(certain)) {
+                            (false, _) => Checked::Failed,
+                            (true, s) if s >= threshold => Checked::Scored(s),
+                            (true, _) => Checked::Below,
+                        };
                         assert_eq!(
                             session.check(query, certain, threshold).unwrap(),
-                            expected.filter(|&s| s >= threshold),
+                            expected,
                             "seed {seed} certain {certain} threshold {threshold}: {query}"
                         );
                     }
@@ -393,7 +398,11 @@ mod tests {
                     assert_eq!(e.verdict, Outcome::Failed, "seed {seed}: {query}");
                 }
                 for certain in [false, true] {
-                    let expected = e.reported(certain).then(|| e.score(certain));
+                    let expected = if e.reported(certain) {
+                        Checked::Scored(e.score(certain))
+                    } else {
+                        Checked::Failed
+                    };
                     assert_eq!(session.check(query, certain, 0).unwrap(), expected);
                 }
             }

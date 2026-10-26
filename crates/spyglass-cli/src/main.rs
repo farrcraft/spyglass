@@ -5,8 +5,10 @@ mod args;
 mod json;
 mod locate;
 mod render;
+mod search;
 mod world;
 
+use std::path::Path;
 use std::process::ExitCode;
 
 use anyhow::{Context, Result, bail};
@@ -34,6 +36,7 @@ fn run(cli: Cli) -> Result<()> {
         Command::Locate { what } => run_locate(&what),
         Command::World { what } => world::run(what),
         Command::Render(args) => render::run(&args),
+        Command::Search(args) => search::run(&args),
     }
 }
 
@@ -84,9 +87,18 @@ fn run_locate(what: &Locate) -> Result<()> {
 }
 
 fn open(common: &Common) -> Result<World> {
-    let dir = match &common.bundle {
-        Some(dir) => dir.clone(),
-        None => spyglass::find_bundle(&common.bundles, common.game_version.as_deref())?.dir,
+    open_bundle(
+        common.bundle.as_deref(),
+        &common.bundles,
+        common.game_version.as_deref(),
+    )
+}
+
+/// The bundle `--bundle` names, or the one for `--game-version` (or the newest) in `--bundles`.
+fn open_bundle(bundle: Option<&Path>, bundles: &Path, version: Option<&str>) -> Result<World> {
+    let dir = match bundle {
+        Some(dir) => dir.to_path_buf(),
+        None => spyglass::find_bundle(bundles, version)?.dir,
     };
     World::open(&dir).with_context(|| format!("loading the bundle in {}", dir.display()))
 }

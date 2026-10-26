@@ -5,7 +5,7 @@
 use spyglass_data::codec::LoadError;
 use spyglass_density::Volume;
 
-use crate::aquifer::{Aquifer, Block};
+use crate::aquifer::{Aquifer, Block, SurfaceLevels};
 use crate::settings::{BoundTerrain, TerrainSettings};
 
 /// `Heightmap.Types`, the two the generator answers for before chunks exist.
@@ -59,6 +59,9 @@ pub struct Terrain {
     height: i32,
     level_min_y: i32,
     default_block_blocks_motion: bool,
+    /// The aquifers' surface levels, kept for the seed: each region's aquifer samples the
+    /// levels around it, and nearby regions share most of them.
+    levels: SurfaceLevels,
 }
 
 impl Terrain {
@@ -73,6 +76,7 @@ impl Terrain {
             height: top - min_y,
             level_min_y: settings.level_min_y,
             default_block_blocks_motion: settings.default_block_blocks_motion,
+            levels: SurfaceLevels::default(),
         })
     }
 
@@ -92,9 +96,9 @@ impl Terrain {
     /// The aquifer for a region, if the settings have one.
     fn aquifer(&self, region: &Volume) -> Option<Aquifer<'_>> {
         let b = &self.bound;
-        b.aquifer
-            .as_ref()
-            .map(|s| Aquifer::new(s, b.aquifer_random, region, b.fluid_picker))
+        b.aquifer.as_ref().map(|s| {
+            Aquifer::with_levels(s, b.aquifer_random, region, b.fluid_picker, &self.levels)
+        })
     }
 
     /// `iterateNoiseColumn`: `final_density` over the whole column as one volume, then each
@@ -113,26 +117,32 @@ impl Terrain {
         let column = Volume::blocks([1, self.height, 1], [x, self.min_y, z]);
         let density = self.bound.final_density.sample_volume(&column);
         let mut aquifer = self.aquifer(&column);
-        self.scan_with(x, z, &density, aquifer.as_mut(), stop, blocks)
+        let blocks = blocks.map(|b| {
+            *b = vec![Block::Air; self.height as usize];
+            &mut b[..]
+        });
+        self.scan_with(x, z, self.min_y, &density, aquifer.as_mut(), stop, blocks)
     }
 
-    /// The scan's second half, given the column's densities from the bottom up and an aquifer
-    /// for a region holding it.
+    /// The scan's second half, given densities from `min_y` up and an aquifer for a region
+    /// holding them; `blocks`, if given, has a block for each density.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the column, its range and densities, the aquifer and what to record"
+    )]
     fn scan_with(
         &self,
         x: i32,
         z: i32,
+        min_y: i32,
         density: &[f32],
         mut aquifer: Option<&mut Aquifer<'_>>,
         stop: Option<Heightmap>,
-        mut blocks: Option<&mut Vec<Block>>,
+        mut blocks: Option<&mut [Block]>,
     ) -> Option<i32> {
         let picker = self.bound.fluid_picker;
-        if let Some(b) = blocks.as_deref_mut() {
-            *b = vec![Block::Air; self.height as usize];
-        }
-        for i in (0..self.height as usize).rev() {
-            let y = self.min_y + i as i32;
+        for i in (0..density.len()).rev() {
+            let y = min_y + i as i32;
             let d = f64::from(density[i]);
             let block = match aquifer.as_deref_mut() {
                 Some(aquifer) => aquifer.substance(x, y, z, d),
@@ -181,8 +191,15 @@ impl Terrain {
                     for x in x0..x1 {
                         let first = tile.index(x - x0, 0, z - z0);
                         let column = &density[first..first + self.height as usize];
-                        let height =
-                            self.scan_with(x, z, column, aquifer.as_mut(), Some(heightmap), None);
+                        let height = self.scan_with(
+                            x,
+                            z,
+                            self.min_y,
+                            column,
+                            aquifer.as_mut(),
+                            Some(heightmap),
+                            None,
+                        );
                         let i = (z - min[1]) as usize * w as usize + (x - min[0]) as usize;
                         out[i] = height.unwrap_or(self.level_min_y);
                     }

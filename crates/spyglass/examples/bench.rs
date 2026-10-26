@@ -58,6 +58,25 @@ fn main() -> spyglass::Result<()> {
                 .unwrap(),
         );
     });
+    report(
+        "locate_structure #village confirmed, new session",
+        10,
+        || {
+            let session = world.session(*seeds.next().unwrap()).unwrap();
+            black_box(
+                session
+                    .locate_structure(&villages, [0, 64, 0], &spyglass::LocateOptions::default())
+                    .unwrap(),
+            );
+        },
+    );
+    report("structure_layout village_plains, bound", 5, || {
+        black_box(
+            session
+                .structure_layout("minecraft:village_plains", [58, -48])
+                .unwrap(),
+        );
+    });
     let stronghold = world.structure_query("minecraft:stronghold")?;
     report("locate_structure stronghold, new session", 5, || {
         let session = world.session(*seeds.next().unwrap()).unwrap();
@@ -122,8 +141,17 @@ fn main() -> spyglass::Result<()> {
     });
     let heights = world.session(SEEDS[0])?;
     heights.height_at([0, 0], spyglass::Heightmap::WorldSurfaceWg);
+    // A column far from every other, so nothing the session remembers helps.
+    let mut far = 0;
     report("height_at one column, bound", 20, || {
-        black_box(heights.height_at([100, -200], spyglass::Heightmap::WorldSurfaceWg));
+        far += 10_000;
+        black_box(heights.height_at([far, -200], spyglass::Heightmap::WorldSurfaceWg));
+    });
+    // Columns next to the last, as structure checks and jigsaw assembly ask for them.
+    let mut near = 0;
+    report("height_at one nearby column, bound", 20, || {
+        near += 3;
+        black_box(heights.height_at([near, 5000], spyglass::Heightmap::WorldSurfaceWg));
     });
     report("heights_in 40 x 25 columns", 3, || {
         black_box(heights.heights_in([0, 0], [39, 24], spyglass::Heightmap::OceanFloorWg));
@@ -169,6 +197,11 @@ fn main() -> spyglass::Result<()> {
             black_box(session.evaluate(&query, false).unwrap());
         });
     }
+    let huts = world.search_query(kinds[0].1)?;
+    report("evaluate swamp hut count confirmed, new session", 5, || {
+        let session = world.session(*seeds.next().unwrap()).unwrap();
+        black_box(session.evaluate(&huts, true).unwrap());
+    });
     // Six huts can't fit within 300 blocks, so placement rejects every lower 48 bits.
     let impossible = world.search_query("require 6 minecraft:swamp_hut within 300 of 0,0")?;
     rate(
@@ -178,7 +211,30 @@ fn main() -> spyglass::Result<()> {
         spyglass::SeedSource::All,
         1 << 32,
         Some(1),
+        false,
     );
+    // The witch-hut farm query, unconfirmed and confirmed.
+    let witch = world.search_query("require 2 minecraft:swamp_hut within 400 of 0,0")?;
+    for confirm in [false, true] {
+        let mode = if confirm { "confirmed" } else { "unconfirmed" };
+        for (threads, label, count) in [
+            (Some(1), "1 thread", 1 << 12),
+            (None, "all threads", 1 << 16),
+        ] {
+            rate(
+                &world,
+                &format!("search, witch huts {mode}, {label}"),
+                &witch,
+                spyglass::SeedSource::Range {
+                    first: 0,
+                    last: i64::MAX,
+                },
+                count,
+                threads,
+                confirm,
+            );
+        }
+    }
     let mixed = world.search_query(
         "require 2 minecraft:swamp_hut within 400 of 0,0\n\
          prefer biome minecraft:cherry_grove within 300 of 0,0\n\
@@ -196,6 +252,7 @@ fn main() -> spyglass::Result<()> {
         range.clone(),
         1 << 11,
         Some(1),
+        false,
     );
     rate(
         &world,
@@ -204,6 +261,7 @@ fn main() -> spyglass::Result<()> {
         range,
         1 << 15,
         None,
+        false,
     );
     Ok(())
 }
@@ -216,11 +274,13 @@ fn rate(
     source: spyglass::SeedSource,
     count: u64,
     threads: Option<usize>,
+    confirm: bool,
 ) {
     let options = spyglass::SearchOptions {
         source,
         seeds: Some(count),
         threads,
+        confirm,
         ..spyglass::SearchOptions::default()
     };
     let start = Instant::now();
@@ -230,7 +290,7 @@ fn rate(
     let seconds = start.elapsed().as_secs_f64();
     let p = &outcome.progress;
     println!(
-        "{name:<45} {:>10.0} seeds/s ({} checked, {} reported)",
+        "{name:<50} {:>10.0} seeds/s ({} checked, {} reported)",
         count as f64 / seconds,
         p.checked,
         p.reported
@@ -248,5 +308,5 @@ fn report(name: &str, runs: usize, mut f: impl FnMut()) {
         .collect();
     times.sort();
     let median = times[runs / 2];
-    println!("{name:<45} {:>10.3} ms", median.as_secs_f64() * 1000.0);
+    println!("{name:<50} {:>10.3} ms", median.as_secs_f64() * 1000.0);
 }

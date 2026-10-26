@@ -8,6 +8,8 @@ mod column;
 mod settings;
 mod tags;
 
-pub use aquifer::{Aquifer, AquiferSamplers, Block, FluidPicker, FluidStatus, WAY_BELOW_MIN_Y};
+pub use aquifer::{
+    Aquifer, AquiferSamplers, Block, FluidPicker, FluidStatus, SurfaceLevels, WAY_BELOW_MIN_Y,
+};
 pub use column::{BlockColumn, Heightmap, Terrain};
 pub use settings::{BoundTerrain, TerrainSettings};

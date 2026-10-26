@@ -14,6 +14,7 @@ The milestones build toward the goals in the [README](../../README.md#goals): co
 | 06  | [Seed search](completed/06-seed-search.md)                                    | Required and preferred constraints, ranked results.                | Completed   |
 | 07  | [Terrain, structure validity, jigsaw](07-terrain-and-validity.md)             | Confirmed structures, heights and exact bounds.                    | In progress |
 | 08  | [Nether, End and multiple versions](08-dimensions-and-versions.md)            | All three dimensions; more than one game version.                  | Planned     |
+| 09  | [Fast density evaluation](09-fast-density.md)                                 | Cheap terrain: flattened, SIMD-friendly density evaluation.        | Planned     |
 
 ## Stretch
 

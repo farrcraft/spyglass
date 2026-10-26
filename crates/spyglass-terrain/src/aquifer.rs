@@ -3,6 +3,7 @@
 //! `docs/specs/terrain.md`.
 
 use std::collections::HashMap;
+use std::sync::Mutex;
 
 use spyglass_density::{Sampler, Volume};
 use spyglass_noise::mth;
@@ -107,6 +108,25 @@ const SURFACE_OFFSETS: [(i32, i32); 13] = [
     (1, 1),
 ];
 
+/// Surface levels by quart-aligned `(x, z)`, shared by every aquifer of one seed. A surface
+/// level is the same whether the game samples it in a region's volume or at a point
+/// (`docs/specs/terrain.md`), so sharing them across regions changes no answer.
+#[derive(Debug, Default)]
+pub struct SurfaceLevels(Mutex<HashMap<(i32, i32), i32>>);
+
+impl Clone for SurfaceLevels {
+    fn clone(&self) -> Self {
+        SurfaceLevels(Mutex::new(self.lock().clone()))
+    }
+}
+
+impl SurfaceLevels {
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<(i32, i32), i32>> {
+        // A panic while holding the lock leaves only whole entries behind.
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
 /// `NoiseBasedAquifer` for one region, as a `NoiseChunk` builds it. It remembers each cell's
 /// centre and fluid status, and surface levels, so asking about one block changes nothing
 /// another answer depends on: the answers don't depend on the order of questions.
@@ -122,6 +142,8 @@ pub struct Aquifer<'s> {
     statuses: Vec<Option<FluidStatus>>,
     /// `surfaceLevelCache`, by quart-aligned `(x, z)`.
     surface_levels: HashMap<(i32, i32), i32>,
+    /// The seed's surface levels, if shared.
+    shared: Option<&'s SurfaceLevels>,
     skip_sampling_above_y: i32,
 }
 
@@ -171,6 +193,28 @@ impl<'s> Aquifer<'s> {
         region: &Volume,
         picker: FluidPicker,
     ) -> Self {
+        Self::build(samplers, random, region, picker, None)
+    }
+
+    /// [`new`](Self::new), with surface levels shared with the seed's other aquifers: those
+    /// already known aren't sampled again.
+    pub fn with_levels(
+        samplers: &'s AquiferSamplers,
+        random: XoroshiroPositionalRandomFactory,
+        region: &Volume,
+        picker: FluidPicker,
+        levels: &'s SurfaceLevels,
+    ) -> Self {
+        Self::build(samplers, random, region, picker, Some(levels))
+    }
+
+    fn build(
+        samplers: &'s AquiferSamplers,
+        random: XoroshiroPositionalRandomFactory,
+        region: &Volume,
+        picker: FluidPicker,
+        shared: Option<&'s SurfaceLevels>,
+    ) -> Self {
         let max = region.max_block();
         let min_grid = [
             grid_x(region.min[0] - 5),
@@ -193,6 +237,7 @@ impl<'s> Aquifer<'s> {
             centres: vec![None; cells],
             statuses: vec![None; cells],
             surface_levels: HashMap::new(),
+            shared,
             skip_sampling_above_y: 0,
         };
         let highest = aquifer.max_surface_level(
@@ -215,6 +260,24 @@ impl<'s> Aquifer<'s> {
             [qx0 << 2, 0, qz0 << 2],
             [4, 1, 4],
         );
+        let keys: Vec<(i32, i32)> = (0..volume.size[2])
+            .flat_map(|iz| (0..volume.size[0]).map(move |ix| (ix, iz)))
+            .map(|(ix, iz)| (volume.block_x(ix), volume.block_z(iz)))
+            .collect();
+        // Every level already known to the seed: nothing to sample.
+        if let Some(shared) = self.shared {
+            let known = shared.lock();
+            if let Some(levels) = keys
+                .iter()
+                .map(|k| known.get(k).copied())
+                .collect::<Option<Vec<i32>>>()
+            {
+                drop(known);
+                self.surface_levels
+                    .extend(keys.iter().copied().zip(levels.iter().copied()));
+                return levels.into_iter().max().unwrap_or(i32::MIN);
+            }
+        }
         let values = self.samplers.surface_level.sample_volume(&volume);
         let mut highest = i32::MIN;
         for iz in 0..volume.size[2] {
@@ -225,6 +288,11 @@ impl<'s> Aquifer<'s> {
                 highest = highest.max(level);
             }
         }
+        if let Some(shared) = self.shared {
+            shared
+                .lock()
+                .extend(self.surface_levels.iter().map(|(&k, &v)| (k, v)));
+        }
         highest
     }
 
@@ -232,11 +300,21 @@ impl<'s> Aquifer<'s> {
     /// point at y 0 if the region's volume didn't cover it.
     fn surface_level(&mut self, x: i32, z: i32) -> i32 {
         let (x, z) = ((x >> 2) << 2, (z >> 2) << 2);
-        let surface_level = &self.samplers.surface_level;
-        *self
-            .surface_levels
-            .entry((x, z))
-            .or_insert_with(|| mth::floor(f64::from(surface_level.sample(x, 0, z))))
+        if let Some(&level) = self.surface_levels.get(&(x, z)) {
+            return level;
+        }
+        let shared = self.shared;
+        let level = shared
+            .and_then(|s| s.lock().get(&(x, z)).copied())
+            .unwrap_or_else(|| {
+                let level = mth::floor(f64::from(self.samplers.surface_level.sample(x, 0, z)));
+                if let Some(s) = shared {
+                    s.lock().insert((x, z), level);
+                }
+                level
+            });
+        self.surface_levels.insert((x, z), level);
+        level
     }
 
     fn index(&self, [x, y, z]: [i32; 3]) -> usize {

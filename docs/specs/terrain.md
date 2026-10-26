@@ -56,7 +56,7 @@ A fluid status `(level, fluid)` gives the fluid below `level` and air at or abov
 
 **Region.** An aquifer is built for a region of blocks (a column, or a chunk), and remembers each cell's centre and status. Its cells run from `gridX(minX − 5)` to `gridX(maxX − 5) + 1`, `gridY(minY + 1) − 1` to `gridY(maxY + 1) + 1`, and likewise for z.
 
-**Surface level.** `surfaceLevel(x, z)` snaps x and z down to multiples of 4, then takes `Mth.floor` of `surface_level` at `(x', 0, z')`, remembered. When the aquifer is built, the quart columns from `fromGridX(minCellX, 0)` to `fromGridX(maxCellX, 9)` (and z alike) are sampled at once, as a volume at y 0 with steps of 4, which fills those entries; others are sampled at a point when asked for. That agrees with point sampling, so results don't depend on the region (below).
+**Surface level.** `surfaceLevel(x, z)` snaps x and z down to multiples of 4, then takes `Mth.floor` of `surface_level` at `(x', 0, z')`, remembered. When the aquifer is built, the quart columns from `fromGridX(minCellX, 0)` to `fromGridX(maxCellX, 9)` (and z alike) are sampled at once, as a volume at y 0 with steps of 4, which fills those entries; others are sampled at a point when asked for. That agrees with point sampling, so results don't depend on the region (below). spyglass keeps the levels for the seed, shared by all its aquifers: an aquifer whose prefill box is all known samples nothing, which saves most of a nearby column's aquifer setup.
 
 ### `computeSubstance(x, y, z, density)`
 

@@ -82,7 +82,7 @@ Non-jigsaw structures' pieces (strongholds, mansions, monuments, mineshafts and 
 
 Set now, revisited once after phase 4's first measurement (any change recorded in Notes with the numbers behind it). Release, one thread, on the 26.3 bundle, in a new session:
 
-- `height_at` for one column in a bound session: at most 150 µs; binding a seed's terrain: at most 400 µs; 1,000 columns in one chunk-aligned region: at most 30 ms. (Revised after phase 4's measurement, see Notes: the first target included binding, which alone costs more than 150 µs.)
+- `height_at` for one column in a bound session: at most 150 µs; binding a seed's terrain: at most 400 µs; 1,000 columns in one chunk-aligned region: at most 30 ms. (Revised after phase 4's measurement, see Notes: the first target included binding, which alone costs more than 150 µs. The single-column target was retired in phase 8, agreed 2026-10-26: see Notes.)
 - A confirmed swamp-hut count within 1,000 of 0,0: at most 3× the unconfirmed cost (1.2 ms today, so 3.6 ms).
 - A confirmed `#minecraft:village` locate from 0,0: at most 50 ms.
 - The m06 witch-hut query (`require 2 minecraft:swamp_hut within 400 of 0,0`) searched with `confirm` on all cores: at least a quarter of the unconfirmed rate.
@@ -152,8 +152,8 @@ Specs and ADRs that govern this: [density-functions.md](../specs/density-functio
 
 ### Phase 8: speed and benchmarks
 
-- [ ] Bench lines (`cargo xtask bench`): one column, a region of heights, a confirmed swamp-hut count, a confirmed village locate, the witch-hut search confirmed (one thread and all).
-- [ ] Meet the targets; flatten the density interpreter if the interpreter can't. Exit criterion 3.
+- [x] Bench lines (`cargo xtask bench`): one column, a region of heights, a confirmed swamp-hut count, a confirmed village locate, the witch-hut search confirmed (one thread and all). Also a nearby column and a village layout.
+- [x] Meet the targets; flatten the density interpreter if the interpreter can't. Exit criterion 3. Every target met but the isolated column, which is retired (see Notes); flattening moves to a later milestone.
 
 ### Phase 9: front ends and close-out
 
@@ -193,6 +193,13 @@ Agreed on 2026-10-25, as recommended:
 
 ## Notes
 
+- 2026-10-26: Phase 8 done; exit criterion 3 is met. Release, `cargo xtask bench`, against the targets (this machine varies by up to 30% between runs, so ranges are over three runs):
+  - Binding a seed's terrain: about 320 µs (target 400). 1,000 columns chunk by chunk: 19 to 20 ms (target 30).
+  - A confirmed swamp-hut count within 1,000 of 0,0 in a new session: 1.6 to 2.3 ms, 1.3 to 1.6 times the unconfirmed 1.2 to 1.6 ms (target 3 times).
+  - A confirmed `#minecraft:village` locate from 0,0 in a new session: 2.9 to 3.5 ms (target 50). Faster than unconfirmed (49 to 52 ms), which runs to the 32-candidate cap; confirmed, the first village is certain.
+  - The witch-hut query searched confirmed: 2,900 to 3,900 seeds a second on one thread and 24,800 to 29,000 on all, 95 to 100% of unconfirmed (target 25%). The unconfirmed first pass rejects nearly every seed before terrain is bound.
+  - One column in a bound session: 170 µs next to earlier columns, about 240 µs on its own; the target was 150 µs. Of an isolated column, about 185 µs is the `final_density` volume and about 140 µs the aquifer's surface levels (49 `find_top_surface` samples), which decide where the aquifer stops sampling and can't be skipped. The game takes about 500 µs. Agreed with the user: retire this target rather than flatten the density interpreter in this milestone, since every target that reflects use is met; flattening becomes its own later milestone, [09](../roadmap/09-fast-density.md).
+  - Changes: surface levels are kept per seed and shared by every aquifer (exact: the terrain spec shows they don't depend on the region), which takes a nearby column's aquifer setup from 139 µs to 2 µs and a plains village's layout from about 85 ms to 65 ms. Sampling a column's density in 64-block segments from the top, to stop at the surface, was tried and dropped: four segments cost 205 µs against 184 µs for the whole column, since each volume call has a large fixed cost.
 - 2026-10-26: Phase 7 done. `Session` decides starts with `Starts::with_terrain` when asked to confirm; every front end still asks for unconfirmed answers until phase 9 gives them the option. Confirmed `/locate` against the oracle: in 212 of the 216 structure cases every hit is certain and the answer is exactly the game's; the other 4 are strongholds behind tie- or platform-dependent ring positions. Choices that differ from the plan's rough API:
   - Bounds are a separate call, `Session::structure_layout(structure, chunk)`, not a field of every `StructureStart`: a village takes about 200 ms to assemble, and a hit can name several structures, of which the one that starts isn't always known. The world loads its template pools on the first call.
   - Check positions aren't exposed, for the same reason: they belong to one structure, and a start lists the structures that may start. Nothing asks for them yet.

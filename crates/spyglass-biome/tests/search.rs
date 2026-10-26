@@ -12,7 +12,7 @@ fn source(tie: bool) -> BiomeSource {
 }
 
 fn id(source: &BiomeSource, name: &str) -> BiomeId {
-    source.parameters().id(name).unwrap()
+    source.biome_names().id(name).unwrap()
 }
 
 #[test]

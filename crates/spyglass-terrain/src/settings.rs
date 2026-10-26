@@ -52,6 +52,8 @@ pub struct TerrainSettings {
     /// `aquifers`, absent where the dimension has none (the aquifer is then disabled).
     aquifers: Option<[Df; 6]>,
     noises: HashMap<String, NormalNoiseParameters>,
+    /// `legacy_random_source`.
+    legacy: bool,
 }
 
 /// Terrain's functions bound to one seed.
@@ -70,8 +72,9 @@ pub struct BoundTerrain {
 impl TerrainSettings {
     /// Loads `noise_settings` (e.g. `minecraft:overworld`): the noise range, sea level, default
     /// block and fluid, the router's `final_density` and the `aquifers` functions; and from
-    /// `dimension_type` (e.g. `minecraft:overworld`), the level's range. Settings with
-    /// `legacy_random_source: true` aren't supported yet.
+    /// `dimension_type` (e.g. `minecraft:overworld`), the level's range. With
+    /// `legacy_random_source: true`, settings with aquifers aren't supported: no vanilla
+    /// dimension has both, and the aquifer's random source isn't ported for legacy.
     pub fn load<R: Resources + ?Sized>(
         resources: &R,
         noise_settings: &str,
@@ -83,17 +86,18 @@ impl TerrainSettings {
             .resource(NOISE_SETTINGS, &id)
             .map_err(|e| root.error(e.into()))?;
         let settings = object(&json, &root)?;
-        if settings
-            .get("legacy_random_source")
-            .and_then(Value::as_bool)
-            == Some(true)
-        {
-            return Err(root
-                .child("legacy_random_source")
-                .error(LoadErrorKind::Unsupported {
-                    what: "random source",
-                    name: "legacy".to_string(),
-                }));
+        let legacy = match settings.get("legacy_random_source") {
+            None => false,
+            Some(v) => v.as_bool().ok_or_else(|| {
+                root.child("legacy_random_source")
+                    .error(LoadErrorKind::Shape("true or false"))
+            })?,
+        };
+        if legacy && settings.contains_key("aquifers") {
+            return Err(root.child("aquifers").error(LoadErrorKind::Unsupported {
+                what: "aquifers with",
+                name: "legacy_random_source".to_string(),
+            }));
         }
         let (min_y, height) = noise_range(field(settings, "noise", &root)?, &root.child("noise"))?;
         let sea_level = int(
@@ -152,6 +156,7 @@ impl TerrainSettings {
             final_density,
             aquifers,
             noises: loader.noises().clone(),
+            legacy,
         })
     }
 
@@ -171,7 +176,7 @@ impl TerrainSettings {
     /// Binds terrain's functions for `seed` with one [`Binder`], so they share their common
     /// nodes and noises as `RandomState` shares them.
     pub fn bind(&self, seed: i64) -> Result<BoundTerrain, LoadError> {
-        let mut binder = Binder::new(&self.noises, seed);
+        let mut binder = Binder::with_legacy_random(&self.noises, seed, self.legacy);
         let final_density = binder.bind(&self.final_density)?;
         let aquifer = match &self.aquifers {
             None => None,

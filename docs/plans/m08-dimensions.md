@@ -200,11 +200,12 @@ Specs and ADRs that govern this: [noise.md](../specs/noise.md), [rng.md](../spec
 
 ### Phase 3: biomes
 
-- [ ] The Nether's source through `multi_noise`.
-- [ ] `TheEndBiomeSource`.
-- [ ] Biome names and palettes from the source.
-- [ ] `World::open_dimension`; spawn origins for both.
-- [ ] Golden biome tests in both dimensions; `check-save` against a real save's Nether and End.
+- [x] The Nether's source through `multi_noise`.
+- [x] `TheEndBiomeSource`.
+- [x] Biome names and palettes from the source.
+- [x] `World::open_dimension`; spawn origins for both.
+- [x] Golden biome tests in both dimensions.
+- [ ] `check-save` against a real save's Nether and End: the test world has no Nether or End chunks yet.
 
 ### Phase 4: terrain
 
@@ -280,6 +281,7 @@ Agreed on 2026-10-26, as recommended:
 
 ## Notes
 
+- 2026-10-26: Phase 3 done but for `check-save`, which needs a save with Nether and End chunks. Every golden biome cell matches: the Nether's 42,598,400 cells (8,064 tied, every tie set equal) and the End's 42,598,400, and the 30 spawn files. `BiomeSource` is multi-noise or the End's; biome names moved to `BiomeNames`, which structure loading takes instead of the parameter list. `World::open_dimension` reads each dimension's type from the preset. Terrain settings accept legacy randomness (refusing it only with aquifers, which no vanilla dimension combines), a phase 4 task done early because opening a world loads terrain.
 - 2026-10-26: Phase 2 done. All 19,660 density probe cases match bit for bit: 14,660 in the Overworld, 2,240 in the Nether and 2,760 in the End, now including the router's inline entries. Every density function in the 26.3 bundle binds. Skipping 17,291 draws instead of 17,292 for the End's islands fails 548 cases. The binder takes a legacy flag (`Binder::with_legacy_random`) and the climate router reads it; terrain settings still refuse legacy until phase 4. Legacy normalization is ported but only hand-tested, since no 26.3 noise uses it.
 - 2026-10-26: Phase 1 done. The golden set now covers all three dimensions (biomes, structures, spawn, heights), and `oracle locate` asks Nether and End cases with `execute in` (locate format 2, a dimension per case; the Rust comparison skips other dimensions until phase 5). Specs have drafts for everything below. From the 26.3 bytecode, beyond the plan's expectations:
   - Legacy randomness changes less than in 1.21: the positional factory, `old_blended_noise` from `LegacyRandomSource(seed)`, and nothing else. **There's no shift override any more.** The Nether biome noises have their own construction, keyed on their ids, not on the legacy flag. `end_outer_islands` is always legacy-seeded.

@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use serde_json::{Map, Value};
-use spyglass_biome::{BiomeSource, ParameterList};
+use spyglass_biome::{BiomeNames, BiomeSource};
 use spyglass_data::bundle::Bundle;
 use spyglass_data::codec::{
     self, At, LoadErrorKind, LoadResult, field, full_id, id, int_field, int_in, object,
@@ -149,16 +149,15 @@ impl StructureSets {
         dimension: &str,
         source: &BiomeSource,
     ) -> LoadResult<Self> {
-        Self::load_with(bundle, preset, dimension, source.parameters())
+        Self::load_with(bundle, preset, dimension, source.biome_names())
     }
 
-    /// [`load`](Self::load), given only the biome source's parameter list, which names its
-    /// biomes.
+    /// [`load`](Self::load), given only the biome source's biomes.
     pub fn load_with(
         bundle: &Bundle,
         preset: &str,
         dimension: &str,
-        biomes: &ParameterList,
+        biomes: &BiomeNames,
     ) -> LoadResult<Self> {
         let (heights, sea_level) = dimension_heights(bundle, preset, dimension)?;
         let ids = bundle.registry_ids(STRUCTURE_SET);
@@ -534,16 +533,9 @@ mod tests {
     use crate::placement::{FrequencyReduction, PlacementKind, SpreadType};
 
     /// A parameter list naming plains, desert and ocean, in that order.
-    fn biomes() -> ParameterList {
-        let point = |b: &str| {
-            json!({"biome": b, "parameters": {
-                "temperature": 0.0, "humidity": 0.0, "continentalness": 0.0,
-                "erosion": 0.0, "depth": 0.0, "weirdness": 0.0, "offset": 0.0}})
-        };
-        let report = json!({"biomes": [
-            point("minecraft:plains"), point("minecraft:desert"), point("minecraft:ocean")
-        ]});
-        ParameterList::from_report(&report, "test").unwrap()
+    fn biomes() -> BiomeNames {
+        let names = ["minecraft:plains", "minecraft:desert", "minecraft:ocean"];
+        BiomeNames::new(names.map(str::to_string).to_vec())
     }
 
     /// Loads a bundle of the given `(path, json)` files, plus a minimal preset, dimension type,

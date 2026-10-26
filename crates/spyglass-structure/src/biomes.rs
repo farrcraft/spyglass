@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use serde_json::Value;
-use spyglass_biome::{BiomeId, ParameterList};
+use spyglass_biome::{BiomeId, BiomeNames};
 use spyglass_data::bundle::Bundle;
 
 use spyglass_data::codec::{At, LoadError, LoadErrorKind, LoadResult, full_id};
@@ -62,14 +62,14 @@ impl BiomeSet {
 /// Resolves biome holder sets and tags, loading each tag once.
 pub(crate) struct Tags<'a> {
     bundle: &'a Bundle,
-    biomes: &'a ParameterList,
+    biomes: &'a BiomeNames,
     tags: HashMap<String, BiomeSet>,
     /// Tags being resolved, outermost first, for cycle detection.
     loading: Vec<String>,
 }
 
 impl<'a> Tags<'a> {
-    pub(crate) fn new(bundle: &'a Bundle, biomes: &'a ParameterList) -> Self {
+    pub(crate) fn new(bundle: &'a Bundle, biomes: &'a BiomeNames) -> Self {
         Tags {
             bundle,
             biomes,

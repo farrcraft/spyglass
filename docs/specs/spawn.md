@@ -1,6 +1,6 @@
 # World spawn
 
-Status: stable. Covers the spawn origin of a noise-based dimension (the Overworld of the Default world preset), implemented in `spyglass-biome` for 26.3 and checked against the oracle's [spawn golden files](oracle.md#spawn-golden-files). The final spawn block needs generated blocks (the surface and features), not only the generator's heights, and is deferred to a later milestone ([roadmap](../roadmap/README.md)).
+Status: stable. Covers the spawn origin of a noise-based dimension (the Default world preset's three), implemented in `spyglass-biome` for 26.3 and checked against the oracle's [spawn golden files](oracle.md#spawn-golden-files). The final spawn block needs generated blocks (the surface and features), not only the generator's heights, and is deferred to a later milestone ([roadmap](../roadmap/README.md)).
 
 ## How the game picks the spawn
 
@@ -12,6 +12,8 @@ Status: stable. Covers the spawn origin of a noise-based dimension (the Overworl
 So the origin is exact now, and the spawn block is in the 11 × 11 chunks around it. In the four 26.3 worlds checked (the two Seed Check worlds and two others), the saved spawn was in the origin chunk itself.
 
 ## Spawn targets
+
+The Nether's and the End's settings have no spawn targets, so their origin is chunk (0, 0) with no climate position; the spawn golden files agree.
 
 `NoiseGeneratorSettings.spawn_target` is a required list of `SpawnTargetPoint`s. Each is a map from a density-function id to a `Climate.Parameter` (`Codec.unboundedMap(DensityFunction.REFERENCE_CODEC, Climate.Parameter.CODEC)`):
 

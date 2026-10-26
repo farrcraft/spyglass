@@ -109,12 +109,52 @@ impl ParameterPoint {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BiomeId(pub u16);
 
+/// A biome source's biomes, by [`BiomeId`]: their ids, e.g. `minecraft:plains`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BiomeNames(Vec<String>);
+
+impl BiomeNames {
+    /// Names in [`BiomeId`] order.
+    pub fn new(names: Vec<String>) -> Self {
+        BiomeNames(names)
+    }
+
+    /// A biome's id. Panics if `biome` isn't one of these.
+    pub fn name(&self, biome: BiomeId) -> &str {
+        &self.0[usize::from(biome.0)]
+    }
+
+    /// Every biome id, by [`BiomeId`].
+    pub fn names(&self) -> &[String] {
+        &self.0
+    }
+
+    /// A biome's [`BiomeId`] by name, if it's one of these.
+    pub fn id(&self, name: &str) -> Option<BiomeId> {
+        self.0
+            .iter()
+            .position(|n| n == name)
+            .map(|i| BiomeId(i as u16))
+    }
+
+    /// The [`BiomeId`] of `name`, added if it's new.
+    fn intern(&mut self, name: &str) -> BiomeId {
+        match self.id(name) {
+            Some(id) => id,
+            None => {
+                self.0.push(name.to_string());
+                BiomeId((self.0.len() - 1) as u16)
+            }
+        }
+    }
+}
+
 /// `Climate.ParameterList`: parameter points with their biomes, in the game's order.
 #[derive(Debug, Clone)]
 pub struct ParameterList {
     points: Vec<ParameterPoint>,
     biomes: Vec<BiomeId>,
-    names: Vec<String>,
+    names: BiomeNames,
 }
 
 /// The parameter names in a report entry, in [`TargetPoint`]'s order. The router's `vegetation`
@@ -148,7 +188,7 @@ impl ParameterList {
         let mut list = ParameterList {
             points: Vec::with_capacity(entries.len()),
             biomes: Vec::with_capacity(entries.len()),
-            names: Vec::new(),
+            names: BiomeNames::default(),
         };
         for (i, entry) in entries.iter().enumerate() {
             let at = format!("biomes[{i}]");
@@ -172,15 +212,10 @@ impl ParameterList {
             // ParameterPoint.CODEC: offset is Codec.floatRange(0, 1), quantized.
             let offset = coordinate(field("offset")?, 0, 10_000)
                 .map_err(|kind| error(format!("{at}.parameters.offset"), kind))?;
-            let id = match list.names.iter().position(|n| n == biome) {
-                Some(id) => id,
-                None => {
-                    list.names.push(biome.to_string());
-                    list.names.len() - 1
-                }
-            };
-            let id = u16::try_from(id)
-                .map_err(|_| error(at, LoadErrorKind::Invalid("too many biomes")))?;
+            if list.names.id(biome).is_none() && list.names.0.len() > usize::from(u16::MAX) {
+                return Err(error(at, LoadErrorKind::Invalid("too many biomes")));
+            }
+            let BiomeId(id) = list.names.intern(biome);
             list.points.push(ParameterPoint {
                 parameters: ranges,
                 offset,
@@ -202,20 +237,22 @@ impl ParameterList {
 
     /// A biome's id, e.g. `minecraft:plains`.
     pub fn name(&self, biome: BiomeId) -> &str {
-        &self.names[usize::from(biome.0)]
+        self.names.name(biome)
     }
 
     /// Every biome id, by [`BiomeId`].
     pub fn names(&self) -> &[String] {
-        &self.names
+        self.names.names()
     }
 
     /// A biome's [`BiomeId`] by name, if it's in the list.
     pub fn id(&self, name: &str) -> Option<BiomeId> {
-        self.names
-            .iter()
-            .position(|n| n == name)
-            .map(|i| BiomeId(i as u16))
+        self.names.id(name)
+    }
+
+    /// The biomes' names.
+    pub fn biome_names(&self) -> &BiomeNames {
+        &self.names
     }
 }
 

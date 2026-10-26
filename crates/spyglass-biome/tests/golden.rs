@@ -20,8 +20,12 @@ fn bundle_for(version: &str) -> Bundle {
     Bundle::open(&dir).unwrap_or_else(|e| panic!("{e}; run spyglass-extract {version}"))
 }
 
-/// Golden files by version, read from `oracle-out/<version>/biomes/overworld/`.
-fn golden_files() -> BTreeMap<String, Vec<PathBuf>> {
+/// The Default preset's dimensions, by their folders in `oracle-out/<version>/biomes/`.
+const DIMENSIONS: [&str; 3] = ["overworld", "the_nether", "the_end"];
+
+/// Golden files by version and dimension folder, read from
+/// `oracle-out/<version>/biomes/<dimension>/`.
+fn golden_files() -> BTreeMap<(String, &'static str), Vec<PathBuf>> {
     let root = spyglass_oracle::default_dir();
     let mut out = BTreeMap::new();
     for entry in std::fs::read_dir(&root)
@@ -29,9 +33,11 @@ fn golden_files() -> BTreeMap<String, Vec<PathBuf>> {
         .flatten()
     {
         let version = entry.file_name().to_string_lossy().into_owned();
-        let files = biome_files(&root, &version, "overworld");
-        if !files.is_empty() {
-            out.insert(version, files);
+        for dimension in DIMENSIONS {
+            let files = biome_files(&root, &version, dimension);
+            if !files.is_empty() {
+                out.insert((version.clone(), dimension), files);
+            }
         }
     }
     assert!(
@@ -110,9 +116,14 @@ fn check_file(source: &BiomeSource, path: &Path) -> Outcome {
 #[test]
 #[ignore = "needs golden files and a bundle: cargo xtask oracle golden"]
 fn every_golden_cell_matches_the_game() {
-    for (version, files) in golden_files() {
+    for ((version, dimension), files) in golden_files() {
         let start = Instant::now();
-        let source = BiomeSource::overworld(&bundle_for(&version)).unwrap();
+        let source = BiomeSource::load(
+            &bundle_for(&version),
+            "minecraft:normal",
+            &format!("minecraft:{dimension}"),
+        )
+        .unwrap();
         // One thread per seed directory.
         let mut by_seed: BTreeMap<PathBuf, Vec<PathBuf>> = BTreeMap::new();
         for f in files {
@@ -156,11 +167,11 @@ fn every_golden_cell_matches_the_game() {
         }
         assert!(
             failed == 0,
-            "{version}: {failed} of {cells} cells fail:\n{}",
+            "{version} {dimension}: {failed} of {cells} cells fail:\n{}",
             report.join("\n")
         );
         println!(
-            "{version}: {} files, {cells} cells, {ties} tied, all match ({:.1?})",
+            "{version} {dimension}: {} files, {cells} cells, {ties} tied, all match ({:.1?})",
             results.len(),
             start.elapsed()
         );
@@ -184,7 +195,9 @@ fn tree_equals_brute_force_on_probed_climates() {
                 continue;
             }
             let target = spyglass_biome::TargetPoint(case.i64s().try_into().expect("six values"));
-            let tree = source.tree();
+            let tree = source
+                .tree()
+                .expect("the overworld's source is multi-noise");
             assert_eq!(
                 tree.lookup(&target),
                 tree.brute_force(&target),

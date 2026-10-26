@@ -1,5 +1,6 @@
-//! A dimension's multi-noise biome source (`MultiNoiseBiomeSource`), loaded from a world preset,
-//! and its lookups for one seed.
+//! A dimension's biome source, loaded from a world preset: multi-noise (`MultiNoiseBiomeSource`,
+//! the Overworld's and the Nether's) or the End's (`TheEndBiomeSource`); and its lookups for one
+//! seed.
 
 use std::collections::BTreeMap;
 
@@ -9,7 +10,7 @@ use spyglass_data::codec::{LoadError, LoadErrorKind, full_id};
 use spyglass_density::{ClimateRouter, ClimateSampler};
 use spyglass_rng::RandomSource;
 
-use crate::parameters::{BiomeId, ParameterList, TargetPoint};
+use crate::parameters::{BiomeId, BiomeNames, ParameterList, TargetPoint};
 use crate::search::{Lookup, SearchTree};
 
 const WORLD_PRESET: &str = "worldgen/world_preset";
@@ -19,14 +20,34 @@ const PARAMETER_LIST: &str = "worldgen/multi_noise_biome_source_parameter_list";
 /// it, a result is reported as tie-dependent without checking.
 pub const MAX_REPLAYED_TIES: usize = 12;
 
-/// A multi-noise biome source: a dimension's climate router and parameter list, independent of
-/// the seed.
+/// `TheEndBiomeSource`'s biomes, in `collectPossibleBiomes` order: [`BiomeId`]s 0 to 4.
+const END_BIOMES: [&str; 5] = [
+    "minecraft:the_end",
+    "minecraft:end_highlands",
+    "minecraft:end_midlands",
+    "minecraft:small_end_islands",
+    "minecraft:end_barrens",
+];
+
+/// A biome source: a dimension's climate router and how it picks biomes, independent of the
+/// seed.
 #[derive(Debug, Clone)]
 pub struct BiomeSource {
     router: ClimateRouter,
-    parameters: ParameterList,
-    tree: SearchTree,
+    kind: Kind,
+    names: BiomeNames,
     noise_settings: String,
+}
+
+#[derive(Debug, Clone)]
+enum Kind {
+    /// `MultiNoiseBiomeSource`: the nearest parameter point to the climate.
+    MultiNoise {
+        parameters: ParameterList,
+        tree: SearchTree,
+    },
+    /// `TheEndBiomeSource`: the main island, then thresholds on erosion.
+    TheEnd,
 }
 
 impl BiomeSource {
@@ -36,8 +57,9 @@ impl BiomeSource {
     }
 
     /// The biome source of `dimension` in world preset `preset`. The dimension's generator must
-    /// be `minecraft:noise` with a `minecraft:multi_noise` biome source that names a parameter
-    /// list preset; its noise settings must be a reference.
+    /// be `minecraft:noise`, with a `minecraft:multi_noise` biome source that names a parameter
+    /// list preset or a `minecraft:the_end` biome source; its noise settings must be a
+    /// reference.
     pub fn load(bundle: &Bundle, preset: &str, dimension: &str) -> Result<Self, LoadError> {
         let error = |resource: &str, path: &str, kind| LoadError::new(resource, path, kind);
         let json = bundle
@@ -62,23 +84,34 @@ impl BiomeSource {
                     )
                 })
         };
-        for (path, want) in [
-            ("type", "minecraft:noise"),
-            ("biome_source.type", "minecraft:multi_noise"),
-        ] {
-            let found = id(path)?;
-            if full_id(found) != want {
-                return Err(error(
-                    preset,
-                    &format!("{at}.{path}"),
-                    LoadErrorKind::Unsupported {
-                        what: "type",
-                        name: found.to_string(),
-                    },
-                ));
-            }
+        let unsupported = |path: &str, found: &str| {
+            error(
+                preset,
+                &format!("{at}.{path}"),
+                LoadErrorKind::Unsupported {
+                    what: "type",
+                    name: found.to_string(),
+                },
+            )
+        };
+        let generator_type = id("type")?;
+        if full_id(generator_type) != "minecraft:noise" {
+            return Err(unsupported("type", generator_type));
         }
         let settings = id("settings")?;
+        let source_type = id("biome_source.type")?;
+        match full_id(source_type).as_str() {
+            "minecraft:multi_noise" => {}
+            "minecraft:the_end" => {
+                return Ok(BiomeSource {
+                    router: ClimateRouter::load(bundle, settings)?,
+                    kind: Kind::TheEnd,
+                    names: BiomeNames::new(END_BIOMES.map(str::to_string).to_vec()),
+                    noise_settings: full_id(settings),
+                });
+            }
+            _ => return Err(unsupported("biome_source.type", source_type)),
+        }
         let list_preset = id("biome_source.preset")?;
 
         // MultiNoiseBiomeSourceParameterList: {"preset": id}, which names the report.
@@ -100,8 +133,11 @@ impl BiomeSource {
 
         Ok(BiomeSource {
             router: ClimateRouter::load(bundle, settings)?,
-            tree: SearchTree::new(&parameters),
-            parameters,
+            names: parameters.biome_names().clone(),
+            kind: Kind::MultiNoise {
+                tree: SearchTree::new(&parameters),
+                parameters,
+            },
             noise_settings: full_id(settings),
         })
     }
@@ -112,25 +148,32 @@ impl BiomeSource {
         &self.noise_settings
     }
 
-    /// The parameter list, for biome names and ids.
-    pub fn parameters(&self) -> &ParameterList {
-        &self.parameters
+    /// Every biome the source can give, by [`BiomeId`].
+    pub fn biome_names(&self) -> &BiomeNames {
+        &self.names
+    }
+
+    /// The parameter list of a multi-noise source; `None` for the End's.
+    pub fn parameters(&self) -> Option<&ParameterList> {
+        match &self.kind {
+            Kind::MultiNoise { parameters, .. } => Some(parameters),
+            Kind::TheEnd => None,
+        }
     }
 
     /// A biome's id, e.g. `minecraft:plains`.
     pub fn name(&self, biome: BiomeId) -> &str {
-        self.parameters.name(biome)
+        self.names.name(biome)
     }
 
-    /// The biome nearest to a climate target.
-    pub fn lookup(&self, target: &TargetPoint) -> Lookup {
-        self.tree.lookup(target)
-    }
-
-    /// The search tree, for tests that compare it with [`SearchTree::brute_force`].
+    /// The search tree of a multi-noise source, for tests that compare it with
+    /// [`SearchTree::brute_force`].
     #[doc(hidden)]
-    pub fn tree(&self) -> &SearchTree {
-        &self.tree
+    pub fn tree(&self) -> Option<&SearchTree> {
+        match &self.kind {
+            Kind::MultiNoise { tree, .. } => Some(tree),
+            Kind::TheEnd => None,
+        }
     }
 
     /// Lookups for `seed`.
@@ -155,11 +198,6 @@ impl Biomes<'_> {
         self.source
     }
 
-    /// The climate sampler.
-    pub(crate) fn climate(&self) -> &ClimateSampler {
-        &self.climate
-    }
-
     /// `Climate.Sampler.sample`: the quantized climate at quart `(qx, qy, qz)`.
     pub fn climate_at(&self, qx: i32, qy: i32, qz: i32) -> TargetPoint {
         TargetPoint::quantize(self.climate.sample(qx, qy, qz))
@@ -167,7 +205,40 @@ impl Biomes<'_> {
 
     /// The biome at quart `(qx, qy, qz)`, with ties.
     pub fn biome_at(&self, qx: i32, qy: i32, qz: i32) -> Lookup {
-        self.source.lookup(&self.climate_at(qx, qy, qz))
+        self.lookup_at(qx, qy, qz, &mut Vec::new())
+    }
+
+    /// [`biome_at`](Self::biome_at), with a buffer the multi-noise search reuses.
+    pub(crate) fn lookup_at(&self, qx: i32, qy: i32, qz: i32, hits: &mut Vec<u32>) -> Lookup {
+        match &self.source.kind {
+            Kind::MultiNoise { tree, .. } => tree.lookup_with(&self.climate_at(qx, qy, qz), hits),
+            Kind::TheEnd => Lookup::Unique(self.end_biome(qx, qy, qz)),
+        }
+    }
+
+    /// `TheEndBiomeSource.getNoiseBiome`: `the_end` within 64 sections of the origin, else by the
+    /// router's erosion at the section's centre block, `((s·2 + 1)·8, qy << 2, …)`. That block
+    /// is quart `4s + 2`, so the climate sampler's quart sample gives it.
+    fn end_biome(&self, qx: i32, qy: i32, qz: i32) -> BiomeId {
+        // QuartPos.toBlock, then SectionPos.blockToSectionCoord.
+        let sx = qx.wrapping_shl(2) >> 4;
+        let sz = qz.wrapping_shl(2) >> 4;
+        let (lx, lz) = (i64::from(sx), i64::from(sz));
+        if lx * lx + lz * lz <= 4096 {
+            return BiomeId(0);
+        }
+        let quart = |s: i32| s.wrapping_mul(4).wrapping_add(2);
+        let erosion = f64::from(self.climate.sample(quart(sx), qy, quart(sz))[3]);
+        // dcmpl/ifle, dcmpl/iflt, dcmpg/ifge: NaN fails every test and gives barrens.
+        if erosion > 0.25 {
+            BiomeId(1)
+        } else if erosion >= -0.0625 {
+            BiomeId(2)
+        } else if erosion < -0.21875 {
+            BiomeId(3)
+        } else {
+            BiomeId(4)
+        }
     }
 
     /// `BiomeSource.findBiomeHorizontal(x, y, z, radius, increment, predicate, random,
@@ -290,8 +361,7 @@ impl Biomes<'_> {
                 let qx = min[0].wrapping_add(x as i32);
                 for y in 0..sy {
                     let qy = min[1].wrapping_add(y as i32);
-                    let target = TargetPoint::quantize(self.climate.sample(qx, qy, qz));
-                    let lookup = self.source.tree.lookup_with(&target, &mut hits);
+                    let lookup = self.lookup_at(qx, qy, qz, &mut hits);
                     let index = (y * sz + z) * sx + x;
                     cells[index] = lookup.biome();
                     if let Lookup::Tied(set) = lookup {
@@ -319,8 +389,7 @@ impl Biomes<'_> {
             let qz = origin[1].wrapping_add(step.wrapping_mul(z as i32));
             for x in 0..sx {
                 let qx = origin[0].wrapping_add(step.wrapping_mul(x as i32));
-                let target = TargetPoint::quantize(self.climate.sample(qx, qy, qz));
-                cells.push(self.source.tree.lookup_with(&target, &mut hits));
+                cells.push(self.lookup_at(qx, qy, qz, &mut hits));
             }
         }
         cells

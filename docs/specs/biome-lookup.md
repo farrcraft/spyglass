@@ -1,6 +1,6 @@
 # Biome lookup
 
-Status: stable. Covers the Overworld of the Default world preset, implemented in `spyglass-biome` for 26.3 and checked cell by cell against the oracle's [golden biome files](oracle.md#golden-biome-files).
+Status: stable. Covers the Default world preset's three dimensions, implemented in `spyglass-biome` for 26.3 and checked cell by cell against the oracle's [golden biome files](oracle.md#golden-biome-files).
 
 A multi-noise biome source (`MultiNoiseBiomeSource`) picks a biome at quart (1:4) resolution: it samples six climate values, quantizes them, and finds the nearest parameter point in the dimension's parameter list. Classes are in `net.minecraft.world.level.biome` unless stated otherwise.
 
@@ -8,15 +8,15 @@ A multi-noise biome source (`MultiNoiseBiomeSource`) picks a biome at quart (1:4
 
 `BiomeSource::load(bundle, preset, dimension)` follows the world preset, as a new world does:
 
-1. `worldgen/world_preset/<preset>`: `dimensions.<dimension>.generator` must have `type: minecraft:noise`, a `biome_source` of `type: minecraft:multi_noise` with a `preset`, and `settings` naming noise settings by id. Inline settings and inline biome lists aren't supported yet.
+1. `worldgen/world_preset/<preset>`: `dimensions.<dimension>.generator` must have `type: minecraft:noise`, a `biome_source` of `type: minecraft:multi_noise` with a `preset` or of `type: minecraft:the_end` ([below](#the-ends-source)), and `settings` naming noise settings by id. Inline settings and inline biome lists aren't supported yet.
 2. `worldgen/multi_noise_biome_source_parameter_list/<preset>` is `{"preset": <id>}`. The parameter list itself is built in code (`MultiNoiseBiomeSourceParameterList.Preset`), so spyglass reads the data generator's report for that id: `reports/biome_parameters/<namespace>/<path>.json` ([data-sources.md](data-sources.md#data-generator)).
 3. The climate router comes from the noise settings ([density-functions.md](density-functions.md#the-climate-sampler)).
 
-`BiomeSource::overworld` is `minecraft:normal`, `minecraft:overworld`: noise settings `minecraft:overworld`, parameter list `minecraft:overworld`.
+`BiomeSource::overworld` is `minecraft:normal`, `minecraft:overworld`: noise settings `minecraft:overworld`, parameter list `minecraft:overworld`. The Nether is noise settings `minecraft:nether` and parameter list `minecraft:nether`; the End is noise settings `minecraft:end` and the End's source. Both bind with legacy randomness ([density-functions.md](density-functions.md#binding-to-a-seed)).
 
 ## The End's source
 
-Draft, from the 26.3 bytecode (`TheEndBiomeSource`). The End's preset names biome source `minecraft:the_end`, with no fields. Its biomes, in order: `the_end`, `end_highlands`, `end_midlands`, `small_end_islands`, `end_barrens`. It has no parameter list and no ties.
+From the 26.3 bytecode (`TheEndBiomeSource`). The End's preset names biome source `minecraft:the_end`, with no fields. Its biomes, in order: `the_end`, `end_highlands`, `end_midlands`, `small_end_islands`, `end_barrens`. It has no parameter list and no ties.
 
 For quart `(qx, qy, qz)`: `bx = qx << 2`, `bz = qz << 2`, section `sx = bx >> 4`, `sz = bz >> 4`.
 
@@ -76,4 +76,4 @@ In 26.3's overworld, five climate functions don't depend on y at all, and depth 
 
 ## Testing
 
-Committed tests use hand-written reports ([ADR 0008](../adr/0008-game-derived-test-values-stay-local.md)): quantization round trips, fitness, ties and the tie answer, and tree against brute force. The ignored tests in `spyglass-biome/tests/golden.rs` check every cell of every golden file by the tie rule. They also require the tie set to equal the golden set exactly, and the number of tied cells to match. Further ignored tests compare the tree with brute force on the probed climate targets, and the region fill with `biome_at`. See [oracle.md](oracle.md#rust-side-comparison) for running them.
+Committed tests use hand-written reports ([ADR 0008](../adr/0008-game-derived-test-values-stay-local.md)): quantization round trips, fitness, ties and the tie answer, and tree against brute force. The ignored tests in `spyglass-biome/tests/golden.rs` check every cell of every golden file by the tie rule, in all three dimensions. For 26.3: the Overworld's 63,897,600 cells (52,297 tied), the Nether's 42,598,400 (8,064 tied) and the End's 42,598,400, all equal. They also require the tie set to equal the golden set exactly, and the number of tied cells to match. Further ignored tests compare the tree with brute force on the probed climate targets, and the region fill with `biome_at`. See [oracle.md](oracle.md#rust-side-comparison) for running them.

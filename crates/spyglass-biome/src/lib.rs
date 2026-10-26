@@ -1,6 +1,7 @@
 //! Climate sampling and biome lookup for the Overworld, Nether and End.
 //!
-//! A [`BiomeSource`] loads a dimension's climate router and biome parameter list from a bundle;
+//! A [`BiomeSource`] loads a dimension's climate router and how it picks biomes (a parameter
+//! list, or the End's rule) from a bundle;
 //! [`BiomeSource::with_seed`] binds it to a seed for [`Biomes::biome_at`] and
 //! [`Biomes::biomes_in`]. The nearest-point search is exact and reports ties, where the game's
 //! answer depends on lookup history. See `docs/specs/biome-lookup.md`.
@@ -17,7 +18,9 @@ mod spawn;
 pub use locate::{
     BiomeHit, BiomeSearch, MAX_UNCERTAIN, SearchVolume, out_from_origin, spiral_around,
 };
-pub use parameters::{BiomeId, Parameter, ParameterList, ParameterPoint, TargetPoint, quantize};
+pub use parameters::{
+    BiomeId, BiomeNames, Parameter, ParameterList, ParameterPoint, TargetPoint, quantize,
+};
 pub use search::{Lookup, SearchTree};
 pub use source::{
     BiomeRegion, BiomeSource, Biomes, HorizontalArea, HorizontalMatch, HorizontalSearch,

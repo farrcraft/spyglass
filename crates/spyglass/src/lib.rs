@@ -261,11 +261,53 @@ pub fn find_bundle(dir: impl AsRef<Path>, version: Option<&str>) -> Result<Bundl
 /// Tells worlds apart, so a query resolved against one isn't used with another.
 static WORLDS: AtomicU64 = AtomicU64::new(0);
 
+/// The world preset every [`World`] is a dimension of: the Default preset.
+const PRESET: &str = "minecraft:normal";
+
+/// One of the Default preset's dimensions (ADR 0023).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Dimension {
+    /// `minecraft:overworld`.
+    Overworld,
+    /// `minecraft:the_nether`.
+    Nether,
+    /// `minecraft:the_end`.
+    End,
+}
+
+impl Dimension {
+    /// All three, in this order.
+    pub const ALL: [Dimension; 3] = [Dimension::Overworld, Dimension::Nether, Dimension::End];
+
+    /// The dimension's id, e.g. `minecraft:the_nether`.
+    pub fn id(self) -> &'static str {
+        match self {
+            Dimension::Overworld => "minecraft:overworld",
+            Dimension::Nether => "minecraft:the_nether",
+            Dimension::End => "minecraft:the_end",
+        }
+    }
+
+    /// The dimension with id `id` (with or without the `minecraft:` namespace).
+    pub fn from_id(id: &str) -> Option<Dimension> {
+        let id = full_id(id);
+        Dimension::ALL.into_iter().find(|d| d.id() == id)
+    }
+}
+
+impl std::fmt::Display for Dimension {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.id())
+    }
+}
+
 /// One dimension of a version bundle, loaded once: everything that doesn't depend on the seed.
 pub struct World {
     id: u64,
     bundle: Bundle,
-    dimension: String,
+    dimension: Dimension,
+    /// The dimension type's `coordinate_scale`.
+    coordinate_scale: f64,
     source: BiomeSource,
     sets: StructureSets,
     spawn: SpawnTargets,
@@ -280,16 +322,30 @@ impl World {
     /// The Overworld of the Default world preset, from the bundle in `dir` (e.g.
     /// `bundles/26.3`).
     pub fn open(dir: impl Into<PathBuf>) -> Result<World> {
+        Self::open_dimension(dir, Dimension::Overworld)
+    }
+
+    /// `dimension` of the Default world preset, from the bundle in `dir`.
+    pub fn open_dimension(dir: impl Into<PathBuf>, dimension: Dimension) -> Result<World> {
         let bundle = Bundle::open(dir)?;
-        let source = BiomeSource::overworld(&bundle)?;
-        let sets = StructureSets::overworld(&bundle, &source)?;
+        let id = dimension.id();
+        let source = BiomeSource::load(&bundle, PRESET, id)?;
+        let sets = StructureSets::load(&bundle, PRESET, id, &source)?;
         let spawn = SpawnTargets::load(&bundle, source.noise_settings())?;
-        let terrain =
-            TerrainSettings::load(&bundle, source.noise_settings(), "minecraft:overworld")?;
+        let dimension_type = dimension_type(&bundle, id)?;
+        let terrain = TerrainSettings::load(&bundle, source.noise_settings(), &dimension_type)?;
         // Binding fails the same way for every seed, so a world that opens binds for all.
         Terrain::new(&terrain, 0)?;
+        let coordinate_scale = bundle
+            .resource(
+                "dimension_type",
+                dimension_type.trim_start_matches("minecraft:"),
+            )?
+            .get("coordinate_scale")
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(1.0);
         let palette = source
-            .parameters()
+            .biome_names()
             .names()
             .iter()
             .map(|n| biome_colour(n))
@@ -297,7 +353,8 @@ impl World {
         Ok(World {
             id: WORLDS.fetch_add(1, Ordering::Relaxed),
             bundle,
-            dimension: "minecraft:overworld".to_string(),
+            dimension,
+            coordinate_scale,
             source,
             sets,
             spawn,
@@ -321,14 +378,24 @@ impl World {
         &self.bundle.manifest().version
     }
 
-    /// The dimension, e.g. `minecraft:overworld`.
+    /// The dimension's id, e.g. `minecraft:overworld`.
     pub fn dimension(&self) -> &str {
-        &self.dimension
+        self.dimension.id()
+    }
+
+    /// The dimension.
+    pub fn dimension_kind(&self) -> Dimension {
+        self.dimension
+    }
+
+    /// The dimension type's coordinate scale: 8 for the Nether, 1 for the others.
+    pub fn coordinate_scale(&self) -> f64 {
+        self.coordinate_scale
     }
 
     /// Every biome the dimension can have.
     pub fn biomes(&self) -> &[String] {
-        self.source.parameters().names()
+        self.source.biome_names().names()
     }
 
     /// Every structure the dimension's structure sets name, possible or not.
@@ -387,9 +454,27 @@ impl World {
         Ok(BiomeQuery {
             world: self.id,
             id: biome.to_string(),
-            biome: self.source.parameters().id(&full_id(biome)),
+            biome: self.source.biome_names().id(&full_id(biome)),
         })
     }
+}
+
+/// The type of `dimension` in the Default preset, e.g. `minecraft:the_nether`.
+fn dimension_type(bundle: &Bundle, dimension: &str) -> Result<String> {
+    let preset = bundle.resource(
+        "worldgen/world_preset",
+        PRESET.trim_start_matches("minecraft:"),
+    )?;
+    preset
+        .get("dimensions")
+        .and_then(|d| d.get(dimension))
+        .and_then(|d| d.get("type"))
+        .and_then(serde_json::Value::as_str)
+        .map(full_id)
+        .ok_or_else(|| Error::Unknown {
+            what: "dimension",
+            id: dimension.to_string(),
+        })
 }
 
 /// A `/locate structure` argument resolved by [`World::structure_query`].

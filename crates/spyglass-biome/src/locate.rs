@@ -148,7 +148,8 @@ impl Biomes<'_> {
             "steps must be positive"
         );
         let mut search = BiomeSearch::default();
-        let names = self.source().parameters().names().len();
+        let mut hits = Vec::new();
+        let names = self.source().biome_names().names().len();
         if !(0..names).any(|b| matches(BiomeId(b as u16))) {
             return search;
         }
@@ -163,9 +164,7 @@ impl Biomes<'_> {
             let x = from[0].wrapping_add(ox.wrapping_mul(horizontal_step));
             let z = from[2].wrapping_add(oz.wrapping_mul(horizontal_step));
             for &y in &ys {
-                let target =
-                    crate::TargetPoint::quantize(self.climate().sample(x >> 2, y >> 2, z >> 2));
-                let lookup = self.source().lookup(&target);
+                let lookup = self.lookup_at(x >> 2, y >> 2, z >> 2, &mut hits);
                 let hit = matches(lookup.biome());
                 let disagree = lookup.candidates().iter().any(|&b| matches(b) != hit);
                 if hit || disagree {

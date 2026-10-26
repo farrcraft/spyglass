@@ -45,7 +45,7 @@ pub fn run(args: &Search) -> Result<()> {
         top: args.top,
         threads: args.threads,
         certain: args.certain,
-        confirm: false,
+        confirm: args.confirm,
     };
 
     let stop = Arc::new(AtomicBool::new(false));
@@ -134,10 +134,11 @@ fn print_text(
         outcome.hits.len(),
         world.version(),
         p.elapsed.as_secs_f64(),
-        if options.certain {
-            ", certain only"
-        } else {
-            ""
+        match (options.certain, options.confirm) {
+            (true, true) => ", confirmed, certain only",
+            (true, false) => ", certain only",
+            (false, true) => ", confirmed",
+            (false, false) => "",
         },
     );
     for line in query.to_string().lines() {
@@ -230,6 +231,7 @@ fn print_json(
         source,
         from: options.from,
         certain: options.certain,
+        confirm: options.confirm,
         top: options.top,
         next: p.next,
         evaluated: p.evaluated,

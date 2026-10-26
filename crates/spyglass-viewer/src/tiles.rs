@@ -1,10 +1,11 @@
 //! Map tiles: computed on worker threads, cached on the UI thread.
 //!
-//! Workers do the slow parts: a tile's biome map and slime chunks, and separately the structure
-//! starts on a tile for the structures chosen. The UI thread turns biome maps into textures with
-//! the current style (ties, highlight, slime) through the library's `BiomeMap::colorize` and
+//! Workers do the slow parts: a tile's biome map, heights and slime chunks, separately the
+//! structure starts on a tile for the structures chosen, and the layouts of jigsaw structures
+//! shown up close. The UI thread turns biome maps into textures with the current style (ties,
+//! highlight, slime, relief) through the library's `BiomeMap::colorize`, `Image::shade` and
 //! `Image::draw_features`, so restyling never samples biomes again, and draws structure markers
-//! itself.
+//! and bounds itself.
 
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
@@ -14,33 +15,50 @@ use std::thread;
 
 use eframe::egui;
 use spyglass::{
-    BiomeMap, DEFAULT_MAP_Y, Layers, MAX_SLIME_SCALE, MapFeatures, Session, StructureQuery,
-    StructureStart,
+    BiomeMap, DEFAULT_MAP_Y, HeightMap, Layers, MAX_SLIME_SCALE, MapFeatures, Session,
+    StructureLayout, StructureQuery, StructureStart,
 };
 
 use crate::view::{TILE, Tile};
 
-/// A tile's biomes: the world and seed, the height, and its place.
+/// A tile's biomes: the world and seed, the height, what terrain it needs, and its place.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TileKey {
     /// The app's number for the world and seed shown; each new session gets a new one.
     pub source: u64,
     pub y: i32,
+    /// Compute the tile's heights, for relief or surface biomes.
+    pub heights: bool,
+    /// Biomes at the surface rather than at `y`; needs `heights`.
+    pub surface: bool,
     pub tile: Tile,
 }
 
-/// A tile's structure markers: the world and seed, the structures chosen, and its place.
+/// A tile's structure markers: the world and seed, the structures chosen, whether terrain
+/// decides them, and its place.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MarkerKey {
     pub source: u64,
     /// The app's number for the structures chosen.
     pub selection: u64,
+    pub confirm: bool,
     pub tile: Tile,
+}
+
+/// A structure's layout: the world and seed, the structure (an index into
+/// `World::structures`) and its start chunk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct LayoutKey {
+    pub source: u64,
+    pub structure: usize,
+    pub chunk: [i32; 2],
 }
 
 /// A computed tile.
 pub struct TileData {
     pub biomes: BiomeMap,
+    /// Heights, where the key asked for them.
+    pub heights: Option<HeightMap>,
     /// Slime chunks, at scales where they're drawn.
     pub slime_chunks: Vec<[i32; 2]>,
 }
@@ -50,6 +68,7 @@ pub struct TileData {
 pub enum JobKey {
     Biomes(TileKey),
     Markers(MarkerKey),
+    Layout(LayoutKey),
 }
 
 /// Something to compute.
@@ -64,6 +83,8 @@ pub enum Output {
     Biomes(TileData),
     /// The structure starts whose marker centre is on the tile, in drawing order.
     Markers(Vec<StructureStart>),
+    /// `None` if the structure isn't a jigsaw.
+    Layout(Option<StructureLayout>),
 }
 
 type Done = (JobKey, Result<Output, String>);
@@ -165,6 +186,19 @@ fn compute(job: &Job) -> Result<Output, String> {
     let (tile, y) = match job.key {
         JobKey::Biomes(key) => (key.tile, key.y),
         JobKey::Markers(key) => (key.tile, DEFAULT_MAP_Y),
+        JobKey::Layout(key) => {
+            let structure = job
+                .session
+                .world()
+                .structures()
+                .nth(key.structure)
+                .ok_or("no such structure")?;
+            return job
+                .session
+                .structure_layout(structure, key.chunk)
+                .map(Output::Layout)
+                .map_err(|e| e.to_string());
+        }
     };
     let area = tile
         .area(y)
@@ -175,8 +209,17 @@ fn compute(job: &Job) -> Result<Output, String> {
             .map_err(|e| e.to_string())
     };
     match job.key {
-        JobKey::Biomes(_) => {
-            let biomes = job.session.biome_map(&area).map_err(|e| e.to_string())?;
+        JobKey::Biomes(key) => {
+            let heights = if key.heights {
+                Some(job.session.height_map(&area).map_err(|e| e.to_string())?)
+            } else {
+                None
+            };
+            let biomes = match &heights {
+                Some(heights) if key.surface => job.session.surface_biome_map(heights),
+                _ => job.session.biome_map(&area),
+            }
+            .map_err(|e| e.to_string())?;
             let slime_chunks = if area.scale <= MAX_SLIME_SCALE {
                 features(Layers {
                     biomes: false,
@@ -189,13 +232,15 @@ fn compute(job: &Job) -> Result<Output, String> {
             };
             Ok(Output::Biomes(TileData {
                 biomes,
+                heights,
                 slime_chunks,
             }))
         }
-        JobKey::Markers(_) => {
+        JobKey::Markers(key) => {
             let mut starts = features(Layers {
                 biomes: false,
                 structures: job.structures.to_vec(),
+                confirm: key.confirm,
                 ..Layers::default()
             })?
             .structures;
@@ -207,6 +252,7 @@ fn compute(job: &Job) -> Result<Output, String> {
             });
             Ok(Output::Markers(starts))
         }
+        JobKey::Layout(_) => unreachable!("layouts are computed above"),
     }
 }
 
@@ -217,6 +263,8 @@ pub struct Style {
     /// Biome ids to keep bright.
     pub highlight: Vec<String>,
     pub slime_chunks: bool,
+    /// Shade by the tile's heights, where it has them.
+    pub relief: bool,
 }
 
 /// A computed tile and its texture in some style.
@@ -304,6 +352,8 @@ mod tests {
         TileKey {
             source: 1,
             y: 64,
+            heights: false,
+            surface: false,
             tile: Tile { scale: 4, x, z: 0 },
         }
     }
@@ -374,20 +424,41 @@ mod tests {
         let pool = Pool::with_threads(2, move || {
             let _ = wake.send(());
         });
-        pool.want(
-            (0..3)
-                .map(|x| job(&session, JobKey::Biomes(key(x))))
-                .collect(),
-        );
-        for (key, result) in run(&pool, &woken, 3) {
+        let terrain = TileKey {
+            heights: true,
+            surface: true,
+            tile: Tile {
+                scale: 1,
+                x: 0,
+                z: 0,
+            },
+            ..key(0)
+        };
+        let mut jobs: Vec<Job> = (0..3)
+            .map(|x| job(&session, JobKey::Biomes(key(x))))
+            .collect();
+        jobs.push(job(&session, JobKey::Biomes(terrain)));
+        pool.want(jobs);
+        for (key, result) in run(&pool, &woken, 4) {
             let (JobKey::Biomes(key), Ok(Output::Biomes(data))) = (key, result) else {
                 panic!("a biome tile");
             };
             let area = key.tile.area(key.y).unwrap();
-            assert_eq!(data.biomes, session.biome_map(&area).unwrap());
+            if key.heights {
+                let heights = session.height_map(&area).unwrap();
+                assert_eq!(data.biomes, session.surface_biome_map(&heights).unwrap());
+                assert_eq!(data.heights, Some(heights));
+            } else {
+                assert_eq!(data.biomes, session.biome_map(&area).unwrap());
+                assert_eq!(data.heights, None);
+            }
+            let side = 256 * key.tile.scale as i32;
             assert_eq!(
                 data.slime_chunks,
-                session.slime_chunks(area.min.map(|m| m >> 4), area.min.map(|m| (m + 1023) >> 4))
+                session.slime_chunks(
+                    area.min.map(|m| m >> 4),
+                    area.min.map(|m| (m + side - 1) >> 4)
+                )
             );
         }
         assert!(!pool.busy());
@@ -407,6 +478,7 @@ mod tests {
         let marker = |tile| MarkerKey {
             source: 1,
             selection: 1,
+            confirm: false,
             tile,
         };
         pool.want(

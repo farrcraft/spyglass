@@ -157,9 +157,9 @@ Specs and ADRs that govern this: [density-functions.md](../specs/density-functio
 
 ### Phase 9: front ends and close-out
 
-- [ ] CLI: `--confirm` on `locate` and `search`; `spyglass heights` (or a `locate` subcommand) for a column or region; bounds in output; `cli-json.md` updated; integration tests.
-- [ ] Viewer: confirmed markers, jigsaw bounds at close zoom, a height layer (shaded heights), and biomes sampled at the surface as an option ([render.md](../specs/render.md)).
-- [ ] Update architecture.md, README, getting-started.
+- [x] CLI: `--confirm` on `locate` and `search`; `spyglass heights` (or a `locate` subcommand) for a column or region; bounds in output; `cli-json.md` updated; integration tests. Locate is confirmed by default (`--unconfirmed`), bounds are `--bounds`, and `render` gained `--confirm`, `--relief` and `--surface`.
+- [x] Viewer: confirmed markers, jigsaw bounds at close zoom, a height layer (shaded heights), and biomes sampled at the surface as an option ([render.md](../specs/render.md)).
+- [x] Update architecture.md, README, getting-started.
 - [ ] `cargo xtask check` and `cargo xtask oracle-test`; move this plan and the milestone to `completed/`.
 
 ## Verification
@@ -177,9 +177,9 @@ Specs and ADRs that govern this: [density-functions.md](../specs/density-functio
 - [x] `docs/specs/structure-placement.md`: terrain conditions, jigsaw assembly and bounds
 - [x] `docs/specs/locate.md`, `docs/specs/search.md`: confirmed mode
 - [x] `docs/specs/oracle.md`: probe additions, height files, structure format 2
-- [ ] `docs/specs/cli-json.md`, `docs/specs/render.md`
+- [x] `docs/specs/cli-json.md`, `docs/specs/render.md`
 - [x] ADR: `spyglass-terrain` and lazy terrain binding ([0022](../adr/0022-terrain-crate-and-volume-evaluation.md))
-- [ ] `docs/architecture.md`, `README.md`, `docs/getting-started.md`
+- [x] `docs/architecture.md`, `README.md`, `docs/getting-started.md`
 
 ## Decisions
 
@@ -193,6 +193,12 @@ Agreed on 2026-10-25, as recommended:
 
 ## Notes
 
+- 2026-10-26: Phase 9's front ends done; close-out waits on the manual in-game check in [Verification](#verification). Choices:
+  - Library first: `Layers` gained `confirm`, `relief` and `surface`; `Session::height_map` (a `HeightMap` per area, like `BiomeMap`), `surface_biome_map` and `surface_biome_at`; `Image::shade` and `HeightMap::elevation`; `StructureStart::starting` (the structure that certainly starts, when known), so front ends know which layout to ask for. The render spec gives the relief formula and surface sampling.
+  - Maps sample one column per pixel, so `Terrain::base_heights_on` samples a sparse grid chunk by chunk, each chunk's volume only as large as the box around its columns. The height golden test now samples every 5th column of every 5th row that way too, and matches.
+  - Terrain layers are limited to scales up to 4 (`MAX_TERRAIN_SCALE`): a 256 × 256 tile's heights take 1.3 s at scale 1 and 11 s at scale 4 (release, one thread; `cargo xtask bench`). A faster density evaluator would lift the limit.
+  - The viewer confirms markers and locates by default (a setting), draws jigsaw bounds for certain starts at scales up to 4, computed as background jobs, and shows the terrain height under the pointer. Search confirms only when asked, in both front ends.
+  - `spyglass heights` takes `--at x,z` or `--min`/`--max` (at most 65,536 columns) and `--heightmap world-surface|ocean-floor`.
 - 2026-10-26: Phase 8 done; exit criterion 3 is met. Release, `cargo xtask bench`, against the targets (this machine varies by up to 30% between runs, so ranges are over three runs):
   - Binding a seed's terrain: about 320 µs (target 400). 1,000 columns chunk by chunk: 19 to 20 ms (target 30).
   - A confirmed swamp-hut count within 1,000 of 0,0 in a new session: 1.6 to 2.3 ms, 1.3 to 1.6 times the unconfirmed 1.2 to 1.6 ms (target 3 times).

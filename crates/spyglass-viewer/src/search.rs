@@ -33,6 +33,8 @@ pub struct SearchSettings {
     /// The index to start at; a finished search's `next` continues it.
     pub from: u64,
     pub certain: bool,
+    /// Decide structure starts with each seed's terrain.
+    pub confirm: bool,
 }
 
 impl Default for SearchSettings {
@@ -49,6 +51,7 @@ impl Default for SearchSettings {
             last: "2147483647".to_string(),
             from: 0,
             certain: false,
+            confirm: false,
         }
     }
 }
@@ -93,7 +96,7 @@ impl SearchSettings {
             top: self.top.clamp(1, 1000),
             threads: Some(threads),
             certain: self.certain,
-            confirm: false,
+            confirm: self.confirm,
         })
     }
 }
@@ -274,9 +277,14 @@ mod tests {
         };
         let o = settings.options(3).unwrap();
         assert_eq!(
-            (o.source, o.seeds, o.time, o.top, o.threads),
-            (SeedSource::All, Some(5000), None, 1000, Some(3))
+            (o.source, o.seeds, o.time, o.top, o.threads, o.confirm),
+            (SeedSource::All, Some(5000), None, 1000, Some(3), false)
         );
+        let confirmed = SearchSettings {
+            confirm: true,
+            ..settings
+        };
+        assert!(confirmed.options(1).unwrap().confirm);
         let range = SearchSettings {
             range: true,
             first: "-5".to_string(),

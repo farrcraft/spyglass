@@ -2,6 +2,7 @@
 //! human-readable, or JSON with `--json` (`docs/specs/cli-json.md`).
 
 mod args;
+mod heights;
 mod json;
 mod locate;
 mod render;
@@ -37,6 +38,7 @@ fn run(cli: Cli) -> Result<()> {
         Command::World { what } => world::run(what),
         Command::Render(args) => render::run(&args),
         Command::Search(args) => search::run(&args),
+        Command::Heights(args) => heights::run(&args),
     }
 }
 
@@ -69,8 +71,16 @@ fn run_locate(what: &Locate) -> Result<()> {
             target,
             from,
             radius,
+            unconfirmed,
+            bounds,
             ..
-        } => locate::structure(&out, target, out.origin(from.from)?, *radius)?,
+        } => {
+            let options = spyglass::LocateOptions {
+                radius: *radius,
+                confirm: !unconfirmed,
+            };
+            locate::structure(&out, target, out.origin(from.from)?, &options, *bounds)?;
+        }
         Locate::Biome {
             biome,
             from,

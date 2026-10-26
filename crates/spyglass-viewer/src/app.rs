@@ -9,8 +9,9 @@ use std::thread;
 use eframe::egui::{self, Color32, Key, Pos2, Rect, Sense, TextureOptions, Vec2};
 use serde::{Deserialize, Serialize};
 use spyglass::{
-    BiomeQuery, BundleInfo, Evaluation, Image, LauncherSave, SaveReport, Scan, SearchOutcome,
-    SearchQuery, Session, SpawnOrigin, StructureQuery, StructureStart, World,
+    BiomeQuery, BundleInfo, Evaluation, Heightmap, Image, LauncherSave, MAX_TERRAIN_SCALE,
+    SaveReport, Scan, SearchOutcome, SearchQuery, Session, SpawnOrigin, StructureLayout,
+    StructureQuery, StructureStart, World,
 };
 
 use crate::export::{Export, Source, visible_area};
@@ -18,7 +19,7 @@ use crate::locate::{self, Found, Target};
 use crate::markers::{self, Picked};
 use crate::search::{self, Match, Running, SearchSettings};
 use crate::tiles::{
-    Cache, Entry, Job, JobKey, MarkerKey, Output, Pool, Style, TileKey, slime_features,
+    Cache, Entry, Job, JobKey, LayoutKey, MarkerKey, Output, Pool, Style, TileKey, slime_features,
 };
 use crate::view::{TILE, Tile, View};
 
@@ -38,6 +39,11 @@ const EMPTY: Color32 = Color32::from_rgb(0x20, 0x20, 0x20);
 const CACHE_MARKERS: usize = 512;
 /// The most structure markers drawn at once; more is a zoom level too far out to read.
 const MAX_MARKERS: usize = 2_000;
+/// The largest scale jigsaw structures' bounds are drawn at: a village is then 30 pixels or
+/// more across, and few enough are in view to lay them all out.
+const MAX_BOUNDS_SCALE: u32 = 4;
+/// Structure layouts kept.
+const CACHE_LAYOUTS: usize = 512;
 
 /// What's remembered between runs.
 #[derive(Serialize, Deserialize)]
@@ -51,6 +57,12 @@ struct Settings {
     ties: bool,
     slime_chunks: bool,
     spawn: bool,
+    /// Decide structure starts and locates with the seed's terrain.
+    confirm: bool,
+    /// Shade by terrain height, up close.
+    relief: bool,
+    /// Biomes at the surface, up close.
+    surface: bool,
     /// Structure ids to mark.
     structures: Vec<String>,
     /// Biome ids to keep bright.
@@ -68,6 +80,9 @@ impl Default for Settings {
             ties: false,
             slime_chunks: false,
             spawn: true,
+            confirm: true,
+            relief: false,
+            surface: false,
             structures: Vec::new(),
             highlight: Vec::new(),
             search: SearchSettings::default(),
@@ -148,6 +163,7 @@ pub struct App {
     pool: Pool,
     cache: Cache<TileKey, Entry>,
     markers: Cache<MarkerKey, Result<Vec<StructureStart>, String>>,
+    layouts: Cache<LayoutKey, Result<Option<StructureLayout>, String>>,
     selection: Selection,
     structure_filter: String,
     biome_filter: String,
@@ -189,6 +205,8 @@ pub struct App {
 /// A search and its query.
 struct SearchRun {
     query: SearchQuery,
+    /// Whether the search decided starts with terrain, so opening a hit does too.
+    confirm: bool,
     running: Option<Running>,
     outcome: Option<Result<SearchOutcome, String>>,
 }
@@ -216,6 +234,7 @@ impl App {
             pool: Pool::new(move || ctx.request_repaint()),
             cache: Cache::new(CACHE_TILES),
             markers: Cache::new(CACHE_MARKERS),
+            layouts: Cache::new(CACHE_LAYOUTS),
             selection: Selection::default(),
             structure_filter: String::new(),
             biome_filter: String::new(),
@@ -391,9 +410,10 @@ impl App {
             return;
         };
         let session = shown.session.clone();
+        let confirm = self.settings.confirm;
         self.found = None;
         self.locating = Some(Pending::spawn(ctx, move || {
-            locate::run(&session, target, from)
+            locate::run(&session, target, from, confirm)
         }));
     }
 
@@ -422,6 +442,7 @@ impl App {
                 });
                 self.cache.clear();
                 self.markers.clear();
+                self.layouts.clear();
                 self.select();
             }
             Err(e) => self.seed_error = Some(e.to_string()),
@@ -453,6 +474,7 @@ impl App {
             highlight: self.settings.highlight.clone(),
             slime_chunks: self.settings.slime_chunks
                 && self.settings.view.scale <= spyglass::MAX_SLIME_SCALE,
+            relief: self.settings.relief && self.settings.view.scale <= MAX_TERRAIN_SCALE,
         }
     }
 
@@ -505,6 +527,9 @@ impl App {
             ties: self.settings.ties,
             slime_chunks: self.settings.slime_chunks,
             spawn: self.settings.spawn,
+            confirm: self.settings.confirm,
+            relief: self.settings.relief,
+            surface: self.settings.surface,
         })
     }
 
@@ -577,6 +602,9 @@ impl App {
                     .map_err(|e| e.to_string())?,
                 slime_chunks: export.slime_chunks && export.area.scale <= spyglass::MAX_SLIME_SCALE,
                 spawn: export.spawn,
+                confirm: export.confirm,
+                relief: export.relief && export.area.scale <= MAX_TERRAIN_SCALE,
+                surface: export.surface && export.area.scale <= MAX_TERRAIN_SCALE,
             };
             let image = session
                 .render(&export.area, &layers)
@@ -644,9 +672,13 @@ impl App {
             ui.label("Start at index");
             ui.add(egui::DragValue::new(&mut s.from));
         });
+        ui.checkbox(&mut s.confirm, "Confirm with terrain").on_hover_text(
+            "Decide structure starts with each seed's terrain, as the game does. Slower, but only \
+             ties and platform-dependent results stay uncertain.",
+        );
         ui.checkbox(&mut s.certain, "Certain only").on_hover_text(
-            "Only seeds whose required constraints hold whatever terrain decides, ranked by the \
-             worst case. Most structures need terrain, so this finds few seeds for now.",
+            "Only seeds whose required constraints hold whatever is left undecided, ranked by the \
+             worst case. Without confirming, most structures are undecided.",
         );
 
         let options = s.options(search::threads());
@@ -743,6 +775,7 @@ impl App {
             let ctx = ui.ctx().clone();
             self.search_error = None;
             self.search_run = Some(SearchRun {
+                confirm: options.confirm,
                 running: Some(Running::start(world, query.clone(), options, move || {
                     ctx.request_repaint();
                 })),
@@ -755,12 +788,15 @@ impl App {
             match evaluation {
                 Some(evaluation) => self.open_hit(seed, &evaluation),
                 None => {
-                    let query = self.search_run.as_ref().map(|r| r.query.clone());
-                    if let Some(query) = query {
+                    let run = self
+                        .search_run
+                        .as_ref()
+                        .map(|r| (r.query.clone(), r.confirm));
+                    if let Some((query, confirm)) = run {
                         self.opening = Some(Pending::spawn(ui.ctx(), move || {
                             world
                                 .session(seed)
-                                .and_then(|s| s.evaluate(&query, false))
+                                .and_then(|s| s.evaluate(&query, confirm))
                                 .map(|e| (seed, e))
                                 .map_err(|e| e.to_string())
                         }));
@@ -1020,7 +1056,10 @@ impl App {
         ui.horizontal(|ui| {
             ui.label("Height");
             ui.add(egui::DragValue::new(&mut view.y).range(-64..=319))
-                .on_hover_text("Biomes are drawn at this y: a slice, not the surface.");
+                .on_hover_text(
+                    "Biomes are drawn at this y: a slice, not the surface, unless biomes at the \
+                     surface are shown.",
+                );
         });
         ui.horizontal(|ui| {
             ui.label("Go to");
@@ -1058,6 +1097,26 @@ impl App {
         .on_disabled_hover_text("Zoom in to 16 blocks per pixel or closer to see slime chunks.");
         ui.checkbox(&mut self.settings.spawn, "World spawn")
             .on_hover_text("Where the game's spawn search starts.");
+        let terrain = self.settings.view.scale <= MAX_TERRAIN_SCALE;
+        let far = "Zoom in to 4 blocks per pixel or closer to see terrain.";
+        ui.add_enabled(
+            terrain,
+            egui::Checkbox::new(&mut self.settings.relief, "Relief"),
+        )
+        .on_hover_text("Shade the map by terrain height, lit from the north-west. Slow to draw.")
+        .on_disabled_hover_text(far);
+        ui.add_enabled(
+            terrain,
+            egui::Checkbox::new(&mut self.settings.surface, "Biomes at the surface"),
+        )
+        .on_hover_text("Draw each column's biome at its terrain height instead of at one y.")
+        .on_disabled_hover_text(far);
+        ui.checkbox(&mut self.settings.confirm, "Confirm with terrain")
+            .on_hover_text(
+                "Decide structure starts and locates with the seed's terrain, as the game does. \
+                 Off, most surface structures are candidates. Jigsaw structures' bounds are \
+                 drawn when confirmed, at 4 blocks per pixel or closer.",
+            );
         let Some(world) = self.world else {
             return;
         };
@@ -1218,15 +1277,25 @@ impl App {
         let (source, session, spawn) = (shown.id, shown.session.clone(), shown.spawn);
         let view = self.settings.view;
         let tiles = view.tiles([rect.width(), rect.height()]);
-        let key = |tile: Tile| TileKey {
-            source,
-            y: view.y,
-            tile,
+        // Terrain layers by each tile's own scale, so the coarser tiles shown while one loads
+        // are found under the keys they were made with.
+        let (relief, surface) = (self.settings.relief, self.settings.surface);
+        let key = |tile: Tile| {
+            let terrain = tile.scale <= MAX_TERRAIN_SCALE;
+            TileKey {
+                source,
+                y: view.y,
+                heights: terrain && (relief || surface),
+                surface: terrain && surface,
+                tile,
+            }
         };
         let selection = self.selection.id;
+        let confirm = self.settings.confirm;
         let marker_key = |tile: Tile| MarkerKey {
             source,
             selection,
+            confirm,
             tile,
         };
         for (done, result) in self.pool.finished() {
@@ -1234,22 +1303,30 @@ impl App {
                 (JobKey::Biomes(k), result) if k.source == source => {
                     let data = result.and_then(|out| match out {
                         Output::Biomes(data) => Ok(data),
-                        Output::Markers(_) => Err("not a biome tile".to_string()),
+                        _ => Err("not a biome tile".to_string()),
                     });
                     self.cache.insert(k, Entry::new(data));
                 }
                 (JobKey::Markers(k), result) if k.source == source && k.selection == selection => {
                     let starts = result.and_then(|out| match out {
                         Output::Markers(starts) => Ok(starts),
-                        Output::Biomes(_) => Err("not markers".to_string()),
+                        _ => Err("not markers".to_string()),
                     });
                     self.markers.insert(k, starts);
+                }
+                (JobKey::Layout(k), result) if k.source == source => {
+                    let layout = result.and_then(|out| match out {
+                        Output::Layout(layout) => Ok(layout),
+                        _ => Err("not a layout".to_string()),
+                    });
+                    self.layouts.insert(k, layout);
                 }
                 _ => {}
             }
         }
         self.cache.next_frame();
         self.markers.next_frame();
+        self.layouts.next_frame();
         let job = |key| Job {
             key,
             session: session.clone(),
@@ -1270,6 +1347,34 @@ impl App {
                     .map(|&t| marker_key(t))
                     .filter(|k| !self.markers.contains(k))
                     .map(|k| job(JobKey::Markers(k))),
+            );
+        }
+        // Then the layouts of the structures certainly starting in view, up close.
+        let mut layout_keys: Vec<(LayoutKey, String)> = Vec::new();
+        if marking && confirm && view.scale <= MAX_BOUNDS_SCALE {
+            for &tile in &tiles {
+                let Some(Ok(found)) = self.markers.get(&marker_key(tile)) else {
+                    continue;
+                };
+                for start in found.iter() {
+                    let index = start
+                        .starting()
+                        .and_then(|s| world.structures().position(|w| w == s));
+                    if let Some(structure) = index {
+                        let key = LayoutKey {
+                            source,
+                            structure,
+                            chunk: start.chunk,
+                        };
+                        layout_keys.push((key, start.set.clone()));
+                    }
+                }
+            }
+            jobs.extend(
+                layout_keys
+                    .iter()
+                    .filter(|(k, _)| !self.layouts.contains(k))
+                    .map(|(k, _)| job(JobKey::Layout(*k))),
             );
         }
         self.pool.want(jobs);
@@ -1310,6 +1415,18 @@ impl App {
         }
         if made >= TEXTURES_PER_FRAME {
             ui.ctx().request_repaint();
+        }
+
+        // Bounds under the markers, over every tile.
+        for (key, set) in &layout_keys {
+            if let Some(Ok(Some(layout))) = self.layouts.get(key) {
+                let b = layout.bounds;
+                let at =
+                    markers::block_rect(&view, centre, [b.min[0], b.min[2]], [b.max[0], b.max[2]]);
+                if rect.intersects(at) {
+                    markers::bounds(&painter, at, set);
+                }
+            }
         }
 
         // Markers over every tile, so none is hidden under a neighbouring tile.
@@ -1449,6 +1566,11 @@ impl App {
                 .filter_map(|b| world.biome_query(b).ok())
                 .collect();
             if let Ok(mut image) = data.biomes.colorize(world, style.ties, &highlight) {
+                if style.relief
+                    && let Some(heights) = &data.heights
+                {
+                    image.shade(heights);
+                }
                 if style.slime_chunks {
                     image.draw_features(data.biomes.area(), &slime_features(data));
                 }
@@ -1467,10 +1589,17 @@ impl App {
     fn status_bar(&self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             if let (Some([x, z]), Some(shown)) = (self.cursor, &self.shown) {
-                let y = self.settings.view.y;
-                let at = shown.session.biome_at([x, y, z]);
+                let session = &shown.session;
+                let height = session.height_at([x, z], Heightmap::WorldSurfaceWg);
+                let surface =
+                    self.settings.surface && self.settings.view.scale <= MAX_TERRAIN_SCALE;
+                let at = if surface {
+                    session.surface_biome_at([x, z])
+                } else {
+                    session.biome_at([x, self.settings.view.y, z])
+                };
                 ui.monospace(format!(
-                    "x {x:>9}  z {z:>9}  chunk {:>7} {:>7}",
+                    "x {x:>9}  z {z:>9}  chunk {:>7} {:>7}  height {height:>4}",
                     x >> 4,
                     z >> 4
                 ));
@@ -1532,8 +1661,8 @@ fn describe(ui: &mut egui::Ui, picked: &Picked<'_>) {
             ui.weak(&start.set);
             if !start.certain {
                 ui.label(
-                    "Candidate: whether it generates depends on terrain or a tied biome, which \
-                     spyglass doesn't compute yet.",
+                    "Candidate: whether it generates depends on terrain (unless confirmed), a \
+                     tied biome or a platform-dependent ring position.",
                 );
             }
         }
@@ -1542,7 +1671,7 @@ fn describe(ui: &mut egui::Ui, picked: &Picked<'_>) {
             let [cx, cz] = origin.chunk;
             ui.label(format!(
                 "The game's spawn search starts in chunk {cx}, {cz}; the spawn is in the 11 × 11 \
-                 chunks around it, decided by terrain."
+                 chunks around it, decided by generated blocks."
             ));
             if let Some([x, _, z]) = origin.position {
                 ui.label(format!("Best climate at {x}, {z}."));

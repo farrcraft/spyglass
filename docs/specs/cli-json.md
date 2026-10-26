@@ -1,6 +1,6 @@
 # CLI JSON output
 
-Status: stable, format 1. Covers `spyglass locate`, `spyglass render`, `spyglass search` and `spyglass world` with `--json`.
+Status: stable, format 1. Covers `spyglass locate`, `spyglass heights`, `spyglass render`, `spyglass search` and `spyglass world` with `--json`.
 
 Scripts depend on this format, so it's versioned. Within a format version, fields are only ever added. Removing or changing the meaning of a field bumps `format`. The CLI writes the JSON from the library's results ([ADR 0014](../adr/0014-public-api-world-and-session.md)); the library types themselves aren't the format.
 
@@ -13,15 +13,15 @@ Scripts depend on this format, so it's versioned. Within a format version, field
 - Paths are strings. Characters that aren't valid Unicode are replaced with U+FFFD.
 - `seed` is the 64-bit seed after text seeds are hashed ([locate.md](locate.md#text-seeds)).
 
-Every `locate` and `render` object starts with:
+Every `locate`, `heights` and `render` object starts with:
 
-| Field       | Type   | Meaning                                                                         |
-| ----------- | ------ | ------------------------------------------------------------------------------- |
-| `format`    | int    | This format's version: `1`.                                                     |
-| `command`   | string | `locate structure`, `locate biome`, `locate slime`, `locate spawn` or `render`. |
-| `version`   | string | The game version of the bundle used, e.g. `26.3`.                               |
-| `dimension` | string | `minecraft:overworld`.                                                          |
-| `seed`      | int    | The world seed.                                                                 |
+| Field       | Type   | Meaning                                                                                    |
+| ----------- | ------ | ------------------------------------------------------------------------------------------ |
+| `format`    | int    | This format's version: `1`.                                                                |
+| `command`   | string | `locate structure`, `locate biome`, `locate slime`, `locate spawn`, `heights` or `render`. |
+| `version`   | string | The game version of the bundle used, e.g. `26.3`.                                          |
+| `dimension` | string | `minecraft:overworld`.                                                                     |
+| `seed`      | int    | The world seed.                                                                            |
 
 With `--world`, two more:
 
@@ -41,20 +41,22 @@ Each warning is `{kind, message}`: `message` is for people, `kind` one of `no_bu
 | `target`         | string      | The argument as given: a structure id or `#tag`.                                                                                                  |
 | `from`           | `[x, y, z]` | Where the search ran from.                                                                                                                        |
 | `radius`         | int         | Rings of placement cells searched (100 is `/locate`'s).                                                                                           |
+| `confirmed`      | bool        | Whether terrain decided each candidate ([locate.md](locate.md#confirmed-mode)): true unless `--unconfirmed`.                                      |
 | `hits`           | array       | Where the game's answer may be, in its search order ([locate.md](locate.md#structures)).                                                          |
 | `complete`       | bool        | Whether the search ended where the game's does. If true, the game's answer is one of `hits` (or nothing, if every hit is a candidate it rejects). |
 | `certain_answer` | int or null | Index into `hits` of the game's answer if every candidate fails.                                                                                  |
 
 Each hit:
 
-| Field         | Type     | Meaning                                                                        |
-| ------------- | -------- | ------------------------------------------------------------------------------ |
-| `position`    | `{x, z}` | What `/locate` reports (it prints `~` for y).                                  |
-| `chunk`       | `[x, z]` | The structure's start chunk.                                                   |
-| `set`         | string   | The structure set, e.g. `minecraft:villages`.                                  |
-| `structures`  | array    | The searched structures that may start here, in the order the game tries them. |
-| `certain`     | bool     | Whether the game certainly starts one of them here. False: a candidate.        |
-| `blocks_away` | int      | The distance `/locate` prints: horizontal, rounded down.                       |
+| Field         | Type           | Meaning                                                                                                                                                                                                                                                       |
+| ------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `position`    | `{x, z}`       | What `/locate` reports (it prints `~` for y).                                                                                                                                                                                                                 |
+| `chunk`       | `[x, z]`       | The structure's start chunk.                                                                                                                                                                                                                                  |
+| `set`         | string         | The structure set, e.g. `minecraft:villages`.                                                                                                                                                                                                                 |
+| `structures`  | array          | The searched structures that may start here, in the order the game tries them.                                                                                                                                                                                |
+| `certain`     | bool           | Whether the game certainly starts one of them here. False: a candidate.                                                                                                                                                                                       |
+| `blocks_away` | int            | The distance `/locate` prints: horizontal, rounded down.                                                                                                                                                                                                      |
+| `bounds`      | object or null | With `--bounds`, for a certain hit with one structure that's a jigsaw: `min` and `max` (`[x, y, z]`, corners included, as `Session::structure_layout` gives them, grown by 12 for structures that adapt the terrain) and `pieces` (how many). Otherwise null. |
 
 ## `locate biome`
 
@@ -79,18 +81,29 @@ Each hit: `position` (`{x, y, z}`), `biome` (the biome there), `tied` (every bio
 | `position`           | `{x, z}` or null | The climate search's best block; null if the dimension has no spawn targets.                                        |
 | `platform_dependent` | bool             | Whether the game's answer may differ by platform.                                                                   |
 
+## `heights`
+
+The generator's heights, before structures, carvers, features and surface blocks ([terrain.md](terrain.md)), for one column (`--at`) or every column of a region (`--min` to `--max`, at most 65,536 columns).
+
+| Field       | Type            | Meaning                                                                                                          |
+| ----------- | --------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `heightmap` | string          | `WORLD_SURFACE_WG` (the default) or `OCEAN_FLOOR_WG`.                                                            |
+| `min`       | `[x, z]`        | The first column; `--at`'s for one column.                                                                       |
+| `max`       | `[x, z]`        | The last column, included.                                                                                       |
+| `heights`   | array of arrays | One row per z from `min` to `max`, each with one height per x: one above the highest block the heightmap counts. |
+
 ## `render`
 
 The image is written to the file given; the JSON describes it ([render.md](render.md)).
 
-| Field          | Type              | Meaning                                                                                                                         |
-| -------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `output`       | string            | The PNG written.                                                                                                                |
-| `area`         | object            | `min` (`[x, z]`, the top-left pixel's corner block), `size` (`[width, height]` in pixels), `scale` (blocks per pixel) and `y`.  |
-| `layers`       | object            | What was drawn: `biomes`, `ties`, `slime_chunks` and `spawn` (bools), `highlight` and `structures` (the ids and tags as given). |
-| `structures`   | array             | The structure markers drawn, in drawing order. Each is a `locate structure` hit without `blocks_away`.                          |
-| `slime_chunks` | array of `[x, z]` | The slime chunks shaded, by z, then x. Empty unless asked for.                                                                  |
-| `spawn`        | object or null    | The spawn marker, as `locate spawn`'s fields; null if not asked for or not in view.                                             |
+| Field          | Type              | Meaning                                                                                                                                                                                        |
+| -------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `output`       | string            | The PNG written.                                                                                                                                                                               |
+| `area`         | object            | `min` (`[x, z]`, the top-left pixel's corner block), `size` (`[width, height]` in pixels), `scale` (blocks per pixel) and `y`.                                                                 |
+| `layers`       | object            | What was drawn: `biomes`, `ties`, `slime_chunks`, `spawn`, `confirm` (markers decided with terrain), `relief` and `surface` (bools), `highlight` and `structures` (the ids and tags as given). |
+| `structures`   | array             | The structure markers drawn, in drawing order. Each is a `locate structure` hit without `blocks_away`.                                                                                         |
+| `slime_chunks` | array of `[x, z]` | The slime chunks shaded, by z, then x. Empty unless asked for.                                                                                                                                 |
+| `spawn`        | object or null    | The spawn marker, as `locate spawn`'s fields; null if not asked for or not in view.                                                                                                            |
 
 ## `search`
 
@@ -102,6 +115,7 @@ The best seeds for a query ([search.md](search.md)). A search is over many seeds
 | `source`          | object      | `kind`: `all`, `range` (with `first` and `last`, both included) or `list` (with `count`).                |
 | `from`            | int         | The first index searched.                                                                                |
 | `certain`         | bool        | Whether only seeds whose required constraints are certainly met were reported, ranked by the worst case. |
+| `confirm`         | bool        | Whether structure starts were decided with each seed's terrain ([search.md](search.md#confirmed-mode)).  |
 | `top`             | int         | How many seeds were kept.                                                                                |
 | `next`            | int or null | The first index not searched; `--from` it to continue. Null when the source is finished.                 |
 | `evaluated`       | int         | Indices searched: `next − from`, or to the end of the source.                                            |

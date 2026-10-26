@@ -90,6 +90,7 @@ fn the_command_writes_the_same_image_as_the_library() {
         structures: vec![world.structure_query("minecraft:tower").unwrap()],
         slime_chunks: true,
         spawn: true,
+        ..Layers::default()
     };
     let mut expected = Vec::new();
     session
@@ -120,6 +121,55 @@ fn the_command_writes_the_same_image_as_the_library() {
         answer["spawn"]["chunk"],
         json!(session.spawn_origin().chunk)
     );
+}
+
+#[test]
+fn terrain_layers_are_the_library_s() {
+    let fixture = bundle();
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("map.png");
+    let out = spyglass(
+        &fixture.path(),
+        &[
+            "--seed",
+            "9",
+            "--size",
+            "40x30",
+            "--scale",
+            "2",
+            "--structures",
+            "minecraft:tower",
+            "--confirm",
+            "--relief",
+            "--surface",
+            "-o",
+            file.to_str().unwrap(),
+            "--json",
+        ],
+    );
+    let answer: Value = serde_json::from_slice(ok(&out)).unwrap();
+    let world = World::open(fixture.path()).unwrap();
+    let layers = Layers {
+        structures: vec![world.structure_query("minecraft:tower").unwrap()],
+        confirm: true,
+        relief: true,
+        surface: true,
+        ..Layers::default()
+    };
+    let area = MapArea::centred_on([0, 0], [40, 30], 2, 64).unwrap();
+    let mut expected = Vec::new();
+    world
+        .session(9)
+        .unwrap()
+        .render(&area, &layers)
+        .unwrap()
+        .write_png(&mut expected)
+        .unwrap();
+    assert_eq!(std::fs::read(&file).unwrap(), expected);
+    for layer in ["confirm", "relief", "surface"] {
+        assert_eq!(answer["layers"][layer], true, "{layer}");
+    }
+    assert_eq!(answer["layers"]["slime_chunks"], false);
 }
 
 #[test]
@@ -165,6 +215,8 @@ fn bad_requests_fail_without_writing() {
         &["--seed", "1", "--scale", "3", "-o", path][..],
         &["--seed", "1", "--min", "1,0", "--scale", "4", "-o", path],
         &["--seed", "1", "--scale", "32", "--slime", "-o", path],
+        &["--seed", "1", "--scale", "8", "--relief", "-o", path],
+        &["--seed", "1", "--surface", "--no-biomes", "-o", path],
         &[
             "--seed",
             "1",

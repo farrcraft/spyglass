@@ -37,8 +37,9 @@ use spyglass_structure::{Assembly, JigsawPools, Placements, Starts, StructureSet
 use spyglass_terrain::{Terrain, TerrainSettings};
 
 pub use render::{
-    BiomeMap, DEFAULT_MAP_Y, Image, Layers, MARKER_REACH, MAX_PIXELS, MAX_SCALE, MAX_SIDE,
-    MAX_SLIME_SCALE, MapArea, MapFeatures, biome_colour, structure_colour,
+    BiomeMap, DEFAULT_MAP_Y, HeightMap, Image, Layers, MARKER_REACH, MAX_PIXELS, MAX_SCALE,
+    MAX_SIDE, MAX_SLIME_SCALE, MAX_TERRAIN_SCALE, MapArea, MapFeatures, biome_colour,
+    structure_colour,
 };
 pub use save::{
     LauncherSave, PackConcern, SaveInfo, SaveInspector, SaveLocation, SaveReport, SaveWarning,
@@ -470,6 +471,17 @@ pub struct StructureStart {
     /// start depends on terrain (unless confirmed), a tied biome cell, or a platform-dependent
     /// ring position.
     pub certain: bool,
+}
+
+impl StructureStart {
+    /// The structure that certainly starts here, when that's known: a certain start with one
+    /// structure. Its layout is [`Session::structure_layout`]'s.
+    pub fn starting(&self) -> Option<&str> {
+        match &self.structures[..] {
+            [only] if self.certain => Some(only),
+            _ => None,
+        }
+    }
 }
 
 /// How [`Session::locate_structure`] searches.

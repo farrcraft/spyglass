@@ -12,7 +12,8 @@ use spyglass_biome::{BiomeId, Lookup};
 pub use palette::{biome_colour, structure_colour};
 
 use crate::{
-    BiomeQuery, Error, Result, Session, SpawnOrigin, StructureQuery, StructureStart, World,
+    BiomeAt, BiomeQuery, Error, Heightmap, Result, Session, SpawnOrigin, StructureQuery,
+    StructureStart, World,
 };
 
 /// The height biomes are sampled at unless asked otherwise.
@@ -25,6 +26,9 @@ pub const MAX_SIDE: u32 = 16_384;
 pub const MAX_PIXELS: u64 = 1 << 26;
 /// The largest scale slime chunks are drawn at: a chunk is at least a pixel.
 pub const MAX_SLIME_SCALE: u32 = 16;
+/// The largest scale terrain layers (relief, surface biomes) are drawn at: each pixel needs a
+/// column's height, and a chunk's heights take milliseconds.
+pub const MAX_TERRAIN_SCALE: u32 = 4;
 /// How many pixels a marker reaches from its centre. An area includes the features whose
 /// centre is within this of it.
 pub const MARKER_REACH: u32 = 5;
@@ -167,6 +171,15 @@ pub struct Layers {
     pub slime_chunks: bool,
     /// The world spawn's origin.
     pub spawn: bool,
+    /// Decide structure starts with the seed's terrain, as confirmed locate does, so markers
+    /// are candidates only behind ties and platform-dependent results.
+    pub confirm: bool,
+    /// Shade the map by terrain height, lit from the north-west; with biomes off, the base is
+    /// grey by height. Scales up to [`MAX_TERRAIN_SCALE`].
+    pub relief: bool,
+    /// Sample biomes at the surface rather than at the area's `y`. Scales up to
+    /// [`MAX_TERRAIN_SCALE`].
+    pub surface: bool,
 }
 
 impl Default for Layers {
@@ -179,7 +192,17 @@ impl Default for Layers {
             structures: Vec::new(),
             slime_chunks: false,
             spawn: false,
+            confirm: false,
+            relief: false,
+            surface: false,
         }
+    }
+}
+
+impl Layers {
+    /// Whether these layers need each pixel's terrain height.
+    pub fn need_heights(&self) -> bool {
+        self.relief || (self.biomes && self.surface)
     }
 }
 
@@ -289,6 +312,82 @@ impl BiomeMap {
     }
 }
 
+/// The terrain height at each pixel of an area, from [`Session::height_map`]: `WORLD_SURFACE_WG`
+/// at the pixel's corner block, and for one pixel beyond the area's west and north edges, which
+/// relief shading compares against.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeightMap {
+    world: u64,
+    area: MapArea,
+    /// `(width + 1) × (height + 1)` heights from pixel `(−1, −1)`, x fastest.
+    heights: Vec<i32>,
+    /// The level's lowest y and its height, for the grey base.
+    level: [i32; 2],
+}
+
+impl HeightMap {
+    /// The area.
+    pub fn area(&self) -> &MapArea {
+        &self.area
+    }
+
+    /// The height at a pixel: one above its corner block's highest block. Panics outside the
+    /// area.
+    pub fn height(&self, [i, j]: [u32; 2]) -> i32 {
+        assert!(
+            i < self.area.size[0] && j < self.area.size[1],
+            "pixel ({i}, {j}) outside the area"
+        );
+        self.around(i64::from(i), i64::from(j))
+    }
+
+    /// The height at pixel `(i, j)`, from −1 on each axis.
+    fn around(&self, i: i64, j: i64) -> i32 {
+        let width = i64::from(self.area.size[0]) + 1;
+        self.heights[((j + 1) * width + i + 1) as usize]
+    }
+
+    /// The relief shade at a pixel, in units of 1/256 (`docs/specs/render.md#layers`): positive
+    /// where the ground rises towards the south-east, so it faces the light.
+    fn shade(&self, i: i64, j: i64) -> i32 {
+        let rise = 2 * self.around(i, j) - self.around(i - 1, j) - self.around(i, j - 1);
+        (rise * 32)
+            .div_euclid(self.area.scale as i32)
+            .clamp(-SHADE_LIMIT, SHADE_LIMIT)
+    }
+
+    /// The image of the heights alone: each pixel grey by its height above the level's bottom.
+    pub fn elevation(&self) -> Image {
+        let [min_y, height] = self.level;
+        let mut image = Image::filled(self.area.size, BACKGROUND);
+        for j in 0..self.area.size[1] {
+            for i in 0..self.area.size[0] {
+                let above = i64::from(self.height([i, j]) - min_y).clamp(0, i64::from(height));
+                let grey = (above * 255 / i64::from(height.max(1))) as u8;
+                image.set([i, j], [grey; 3]);
+            }
+        }
+        image
+    }
+}
+
+/// The largest relief shade, in units of 1/256.
+const SHADE_LIMIT: i32 = 128;
+
+/// `colour` shaded by `shade`, in units of 1/256: towards white when positive, towards black
+/// when negative.
+fn shaded(colour: [u8; 3], shade: i32) -> [u8; 3] {
+    colour.map(|c| {
+        let c = i32::from(c);
+        let out = if shade >= 0 {
+            c + (255 - c) * shade / 256
+        } else {
+            c * (256 + shade) / 256
+        };
+        out as u8
+    })
+}
+
 /// A non-highlighted colour: towards its grey, and darker.
 fn dimmed([r, g, b]: [u8; 3]) -> [u8; 3] {
     let grey = (77 * u32::from(r) + 150 * u32::from(g) + 29 * u32::from(b)) / 256;
@@ -389,6 +488,18 @@ impl Image {
         }
     }
 
+    /// Shades the image of `heights`' area by its relief (`docs/specs/render.md#layers`). The
+    /// image must be the area's size.
+    pub fn shade(&mut self, heights: &HeightMap) {
+        assert_eq!(self.size, heights.area.size, "an image of the area");
+        for j in 0..self.size[1] {
+            for i in 0..self.size[0] {
+                let shade = heights.shade(i64::from(i), i64::from(j));
+                self.set([i, j], shaded(self.pixel([i, j]), shade));
+            }
+        }
+    }
+
     /// Writes the image as an 8-bit RGB PNG with no ancillary chunks.
     pub fn write_png(&self, out: impl io::Write) -> io::Result<()> {
         let mut encoder = png::Encoder::new(out, self.size[0], self.size[1]);
@@ -474,6 +585,94 @@ impl Session<'_> {
         })
     }
 
+    /// The terrain height at each pixel of `area`, and one pixel beyond its west and north
+    /// edges (`docs/specs/render.md#heights`). Binds the seed's terrain. Scales up to
+    /// [`MAX_TERRAIN_SCALE`].
+    pub fn height_map(&self, area: &MapArea) -> Result<HeightMap> {
+        area.check()?;
+        if area.scale > MAX_TERRAIN_SCALE {
+            return Err(invalid(format!(
+                "terrain is drawn at scales up to {MAX_TERRAIN_SCALE}, not {}",
+                area.scale
+            )));
+        }
+        let s = i64::from(area.scale);
+        // From one pixel before the area, which saturates at the edge of the coordinates.
+        let axis = |d: usize| -> Vec<i32> {
+            (-1..i64::from(area.size[d]))
+                .map(|i| saturate(i64::from(area.min[d]) + i * s))
+                .collect()
+        };
+        let (xs, zs) = (axis(0), axis(1));
+        let heights = self
+            .terrain()
+            .base_heights_on(&xs, &zs, Heightmap::WorldSurfaceWg);
+        let level = self.world.sets.heights();
+        Ok(HeightMap {
+            world: self.world.id,
+            area: *area,
+            heights,
+            level: [level.level_min_y, level.level_height],
+        })
+    }
+
+    /// The biome under each pixel of `heights`' area at the surface: the quart containing the
+    /// pixel's corner block at its height, kept below the top of the level
+    /// (`docs/specs/render.md#biomes`).
+    pub fn surface_biome_map(&self, heights: &HeightMap) -> Result<BiomeMap> {
+        if heights.world != self.world.id {
+            return Err(Error::OtherWorld("a height map".to_string()));
+        }
+        let area = heights.area;
+        let top = self.level_top();
+        let [w, h] = area.size;
+        let mut ties = BTreeMap::new();
+        let mut cells = Vec::with_capacity(w as usize * h as usize);
+        for j in 0..h {
+            for i in 0..w {
+                let [x, z] = area.block([i, j]);
+                let y = heights.height([i, j]).min(top);
+                let cell = match self.biomes.biome_at(x >> 2, y >> 2, z >> 2) {
+                    Lookup::Unique(b) => b,
+                    Lookup::Tied(set) => {
+                        let first = set[0];
+                        ties.insert(cells.len(), set);
+                        first
+                    }
+                };
+                cells.push(cell);
+            }
+        }
+        Ok(BiomeMap {
+            world: self.world.id,
+            area,
+            columns: (0..w).collect(),
+            rows: (0..h).collect(),
+            grid_width: w as usize,
+            cells,
+            ties,
+        })
+    }
+
+    /// The level's top block's y.
+    fn level_top(&self) -> i32 {
+        let level = self.world.sets.heights();
+        level
+            .level_min_y
+            .wrapping_add(level.level_height)
+            .wrapping_sub(1)
+    }
+
+    /// The biome at the surface of column `(x, z)`, as a [surface biome
+    /// map](Self::surface_biome_map) samples it: at the column's `WORLD_SURFACE_WG` height,
+    /// kept below the top of the level. Binds the seed's terrain.
+    pub fn surface_biome_at(&self, [x, z]: [i32; 2]) -> BiomeAt {
+        let y = self
+            .height_at([x, z], Heightmap::WorldSurfaceWg)
+            .min(self.level_top());
+        self.biome_at([x, y, z])
+    }
+
     /// The structure starts, slime chunks and spawn that `area` draws with `layers`
     /// (`docs/specs/render.md#layers`): structures and the spawn whose marker reaches the
     /// area, and slime chunks that overlap it.
@@ -501,7 +700,7 @@ impl Session<'_> {
                         [chunk(x1, offset[0]), chunk(z1, offset[2])],
                     )
                 },
-                false,
+                layers.confirm,
             );
             starts.retain(|s| area.reaches([s.position[0], s.position[2]]));
             starts.sort_by(|a, b| {
@@ -533,12 +732,25 @@ impl Session<'_> {
     /// `area` drawn with `layers` (`docs/specs/render.md`).
     pub fn render(&self, area: &MapArea, layers: &Layers) -> Result<Image> {
         let features = self.map_features(area, layers)?;
-        let mut image = if layers.biomes {
-            self.biome_map(area)?
-                .colorize(self.world, layers.ties, &layers.highlight)?
+        let heights = if layers.need_heights() {
+            Some(self.height_map(area)?)
         } else {
-            Image::background(area.size)
+            None
         };
+        let mut image = match &heights {
+            Some(heights) if layers.biomes && layers.surface => self
+                .surface_biome_map(heights)?
+                .colorize(self.world, layers.ties, &layers.highlight)?,
+            _ if layers.biomes => {
+                self.biome_map(area)?
+                    .colorize(self.world, layers.ties, &layers.highlight)?
+            }
+            Some(heights) => heights.elevation(),
+            None => Image::background(area.size),
+        };
+        if let (Some(heights), true) = (&heights, layers.relief) {
+            image.shade(heights);
+        }
         image.draw_features(area, &features);
         Ok(image)
     }

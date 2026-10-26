@@ -92,13 +92,44 @@ fn structures() {
         "minecraft:monument",
         "--seed",
         "1",
+        "--unconfirmed",
     ]));
     assert!(out.starts_with("minecraft:monument from 0 64 0 (seed 1, Minecraft "));
     assert!(out.contains("candidate"));
+    // Confirmed by default: terrain decides the monument, so one certain answer.
+    let v = json(&["locate", "structure", "minecraft:monument", "--seed", "1"]);
+    assert_eq!(v["confirmed"], true);
+    assert_eq!(v["hits"].as_array().unwrap().len(), 1);
+    assert_eq!(v["certain_answer"], 0);
+    assert_eq!(v["hits"][0]["bounds"], Value::Null);
 
     let out = spyglass(&["locate", "structure", "minecraft:nothing", "--seed", "1"]);
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("unknown structure"));
+}
+
+#[test]
+#[ignore = "needs a bundle: spyglass-extract 26.3"]
+fn jigsaw_bounds() {
+    let args = [
+        "locate",
+        "structure",
+        "#minecraft:village",
+        "--seed",
+        "spyglass",
+        "--bounds",
+    ];
+    let v = json(&args);
+    let hit = &v["hits"][0];
+    assert_eq!(hit["certain"], true);
+    let bounds = &hit["bounds"];
+    assert!(bounds["pieces"].as_u64().unwrap() > 1);
+    for d in 0..3 {
+        assert!(bounds["min"][d].as_i64().unwrap() <= bounds["max"][d].as_i64().unwrap());
+    }
+    let out = text(&spyglass(&args));
+    assert!(out.contains(" pieces"), "{out}");
+    assert!(out.contains("bounds "), "{out}");
 }
 
 #[test]

@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use spyglass::{MAX_SLIME_SCALE, MapArea};
+use spyglass::{MAX_SLIME_SCALE, MAX_TERRAIN_SCALE, MapArea};
 
 use crate::view::View;
 
@@ -35,6 +35,9 @@ pub struct Export {
     pub ties: bool,
     pub slime_chunks: bool,
     pub spawn: bool,
+    pub confirm: bool,
+    pub relief: bool,
+    pub surface: bool,
 }
 
 /// `text` as one shell argument: quoted if it has spaces or quotes.
@@ -87,6 +90,16 @@ impl Export {
         if self.spawn {
             args.push("--spawn".to_string());
         }
+        if self.confirm && !self.structures.is_empty() {
+            args.push("--confirm".to_string());
+        }
+        let terrain = self.area.scale <= MAX_TERRAIN_SCALE;
+        if self.relief && terrain {
+            args.push("--relief".to_string());
+        }
+        if self.surface && terrain {
+            args.push("--surface".to_string());
+        }
         args.push("-o".to_string());
         args.push(output.to_string());
         args
@@ -137,12 +150,27 @@ mod tests {
             ties: true,
             slime_chunks: true,
             spawn: true,
+            confirm: true,
+            relief: true,
+            surface: false,
         };
+        // Terrain layers aren't drawn past scale 4, so the command doesn't ask for them.
         assert_eq!(
             export.command("map.png"),
             "spyglass render --seed -5 --game-version 26.3 --centre 1000,-336 --size 1013x775 \
              --scale 8 --y 70 --structures minecraft:village_plains,minecraft:stronghold \
-             --highlight minecraft:river --ties --slime --spawn -o map.png"
+             --highlight minecraft:river --ties --slime --spawn --confirm -o map.png"
+        );
+        let close = Export {
+            area: MapArea::centred_on([0, 0], [10, 10], 4, 64).unwrap(),
+            structures: Vec::new(),
+            surface: true,
+            ..export.clone()
+        };
+        assert!(
+            close
+                .command("map.png")
+                .ends_with("--ties --slime --spawn --relief --surface -o map.png")
         );
         // The CLI centres --centre with `centred_on`, which gives back the same area.
         assert_eq!(
@@ -161,6 +189,9 @@ mod tests {
             ties: false,
             slime_chunks: true,
             spawn: false,
+            confirm: false,
+            relief: false,
+            surface: false,
         };
         assert_eq!(
             export.command("out dir/map.png"),

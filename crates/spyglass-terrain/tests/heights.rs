@@ -93,9 +93,17 @@ fn check(path: &Path) -> (Vec<String>, usize) {
                     (i, terrain.base_height(x, z, heightmap))
                 })
                 .collect();
-            checked += want.len() + alone.len();
+            // A sparse grid, as maps sample terrain: every 5th column from the second.
+            let xs: Vec<i32> = (x0 + 1..x0 + size).step_by(5).collect();
+            let zs: Vec<i32> = (z0 + 1..z0 + size).step_by(5).collect();
+            let grid = terrain.base_heights_on(&xs, &zs, heightmap);
+            let sparse = grid.iter().enumerate().map(|(i, &h)| {
+                let (x, z) = (xs[i % xs.len()], zs[i / xs.len()]);
+                (((z - z0) * size + (x - x0)) as usize, h)
+            });
+            checked += want.len() + alone.len() + grid.len();
             let found = got.iter().copied().enumerate();
-            for (i, g) in found.chain(alone) {
+            for (i, g) in found.chain(alone).chain(sparse) {
                 let w = want[i];
                 if w != g {
                     let (x, z) = (x0 + i as i32 % size, z0 + i as i32 / size);

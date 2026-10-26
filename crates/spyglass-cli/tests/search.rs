@@ -111,6 +111,46 @@ fn the_command_reports_what_the_library_finds() {
 }
 
 #[test]
+fn confirmed_searches_are_the_library_s() {
+    let fixture = fixtures::structured_overworld(false);
+    let query = "require 2 hut within 400 of 0,0";
+    let json: Value = serde_json::from_str(&ok(&spyglass(
+        &fixture.path(),
+        &["-q", query, "--range", "0..299", "--confirm", "--json"],
+    )))
+    .unwrap();
+    let world = World::open(fixture.path()).unwrap();
+    let options = SearchOptions {
+        source: SeedSource::Range {
+            first: 0,
+            last: 299,
+        },
+        confirm: true,
+        ..SearchOptions::default()
+    };
+    let expected = world
+        .search(&world.search_query(query).unwrap(), &options, |_| {
+            ControlFlow::Continue(())
+        })
+        .unwrap();
+    assert_eq!(json["confirm"], true);
+    assert_eq!(json["reported"], expected.progress.reported);
+    let hits = json["hits"].as_array().unwrap();
+    assert_eq!(hits.len(), expected.hits.len());
+    assert!(!hits.is_empty());
+    for (got, want) in hits.iter().zip(&expected.hits) {
+        assert_eq!(got["seed"], want.seed);
+        assert_eq!(got["score"], want.score);
+        assert_eq!(got["verdict"], "met");
+    }
+    let text = ok(&spyglass(
+        &fixture.path(),
+        &["-q", query, "--range", "0..9", "--confirm"],
+    ));
+    assert!(text.contains(", confirmed):"), "{text}");
+}
+
+#[test]
 fn text_output_and_errors() {
     let fixture = fixtures::structured_overworld(false);
     let text = ok(&spyglass(

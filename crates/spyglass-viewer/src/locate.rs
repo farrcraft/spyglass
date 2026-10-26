@@ -45,8 +45,14 @@ pub struct Found {
     pub note: Option<String>,
 }
 
-/// Runs `/locate` for `target` from `from`, with the game's radius.
-pub fn run(session: &Session<'_>, target: Target, from: [i32; 3]) -> Result<Found, String> {
+/// Runs `/locate` for `target` from `from`, with the game's radius; structure candidates are
+/// decided with the seed's terrain if `confirm`.
+pub fn run(
+    session: &Session<'_>,
+    target: Target,
+    from: [i32; 3],
+    confirm: bool,
+) -> Result<Found, String> {
     let world = session.world();
     let (hits, note) = match &target {
         Target::Structure(id) => {
@@ -57,7 +63,7 @@ pub fn run(session: &Session<'_>, target: Target, from: [i32; 3]) -> Result<Foun
                     from,
                     &spyglass::LocateOptions {
                         radius: LOCATE_RADIUS,
-                        confirm: false,
+                        confirm,
                     },
                 )
                 .map_err(|e| e.to_string())?;
@@ -83,11 +89,16 @@ pub fn run(session: &Session<'_>, target: Target, from: [i32; 3]) -> Result<Foun
                         .to_string(),
                 )
             } else if hits.iter().any(|h| !h.certain) {
-                Some(
-                    "Candidates depend on terrain or a tied biome. The game's answer is the first of \
-                     these it generates."
-                        .to_string(),
-                )
+                Some(if confirm {
+                    "Candidates are behind a tied biome, a platform-dependent ring position or a \
+                     mineshaft spyglass can't place. The game's answer is the first of these it \
+                     generates."
+                        .to_string()
+                } else {
+                    "Candidates depend on terrain (confirm with terrain to decide them) or a tied \
+                     biome. The game's answer is the first of these it generates."
+                        .to_string()
+                })
             } else {
                 None
             };
@@ -165,35 +176,48 @@ mod tests {
         let session = world.session(5).unwrap();
         let from = [300, 64, 20];
 
-        let found = run(&session, Target::Structure("minecraft:tower".into()), from).unwrap();
         let query = world.structure_query("minecraft:tower").unwrap();
-        let expected = session
-            .locate_structure(
-                &query,
-                from,
-                &spyglass::LocateOptions {
-                    radius: LOCATE_RADIUS,
-                    confirm: false,
-                },
-            )
-            .unwrap();
-        assert_eq!(found.hits.len(), expected.hits.len());
-        let first = &expected.hits[0];
-        assert_eq!(
-            [found.hits[0].x, found.hits[0].z],
-            [first.start.position[0], first.start.position[2]]
-        );
-        assert_eq!(found.hits[0].blocks_away, first.blocks_away);
+        for confirm in [false, true] {
+            let target = Target::Structure("minecraft:tower".into());
+            let found = run(&session, target, from, confirm).unwrap();
+            let expected = session
+                .locate_structure(
+                    &query,
+                    from,
+                    &spyglass::LocateOptions {
+                        radius: LOCATE_RADIUS,
+                        confirm,
+                    },
+                )
+                .unwrap();
+            assert_eq!(found.hits.len(), expected.hits.len());
+            let first = &expected.hits[0];
+            assert_eq!(
+                [found.hits[0].x, found.hits[0].z],
+                [first.start.position[0], first.start.position[2]]
+            );
+            assert_eq!(found.hits[0].blocks_away, first.blocks_away);
+            assert_eq!(found.hits[0].certain, first.start.certain);
+        }
 
         let found = run(
             &session,
             Target::Biome("minecraft:desert".into()),
             [-300, 64, 0],
+            true,
         )
         .unwrap();
         let last = found.hits.last().unwrap();
         assert!(last.certain && last.x >= 0 && last.what == "minecraft:desert");
 
-        assert!(run(&session, Target::Biome("minecraft:nowhere".into()), from).is_err());
+        assert!(
+            run(
+                &session,
+                Target::Biome("minecraft:nowhere".into()),
+                from,
+                true
+            )
+            .is_err()
+        );
     }
 }

@@ -1,6 +1,6 @@
 # Terrain
 
-Status: draft. Covers what the Overworld's generator answers about terrain before any chunk exists, for 26.3, in `spyglass-terrain` ([ADR 0022](../adr/0022-terrain-crate-and-volume-evaluation.md)). Implemented, and checked against the oracle's [probe files](oracle.md#probe-files) (the aquifer) and [height golden files](oracle.md#height-golden-files) (every query). Ported from the 26.3 bytecode; worldgen before 26.x (surface rules, noise router fields, `blocksMotion`) doesn't apply.
+Status: stable. Covers what the Overworld's generator answers about terrain before any chunk exists, for 26.3, in `spyglass-terrain` ([ADR 0022](../adr/0022-terrain-crate-and-volume-evaluation.md)). Implemented, and checked against the oracle's [probe files](oracle.md#probe-files) (the aquifer) and [height golden files](oracle.md#height-golden-files) (every query). Ported from the 26.3 bytecode; worldgen before 26.x (surface rules, noise router fields, `blocksMotion`) doesn't apply.
 
 Structures decide where they start, and at what height, before their chunks are generated. They ask the chunk generator for heights and block columns, which it computes from the density graph and the aquifer alone. That's this spec. Real chunks differ from these answers: structures' terrain adaptation (the beardifier), the material rule (surface blocks, ore veins, frozen-ocean holes, swamp water), carvers and features all come later. Classes are in `net.minecraft.world.level.levelgen` unless stated otherwise.
 
@@ -32,6 +32,8 @@ Structures decide where they start, and at what height, before their chunks are 
 So a column holds only the default block, the default fluid (from the [fluid picker](#the-fluid-picker)), lava and air. The density is an `f32`, widened to `f64` once, for the aquifer.
 
 **Regions.** Heights for many columns are computed chunk by chunk, as chunk generation does: `final_density` over each chunk's part of the box as one volume, and one aquifer for it. Each column gets the same blocks as on its own, because columns and chunks agree on density and the aquifer doesn't depend on its region ([below](#settled-questions)), and neighbouring columns share cell corners, surface levels and aquifer statuses, about 20 times less work for a 40 × 25 box.
+
+**Grids.** A sparse grid of columns, as a map samples one per pixel, is computed the same way: chunk by chunk, with each chunk's volume only as large as the box around its sampled columns. A box's density doesn't depend on where it starts, for the reason columns and chunks agree, so each column again gets its own answers.
 
 **What the column leaves out.** It evaluates the density graph with no structures and no blending. `beardifier` is 0, `blend_density` passes its input through, `blend_alpha` is 1 and `blend_offset` 0. The material rule isn't evaluated at all, so the router's `chunk_surface_level` isn't used either.
 
@@ -116,4 +118,4 @@ Open when this spec was drafted, and settled since:
 
 - **Unit tests** on hand-written density functions and aquifer settings: the slot order and ties, pressure cases, the fluid picker's boundaries, skipping against the full path, and answers independent of the order of questions.
 - **The ignored aquifer test** (`spyglass-terrain/tests/probe.rs`) compares every block of the probe's aquifer columns.
-- **The ignored golden test** (`spyglass-terrain/tests/heights.rs`) compares every height in the [height golden files](oracle.md#height-golden-files), both heightmaps, computed by regions, and every 13th by its own column; and every sampled block column. Run by `cargo xtask oracle-test`.
+- **The ignored golden test** (`spyglass-terrain/tests/heights.rs`) compares every height in the [height golden files](oracle.md#height-golden-files), both heightmaps, computed by regions, every 13th by its own column, and every 5th column of every 5th row as a grid; and every sampled block column. Run by `cargo xtask oracle-test`.

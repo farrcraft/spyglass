@@ -1,26 +1,36 @@
 //! `spyglass locate`: structures, biomes, slime chunks and the spawn, as text or JSON.
 
 use anyhow::Result;
+use spyglass::{BlockBox, LocateOptions, StructureLayout};
 
 use crate::json::{self, Xyz, Xz};
 use crate::{Out, SHOWN};
 
-pub fn structure(out: &Out<'_>, target: &str, from: [i32; 3], radius: i32) -> Result<()> {
+pub fn structure(
+    out: &Out<'_>,
+    target: &str,
+    from: [i32; 3],
+    options: &LocateOptions,
+    bounds: bool,
+) -> Result<()> {
     let session = out.session;
     let query = session.world().structure_query(target)?;
-    let found = session.locate_structure(
-        &query,
-        from,
-        &spyglass::LocateOptions {
-            radius,
-            confirm: false,
-        },
-    )?;
+    let found = session.locate_structure(&query, from, options)?;
+    // Each hit's layout, where asked for and known.
+    let layouts = found
+        .hits
+        .iter()
+        .map(|h| match h.start.starting() {
+            Some(structure) if bounds => session.structure_layout(structure, h.start.chunk),
+            _ => Ok(None),
+        })
+        .collect::<spyglass::Result<Vec<Option<StructureLayout>>>>()?;
     if out.json {
         let hits = found
             .hits
             .iter()
-            .map(|h| json::StructureHit {
+            .zip(&layouts)
+            .map(|(h, layout)| json::StructureHit {
                 position: Xz {
                     x: h.start.position[0],
                     z: h.start.position[2],
@@ -30,6 +40,7 @@ pub fn structure(out: &Out<'_>, target: &str, from: [i32; 3], radius: i32) -> Re
                 structures: &h.start.structures,
                 certain: h.start.certain,
                 blocks_away: h.blocks_away,
+                bounds: layout.as_ref().map(json::Bounds::new),
             })
             .collect();
         return out.print(
@@ -37,7 +48,8 @@ pub fn structure(out: &Out<'_>, target: &str, from: [i32; 3], radius: i32) -> Re
             json::StructureAnswer {
                 target,
                 from,
-                radius,
+                radius: options.radius,
+                confirmed: options.confirm,
                 complete: found.complete,
                 certain_answer: found.certain_answer,
                 hits,
@@ -46,10 +58,10 @@ pub fn structure(out: &Out<'_>, target: &str, from: [i32; 3], radius: i32) -> Re
     }
     println!("{target}{}", out.context(Some(from)));
     if found.hits.is_empty() {
-        println!("  none within {radius} rings");
+        println!("  none within {} rings", options.radius);
         return Ok(());
     }
-    for h in found.hits.iter().take(SHOWN) {
+    for (h, layout) in found.hits.iter().zip(&layouts).take(SHOWN) {
         let [x, _, z] = h.start.position;
         println!(
             "  {:>9} ~ {:<9} {:>7} blocks  {:<10} {}",
@@ -63,6 +75,20 @@ pub fn structure(out: &Out<'_>, target: &str, from: [i32; 3], radius: i32) -> Re
             },
             h.start.structures.join(" or "),
         );
+        if let Some(layout) = layout {
+            let BlockBox { min, max } = layout.bounds;
+            println!(
+                "  {:>9}   bounds {} {} {} to {} {} {}, {} pieces",
+                "",
+                min[0],
+                min[1],
+                min[2],
+                max[0],
+                max[1],
+                max[2],
+                layout.pieces.len()
+            );
+        }
     }
     if found.hits.len() > SHOWN {
         println!(
@@ -76,9 +102,13 @@ pub fn structure(out: &Out<'_>, target: &str, from: [i32; 3], radius: i32) -> Re
         } else {
             ", or further out."
         };
+        let why = if options.confirm {
+            "Candidates are behind a tied biome, a platform-dependent ring position or a              mineshaft spyglass can't place."
+        } else {
+            "Candidates depend on terrain, which --unconfirmed leaves undecided, or a tied biome."
+        };
         println!(
-            "Candidates depend on terrain (or a tied biome), which spyglass doesn't compute yet. \
-             The game's answer is the first of these it generates, usually the first listed{rest}"
+            "{why} The game's answer is the first of these it generates, usually the first              listed{rest}"
         );
     }
     Ok(())
@@ -199,8 +229,8 @@ pub fn spawn(out: &Out<'_>) -> Result<()> {
         println!("  this may differ on other platforms (Java's sin and cos aren't exact)");
     }
     println!(
-        "The spawn itself is in the 11 x 11 chunks around it, chosen by terrain, which spyglass \
-         doesn't compute yet."
+        "The spawn itself is in the 11 x 11 chunks around it, chosen by generated blocks \
+         (surface and features), which spyglass doesn't compute yet."
     );
     Ok(())
 }

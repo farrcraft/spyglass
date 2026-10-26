@@ -211,6 +211,61 @@ impl Terrain {
         out
     }
 
+    /// [`base_height`](Self::base_height) at every `(x, z)` with x in `xs` and z in `zs`, z outer
+    /// and x inner. Both must be ascending. Chunk by chunk, as
+    /// [`base_heights`](Self::base_heights) is, with each chunk's volume only as large as the box
+    /// around its columns, so a sparse grid costs about one column per chunk.
+    pub fn base_heights_on(&self, xs: &[i32], zs: &[i32], heightmap: Heightmap) -> Vec<i32> {
+        debug_assert!(xs.is_sorted() && zs.is_sorted(), "ascending coordinates");
+        let mut out = vec![self.level_min_y; xs.len() * zs.len()];
+        if self.height <= 0 {
+            return out;
+        }
+        // Runs of coordinates in one chunk, as index ranges.
+        let runs = |vs: &[i32]| {
+            let mut runs = Vec::new();
+            let mut first = 0;
+            for i in 1..=vs.len() {
+                if i == vs.len() || vs[i] >> 4 != vs[first] >> 4 {
+                    runs.push(first..i);
+                    first = i;
+                }
+            }
+            runs
+        };
+        let (x_runs, z_runs) = (runs(xs), runs(zs));
+        for zr in &z_runs {
+            let (z0, z1) = (zs[zr.start], zs[zr.end - 1]);
+            for xr in &x_runs {
+                let (x0, x1) = (xs[xr.start], xs[xr.end - 1]);
+                let tile = Volume::blocks(
+                    [x1 - x0 + 1, self.height, z1 - z0 + 1],
+                    [x0, self.min_y, z0],
+                );
+                let density = self.bound.final_density.sample_volume(&tile);
+                let mut aquifer = self.aquifer(&tile);
+                for j in zr.clone() {
+                    for i in xr.clone() {
+                        let (x, z) = (xs[i], zs[j]);
+                        let first = tile.index(x - x0, 0, z - z0);
+                        let column = &density[first..first + self.height as usize];
+                        let height = self.scan_with(
+                            x,
+                            z,
+                            self.min_y,
+                            column,
+                            aquifer.as_mut(),
+                            Some(heightmap),
+                            None,
+                        );
+                        out[j * xs.len() + i] = height.unwrap_or(self.level_min_y);
+                    }
+                }
+            }
+        }
+        out
+    }
+
     /// `getFirstFreeHeight`: the same as [`base_height`](Self::base_height).
     pub fn first_free_height(&self, x: i32, z: i32, heightmap: Heightmap) -> i32 {
         self.base_height(x, z, heightmap)
@@ -312,6 +367,24 @@ mod tests {
         }
         assert!(
             t.base_heights([0, 0], [0, 5], Heightmap::WorldSurfaceWg)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn grids_answer_as_columns_do() {
+        let t = overworld();
+        let (xs, zs) = ([-33, -17, -16, -1, 0, 5, 40], [-4, 3, 12, 16]);
+        for heightmap in Heightmap::ALL {
+            let grid = t.base_heights_on(&xs, &zs, heightmap);
+            assert_eq!(grid.len(), xs.len() * zs.len());
+            for (i, h) in grid.iter().enumerate() {
+                let (x, z) = (xs[i % xs.len()], zs[i / xs.len()]);
+                assert_eq!(*h, t.base_height(x, z, heightmap));
+            }
+        }
+        assert!(
+            t.base_heights_on(&[], &[1], Heightmap::WorldSurfaceWg)
                 .is_empty()
         );
     }

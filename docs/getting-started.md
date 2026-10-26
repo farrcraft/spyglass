@@ -232,6 +232,7 @@ cargo run --release -p spyglass-cli -- locate structure minecraft:stronghold --s
 cargo run --release -p spyglass-cli -- locate biome minecraft:cherry_grove --seed 12345
 cargo run --release -p spyglass-cli -- locate slime --seed 12345 --radius 4
 cargo run --release -p spyglass-cli -- locate spawn --seed 12345
+cargo run --release -p spyglass-cli -- heights --seed 12345 --min 0,0 --max 15,15
 ```
 
 Or install it with `cargo install --path crates/spyglass-cli` and run `spyglass ...` directly.
@@ -242,10 +243,14 @@ Or install it with `cargo install --path crates/spyglass-cli` and run `spyglass 
 | `--world <save>`      | none          | A world save instead of `--seed`: its folder, or its folder name in a launcher's saves.   |
 | `--from <x,y,z>`      | `0,64,0`      | Where to search from, in blocks; `x,z` means y 64; `player` is `--world`'s single player. |
 | `--radius <n>`        | as `/locate`  | Placement-cell rings (structures), blocks (biomes) or chunks (slime).                     |
+| `--unconfirmed`       | off           | Structures: don't decide candidates with the seed's terrain. Faster, but less certain.    |
+| `--bounds`            | off           | Structures: each certain jigsaw structure's bounds and piece count.                       |
 | `--game-version <id>` | newest bundle | Which bundle in `--bundles` to use.                                                       |
 | `--bundle <dir>`      | none          | Use this bundle directory instead.                                                        |
 | `--bundles <dir>`     | `bundles`     | Where bundles are.                                                                        |
 | `--json`              | off           | Print JSON for scripts ([specs/cli-json.md](specs/cli-json.md)).                          |
+
+`spyglass heights` prints the generator's terrain heights for one column (`--at x,z`) or a region (`--min x,z --max x,z`, up to 256 × 256 columns): one above the highest block before structures, carvers, features and surface blocks change it, as structures are placed by ([specs/terrain.md](specs/terrain.md)). `--heightmap ocean-floor` ignores water.
 
 ### Your own worlds
 
@@ -268,17 +273,20 @@ cargo run --release -p spyglass-cli -- render --seed 12345 --centre 1000,-2000 -
 cargo run --release -p spyglass-cli -- render --world "My World" --highlight minecraft:cherry_grove -o map.png
 ```
 
-| Option                            | Default            | What it does                                                                          |
-| --------------------------------- | ------------------ | ------------------------------------------------------------------------------------- |
-| `-o <file>`                       | required           | The PNG to write.                                                                     |
-| `--centre <x,z>` or `--min <x,z>` | 0,0, or the player | The block at the image's centre, or at its top-left corner.                           |
-| `--size <WxH>`                    | `1024x1024`        | Pixels.                                                                               |
-| `--scale <n>`                     | `4`                | Blocks per pixel: 1, 2, 4 and so on up to 256.                                        |
-| `--y <y>`                         | `64`               | The height biomes are drawn at. The map is a slice at this height, not the surface.   |
-| `--structures <ids>`              | none               | Structure ids or `#tags` to mark, separated by commas. Hollow markers are candidates. |
-| `--highlight <ids>`               | none               | Biomes to keep bright; the rest are dimmed.                                           |
-| `--slime`, `--spawn`, `--ties`    | off                | Slime chunks (scales up to 16), the spawn's origin, tied biome cells.                 |
-| `--no-biomes`                     | off                | A plain background under the other layers.                                            |
+| Option                            | Default            | What it does                                                                             |
+| --------------------------------- | ------------------ | ---------------------------------------------------------------------------------------- |
+| `-o <file>`                       | required           | The PNG to write.                                                                        |
+| `--centre <x,z>` or `--min <x,z>` | 0,0, or the player | The block at the image's centre, or at its top-left corner.                              |
+| `--size <WxH>`                    | `1024x1024`        | Pixels.                                                                                  |
+| `--scale <n>`                     | `4`                | Blocks per pixel: 1, 2, 4 and so on up to 256.                                           |
+| `--y <y>`                         | `64`               | The height biomes are drawn at. The map is a slice at this height, not the surface.      |
+| `--surface`                       | off                | Biomes at the surface instead of at `--y` (scales up to 4).                              |
+| `--relief`                        | off                | Shade by terrain height (scales up to 4). Slow: about a second per 256 × 256 at scale 1. |
+| `--structures <ids>`              | none               | Structure ids or `#tags` to mark, separated by commas. Hollow markers are candidates.    |
+| `--confirm`                       | off                | Decide structure markers with the seed's terrain, so nearly all are certain.             |
+| `--highlight <ids>`               | none               | Biomes to keep bright; the rest are dimmed.                                              |
+| `--slime`, `--spawn`, `--ties`    | off                | Slime chunks (scales up to 16), the spawn's origin, tied biome cells.                    |
+| `--no-biomes`                     | off                | A plain background under the other layers, or grey by height with `--relief`.            |
 
 The seed, world and bundle options are as for `locate`. With `--json` it prints the area and everything it drew.
 
@@ -301,16 +309,17 @@ cargo run --release -p spyglass-cli -- search --query-file huts.txt --range -214
 | `--range <a..b>`, `--seeds <f>` | every seed | Only seeds from a to b (both included; the example is every text seed), or those listed in a file. |
 | `--from <index>`                | `0`        | Where to start; a search prints the index to continue from.                                        |
 | `--top <n>`                     | `10`       | How many seeds to keep.                                                                            |
-| `--certain`                     | off        | Only seeds whose required constraints hold whatever terrain decides.                               |
+| `--confirm`                     | off        | Decide structure starts with each seed's terrain, as the game does.                                |
+| `--certain`                     | off        | Only seeds whose required constraints hold whatever is left undecided.                             |
 | `--threads <n>`                 | all cores  | Worker threads.                                                                                    |
 
 The bundle options are as for `locate`; `--json` prints every hit with what each constraint matched. Searching every seed checks structure placement first, which depends only on the seed's lower 48 bits, so seeds that can't place enough structures are skipped 65,536 at a time. The same query, range, start and count always give the same list, on any machine.
 
-Most structures need terrain to confirm, so until it's ported a constraint on them is usually **possibly** met rather than met: the structures are where the game tries them, and whether each one generates depends on the ground there.
+Most structures need terrain to confirm. Without `--confirm`, a constraint on them is usually **possibly** met rather than met: the structures are where the game tries them, and whether each one generates depends on the ground there. With it, terrain decides them, and only tied biomes and platform-dependent results stay uncertain. Confirming costs little on top of a search, since it runs only on seeds that pass everything else.
 
 ### Reading the answers
 
-Answers are listed in the game's search order, which isn't always nearest first. Until terrain is ported, most surface structures (villages, temples, monuments) can't be confirmed without it, so they're shown as **candidates**: the game's answer is the first of them it generates, and in testing that's usually the first one listed. Strongholds, ancient cities and trial chambers don't depend on terrain and are usually **certain**.
+Answers are listed in the game's search order, which isn't always nearest first. `locate` decides each structure with the seed's terrain, as the game does, so its answers are almost always **certain**, and then exactly the game's `/locate` answer. A **candidate** is left where the game's choice depends on a tied biome cell, a platform-dependent stronghold ring position or a mineshaft spyglass can't place yet: the game's answer is the first of them it generates, usually the first one listed. Without terrain (`--unconfirmed`, and maps and searches unless they confirm), most surface structures (villages, temples, monuments) are candidates.
 
 ## 10. The viewer
 
@@ -322,10 +331,10 @@ The viewer opens the newest bundle in `bundles/` (choose another folder from the
 
 - **Move around:** drag to pan, scroll to zoom around the pointer, or use the arrow keys and `+`/`-`. **Go to** takes `x z` or `x y z`. The status bar shows the block, chunk and biome under the pointer.
 - **Seed or save:** type a seed and press **Show**, or open a save from the launchers' list or any folder. A save opens on its player, with anything that makes its answers inexact listed.
-- **Layers:** tied biome cells, slime chunks, the world spawn, structures to mark (hover a marker for what it is), and biomes to highlight. **Height** sets the y biomes are drawn at.
+- **Layers:** tied biome cells, slime chunks, the world spawn, structures to mark (hover a marker for what it is), and biomes to highlight. **Height** sets the y biomes are drawn at. Up close (4 blocks per pixel or less), **Relief** shades the map by terrain height and **Biomes at the surface** draws each column's biome at its height; both are slow to fill in. **Confirm with terrain** (on by default) decides structure markers and locates with the seed's terrain, and draws the bounds of villages and other jigsaw structures up close. The status bar shows the terrain height under the pointer.
 - **Locate:** right-click the map for the nearest structure or biome from there, as `/locate` would. Hits are listed in the side panel (click one to go there) and ringed on the map.
 - **Export:** **Export image…** saves the view as a PNG, and **Copy command** copies the `spyglass render` command that draws the same image.
-- **Search:** type a query in the **Search** section, set a seed count or time limit, and press **Search**. The best seeds appear as they're found; click one to open it, centred on the query's first place with everything its constraints matched ringed.
+- **Search:** type a query in the **Search** section, set a seed count or time limit (and **Confirm with terrain** to decide structures), and press **Search**. The best seeds appear as they're found; click one to open it, centred on the query's first place with everything its constraints matched ringed.
 
 Rendering runs in the background on all but one core, so the map stays responsive while tiles fill in. Settings are kept between runs.
 

@@ -118,6 +118,16 @@ fn main() -> spyglass::Result<()> {
             },
         );
     }
+    for scale in [1, 4] {
+        let tile = spyglass::MapArea::centred_on([0, 0], [256, 256], scale, 64)?;
+        report(
+            &format!("height_map, 256 x 256 tile at scale {scale}"),
+            1,
+            || {
+                black_box(session.height_map(&tile).unwrap());
+            },
+        );
+    }
     let view = spyglass::MapArea::centred_on([0, 0], [1024, 1024], 16, 64)?;
     let layers = spyglass::Layers {
         structures: vec![villages.clone(), stronghold.clone()],

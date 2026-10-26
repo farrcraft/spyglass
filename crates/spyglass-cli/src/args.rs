@@ -3,8 +3,8 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use clap::{Args, Parser, Subcommand};
-use spyglass::{DEFAULT_MAP_Y, LOCATE_BIOME_RADIUS, LOCATE_RADIUS};
+use clap::{Args, Parser, Subcommand, ValueEnum};
+use spyglass::{DEFAULT_MAP_Y, Heightmap, LOCATE_BIOME_RADIUS, LOCATE_RADIUS};
 
 #[derive(Parser)]
 #[command(
@@ -34,6 +34,46 @@ pub enum Command {
     /// Find the seeds that fit a query best: required and preferred structures, biomes, slime
     /// chunks and spawn.
     Search(Search),
+    /// Terrain heights before structures, carvers and features, as structures are placed by:
+    /// one column or a region.
+    Heights(Heights),
+}
+
+/// `spyglass heights` (`docs/specs/terrain.md`).
+#[derive(Args)]
+pub struct Heights {
+    /// One column, `x,z`.
+    #[arg(long, allow_hyphen_values = true, value_parser = xz, required_unless_present = "min", conflicts_with = "min")]
+    pub at: Option<[i32; 2]>,
+    /// A region's corner, `x,z`, with `--max`: every column between them, both included.
+    #[arg(long, allow_hyphen_values = true, value_parser = xz, requires = "max")]
+    pub min: Option<[i32; 2]>,
+    /// The region's other corner, `x,z`.
+    #[arg(long, allow_hyphen_values = true, value_parser = xz, requires = "min")]
+    pub max: Option<[i32; 2]>,
+    /// Which height: the top of anything but air (fluids count), or of solid ground.
+    #[arg(long, value_enum, default_value_t = HeightmapArg::WorldSurface)]
+    pub heightmap: HeightmapArg,
+    #[command(flatten)]
+    pub common: Common,
+}
+
+/// The heightmaps `--heightmap` takes.
+#[derive(Clone, Copy, ValueEnum)]
+pub enum HeightmapArg {
+    /// `WORLD_SURFACE_WG`: any block but air.
+    WorldSurface,
+    /// `OCEAN_FLOOR_WG`: blocks that block motion, so not fluids.
+    OceanFloor,
+}
+
+impl HeightmapArg {
+    pub fn heightmap(self) -> Heightmap {
+        match self {
+            HeightmapArg::WorldSurface => Heightmap::WorldSurfaceWg,
+            HeightmapArg::OceanFloor => Heightmap::OceanFloorWg,
+        }
+    }
 }
 
 /// `spyglass search` (`docs/specs/search.md`).
@@ -78,6 +118,10 @@ pub struct Search {
     /// by the worst case.
     #[arg(long)]
     pub certain: bool,
+    /// Decide structure starts with each seed's terrain, as the game does. Slower, but only
+    /// ties and platform-dependent results stay uncertain.
+    #[arg(long)]
+    pub confirm: bool,
     /// Game version of the bundle to use, from `--bundles`. Defaults to the newest there.
     #[arg(long)]
     pub game_version: Option<String>,
@@ -161,9 +205,20 @@ pub struct Render {
     /// Show tied biome cells as a checker of the biomes the game may give.
     #[arg(long)]
     pub ties: bool,
-    /// Leave biomes out: a plain background under the other layers.
+    /// Leave biomes out: a plain background under the other layers, or grey by height with
+    /// `--relief`.
     #[arg(long)]
     pub no_biomes: bool,
+    /// Decide structure markers with the seed's terrain, so candidates are only ties and
+    /// platform-dependent results.
+    #[arg(long)]
+    pub confirm: bool,
+    /// Shade by terrain height (scales up to 4).
+    #[arg(long)]
+    pub relief: bool,
+    /// Draw biomes at the surface instead of at `--y` (scales up to 4).
+    #[arg(long, conflicts_with = "no_biomes")]
+    pub surface: bool,
     #[command(flatten)]
     pub common: Common,
 }
@@ -241,6 +296,14 @@ pub enum Locate {
         /// Rings of placement cells to search; the game's `/locate` searches 100.
         #[arg(long, default_value_t = LOCATE_RADIUS)]
         radius: i32,
+        /// Don't decide candidates with the seed's terrain: faster, but most surface
+        /// structures stay candidates.
+        #[arg(long)]
+        unconfirmed: bool,
+        /// Show each certain jigsaw structure's bounds and piece count (villages, outposts,
+        /// ancient cities, trial chambers and others). The first use loads the template pools.
+        #[arg(long)]
+        bounds: bool,
     },
     /// The nearest biome, searched in 3D from `--from`, as `/locate biome` does.
     Biome {

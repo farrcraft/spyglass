@@ -46,6 +46,9 @@ pub fn run(args: &Render) -> Result<()> {
             .collect::<spyglass::Result<_>>()?,
         slime_chunks: args.slime,
         spawn: args.spawn,
+        confirm: args.confirm,
+        relief: args.relief,
+        surface: args.surface,
     };
     let features = session.map_features(&area, &layers)?;
     let image = session.render(&area, &layers)?;
@@ -87,6 +90,9 @@ pub fn run(args: &Render) -> Result<()> {
                     structures: &args.structures,
                     slime_chunks: layers.slime_chunks,
                     spawn: layers.spawn,
+                    confirm: layers.confirm,
+                    relief: layers.relief,
+                    surface: layers.surface,
                 },
                 structures,
                 slime_chunks: features.slime_chunks,
@@ -98,12 +104,16 @@ pub fn run(args: &Render) -> Result<()> {
     let s = i64::from(area.scale);
     let [x0, z0] = area.min.map(i64::from);
     let (x1, z1) = (x0 + i64::from(w) * s - 1, z0 + i64::from(h) * s - 1);
+    let biomes = match (layers.biomes, layers.surface) {
+        (false, _) => String::new(),
+        (true, true) => ", biomes at the surface".to_string(),
+        (true, false) => format!(", biomes at y {}", area.y),
+    };
     println!(
-        "wrote {}: {w} × {h} pixels, {} blocks per pixel, x {x0} to {x1}, z {z0} to {z1}, \
-         biomes at y {}{}",
+        "wrote {}: {w} × {h} pixels, {} blocks per pixel, x {x0} to {x1}, z {z0} to {z1}\
+         {biomes}{}",
         path.display(),
         area.scale,
-        area.y,
         out.context(None),
     );
     if layers.spawn || !layers.structures.is_empty() || layers.slime_chunks {

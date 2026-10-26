@@ -5,7 +5,7 @@ use std::path::Path;
 
 use anyhow::Result;
 use serde::Serialize;
-use spyglass::{SaveLocation, SaveReport, SpawnOrigin};
+use spyglass::{SaveLocation, SaveReport, SpawnOrigin, StructureLayout};
 
 /// The `--json` format version.
 pub const FORMAT: u32 = 1;
@@ -92,6 +92,7 @@ pub struct StructureAnswer<'a> {
     pub target: &'a str,
     pub from: [i32; 3],
     pub radius: i32,
+    pub confirmed: bool,
     pub complete: bool,
     pub certain_answer: Option<usize>,
     pub hits: Vec<StructureHit<'a>>,
@@ -105,6 +106,35 @@ pub struct StructureHit<'a> {
     pub structures: &'a [String],
     pub certain: bool,
     pub blocks_away: i32,
+    /// With `--bounds`, where the structure that starts is known and is a jigsaw.
+    pub bounds: Option<Bounds>,
+}
+
+/// A jigsaw structure's bounds.
+#[derive(Serialize)]
+pub struct Bounds {
+    pub min: [i32; 3],
+    pub max: [i32; 3],
+    pub pieces: usize,
+}
+
+impl Bounds {
+    pub fn new(layout: &StructureLayout) -> Self {
+        Bounds {
+            min: layout.bounds.min,
+            max: layout.bounds.max,
+            pieces: layout.pieces.len(),
+        }
+    }
+}
+
+/// `heights`: rows of columns, z outer and x inner.
+#[derive(Serialize)]
+pub struct HeightsAnswer<'a> {
+    pub heightmap: &'static str,
+    pub min: [i32; 2],
+    pub max: [i32; 2],
+    pub heights: Vec<&'a [i32]>,
 }
 
 #[derive(Serialize)]
@@ -175,6 +205,9 @@ pub struct RenderLayers<'a> {
     pub structures: &'a [String],
     pub slime_chunks: bool,
     pub spawn: bool,
+    pub confirm: bool,
+    pub relief: bool,
+    pub surface: bool,
 }
 
 /// A structure marker on a map.
@@ -278,6 +311,7 @@ pub struct SearchAnswer<'a> {
     pub source: Source,
     pub from: u64,
     pub certain: bool,
+    pub confirm: bool,
     pub top: usize,
     pub next: Option<u64>,
     pub evaluated: u64,

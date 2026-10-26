@@ -2,8 +2,7 @@
 //! `Image::draw_features` (`docs/specs/render.md#layers`): one tile pixel is one point, and a
 //! marker's centre is the pixel `floor(block / scale)` on the world-aligned grid.
 
-use eframe::egui::Stroke;
-use eframe::egui::{Color32, Painter, Pos2, Rect, Vec2};
+use eframe::egui::{self, Color32, Painter, Pos2, Rect, Stroke, Vec2};
 use spyglass::{SpawnOrigin, StructureStart, structure_colour};
 
 use crate::locate::Hit;
@@ -51,6 +50,38 @@ pub fn structure(painter: &Painter, centre: Pos2, start: &StructureStart) {
     if start.certain {
         square(painter, centre, [-1.0, -1.0], [1.0, 1.0], colour);
     }
+}
+
+/// The screen rectangle covering blocks `min..=max` (x and z).
+pub fn block_rect(view: &View, map_centre: Pos2, min: [i32; 2], max: [i32; 2]) -> Rect {
+    let s = f64::from(view.scale);
+    let origin = view.origin();
+    let edge = |b: i64, d: usize| (b as f64 / s + origin[d]) as f32;
+    Rect::from_min_max(
+        map_centre + Vec2::new(edge(i64::from(min[0]), 0), edge(i64::from(min[1]), 1)),
+        map_centre
+            + Vec2::new(
+                edge(i64::from(max[0]) + 1, 0),
+                edge(i64::from(max[1]) + 1, 1),
+            ),
+    )
+}
+
+/// A structure's bounds: an outline in its set's colour over a black one.
+pub fn bounds(painter: &Painter, rect: Rect, set: &str) {
+    let colour = rgb(structure_colour(set));
+    painter.rect_stroke(
+        rect,
+        0.0,
+        Stroke::new(3.0, Color32::BLACK),
+        egui::StrokeKind::Inside,
+    );
+    painter.rect_stroke(
+        rect.shrink(1.0),
+        0.0,
+        Stroke::new(1.0, colour),
+        egui::StrokeKind::Inside,
+    );
 }
 
 /// A white cross reaching 4 pixels over a black one 3 wide reaching 5.
@@ -126,6 +157,23 @@ mod tests {
                 "{block:?}"
             );
         }
+    }
+
+    #[test]
+    fn bounds_cover_their_blocks() {
+        let view = View {
+            centre: [0.0, 0.0],
+            scale: 2,
+            y: 64,
+        };
+        let map_centre = Pos2::new(100.0, 100.0);
+        // Blocks 0..=3 are pixels 0 and 1; the rectangle runs from the first pixel's left edge
+        // to the last one's right edge.
+        let rect = block_rect(&view, map_centre, [0, -4], [3, -1]);
+        let first = pixel_centre(&view, map_centre, [0, -4]);
+        let last = pixel_centre(&view, map_centre, [3, -1]);
+        assert_eq!(rect.min, first - Vec2::splat(0.5));
+        assert_eq!(rect.max, last + Vec2::splat(0.5));
     }
 
     #[test]

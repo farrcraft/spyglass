@@ -24,3 +24,4 @@ Start from [template.md](template.md). Files are named `NNNN-kebab-case-title.md
 | [0016](0016-extractor-crate-and-read-only-data.md)            | The extractor in its own crate; `spyglass-data` reads only   | Accepted |
 | [0017](0017-map-rendering-in-the-public-api.md)               | Map rendering in the public API                              | Accepted |
 | [0018](0018-biome-palette.md)                                 | A biome palette of spyglass's own                            | Accepted |
+| [0019](0019-gui-stack-and-msrv-1-95.md)                       | The viewer's GUI stack, and MSRV 1.95                        | Accepted |

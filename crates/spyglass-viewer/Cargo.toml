@@ -11,4 +11,10 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+eframe.workspace = true
+rfd.workspace = true
+serde.workspace = true
 spyglass.workspace = true
+
+[dev-dependencies]
+spyglass-oracle.workspace = true

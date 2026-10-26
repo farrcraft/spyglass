@@ -7,7 +7,16 @@ all-features = true
 [advisories]
 # Security advisories are errors by default. Yanked crates too.
 yanked = "deny"
-
+# Unmaintained (not vulnerable) crates under the viewer's GUI stack (ADR 0019), with no upgrade
+# yet. Drop each once eframe moves off it.
+ignore = [
+  # ttf-parser, via winit's Wayland window decorations (sctk-adwaita, ab_glyph).
+  { id = "RUSTSEC-2026-0192", reason = "unmaintained; only via winit on Wayland, no upgrade available" },
+  # zbus_names, zvariant and zvariant_derive, merged into zbus 6; via AccessKit's Linux bridge.
+  { id = "RUSTSEC-2026-0370", reason = "merged into zbus 6; only via AccessKit on Linux, no upgrade available" },
+  { id = "RUSTSEC-2026-0371", reason = "merged into zbus 6; only via AccessKit on Linux, no upgrade available" },
+  { id = "RUSTSEC-2026-0372", reason = "merged into zbus 6; only via AccessKit on Linux, no upgrade available" },
+]
 [licenses]
 # Licenses compatible with distributing spyglass under MIT. Add to this list deliberately.
 allow = [
@@ -21,6 +30,12 @@ allow = [
   "CDLA-Permissive-2.0",
   # option-ext (via directories). Weak, file-level copyleft: fine as an unmodified dependency.
   "MPL-2.0",
+  # The viewer's GUI stack (ADR 0019): arrayref (BSD-2-Clause), clipboard-win and error-code
+  # (BSL-1.0), and egui's bundled fonts (OFL-1.1, Ubuntu-font-1.0).
+  "BSD-2-Clause",
+  "BSL-1.0",
+  "OFL-1.1",
+  "Ubuntu-font-1.0",
 ]
 confidence-threshold = 0.9
 

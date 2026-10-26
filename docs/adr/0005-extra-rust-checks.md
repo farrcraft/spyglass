@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-25
-- See also: [0002](0002-git-hooks-for-local-checks.md), which this extends
+- See also: [0002](0002-git-hooks-for-local-checks.md), which this extends; [0019](0019-gui-stack-and-msrv-1-95.md), which raises the MSRV to 1.95
 
 ## Context
 

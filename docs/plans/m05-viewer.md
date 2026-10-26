@@ -114,15 +114,15 @@ Specs and ADRs that govern this: [ADR 0014](../adr/0014-public-api-world-and-ses
 
 ### Phase 3: viewer shell
 
-- [ ] ADR: the GUI stack (`eframe` with `wgpu`, `rfd`), with licences added to `deny.toml` as needed and the MSRV checked against eframe's.
-- [ ] App skeleton: eframe window, side panel, map area, status bar; settings persistence.
-- [ ] Bundle discovery with `bundles_in`; the no-bundle screen with the extract command and a folder chooser.
-- [ ] Seed input (`parse_seed`) and version picker.
-- [ ] World host thread, scoped workers, request queue with generations and centre-first order.
-- [ ] Tile cache (LRU) and texture upload; coarser tiles as placeholders.
-- [ ] Pan (drag, keys) and zoom (wheel around the cursor, buttons) across scales 1 to 256; height slider for y.
-- [ ] Cursor readout (block, chunk, biome with ties) and "go to".
-- [ ] Unit tests for view transforms, tile keys and stale-request dropping.
+- [x] ADR: the GUI stack (`eframe` with `wgpu`, `rfd`), with licences added to `deny.toml` as needed and the MSRV checked against eframe's: [0019](../adr/0019-gui-stack-and-msrv-1-95.md). eframe 0.37 needs Rust 1.95, so the workspace MSRV is now 1.95.
+- [x] App skeleton: eframe window, side panel, map area, status bar; settings persistence.
+- [x] Bundle discovery with `bundles_in`; the no-bundle screen with the extract command and a folder chooser.
+- [x] Seed input (`parse_seed`) and version picker.
+- [x] Worker pool with a most-wanted-first queue that each frame replaces, so stale requests drop; worlds kept per bundle for the run instead of a host thread (see Notes).
+- [x] Tile cache (LRU) and texture upload; coarser tiles as placeholders.
+- [x] Pan (drag, keys) and zoom (wheel around the cursor, buttons) across scales 1 to 256; height slider for y.
+- [x] Cursor readout (block, chunk, biome with ties) and "go to".
+- [x] Unit tests for view transforms, tile keys and stale-request dropping.
 
 ### Phase 4: layers
 
@@ -160,11 +160,14 @@ Specs and ADRs that govern this: [ADR 0014](../adr/0014-public-api-world-and-ses
 - [x] `docs/specs/cli-json.md`: `render`
 - [x] ADR: map rendering in the public API ([0017](../adr/0017-map-rendering-in-the-public-api.md))
 - [x] ADR: biome palette ([0018](../adr/0018-biome-palette.md))
-- [ ] ADR: GUI stack
+- [x] ADR: GUI stack ([0019](../adr/0019-gui-stack-and-msrv-1-95.md))
 - [ ] `docs/architecture.md`, `README.md`, `docs/getting-started.md`
 
 ## Notes
 
+- 2026-10-25: Phase 3 done. Run on Windows: seed 0 renders, drag, wheel zoom and the cursor readout work, and the no-bundle screen shows the extract command. A view compared by eye with `spyglass render` of the same blocks matches. Some neighbouring biomes have close colours (`deep_cold_ocean` in `deep_ocean`, `frozen_river` across `snowy_plains`) and look like translucent overlays; worth a palette pass.
+- 2026-10-25: Worlds aren't owned by a host thread with scoped workers. The viewer keeps each bundle's `World` for the whole run (`Box::leak`, one per bundle directory), so `Session<'static>` can be shared by `Arc` with the workers and used on the UI thread for the cursor's biome. A run opens a handful of bundles at most. No API change was needed.
+- 2026-10-25: The library gained `Image::background`, `Image::draw_features` and `SpawnOrigin::map_block`, and `Session::render` is now those steps. The viewer caches biome maps and recolours them (ties, highlight, slime chunks) without sampling again. `BiomeMap` stores 2 bytes per cell plus a tie table (was 24), so a tile's map is 128 KB.
 - 2026-10-25: Phase 2 done. `spyglass render` writes the PNG, then prints a summary, or with `--json` the area, layers and the features drawn (from `map_features`, which `render` also calls, so they match). Defaults: 1024 × 1024 pixels at scale 4 and y 64, biomes only. `-o` is required; there's no writing to stdout yet.
 - 2026-10-25: Phase 1 done. `cargo xtask bench` (release, one thread): a 256² `biome_map` tile is 10.6 ms at scale 1 (64 × 64 quarts, repeated), 158 ms at scale 4 and 164 ms at scale 64, matching the plan's estimate. A 1024² render at scale 16 with structures, slime chunks and spawn is 2.48 s, nearly all biome sampling; overlays are negligible. `Session::render` is single-threaded. The viewer spreads tiles over workers. If `spyglass render` of large images feels slow, the library can render in parallel strips (the grid makes strips independent).
 - 2026-10-25: The palette's fallback for unknown ids is a hash of the id, not colours from the bundle's biome JSON: those colours are sparse and mostly alike (ADR 0018). Biome sampling uses a new strided `Biomes::biome_grid`, not `biomes_in`, which fills every quart of a box and would sample 256 times more than needed at scale 64.

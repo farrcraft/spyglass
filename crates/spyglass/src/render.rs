@@ -4,6 +4,7 @@
 
 mod palette;
 
+use std::collections::BTreeMap;
 use std::io;
 
 use spyglass_biome::{BiomeId, Lookup};
@@ -193,11 +194,14 @@ pub struct MapFeatures {
     pub spawn: Option<SpawnOrigin>,
 }
 
-/// The block a spawn marker is centred on.
-fn spawn_block(origin: &SpawnOrigin) -> [i32; 2] {
-    match origin.position {
-        Some([x, _, z]) => [x, z],
-        None => origin.chunk.map(|c| c.wrapping_shl(4).wrapping_add(8)),
+impl SpawnOrigin {
+    /// The block a map's spawn marker is centred on: the climate search's position, or the
+    /// centre of the origin chunk when there's none.
+    pub fn map_block(&self) -> [i32; 2] {
+        match self.position {
+            Some([x, _, z]) => [x, z],
+            None => self.chunk.map(|c| c.wrapping_shl(4).wrapping_add(8)),
+        }
     }
 }
 
@@ -210,8 +214,10 @@ pub struct BiomeMap {
     columns: Vec<u32>,
     rows: Vec<u32>,
     grid_width: usize,
-    /// The sampled quarts, x fastest.
-    cells: Vec<Lookup>,
+    /// Each sampled quart's biome (a tied cell's first), x fastest.
+    cells: Vec<BiomeId>,
+    /// Tied cells' sets, by cell index.
+    ties: BTreeMap<usize, Box<[BiomeId]>>,
 }
 
 impl BiomeMap {
@@ -220,24 +226,26 @@ impl BiomeMap {
         &self.area
     }
 
-    fn cell(&self, [i, j]: [u32; 2]) -> &Lookup {
+    /// A pixel's candidates: one biome, or a tie.
+    fn cell(&self, [i, j]: [u32; 2]) -> &[BiomeId] {
         let row = self.rows[j as usize] as usize;
-        &self.cells[row * self.grid_width + self.columns[i as usize] as usize]
+        let index = row * self.grid_width + self.columns[i as usize] as usize;
+        match self.ties.get(&index) {
+            Some(set) => set,
+            None => std::slice::from_ref(&self.cells[index]),
+        }
     }
 
     /// The biome at a pixel, as an index into [`World::biomes`]: where the cell is tied, the
     /// first of the tie. Panics outside the area.
     pub fn biome(&self, pixel: [u32; 2]) -> usize {
-        usize::from(self.cell(pixel).biome().0)
+        usize::from(self.cell(pixel)[0].0)
     }
 
     /// Every biome the game may give at a pixel, as indices into [`World::biomes`]: one, or
     /// a tie. Panics outside the area.
     pub fn candidates(&self, pixel: [u32; 2]) -> impl Iterator<Item = usize> + '_ {
-        self.cell(pixel)
-            .candidates()
-            .iter()
-            .map(|b| usize::from(b.0))
+        self.cell(pixel).iter().map(|b| usize::from(b.0))
     }
 
     /// The image of these biomes (`docs/specs/render.md#layers`): tied cells as a checker of
@@ -262,7 +270,7 @@ impl BiomeMap {
         let mut image = Image::filled(self.area.size, BACKGROUND);
         for j in 0..h {
             for i in 0..w {
-                let candidates = self.cell([i, j]).candidates();
+                let candidates = self.cell([i, j]);
                 let shown = if ties && candidates.len() > 1 {
                     let parity = (gx0 + i64::from(i) + gz0 + i64::from(j))
                         .rem_euclid(candidates.len() as i64);
@@ -439,9 +447,22 @@ impl Session<'_> {
         };
         let (columns, rows) = (axis(0), axis(1));
         let grid = [columns[columns.len() - 1] + 1, rows[rows.len() - 1] + 1];
-        let cells = self
+        let lookups = self
             .biomes
             .biome_grid(origin, area.y >> 2, step as i32, grid);
+        let mut ties = BTreeMap::new();
+        let cells = lookups
+            .into_iter()
+            .enumerate()
+            .map(|(i, lookup)| match lookup {
+                Lookup::Unique(b) => b,
+                Lookup::Tied(set) => {
+                    let first = set[0];
+                    ties.insert(i, set);
+                    first
+                }
+            })
+            .collect();
         Ok(BiomeMap {
             world: self.world.id,
             area: *area,
@@ -449,6 +470,7 @@ impl Session<'_> {
             rows,
             grid_width: grid[0] as usize,
             cells,
+            ties,
         })
     }
 
@@ -497,7 +519,7 @@ impl Session<'_> {
         }
         if layers.spawn {
             let origin = self.spawn_origin();
-            if area.reaches(spawn_block(&origin)) {
+            if area.reaches(origin.map_block()) {
                 features.spawn = Some(origin);
             }
         }
@@ -511,25 +533,42 @@ impl Session<'_> {
             self.biome_map(area)?
                 .colorize(self.world, layers.ties, &layers.highlight)?
         } else {
-            Image::filled(area.size, BACKGROUND)
+            Image::background(area.size)
         };
+        image.draw_features(area, &features);
+        Ok(image)
+    }
+}
+
+impl Image {
+    /// The background drawn when the biome layer is off.
+    pub fn background(size: [u32; 2]) -> Image {
+        Image::filled(size, BACKGROUND)
+    }
+
+    /// Draws `features` over the image of `area`, which must be the image's size: slime chunks,
+    /// then structure markers, then the spawn. [`Session::render`] is
+    /// [`BiomeMap::colorize`] (or [`background`](Self::background)), then this, with
+    /// [`Session::map_features`]; front ends that cache biome maps can do the steps
+    /// themselves, and leave out features they draw another way.
+    pub fn draw_features(&mut self, area: &MapArea, features: &MapFeatures) {
+        assert_eq!(self.size, area.size, "an image of the area");
         for &[x, z] in &features.slime_chunks {
             let min = area.pixel([x.wrapping_shl(4), z.wrapping_shl(4)]);
             let max = area.pixel([
                 x.wrapping_shl(4).wrapping_add(15),
                 z.wrapping_shl(4).wrapping_add(15),
             ]);
-            image.blend_rect(min, max, SLIME, SLIME_ALPHA);
+            self.blend_rect(min, max, SLIME, SLIME_ALPHA);
         }
         for start in &features.structures {
             let centre = area.pixel([start.position[0], start.position[2]]);
             let marker = structure_marker(structure_colour(&start.set), start.certain);
-            image.stamp(centre, 4, marker);
+            self.stamp(centre, 4, marker);
         }
         if let Some(origin) = &features.spawn {
-            image.stamp(area.pixel(spawn_block(origin)), 5, spawn_marker);
+            self.stamp(area.pixel(origin.map_block()), 5, spawn_marker);
         }
-        Ok(image)
     }
 }
 

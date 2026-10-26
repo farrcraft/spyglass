@@ -18,3 +18,4 @@ A spec is **Stable** when the behavior it describes is implemented and checked: 
 | [locate.md](locate.md)                           | `/locate structure` and `/locate biome`.                          | Stable |
 | [cli-json.md](cli-json.md)                       | The `spyglass` command's JSON output.                             | Stable |
 | [world-saves.md](world-saves.md)                 | Reading world saves and judging whether spyglass can answer.      | Stable |
+| [render.md](render.md)                           | Map images: sampling, colours, layers.                            | Draft  |

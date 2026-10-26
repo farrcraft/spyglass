@@ -68,6 +68,26 @@ fn main() -> spyglass::Result<()> {
             }
         }
     });
+    for scale in [1, 4, 64] {
+        let tile = spyglass::MapArea::centred_on([0, 0], [256, 256], scale, 64)?;
+        report(
+            &format!("biome_map, 256 x 256 tile at scale {scale}"),
+            3,
+            || {
+                black_box(session.biome_map(&tile).unwrap());
+            },
+        );
+    }
+    let view = spyglass::MapArea::centred_on([0, 0], [1024, 1024], 16, 64)?;
+    let layers = spyglass::Layers {
+        structures: vec![villages.clone(), stronghold.clone()],
+        slime_chunks: true,
+        spawn: true,
+        ..spyglass::Layers::default()
+    };
+    report("render 1024 x 1024 at scale 16, all layers", 3, || {
+        black_box(session.render(&view, &layers).unwrap());
+    });
     report("slime_chunks, 1000 x 1000 chunks", 3, || {
         black_box(session.slime_chunks([-500, -500], [499, 499]));
     });

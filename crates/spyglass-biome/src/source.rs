@@ -307,6 +307,24 @@ impl Biomes<'_> {
             ties,
         }
     }
+
+    /// The biomes at quart height `qy` on a horizontal grid: `size` cells from quart
+    /// `origin` (x, z), `step` quarts apart, x fastest. Each cell is
+    /// [`biome_at`](Self::biome_at)'s answer; positions wrap like the game's `int`s.
+    pub fn biome_grid(&self, origin: [i32; 2], qy: i32, step: i32, size: [u32; 2]) -> Vec<Lookup> {
+        let [sx, sz] = size;
+        let mut hits = Vec::new();
+        let mut cells = Vec::with_capacity(sx as usize * sz as usize);
+        for z in 0..sz {
+            let qz = origin[1].wrapping_add(step.wrapping_mul(z as i32));
+            for x in 0..sx {
+                let qx = origin[0].wrapping_add(step.wrapping_mul(x as i32));
+                let target = TargetPoint::quantize(self.climate.sample(qx, qy, qz));
+                cells.push(self.source.tree.lookup_with(&target, &mut hits));
+            }
+        }
+        cells
+    }
 }
 
 /// Where [`Biomes::find_biome_horizontal`] looks: `BiomeSource.findBiomeHorizontal`'s

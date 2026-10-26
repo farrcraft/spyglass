@@ -6,4 +6,4 @@ Code must not reference plans. Anything durable a plan produces belongs in a spe
 
 ## Active
 
-None. [m05-cleanup](completed/m05-cleanup.md) is complete; milestone [05](../roadmap/05-viewer-mvp.md) needs its viewer plan next.
+- [m05-viewer](m05-viewer.md): map rendering in the public API, `spyglass render`, and the viewer (milestone [05](../roadmap/05-viewer-mvp.md)).

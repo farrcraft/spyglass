@@ -22,6 +22,7 @@
 //! spyglass doesn't compute yet, and some results depend on the platform the game runs on;
 //! each result type says which applies. See `docs/specs/locate.md`.
 
+mod render;
 mod save;
 
 use std::path::{Path, PathBuf};
@@ -32,6 +33,10 @@ use spyglass_data::bundle::{Bundle, BundleError};
 use spyglass_data::codec::{LoadError, full_id};
 use spyglass_structure::{Placements, Starts, StructureSets};
 
+pub use render::{
+    BiomeMap, DEFAULT_MAP_Y, Image, Layers, MARKER_REACH, MAX_PIXELS, MAX_SCALE, MAX_SIDE,
+    MAX_SLIME_SCALE, MapArea, MapFeatures, biome_colour, structure_colour,
+};
 pub use save::{
     LauncherSave, PackConcern, SaveInfo, SaveInspector, SaveLocation, SaveReport, SaveWarning,
     Scan, find_save, inspect_save, launcher_saves,
@@ -105,6 +110,9 @@ pub enum Error {
     /// A query was resolved against a different [`World`] than the session's.
     #[error("{0:?} was resolved against another world; resolve it with this session's world")]
     OtherWorld(String),
+    /// A map area or layers that can't be drawn: the message says why.
+    #[error("{0}")]
+    InvalidMap(String),
 }
 
 /// What went wrong below the API, for [`Error::Data`] and [`Error::Save`]. Its message is the
@@ -230,6 +238,8 @@ pub struct World {
     source: BiomeSource,
     sets: StructureSets,
     spawn: SpawnTargets,
+    /// Each biome's map colour, by [`BiomeId`].
+    palette: Vec<[u8; 3]>,
 }
 
 impl World {
@@ -240,6 +250,12 @@ impl World {
         let source = BiomeSource::overworld(&bundle)?;
         let sets = StructureSets::overworld(&bundle, &source)?;
         let spawn = SpawnTargets::load(&bundle, source.noise_settings())?;
+        let palette = source
+            .parameters()
+            .names()
+            .iter()
+            .map(|n| biome_colour(n))
+            .collect();
         Ok(World {
             id: WORLDS.fetch_add(1, Ordering::Relaxed),
             bundle,
@@ -247,6 +263,7 @@ impl World {
             source,
             sets,
             spawn,
+            palette,
         })
     }
 
@@ -573,7 +590,16 @@ impl<'w> Session<'w> {
         max: [i32; 2],
     ) -> Result<Vec<StructureStart>> {
         self.check_world(query.world, &query.argument)?;
-        let targets = &query.targets;
+        Ok(self.starts_by_set(&query.targets, |_| (min, max)))
+    }
+
+    /// Every chunk in each set's `chunks(locate offset)` range (inclusive) where one of
+    /// `targets` may start, by set, then in each set's chunk order.
+    fn starts_by_set(
+        &self,
+        targets: &[usize],
+        chunks: impl Fn([i32; 3]) -> ([i32; 2], [i32; 2]),
+    ) -> Vec<StructureStart> {
         let starts = Starts::new(&self.placements, &self.biomes);
         let sets = &self.world.sets;
         let mut out = Vec::new();
@@ -581,6 +607,7 @@ impl<'w> Session<'w> {
             if !set.possible || !set.entries.iter().any(|e| targets.contains(&e.structure)) {
                 continue;
             }
+            let (min, max) = chunks(set.placement.locate_offset);
             for chunk in self.placements.structure_chunks_in(i, min, max) {
                 if let Some((structures, certain)) = starts.targets_at(i, chunk, targets) {
                     let offset = set.placement.locate_offset;
@@ -593,7 +620,7 @@ impl<'w> Session<'w> {
                 }
             }
         }
-        Ok(out)
+        out
     }
 
     /// `/locate biome <biome>` run at `from`, searching `radius` blocks

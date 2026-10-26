@@ -22,3 +22,5 @@ Start from [template.md](template.md). Files are named `NNNN-kebab-case-title.md
 | [0014](0014-public-api-world-and-session.md)                  | Public API: a loaded world and seed-bound sessions           | Accepted |
 | [0015](0015-locate-checks-on-a-real-server.md)                | Check `/locate` answers on a real dedicated server           | Accepted |
 | [0016](0016-extractor-crate-and-read-only-data.md)            | The extractor in its own crate; `spyglass-data` reads only   | Accepted |
+| [0017](0017-map-rendering-in-the-public-api.md)               | Map rendering in the public API                              | Accepted |
+| [0018](0018-biome-palette.md)                                 | A biome palette of spyglass's own                            | Accepted |

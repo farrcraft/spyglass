@@ -55,6 +55,8 @@ The tree and brute force are compared on random lists with frequent ties, and on
 
 `Biomes::biomes_in(min, size)` returns the box's lookups, x fastest, then z, then y. It goes column by column, so each column's y-independent climate is computed once ([density-functions.md](density-functions.md#remembered-values)). That's exact, so the region fill and `biome_at` give the same answer on every cell. Tests check this on random regions and on a sample of golden cells.
 
+`Biomes::biome_grid(origin, qy, step, size)` returns the lookups on a horizontal grid of quarts `step` apart at one height, x fastest, for map rendering ([render.md](render.md)). Each cell is `biome_at`'s answer.
+
 In 26.3's overworld, five climate functions don't depend on y at all, and depth is a y gradient plus a y-independent offset, so a column costs the 2D work once.
 
 ## Testing

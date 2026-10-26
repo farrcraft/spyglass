@@ -131,3 +131,20 @@ fn region_fills_agree_with_point_lookups() {
         }
     }
 }
+
+#[test]
+fn grids_agree_with_point_lookups() {
+    let source = source(true);
+    let biomes = source.with_seed(7).unwrap();
+    // Across the plains–desert boundary at x = 0, with a stride, and wrapping at the edge.
+    for (origin, step) in [([-40, 9], 1), ([-300, -5], 16), ([i32::MAX - 3, 0], 2)] {
+        let grid = biomes.biome_grid(origin, 16, step, [12, 3]);
+        assert_eq!(grid.len(), 36);
+        for (i, cell) in grid.iter().enumerate() {
+            let (x, z) = ((i % 12) as i32, (i / 12) as i32);
+            let qx = origin[0].wrapping_add(step.wrapping_mul(x));
+            let qz = origin[1].wrapping_add(step.wrapping_mul(z));
+            assert_eq!(*cell, biomes.biome_at(qx, 16, qz), "({qx}, {qz})");
+        }
+    }
+}

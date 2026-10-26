@@ -2,7 +2,7 @@
 
 - Status: In progress
 - Depends on: [03](completed/03-structure-placement.md), [04](completed/04-world-saves.md)
-- Plans: [m05-cleanup](../plans/completed/m05-cleanup.md) (completed); the viewer plan is next
+- Plans: [m05-cleanup](../plans/completed/m05-cleanup.md) (completed), [m05-viewer](../plans/m05-viewer.md)
 
 ## Goal
 
@@ -23,5 +23,5 @@ A native app to preview a seed or a world save on a map, rendering exactly the t
 - [ ] Panning and zooming stay responsive while tiles render in the background.
 - [ ] Overlays match the output of the public API exactly.
 - [ ] `spyglass render` produces the same image as the viewer for the same view and layers.
-- [ ] Runs on Windows, macOS and Linux.
+- [ ] Runs on Windows and Linux. macOS is best effort: built and tried when a Mac is available, not guaranteed.
 - [ ] The viewer explains what to do when no bundle has been extracted yet.

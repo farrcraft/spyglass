@@ -1,8 +1,8 @@
 # 08. Nether, End and multiple versions
 
-- Status: Planned
+- Status: In progress
 - Depends on: [07](completed/07-terrain-and-validity.md)
-- Plans: none yet
+- Plans: [m08-dimensions](../plans/m08-dimensions.md); m08-versions to come
 
 ## Goal
 

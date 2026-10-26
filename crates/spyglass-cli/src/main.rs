@@ -15,7 +15,7 @@ use std::process::ExitCode;
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use serde::Serialize;
-use spyglass::{SaveReport, Scan, Session, World};
+use spyglass::{Dimension, Game, SaveReport, Scan, Session, World};
 
 use crate::args::{Cli, Command, Common, Locate, Origin};
 
@@ -42,13 +42,22 @@ fn run(cli: Cli) -> Result<()> {
     }
 }
 
-/// The world and seed `--seed` or `--world` name, and the save's report with `--world`.
-fn load(common: &Common) -> Result<(World, i64, Option<SaveReport>)> {
+/// The world and seed `--seed` or `--world` name, and the save's report with `--world`. The
+/// world is `--dimension`'s; without it, the player's if `player` (the position asked about is
+/// the player's) and the save has one, otherwise the Overworld.
+fn load(common: &Common, player: bool) -> Result<(World, i64, Option<SaveReport>)> {
     Ok(match (&common.world, &common.seed) {
         (Some(save), _) => {
             let dir = spyglass::find_save(save)?;
             let report = spyglass::inspect_save(&dir, &common.bundles, Scan::Quick)?;
-            let world = report.open_world(spyglass::Dimension::Overworld)?;
+            let players = report
+                .save
+                .player
+                .as_ref()
+                .and_then(spyglass::SaveLocation::dimension_kind)
+                .filter(|_| player);
+            let dimension = common.dimension.or(players).unwrap_or(Dimension::Overworld);
+            let world = report.open_world(dimension)?;
             let seed = report.save.seed;
             (world, seed, Some(report))
         }
@@ -59,7 +68,15 @@ fn load(common: &Common) -> Result<(World, i64, Option<SaveReport>)> {
 
 fn run_locate(what: &Locate) -> Result<()> {
     let common = what.common();
-    let (world, seed, report) = load(common)?;
+    let player = match what {
+        Locate::Structure { from, .. }
+        | Locate::Biome { from, .. }
+        | Locate::Slime { from, .. } => {
+            matches!(from.from, Origin::Player)
+        }
+        Locate::Spawn { .. } => false,
+    };
+    let (world, seed, report) = load(common, player)?;
     let session = world.session(seed)?;
     let out = Out {
         session: &session,
@@ -97,20 +114,32 @@ fn run_locate(what: &Locate) -> Result<()> {
 }
 
 fn open(common: &Common) -> Result<World> {
-    open_bundle(
+    let dir = bundle_dir(
         common.bundle.as_deref(),
         &common.bundles,
         common.game_version.as_deref(),
-    )
+    )?;
+    let dimension = common.dimension.unwrap_or(Dimension::Overworld);
+    World::open_dimension(&dir, dimension)
+        .with_context(|| format!("loading {dimension} from the bundle in {}", dir.display()))
 }
 
 /// The bundle `--bundle` names, or the one for `--game-version` (or the newest) in `--bundles`.
-fn open_bundle(bundle: Option<&Path>, bundles: &Path, version: Option<&str>) -> Result<World> {
-    let dir = match bundle {
+fn bundle_dir(
+    bundle: Option<&Path>,
+    bundles: &Path,
+    version: Option<&str>,
+) -> Result<std::path::PathBuf> {
+    Ok(match bundle {
         Some(dir) => dir.to_path_buf(),
         None => spyglass::find_bundle(bundles, version)?.dir,
-    };
-    World::open(&dir).with_context(|| format!("loading the bundle in {}", dir.display()))
+    })
+}
+
+/// [`bundle_dir`]'s bundle as a [`Game`], every dimension of it opened as it's needed.
+fn open_game(bundle: Option<&Path>, bundles: &Path, version: Option<&str>) -> Result<Game> {
+    let dir = bundle_dir(bundle, bundles, version)?;
+    Game::open(&dir).with_context(|| format!("loading the bundle in {}", dir.display()))
 }
 
 /// What every answer is printed with.
@@ -131,6 +160,15 @@ impl Out<'_> {
         }
     }
 
+    /// Fails unless the session is in the Overworld, which alone has `what`.
+    fn overworld_only(&self, what: &str) -> Result<()> {
+        let here = self.session.world().dimension_kind();
+        if here != Dimension::Overworld {
+            bail!("{what} only in the Overworld, not {}", here.name());
+        }
+        Ok(())
+    }
+
     /// Resolves `--from`.
     fn origin(&self, from: Origin) -> Result<[i32; 3]> {
         match from {
@@ -145,10 +183,12 @@ impl Out<'_> {
                         report.save.name
                     );
                 };
-                if player.dimension != "minecraft:overworld" {
+                let here = self.session.world().dimension_kind();
+                if player.dimension_kind() != Some(here) {
                     bail!(
-                        "the player is in {}; spyglass answers for the overworld only",
-                        player.dimension
+                        "the player is in {}, not {}; leave out --dimension to answer there",
+                        player.dimension,
+                        here.name()
                     );
                 }
                 Ok(player.block())
@@ -182,8 +222,14 @@ impl Out<'_> {
         let world = self
             .report
             .map_or(String::new(), |r| format!("{}, ", r.save.name));
+        let dimension = self.session.world().dimension_kind();
+        let place = if dimension == Dimension::Overworld {
+            String::new()
+        } else {
+            format!("{}, ", dimension.name())
+        };
         format!(
-            "{at} ({world}seed {}, Minecraft {})",
+            "{at} ({place}{world}seed {}, Minecraft {})",
             self.session.seed(),
             self.session.world().version()
         )

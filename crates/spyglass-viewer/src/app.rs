@@ -1,6 +1,6 @@
 //! The viewer window: the side panel (source and view), the map, and the status bar.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -9,7 +9,7 @@ use std::thread;
 use eframe::egui::{self, Color32, Key, Pos2, Rect, Sense, TextureOptions, Vec2};
 use serde::{Deserialize, Serialize};
 use spyglass::{
-    BiomeQuery, BundleInfo, Dimension, Evaluation, Heightmap, Image, LauncherSave,
+    BiomeQuery, BundleInfo, Dimension, Evaluation, Game, Heightmap, Image, LauncherSave, Layers,
     MAX_TERRAIN_SCALE, SaveReport, Scan, SearchOutcome, SearchQuery, Session, SpawnOrigin,
     StructureLayout, StructureQuery, StructureStart, World,
 };
@@ -53,7 +53,11 @@ struct Settings {
     /// The game version last shown.
     version: Option<String>,
     seed: String,
+    /// The dimension shown, by id.
+    dimension: String,
     view: View,
+    /// The other dimensions' views, by id, to go back to.
+    views: BTreeMap<String, View>,
     ties: bool,
     slime_chunks: bool,
     spawn: bool,
@@ -76,7 +80,9 @@ impl Default for Settings {
             bundles: PathBuf::from("bundles"),
             version: None,
             seed: "0".to_string(),
+            dimension: Dimension::Overworld.id().to_string(),
             view: View::default(),
+            views: BTreeMap::new(),
             ties: false,
             slime_chunks: false,
             spawn: true,
@@ -87,6 +93,22 @@ impl Default for Settings {
             highlight: Vec::new(),
             search: SearchSettings::default(),
         }
+    }
+}
+
+impl Settings {
+    /// The dimension shown.
+    fn dimension(&self) -> Dimension {
+        Dimension::from_id(&self.dimension).unwrap_or(Dimension::Overworld)
+    }
+}
+
+/// A dimension's name in the window.
+fn dimension_label(dimension: Dimension) -> &'static str {
+    match dimension {
+        Dimension::Overworld => "Overworld",
+        Dimension::Nether => "Nether",
+        Dimension::End => "End",
     }
 }
 
@@ -114,25 +136,43 @@ impl<T: Send + 'static> Pending<T> {
     }
 }
 
-/// Worlds by bundle directory, loaded once and kept for the whole run, so sessions and tile
-/// jobs can borrow them from any thread. A run opens a handful at most.
-type Worlds = Arc<Mutex<HashMap<PathBuf, &'static World>>>;
+/// Games by bundle directory, kept for the whole run with every dimension they've loaded, so
+/// sessions and tile jobs can borrow their worlds from any thread. A run opens a handful at
+/// most.
+type Games = Arc<Mutex<HashMap<PathBuf, &'static Game>>>;
 
-fn open_world(worlds: &Worlds, dir: &Path) -> Result<&'static World, String> {
-    if let Some(world) = worlds
+/// `dimension` of the bundle in `dir`, loading it if no one has yet.
+fn open_world(
+    games: &Games,
+    dir: &Path,
+    dimension: Dimension,
+) -> Result<(&'static Game, &'static World), String> {
+    let known = games
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .get(dir)
-    {
-        return Ok(world);
-    }
-    let world: &'static World = Box::leak(Box::new(World::open(dir).map_err(|e| e.to_string())?));
-    worlds
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .insert(dir.to_path_buf(), world);
-    Ok(world)
+        .copied();
+    let game = match known {
+        Some(game) => game,
+        None => {
+            let game: &'static Game =
+                Box::leak(Box::new(Game::open(dir).map_err(|e| e.to_string())?));
+            *games
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .entry(dir.to_path_buf())
+                .or_insert(game)
+        }
+    };
+    let world = game.world(dimension).map_err(|e| e.to_string())?;
+    Ok((game, world))
 }
+
+/// A world being loaded: its bundle and dimension.
+type Loading = (
+    (PathBuf, Dimension),
+    Pending<Result<(&'static Game, &'static World), String>>,
+);
 
 /// The world and seed on the map.
 struct Shown {
@@ -153,9 +193,12 @@ struct Selection {
 pub struct App {
     settings: Settings,
     bundles: Result<Vec<BundleInfo>, String>,
-    worlds: Worlds,
+    games: Games,
+    /// The bundle shown, every dimension of it.
+    game: Option<&'static Game>,
+    /// The dimension shown.
     world: Option<&'static World>,
-    loading: Option<(PathBuf, Pending<Result<&'static World, String>>)>,
+    loading: Option<Loading>,
     load_error: Option<String>,
     shown: Option<Shown>,
     seed_error: Option<String>,
@@ -224,7 +267,8 @@ impl App {
                 ..settings
             },
             bundles: Ok(Vec::new()),
-            worlds: Worlds::default(),
+            games: Games::default(),
+            game: None,
             world: None,
             loading: None,
             load_error: None,
@@ -277,33 +321,88 @@ impl App {
         match pick {
             Some(bundle) => self.open(ctx, &bundle),
             None => {
+                self.game = None;
                 self.world = None;
                 self.shown = None;
             }
         }
     }
 
-    /// Starts loading a bundle's world in the background.
+    /// Starts loading the dimension shown of a bundle in the background.
     fn open(&mut self, ctx: &egui::Context, bundle: &BundleInfo) {
         self.settings.version = Some(bundle.version.clone());
-        if self
-            .loading
-            .as_ref()
-            .is_some_and(|(dir, _)| *dir == bundle.dir)
-        {
+        let key = (bundle.dir.clone(), self.settings.dimension());
+        if self.loading.as_ref().is_some_and(|(k, _)| *k == key) {
             return;
         }
-        let (worlds, dir) = (self.worlds.clone(), bundle.dir.clone());
+        let games = self.games.clone();
+        let (dir, dimension) = key.clone();
         self.load_error = None;
         self.loading = Some((
-            bundle.dir.clone(),
-            Pending::spawn(ctx, move || open_world(&worlds, &dir)),
+            key,
+            Pending::spawn(ctx, move || open_world(&games, &dir, dimension)),
         ));
+    }
+
+    /// The bundle of the version shown.
+    fn current_bundle(&self) -> Option<BundleInfo> {
+        let version = self.settings.version.as_ref()?;
+        self.bundles
+            .as_ref()
+            .ok()?
+            .iter()
+            .find(|b| b.version == *version)
+            .cloned()
+    }
+
+    /// Shows `dimension` from now on, with its own view: where it was last left, or the default.
+    fn set_dimension(&mut self, dimension: Dimension) {
+        let from = self.settings.dimension();
+        if dimension == from {
+            return;
+        }
+        let view = self
+            .settings
+            .views
+            .remove(dimension.id())
+            .unwrap_or_default();
+        let left = std::mem::replace(&mut self.settings.view, view);
+        self.settings.views.insert(from.id().to_string(), left);
+        self.settings.dimension = dimension.id().to_string();
+        self.found = None;
+        self.menu_block = None;
+    }
+
+    /// Switches the map to `dimension`, loading it in the background.
+    fn switch_dimension(&mut self, ctx: &egui::Context, dimension: Dimension) {
+        if let Some(report) = &self.save
+            && !report.answerable_in(dimension)
+        {
+            let reasons: Vec<String> = report
+                .warnings
+                .iter()
+                .filter(|w| w.blocks(dimension))
+                .map(ToString::to_string)
+                .collect();
+            self.save_error = Some(format!(
+                "spyglass can't show {} of {}: {}",
+                dimension.name(),
+                report.save.name,
+                reasons.join("; ")
+            ));
+            return;
+        }
+        self.set_dimension(dimension);
+        self.world = None;
+        self.shown = None;
+        if let Some(bundle) = self.current_bundle() {
+            self.open(ctx, &bundle);
+        }
     }
 
     /// Picks up a finished world load.
     fn poll_loading(&mut self) {
-        let Some((dir, pending)) = &self.loading else {
+        let Some(((dir, _), pending)) = &self.loading else {
             return;
         };
         let Some(result) = pending.poll() else {
@@ -312,9 +411,12 @@ impl App {
         let dir = dir.clone();
         self.loading = None;
         match result {
-            Ok(Ok(world)) => {
+            Ok(Ok((game, world))) => {
+                if self.game.is_none_or(|g| !std::ptr::eq(g, game)) {
+                    self.search_parsed = None;
+                }
+                self.game = Some(game);
                 self.world = Some(world);
-                self.search_parsed = None;
                 self.apply_seed();
             }
             Ok(Err(e)) => self.load_error = Some(e),
@@ -367,15 +469,23 @@ impl App {
         }));
     }
 
-    /// Shows an inspected save: its world and seed, centred on its player or else its spawn.
+    /// Shows an inspected save: its world and seed, in its player's dimension if spyglass
+    /// answers there (otherwise the Overworld), centred on its player or else its spawn.
     fn show_save(&mut self, ctx: &egui::Context, report: SaveReport) {
-        let bundle = match (&report.bundle, report.answerable_in(Dimension::Overworld)) {
+        let save = &report.save;
+        let dimension = save
+            .player
+            .as_ref()
+            .and_then(spyglass::SaveLocation::dimension_kind)
+            .filter(|&d| report.answerable_in(d))
+            .unwrap_or(Dimension::Overworld);
+        let bundle = match (&report.bundle, report.answerable_in(dimension)) {
             (Some(bundle), true) => bundle.clone(),
             _ => {
                 let reasons: Vec<String> = report
                     .warnings
                     .iter()
-                    .filter(|w| w.blocks(Dimension::Overworld))
+                    .filter(|w| w.blocks(dimension))
                     .map(ToString::to_string)
                     .collect();
                 self.save_error = Some(format!(
@@ -386,13 +496,18 @@ impl App {
                 return;
             }
         };
+        if dimension != self.settings.dimension() {
+            self.set_dimension(dimension);
+            self.world = None;
+            self.shown = None;
+        }
         let save = &report.save;
-        let overworld = |l: &&spyglass::SaveLocation| l.dimension == "minecraft:overworld";
+        let here = |l: &&spyglass::SaveLocation| l.dimension_kind() == Some(dimension);
         if let Some(place) = save
             .player
             .as_ref()
-            .filter(overworld)
-            .or(save.spawn.as_ref().filter(overworld))
+            .filter(here)
+            .or(save.spawn.as_ref().filter(here))
         {
             let [x, _, z] = place.block();
             self.settings.view.centre = [f64::from(x) + 0.5, f64::from(z) + 0.5];
@@ -468,13 +583,45 @@ impl App {
         };
     }
 
+    /// Whether the dimension shown has `layers` (`Layers::check`).
+    fn allows(&self, layers: Layers) -> bool {
+        self.world.is_none_or(|w| layers.check(w).is_ok())
+    }
+
+    /// Whether slime chunks are drawn in the dimension shown.
+    fn slime_allowed(&self) -> bool {
+        self.allows(Layers {
+            slime_chunks: true,
+            ..Layers::default()
+        })
+    }
+
+    /// Whether the spawn is drawn in the dimension shown.
+    fn spawn_allowed(&self) -> bool {
+        self.allows(Layers {
+            spawn: true,
+            ..Layers::default()
+        })
+    }
+
+    /// Whether terrain layers are drawn in the dimension shown: not under a ceiling.
+    fn terrain_allowed(&self) -> bool {
+        self.allows(Layers {
+            relief: true,
+            ..Layers::default()
+        })
+    }
+
     fn style(&self) -> Style {
         Style {
             ties: self.settings.ties,
             highlight: self.settings.highlight.clone(),
             slime_chunks: self.settings.slime_chunks
+                && self.slime_allowed()
                 && self.settings.view.scale <= spyglass::MAX_SLIME_SCALE,
-            relief: self.settings.relief && self.settings.view.scale <= MAX_TERRAIN_SCALE,
+            relief: self.settings.relief
+                && self.terrain_allowed()
+                && self.settings.view.scale <= MAX_TERRAIN_SCALE,
         }
     }
 
@@ -513,9 +660,11 @@ impl App {
                 version: world.version().to_string(),
             },
         };
+        let terrain = self.terrain_allowed();
         Some(Export {
             area: visible_area(&self.settings.view, self.map_size)?,
             source,
+            dimension: world.dimension_kind(),
             bundles: (self.settings.bundles != Settings::default().bundles)
                 .then(|| self.bundles_dir()),
             structures: if self.structures_generate() {
@@ -525,11 +674,11 @@ impl App {
             },
             highlight: self.settings.highlight.clone(),
             ties: self.settings.ties,
-            slime_chunks: self.settings.slime_chunks,
-            spawn: self.settings.spawn,
+            slime_chunks: self.settings.slime_chunks && self.slime_allowed(),
+            spawn: self.settings.spawn && self.spawn_allowed(),
             confirm: self.settings.confirm,
-            relief: self.settings.relief,
-            surface: self.settings.surface,
+            relief: self.settings.relief && terrain,
+            surface: self.settings.surface && terrain,
         })
     }
 
@@ -620,7 +769,7 @@ impl App {
 
     /// The search query, its options, and the best seeds so far: click one to open it.
     fn search_section(&mut self, ui: &mut egui::Ui) {
-        let Some(world) = self.world else {
+        let Some(game) = self.game else {
             ui.weak("Open a bundle to search.");
             return;
         };
@@ -637,7 +786,7 @@ impl App {
             .as_ref()
             .is_none_or(|(text, _)| *text != s.query)
         {
-            let parsed = world.search_query(&s.query).map_err(|e| e.to_string());
+            let parsed = game.search_query(&s.query).map_err(|e| e.to_string());
             self.search_parsed = Some((s.query.clone(), parsed));
         }
         let parsed = self.search_parsed.as_ref().map(|(_, p)| p);
@@ -776,7 +925,7 @@ impl App {
             self.search_error = None;
             self.search_run = Some(SearchRun {
                 confirm: options.confirm,
-                running: Some(Running::start(world, query.clone(), options, move || {
+                running: Some(Running::start(game, query.clone(), options, move || {
                     ctx.request_repaint();
                 })),
                 query,
@@ -794,9 +943,8 @@ impl App {
                         .map(|r| (r.query.clone(), r.confirm));
                     if let Some((query, confirm)) = run {
                         self.opening = Some(Pending::spawn(ui.ctx(), move || {
-                            world
-                                .session(seed)
-                                .and_then(|s| s.evaluate(&query, confirm))
+                            game.session(seed)
+                                .evaluate(&query, confirm)
                                 .map(|e| (seed, e))
                                 .map_err(|e| e.to_string())
                         }));
@@ -806,21 +954,36 @@ impl App {
         }
     }
 
-    /// Shows a search hit: its seed, centred on the query's first place, with the structures it
-    /// matched marked and everything its constraints matched ringed.
+    /// Shows a search hit: its seed, in its first constraint's dimension, centred on that
+    /// constraint's place, with the structures it matched marked and everything its constraints
+    /// matched there ringed.
     fn open_hit(&mut self, seed: i64, evaluation: &Evaluation) {
-        let Some(run) = &self.search_run else {
+        let (Some(run), Some(game)) = (&self.search_run, self.game) else {
             return;
         };
         let matches = search::matches(&run.query, evaluation);
         let query = run.query.clone();
-        self.save = None;
-        self.settings.seed = seed.to_string();
-        self.apply_seed();
-        let Some(shown) = &self.shown else {
+        let dimension = query.dimension(0);
+        // The query was resolved against this game, so its dimensions are loaded.
+        let Ok(world) = game.world(dimension) else {
             return;
         };
-        let [x, z] = search::focus(query.query(), shown.spawn.map_block());
+        self.save = None;
+        self.set_dimension(dimension);
+        self.world = Some(world);
+        self.settings.seed = seed.to_string();
+        self.apply_seed();
+        if self.shown.is_none() {
+            return;
+        }
+        // The Overworld spawn, converted; the End has no spawn anchors.
+        let spawn = game
+            .session(seed)
+            .dimension(Dimension::Overworld)
+            .map(|s| s.spawn_origin().map_block())
+            .and_then(|at| game.convert(at, Dimension::Overworld, dimension))
+            .unwrap_or([0, 0]);
+        let [x, z] = search::focus(query.query(), spawn);
         self.settings.view.centre = [f64::from(x) + 0.5, f64::from(z) + 0.5];
         for id in search::structures(evaluation) {
             if !self.settings.structures.contains(&id) {
@@ -885,6 +1048,20 @@ impl App {
     }
 
     fn world_section(&mut self, ui: &mut egui::Ui) {
+        let here = self.settings.dimension();
+        let mut picked = None;
+        egui::ComboBox::from_label("Dimension")
+            .selected_text(dimension_label(here))
+            .show_ui(ui, |ui| {
+                for d in Dimension::ALL {
+                    if ui.selectable_label(d == here, dimension_label(d)).clicked() {
+                        picked = Some(d);
+                    }
+                }
+            });
+        if let Some(d) = picked {
+            self.switch_dimension(ui.ctx(), d);
+        }
         let versions: Vec<BundleInfo> = self.bundles.clone().unwrap_or_default();
         let current = match self.settings.version.clone() {
             Some(v) if versions.iter().any(|b| b.version == v) => v,
@@ -1089,16 +1266,32 @@ impl App {
     fn layers_section(&mut self, ui: &mut egui::Ui) {
         ui.checkbox(&mut self.settings.ties, "Tied biome cells")
             .on_hover_text("Where the game's biome depends on lookup history, show a checker of the biomes it may give.");
+        let overworld_only = "Only in the Overworld.";
+        let slime_here = self.slime_allowed();
         let slime_visible = self.settings.view.scale <= spyglass::MAX_SLIME_SCALE;
         ui.add_enabled(
-            slime_visible,
+            slime_here && slime_visible,
             egui::Checkbox::new(&mut self.settings.slime_chunks, "Slime chunks"),
         )
-        .on_disabled_hover_text("Zoom in to 16 blocks per pixel or closer to see slime chunks.");
-        ui.checkbox(&mut self.settings.spawn, "World spawn")
-            .on_hover_text("Where the game's spawn search starts.");
-        let terrain = self.settings.view.scale <= MAX_TERRAIN_SCALE;
-        let far = "Zoom in to 4 blocks per pixel or closer to see terrain.";
+        .on_disabled_hover_text(if slime_here {
+            "Zoom in to 16 blocks per pixel or closer to see slime chunks."
+        } else {
+            overworld_only
+        });
+        let spawn_here = self.spawn_allowed();
+        ui.add_enabled(
+            spawn_here,
+            egui::Checkbox::new(&mut self.settings.spawn, "World spawn"),
+        )
+        .on_hover_text("Where the game's spawn search starts.")
+        .on_disabled_hover_text(overworld_only);
+        let terrain_here = self.terrain_allowed();
+        let terrain = terrain_here && self.settings.view.scale <= MAX_TERRAIN_SCALE;
+        let far = if terrain_here {
+            "Zoom in to 4 blocks per pixel or closer to see terrain."
+        } else {
+            "Terrain isn't drawn under a ceiling: the surface heights are the ceiling's."
+        };
         ui.add_enabled(
             terrain,
             egui::Checkbox::new(&mut self.settings.relief, "Relief"),
@@ -1279,7 +1472,11 @@ impl App {
         let tiles = view.tiles([rect.width(), rect.height()]);
         // Terrain layers by each tile's own scale, so the coarser tiles shown while one loads
         // are found under the keys they were made with.
-        let (relief, surface) = (self.settings.relief, self.settings.surface);
+        let terrain_here = self.terrain_allowed();
+        let (relief, surface) = (
+            self.settings.relief && terrain_here,
+            self.settings.surface && terrain_here,
+        );
         let key = |tile: Tile| {
             let terrain = tile.scale <= MAX_TERRAIN_SCALE;
             TileKey {
@@ -1450,7 +1647,7 @@ impl App {
                 }
             }
         }
-        if self.settings.spawn {
+        if self.settings.spawn && self.spawn_allowed() {
             let at = markers::pixel_centre(&view, centre, spawn.map_block());
             markers::spawn(&painter, at);
             shown_markers.push((at, Picked::Spawn(&spawn)));
@@ -1465,7 +1662,10 @@ impl App {
         if let Some((seed, matches)) = &self.opened
             && *seed == session.seed()
         {
-            for m in matches {
+            for m in matches
+                .iter()
+                .filter(|m| m.dimension == world.dimension_kind())
+            {
                 let at = markers::pixel_centre(&view, centre, m.at);
                 markers::hit(&painter, at, m.certain);
                 shown_markers.push((at, Picked::Match(m)));
@@ -1591,8 +1791,9 @@ impl App {
             if let (Some([x, z]), Some(shown)) = (self.cursor, &self.shown) {
                 let session = &shown.session;
                 let height = session.height_at([x, z], Heightmap::WorldSurfaceWg);
-                let surface =
-                    self.settings.surface && self.settings.view.scale <= MAX_TERRAIN_SCALE;
+                let surface = self.settings.surface
+                    && self.terrain_allowed()
+                    && self.settings.view.scale <= MAX_TERRAIN_SCALE;
                 let at = if surface {
                     session.surface_biome_at([x, z])
                 } else {
@@ -1614,7 +1815,11 @@ impl App {
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if let Some(world) = self.world {
-                    ui.weak(format!("Minecraft {}", world.version()));
+                    ui.weak(format!(
+                        "{}, Minecraft {}",
+                        dimension_label(world.dimension_kind()),
+                        world.version()
+                    ));
                 }
                 if self.pool.busy() {
                     ui.spinner();

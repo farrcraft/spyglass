@@ -4,7 +4,7 @@
 
 A local-only seed explorer for Minecraft: Java Edition. Describe what you want in a world, and spyglass searches for the seeds that fit best, shows them on a map, and finds where things are in worlds you already play. Output aims to match the game exactly on current versions.
 
-> Status: early. For game version 26.3, the `spyglass` command answers `/locate`-style questions (structures, biomes, slime chunks, spawn) for any seed or a world save in the Overworld, with `--json` for scripts, draws maps of them, and searches for the seeds that best fit a query of required and preferred constraints. The viewer shows the same maps, pannable and zoomable, with layers you choose, and runs the same searches. Terrain heights decide which structures really generate, so locate answers match the game's `/locate`, with exact bounds for villages and other jigsaw structures; maps can show terrain relief up close. The Nether and End are still to come ([roadmap](docs/roadmap/README.md)).
+> Status: early. For game version 26.3, the `spyglass` command answers `/locate`-style questions (structures, biomes, slime chunks, spawn) for any seed or a world save, in the Overworld, the Nether and the End, with `--json` for scripts, draws maps of them, and searches for the seeds that best fit a query of required and preferred constraints, which can span dimensions ("a fortress near the spawn's portal"). The viewer shows the same maps, pannable and zoomable, with layers you choose and a dimension switch, and runs the same searches. Terrain heights decide which structures really generate, so locate answers match the game's `/locate`, with exact bounds for villages, bastions and other jigsaw structures; maps can show terrain relief up close. Other game versions are next ([roadmap](docs/roadmap/README.md)).
 
 Not affiliated with or endorsed by Mojang or Microsoft.
 
@@ -47,8 +47,10 @@ With a version bundle extracted, ask a seed where things are, as the game's `/lo
 cargo run -p spyglass-extract -- 26.3
 cargo run --release -p spyglass-cli -- locate structure '#minecraft:village' --seed 12345
 cargo run --release -p spyglass-cli -- locate structure '#minecraft:village' --world "My World" --from player
+cargo run --release -p spyglass-cli -- locate structure minecraft:fortress --seed 12345 --dimension nether
 cargo run --release -p spyglass-cli -- render --seed 12345 --structures '#minecraft:village' --spawn -o map.png
 cargo run --release -p spyglass-cli -- search -q 'require 2 minecraft:swamp_hut within 600 of spawn' --time 60s
+cargo run --release -p spyglass-cli -- search -q 'require minecraft:fortress within 150 of spawn' --time 60s
 cargo run --release -p spyglass-viewer
 ```
 

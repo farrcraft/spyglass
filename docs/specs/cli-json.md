@@ -15,13 +15,13 @@ Scripts depend on this format, so it's versioned. Within a format version, field
 
 Every `locate`, `heights` and `render` object starts with:
 
-| Field       | Type   | Meaning                                                                                    |
-| ----------- | ------ | ------------------------------------------------------------------------------------------ |
-| `format`    | int    | This format's version: `1`.                                                                |
-| `command`   | string | `locate structure`, `locate biome`, `locate slime`, `locate spawn`, `heights` or `render`. |
-| `version`   | string | The game version of the bundle used, e.g. `26.3`.                                          |
-| `dimension` | string | `minecraft:overworld`.                                                                     |
-| `seed`      | int    | The world seed.                                                                            |
+| Field       | Type   | Meaning                                                                                                                                                              |
+| ----------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `format`    | int    | This format's version: `1`.                                                                                                                                          |
+| `command`   | string | `locate structure`, `locate biome`, `locate slime`, `locate spawn`, `heights` or `render`.                                                                           |
+| `version`   | string | The game version of the bundle used, e.g. `26.3`.                                                                                                                    |
+| `dimension` | string | The dimension answered for: `minecraft:overworld`, `minecraft:the_nether` or `minecraft:the_end` (`--dimension`, or the player's when the position is the player's). |
+| `seed`      | int    | The world seed.                                                                                                                                                      |
 
 With `--world`, two more:
 
@@ -32,7 +32,7 @@ With `--world`, two more:
 
 ## Warnings
 
-Each warning is `{kind, message}`: `message` is for people, `kind` one of `no_bundle`, `unsupported_generator`, `structures_disabled`, `data_pack`, `modded` or `older_chunks` ([world-saves.md](world-saves.md#warnings)). New kinds may be added within format 1.
+Each warning is `{kind, message}`: `message` is for people, `kind` one of `no_bundle`, `unsupported_generator`, `structures_disabled`, `data_pack`, `modded` or `older_chunks` ([world-saves.md](world-saves.md#warnings)). A warning about one dimension (`unsupported_generator` and `older_chunks`) also has `dimension`, its id; one that blocks answers blocks them in that dimension only. New kinds may be added within format 1.
 
 ## `locate structure`
 
@@ -107,7 +107,7 @@ The image is written to the file given; the JSON describes it ([render.md](rende
 
 ## `search`
 
-The best seeds for a query ([search.md](search.md)). A search is over many seeds, so its object has no `seed`, `world` or `warnings`: it starts with `format`, `command` (`search`), `version` and `dimension`, then:
+The best seeds for a query ([search.md](search.md)). A search is over many seeds, so its object has no `seed`, `world` or `warnings`: it starts with `format`, `command` (`search`), `version` and `dimension` (the first constraint's; each constraint has its own), then:
 
 | Field             | Type        | Meaning                                                                                                  |
 | ----------------- | ----------- | -------------------------------------------------------------------------------------------------------- |
@@ -127,14 +127,15 @@ The best seeds for a query ([search.md](search.md)). A search is over many seeds
 
 Each hit has `index`, `seed`, `score`, `verdict` (`met` or `possibly`) and `constraints`, one per line of the query, each with:
 
-| Field        | Type   | Meaning                                                                                  |
-| ------------ | ------ | ---------------------------------------------------------------------------------------- |
-| `constraint` | string | The constraint's canonical line.                                                         |
-| `required`   | bool   | Whether it's `require`.                                                                  |
-| `outcome`    | string | `met`, `possibly` or `failed`.                                                           |
-| `best`       | int    | Its satisfaction in the best case, 0 to 1000.                                            |
-| `worst`      | int    | Its satisfaction in the worst case.                                                      |
-| `features`   | array  | What it matched. Each has a `kind` and that kind's fields, as below. Empty for `covers`. |
+| Field        | Type   | Meaning                                                                                                         |
+| ------------ | ------ | --------------------------------------------------------------------------------------------------------------- |
+| `constraint` | string | The constraint's canonical line.                                                                                |
+| `dimension`  | string | The dimension it counts in ([search.md](search.md#dimensions)); its features' positions are in its coordinates. |
+| `required`   | bool   | Whether it's `require`.                                                                                         |
+| `outcome`    | string | `met`, `possibly` or `failed`.                                                                                  |
+| `best`       | int    | Its satisfaction in the best case, 0 to 1000.                                                                   |
+| `worst`      | int    | Its satisfaction in the worst case.                                                                             |
+| `features`   | array  | What it matched. Each has a `kind` and that kind's fields, as below. Empty for `covers`.                        |
 
 Feature kinds; more may be added within format 1:
 
@@ -147,19 +148,20 @@ Feature kinds; more may be added within format 1:
 
 `format`, `command` (`world info`), and the save:
 
-| Field                 | Type           | Meaning                                                                                                                             |
-| --------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `name`                | string         | The name in the world list.                                                                                                         |
-| `dir`                 | string         | The save's folder.                                                                                                                  |
-| `data_version`        | int or null    | The data version it was last saved in; null before 1.9.                                                                             |
-| `version_name`        | string or null | e.g. `26.3`.                                                                                                                        |
-| `seed`                | int            | The world seed.                                                                                                                     |
-| `generate_structures` | bool           | Whether structures generate.                                                                                                        |
-| `data_packs`          | array          | Enabled data packs, in load order.                                                                                                  |
-| `spawn`, `player`     | object or null | `dimension` and `position` (`[x, y, z]`, numbers); `player` only in single-player saves.                                            |
-| `bundle`              | string or null | The bundle with the save's data version.                                                                                            |
-| `answerable`          | bool           | Whether spyglass answers for the save: no warning blocks answers.                                                                   |
-| `warnings`            | array          | [Warnings](#warnings), including the blocking kinds `no_bundle` and `unsupported_generator`. `older_chunks` only without `--quick`. |
+| Field                   | Type           | Meaning                                                                                                                             |
+| ----------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `name`                  | string         | The name in the world list.                                                                                                         |
+| `dir`                   | string         | The save's folder.                                                                                                                  |
+| `data_version`          | int or null    | The data version it was last saved in; null before 1.9.                                                                             |
+| `version_name`          | string or null | e.g. `26.3`.                                                                                                                        |
+| `seed`                  | int            | The world seed.                                                                                                                     |
+| `generate_structures`   | bool           | Whether structures generate.                                                                                                        |
+| `data_packs`            | array          | Enabled data packs, in load order.                                                                                                  |
+| `spawn`, `player`       | object or null | `dimension` and `position` (`[x, y, z]`, numbers); `player` only in single-player saves.                                            |
+| `bundle`                | string or null | The bundle with the save's data version.                                                                                            |
+| `answerable`            | bool           | Whether spyglass answers for the save: no warning blocks answers.                                                                   |
+| `answerable_dimensions` | array          | The ids of the dimensions spyglass answers for: those no warning blocks, if there's a bundle.                                       |
+| `warnings`              | array          | [Warnings](#warnings), including the blocking kinds `no_bundle` and `unsupported_generator`. `older_chunks` only without `--quick`. |
 
 ## `world list`
 

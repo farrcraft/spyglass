@@ -8,14 +8,14 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use spyglass::{
-    Feature, Outcome, SearchOptions, SearchOutcome, SearchProgress, SearchQuery, SeedSource, World,
+    Feature, Game, Outcome, SearchOptions, SearchOutcome, SearchProgress, SearchQuery, SeedSource,
 };
 
 use crate::args::Search;
 use crate::json::{self, Xyz, Xz};
 
 pub fn run(args: &Search) -> Result<()> {
-    let world = crate::open_bundle(
+    let game = crate::open_game(
         args.bundle.as_deref(),
         &args.bundles,
         args.game_version.as_deref(),
@@ -27,7 +27,7 @@ pub fn run(args: &Search) -> Result<()> {
         }
         _ => bail!("give the query with -q or --query-file"),
     };
-    let query = world.search_query(&text)?;
+    let query = game.search_query(&text)?;
     let source = match (&args.range, &args.seeds) {
         (Some([first, last]), None) => SeedSource::Range {
             first: *first,
@@ -63,7 +63,7 @@ pub fn run(args: &Search) -> Result<()> {
         eprintln!("searching every seed; Ctrl-C stops and prints the best so far");
     }
     let mut last = Instant::now();
-    let outcome = world.search(&query, &options, |p| {
+    let outcome = game.search(&query, &options, |p| {
         if terminal && last.elapsed() >= Duration::from_secs(1) {
             last = Instant::now();
             eprint!("\r{}", status(p));
@@ -79,9 +79,9 @@ pub fn run(args: &Search) -> Result<()> {
         eprint!("\r{}\r", " ".repeat(status(&outcome.progress).len()));
     }
     if args.json {
-        print_json(&world, &query, &options, &outcome)
+        print_json(&game, &query, &options, &outcome)
     } else {
-        print_text(&world, &query, &options, &outcome);
+        print_text(&game, &query, &options, &outcome);
         Ok(())
     }
 }
@@ -120,19 +120,14 @@ fn outcome_word(o: Outcome) -> &'static str {
     }
 }
 
-fn print_text(
-    world: &World,
-    query: &SearchQuery,
-    options: &SearchOptions,
-    outcome: &SearchOutcome,
-) {
+fn print_text(game: &Game, query: &SearchQuery, options: &SearchOptions, outcome: &SearchOutcome) {
     let p = &outcome.progress;
     println!(
         "{} of {} seeds reported, best {} shown (Minecraft {}, {:.1} s{}):",
         p.reported,
         p.evaluated,
         outcome.hits.len(),
-        world.version(),
+        game.version(),
         p.elapsed.as_secs_f64(),
         match (options.certain, options.confirm) {
             (true, true) => ", confirmed, certain only",
@@ -183,7 +178,7 @@ fn feature_at(f: &Feature) -> Option<[i32; 2]> {
 }
 
 fn print_json(
-    world: &World,
+    game: &Game,
     query: &SearchQuery,
     options: &SearchOptions,
     outcome: &SearchOutcome,
@@ -213,6 +208,7 @@ fn print_json(
                 .zip(&h.evaluation.constraints)
                 .map(|((line, c), r)| json::ConstraintAnswer {
                     constraint: line,
+                    dimension: r.dimension.id(),
                     required: c.importance == spyglass::query::Importance::Required,
                     outcome: outcome_word(r.outcome),
                     best: r.best,
@@ -225,8 +221,8 @@ fn print_json(
     json::print(&json::SearchAnswer {
         format: json::FORMAT,
         command: "search",
-        version: world.version(),
-        dimension: world.dimension(),
+        version: game.version(),
+        dimension: query.dimension(0).id(),
         query: &canonical,
         source,
         from: options.from,

@@ -11,13 +11,14 @@ fn bundles() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../bundles")
 }
 
+/// The command with `args`, on the 26.3 bundle in `bundles/` (others there may be newer).
 fn spyglass(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_spyglass"))
-        .args(args)
-        .arg("--bundles")
-        .arg(bundles())
-        .output()
-        .unwrap()
+    let mut command = Command::new(env!("CARGO_BIN_EXE_spyglass"));
+    command.args(args).arg("--bundles").arg(bundles());
+    if args.contains(&"--seed") && !args.contains(&"--bundle") {
+        command.args(["--game-version", "26.3"]);
+    }
+    command.output().unwrap()
 }
 
 fn text(out: &Output) -> String {

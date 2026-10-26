@@ -6,4 +6,4 @@ Code must not reference plans. Anything durable a plan produces belongs in a spe
 
 ## Active
 
-- [m08-dimensions](m08-dimensions.md) (in progress): the Nether and the End, and cross-dimension search, for milestone [08](../roadmap/08-dimensions-and-versions.md).
+None. m08-versions, for milestone [08](../roadmap/08-dimensions-and-versions.md), is to be written once 26.4 nears release.

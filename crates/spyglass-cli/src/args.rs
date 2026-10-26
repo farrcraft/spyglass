@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use spyglass::{DEFAULT_MAP_Y, Heightmap, LOCATE_BIOME_RADIUS, LOCATE_RADIUS};
+use spyglass::{DEFAULT_MAP_Y, Dimension, Heightmap, LOCATE_BIOME_RADIUS, LOCATE_RADIUS};
 
 #[derive(Parser)]
 #[command(
@@ -32,7 +32,7 @@ pub enum Command {
     /// Draw a map of a seed or world save as a PNG: biomes, and the layers you choose.
     Render(Render),
     /// Find the seeds that fit a query best: required and preferred structures, biomes, slime
-    /// chunks and spawn.
+    /// chunks and spawn, in any dimension.
     Search(Search),
     /// Terrain heights before structures, carvers and features, as structures are placed by:
     /// one column or a region.
@@ -231,6 +231,19 @@ pub enum Centre {
     Player,
 }
 
+/// `overworld`, `nether` or `end`, or a dimension id such as `minecraft:the_nether`.
+fn dimension(text: &str) -> Result<Dimension, String> {
+    let keyword = match text {
+        "overworld" => Some(Dimension::Overworld),
+        "nether" => Some(Dimension::Nether),
+        "end" => Some(Dimension::End),
+        _ => None,
+    };
+    keyword
+        .or_else(|| Dimension::from_id(text))
+        .ok_or_else(|| format!("expected overworld, nether or end, got {text:?}"))
+}
+
 fn centre(text: &str) -> Result<Centre, String> {
     if text == "player" {
         Ok(Centre::Player)
@@ -355,6 +368,10 @@ pub struct Common {
     /// Its seed and version are used, and anything that makes answers inexact is shown.
     #[arg(long, conflicts_with_all = ["seed", "bundle", "game_version"])]
     pub world: Option<String>,
+    /// The dimension: `overworld`, `nether` or `end`. Defaults to the player's when the position
+    /// is the player's, otherwise the Overworld.
+    #[arg(long, value_parser = dimension)]
+    pub dimension: Option<Dimension>,
     /// Game version of the bundle to use, from `--bundles`. Defaults to the newest there.
     #[arg(long)]
     pub game_version: Option<String>,

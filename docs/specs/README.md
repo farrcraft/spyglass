@@ -11,13 +11,13 @@ A spec is **Stable** when the behavior it describes is implemented and checked: 
 | [bundle-format.md](bundle-format.md)             | Version bundles on disk; NBT.                                     | Stable |
 | [rng.md](rng.md)                                 | The game's random sources.                                        | Stable |
 | [noise.md](noise.md)                             | Perlin, octave and normal noise.                                  | Stable |
-| [density-functions.md](density-functions.md)     | Density-function graphs, for the Overworld's climate.             | Stable |
-| [terrain.md](terrain.md)                         | Heights and block columns before chunks exist; the aquifer.       | Draft  |
-| [biome-lookup.md](biome-lookup.md)               | Overworld biomes at quart resolution.                             | Stable |
-| [structure-placement.md](structure-placement.md) | Overworld structure placement and biome checks.                   | Stable |
+| [density-functions.md](density-functions.md)     | Density-function graphs, in all three dimensions.                 | Stable |
+| [terrain.md](terrain.md)                         | Heights and block columns before chunks exist; the aquifer.       | Stable |
+| [biome-lookup.md](biome-lookup.md)               | Biomes at quart resolution, in all three dimensions.              | Stable |
+| [structure-placement.md](structure-placement.md) | Structure placement and checks, in all three dimensions.          | Stable |
 | [spawn.md](spawn.md)                             | The world spawn's origin.                                         | Stable |
 | [locate.md](locate.md)                           | `/locate structure` and `/locate biome`.                          | Stable |
 | [cli-json.md](cli-json.md)                       | The `spyglass` command's JSON output.                             | Stable |
 | [world-saves.md](world-saves.md)                 | Reading world saves and judging whether spyglass can answer.      | Stable |
 | [render.md](render.md)                           | Map images: sampling, colours, layers.                            | Stable |
-| [search.md](search.md)                           | Seed search: the query language, scoring, seed order.             | Stable |
+| [search.md](search.md)                           | Seed search: the query language, dimensions, scoring, seed order. | Stable |

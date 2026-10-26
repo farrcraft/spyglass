@@ -116,6 +116,19 @@ fn info(report: &SaveReport, as_json: bool) -> Result<()> {
         Some(b) => println!("  bundle   {}", b.dir.display()),
         None => println!("  bundle   none"),
     }
+    if report.bundle.is_some() {
+        let answers: Vec<&str> = spyglass::Dimension::ALL
+            .into_iter()
+            .filter(|&d| report.answerable_in(d))
+            .map(spyglass::Dimension::name)
+            .collect();
+        let answers = if answers.is_empty() {
+            "nothing".to_string()
+        } else {
+            answers.join(", ")
+        };
+        println!("  answers  {answers}");
+    }
     if report.warnings.is_empty() {
         println!("spyglass's answers for this world are exact where they say so.");
     }

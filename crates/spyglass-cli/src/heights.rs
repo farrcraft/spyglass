@@ -26,7 +26,7 @@ pub fn run(args: &Heights) -> Result<()> {
             size[1]
         );
     }
-    let (world, seed, report) = crate::load(&args.common)?;
+    let (world, seed, report) = crate::load(&args.common, false)?;
     let session = world.session(seed)?;
     let out = Out {
         session: &session,

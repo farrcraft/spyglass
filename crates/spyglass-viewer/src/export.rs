@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use spyglass::{MAX_SLIME_SCALE, MAX_TERRAIN_SCALE, MapArea};
+use spyglass::{Dimension, MAX_SLIME_SCALE, MAX_TERRAIN_SCALE, MapArea};
 
 use crate::view::View;
 
@@ -28,6 +28,8 @@ pub enum Source {
 pub struct Export {
     pub area: MapArea,
     pub source: Source,
+    /// The dimension drawn.
+    pub dimension: Dimension,
     /// The bundles folder, if it isn't `spyglass render`'s default.
     pub bundles: Option<PathBuf>,
     pub structures: Vec<String>,
@@ -66,6 +68,12 @@ impl Export {
         }
         if let Some(dir) = &self.bundles {
             add("--bundles", dir.display().to_string());
+        }
+        // The Overworld is the default whenever --centre is given.
+        match self.dimension {
+            Dimension::Overworld => {}
+            Dimension::Nether => add("--dimension", "nether".to_string()),
+            Dimension::End => add("--dimension", "end".to_string()),
         }
         let [w, h] = self.area.size;
         let s = i64::from(self.area.scale);
@@ -141,6 +149,7 @@ mod tests {
                 seed: -5,
                 version: "26.3".into(),
             },
+            dimension: Dimension::Overworld,
             bundles: None,
             structures: vec![
                 "minecraft:village_plains".into(),
@@ -183,6 +192,7 @@ mod tests {
         let export = Export {
             area: MapArea::centred_on([0, 0], [10, 10], 32, 64).unwrap(),
             source: Source::Save(PathBuf::from("C:/saves/My World")),
+            dimension: Dimension::Overworld,
             bundles: Some(PathBuf::from("D:/bundles")),
             structures: Vec::new(),
             highlight: Vec::new(),
@@ -197,6 +207,15 @@ mod tests {
             export.command("out dir/map.png"),
             "spyglass render --world \"C:/saves/My World\" --bundles D:/bundles --centre 0,0 \
              --size 10x10 --scale 32 --y 64 -o \"out dir/map.png\""
+        );
+        let nether = Export {
+            dimension: Dimension::Nether,
+            ..export
+        };
+        assert!(
+            nether
+                .command("m.png")
+                .contains("--bundles D:/bundles --dimension nether --centre 0,0")
         );
     }
 }

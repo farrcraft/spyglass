@@ -5,7 +5,7 @@ use std::path::Path;
 
 use anyhow::Result;
 use serde::Serialize;
-use spyglass::{SaveLocation, SaveReport, SpawnOrigin, StructureLayout};
+use spyglass::{Dimension, SaveLocation, SaveReport, SpawnOrigin, StructureLayout};
 
 /// The `--json` format version.
 pub const FORMAT: u32 = 1;
@@ -61,6 +61,9 @@ pub struct WorldRef {
 pub struct Warning {
     pub kind: &'static str,
     pub message: String,
+    /// For a warning about one dimension.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dimension: Option<&'static str>,
 }
 
 pub fn warnings(report: &SaveReport) -> Vec<Warning> {
@@ -70,6 +73,7 @@ pub fn warnings(report: &SaveReport) -> Vec<Warning> {
         .map(|w| Warning {
             kind: w.kind(),
             message: w.to_string(),
+            dimension: w.dimension().map(Dimension::id),
         })
         .collect()
 }
@@ -234,6 +238,7 @@ pub struct Save<'a> {
     pub player: Option<Location<'a>>,
     pub bundle: Option<String>,
     pub answerable: bool,
+    pub answerable_dimensions: Vec<&'static str>,
     pub warnings: Vec<Warning>,
 }
 
@@ -262,6 +267,11 @@ impl<'a> Save<'a> {
             player: save.player.as_ref().map(location),
             bundle: report.bundle.as_ref().map(|b| path(&b.dir)),
             answerable: report.answerable(),
+            answerable_dimensions: Dimension::ALL
+                .into_iter()
+                .filter(|&d| report.bundle.is_some() && report.answerable_in(d))
+                .map(Dimension::id)
+                .collect(),
             warnings: warnings(report),
         }
     }
@@ -342,6 +352,7 @@ pub struct SearchHit<'a> {
 #[derive(Serialize)]
 pub struct ConstraintAnswer<'a> {
     pub constraint: &'a str,
+    pub dimension: &'static str,
     pub required: bool,
     pub outcome: &'static str,
     pub best: u32,

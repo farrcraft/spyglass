@@ -1,6 +1,6 @@
 # 0025. Inferring dimensions in search queries
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-26
 - Supersedes: [0024](0024-dimensions-in-the-search-language.md)
 

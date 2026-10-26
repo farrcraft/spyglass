@@ -2,7 +2,7 @@
 
 - Status: In progress
 - Depends on: [07](completed/07-terrain-and-validity.md)
-- Plans: [m08-dimensions](../plans/m08-dimensions.md); m08-versions to come
+- Plans: [m08-dimensions](../plans/completed/m08-dimensions.md) (completed); m08-versions to come
 
 ## Goal
 
@@ -17,6 +17,6 @@ Cover all three dimensions and more than one game version.
 
 ## Exit criteria
 
-- [ ] Nether and End outputs match the oracle.
+- [x] Nether and End outputs match the oracle.
 - [ ] At least two versions pass the full oracle suite in CI.
 - [ ] A spec or guide documents how to add a version, and has been followed at least once.

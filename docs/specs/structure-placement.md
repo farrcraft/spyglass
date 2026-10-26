@@ -1,6 +1,6 @@
 # Structure placement
 
-Status: stable. Covers the Overworld of the Default world preset, implemented in `spyglass-structure` for 26.3 and checked against the oracle's [structure golden files](oracle.md#structure-golden-files).
+Status: stable. Covers the Default world preset's three dimensions, implemented in `spyglass-structure` for 26.3 and checked against the oracle's [structure golden files](oracle.md#structure-golden-files).
 
 The game decides where a structure starts in three steps:
 

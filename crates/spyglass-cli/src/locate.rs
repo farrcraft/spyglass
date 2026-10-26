@@ -173,6 +173,7 @@ pub fn biome(out: &Out<'_>, biome: &str, from: [i32; 3], radius: i32) -> Result<
 
 pub fn slime(out: &Out<'_>, from: [i32; 3], radius: i32) -> Result<()> {
     let centre = [from[0] >> 4, from[2] >> 4];
+    out.overworld_only("slime chunks are")?;
     let chunks = out.session.slime_chunks_near(centre, radius);
     if out.json {
         return out.print(
@@ -209,6 +210,7 @@ pub fn slime(out: &Out<'_>, from: [i32; 3], radius: i32) -> Result<()> {
 }
 
 pub fn spawn(out: &Out<'_>) -> Result<()> {
+    out.overworld_only("the world spawn is")?;
     let origin = out.session.spawn_origin();
     if out.json {
         return out.print("locate spawn", json::SpawnAnswer::new(&origin));

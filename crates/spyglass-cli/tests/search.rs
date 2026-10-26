@@ -198,3 +198,51 @@ fn text_output_and_errors() {
     assert_eq!(json["evaluated"], 3);
     assert_eq!(json["next"], Value::Null);
 }
+
+#[test]
+fn searches_span_dimensions() {
+    let fixture = fixtures::structured_overworld_and_nether();
+    let query =
+        "require 2 fort within 200 of spawn\nprefer tower within 300 of fort in -50,-50 to 50,50";
+    let json: Value = serde_json::from_str(&ok(&spyglass(
+        &fixture.path(),
+        &["-q", query, "--range", "0..199", "--top", "5", "--json"],
+    )))
+    .unwrap();
+    let game = spyglass::Game::open(fixture.path()).unwrap();
+    let resolved = game.search_query(query).unwrap();
+    let options = SearchOptions {
+        source: SeedSource::Range {
+            first: 0,
+            last: 199,
+        },
+        top: 5,
+        ..SearchOptions::default()
+    };
+    let expected = game
+        .search(&resolved, &options, |_| ControlFlow::Continue(()))
+        .unwrap();
+    assert_eq!(json["dimension"], "minecraft:the_nether");
+    assert_eq!(json["query"], resolved.to_string());
+    let hits = json["hits"].as_array().unwrap();
+    assert!(!hits.is_empty());
+    assert_eq!(hits.len(), expected.hits.len());
+    for (got, want) in hits.iter().zip(&expected.hits) {
+        assert_eq!(got["seed"], want.seed);
+        assert_eq!(got["score"], want.score);
+        let dimensions: Vec<&str> = got["constraints"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["dimension"].as_str().unwrap())
+            .collect();
+        assert_eq!(dimensions, ["minecraft:the_nether", "minecraft:overworld"]);
+    }
+    // A dimension that can't have the target is an error.
+    let out = spyglass(
+        &fixture.path(),
+        &["-q", "require nether tower within 5 of 0,0"],
+    );
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("isn't placed in the Nether"));
+}

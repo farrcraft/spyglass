@@ -30,4 +30,4 @@ Start from [template.md](template.md). Files are named `NNNN-kebab-case-title.md
 | [0022](0022-terrain-crate-and-volume-evaluation.md)           | Terrain in its own crate, with the game's volume evaluation           | Accepted                                                             |
 | [0023](0023-dimensions-in-the-public-api.md)                  | Dimensions in the public API                                          | Accepted                                                             |
 | [0024](0024-dimensions-in-the-search-language.md)             | Dimensions in the search language                                     | Superseded by [0025](0025-inferring-dimensions-in-search-queries.md) |
-| [0025](0025-inferring-dimensions-in-search-queries.md)        | Inferring dimensions in search queries                                | Proposed                                                             |
+| [0025](0025-inferring-dimensions-in-search-queries.md)        | Inferring dimensions in search queries                                | Accepted                                                             |

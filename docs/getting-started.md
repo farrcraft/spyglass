@@ -232,6 +232,7 @@ cargo run --release -p spyglass-cli -- locate structure minecraft:stronghold --s
 cargo run --release -p spyglass-cli -- locate biome minecraft:cherry_grove --seed 12345
 cargo run --release -p spyglass-cli -- locate slime --seed 12345 --radius 4
 cargo run --release -p spyglass-cli -- locate spawn --seed 12345
+cargo run --release -p spyglass-cli -- locate structure minecraft:bastion_remnant --seed 12345 --dimension nether
 cargo run --release -p spyglass-cli -- heights --seed 12345 --min 0,0 --max 15,15
 ```
 
@@ -242,6 +243,7 @@ Or install it with `cargo install --path crates/spyglass-cli` and run `spyglass 
 | `--seed <seed>`       | required      | A number, or text hashed as the world-creation screen does.                               |
 | `--world <save>`      | none          | A world save instead of `--seed`: its folder, or its folder name in a launcher's saves.   |
 | `--from <x,y,z>`      | `0,64,0`      | Where to search from, in blocks; `x,z` means y 64; `player` is `--world`'s single player. |
+| `--dimension <d>`     | Overworld     | `overworld`, `nether` or `end`. With `--from player`, the player's dimension by default.  |
 | `--radius <n>`        | as `/locate`  | Placement-cell rings (structures), blocks (biomes) or chunks (slime).                     |
 | `--unconfirmed`       | off           | Structures: don't decide candidates with the seed's terrain. Faster, but less certain.    |
 | `--bounds`            | off           | Structures: each certain jigsaw structure's bounds and piece count.                       |
@@ -249,6 +251,8 @@ Or install it with `cargo install --path crates/spyglass-cli` and run `spyglass 
 | `--bundle <dir>`      | none          | Use this bundle directory instead.                                                        |
 | `--bundles <dir>`     | `bundles`     | Where bundles are.                                                                        |
 | `--json`              | off           | Print JSON for scripts ([specs/cli-json.md](specs/cli-json.md)).                          |
+
+Slime chunks and the world spawn are only in the Overworld. In the Nether, heights find the solid ceiling (about 128 everywhere), which is what the game's own structure checks see too.
 
 `spyglass heights` prints the generator's terrain heights for one column (`--at x,z`) or a region (`--min x,z --max x,z`, up to 256 × 256 columns): one above the highest block before structures, carvers, features and surface blocks change it, as structures are placed by ([specs/terrain.md](specs/terrain.md)). `--heightmap ocean-floor` ignores water.
 
@@ -288,7 +292,7 @@ cargo run --release -p spyglass-cli -- render --world "My World" --highlight min
 | `--slime`, `--spawn`, `--ties`    | off                | Slime chunks (scales up to 16), the spawn's origin, tied biome cells.                    |
 | `--no-biomes`                     | off                | A plain background under the other layers, or grey by height with `--relief`.            |
 
-The seed, world and bundle options are as for `locate`. With `--json` it prints the area and everything it drew.
+The seed, world, dimension and bundle options are as for `locate`; with `--world`, a map centred on the player is in the player's dimension. In the Nether, terrain layers aren't drawn, since its surface heights are the ceiling's, and slime chunks and the spawn are the Overworld's alone. With `--json` it prints the area and everything it drew.
 
 ### Seed search
 
@@ -300,7 +304,11 @@ require cluster 2 minecraft:swamp_hut within 200 of each other within 600 of spa
 prefer 3 #minecraft:village within 800 of spawn
 prefer biome minecraft:cherry_grove within 500 of spawn weight 2'
 cargo run --release -p spyglass-cli -- search --query-file huts.txt --range -2147483648..2147483647 --count 1000000
+cargo run --release -p spyglass-cli -- search --time 2m -q 'require minecraft:fortress within 100 of spawn
+prefer minecraft:bastion_remnant within 200 of minecraft:fortress within 1000 of spawn'
 ```
+
+Each constraint is in one dimension, inferred from what it counts: fortresses and bastions are the Nether's, end cities the End's, villages the Overworld's. `spawn` in a Nether constraint is the block the Overworld spawn's portal leads to (its position divided by 8), and a structure anchor in another dimension is converted the same way. Write `nether`, `end` or `overworld` after `require` or `prefer` to choose for a structure tag that spans dimensions: `require nether #minecraft:ruined_portal within 300 of spawn` ([specs/search.md](specs/search.md#dimensions)).
 
 | Option                          | Default    | What it does                                                                                       |
 | ------------------------------- | ---------- | -------------------------------------------------------------------------------------------------- |
@@ -330,11 +338,12 @@ cargo run --release -p spyglass-viewer
 The viewer opens the newest bundle in `bundles/` (choose another folder from the side panel) and shows seed 0. Without a bundle it says how to extract one.
 
 - **Move around:** drag to pan, scroll to zoom around the pointer, or use the arrow keys and `+`/`-`. **Go to** takes `x z` or `x y z`. The status bar shows the block, chunk and biome under the pointer.
-- **Seed or save:** type a seed and press **Show**, or open a save from the launchers' list or any folder. A save opens on its player, with anything that makes its answers inexact listed.
+- **Seed or save:** type a seed and press **Show**, or open a save from the launchers' list or any folder. A save opens on its player, in the player's dimension, with anything that makes its answers inexact listed.
+- **Dimension:** switch between the Overworld, the Nether and the End; each keeps its own view. Slime chunks and the spawn are the Overworld's, and terrain layers aren't drawn in the Nether, whose surface is its ceiling.
 - **Layers:** tied biome cells, slime chunks, the world spawn, structures to mark (hover a marker for what it is), and biomes to highlight. **Height** sets the y biomes are drawn at. Up close (4 blocks per pixel or less), **Relief** shades the map by terrain height and **Biomes at the surface** draws each column's biome at its height; both are slow to fill in. **Confirm with terrain** (on by default) decides structure markers and locates with the seed's terrain, and draws the bounds of villages and other jigsaw structures up close. The status bar shows the terrain height under the pointer.
 - **Locate:** right-click the map for the nearest structure or biome from there, as `/locate` would. Hits are listed in the side panel (click one to go there) and ringed on the map.
 - **Export:** **Export image…** saves the view as a PNG, and **Copy command** copies the `spyglass render` command that draws the same image.
-- **Search:** type a query in the **Search** section, set a seed count or time limit (and **Confirm with terrain** to decide structures), and press **Search**. The best seeds appear as they're found; click one to open it, centred on the query's first place with everything its constraints matched ringed.
+- **Search:** type a query in the **Search** section, set a seed count or time limit (and **Confirm with terrain** to decide structures), and press **Search**. The best seeds appear as they're found; click one to open it, in its first constraint's dimension and centred on that constraint's place, with everything its constraints matched there ringed.
 
 Rendering runs in the background on all but one core, so the map stays responsive while tiles fill in. Settings are kept between runs.
 

@@ -11,7 +11,13 @@ use crate::json::{self, Xz};
 use crate::{Origin, Out};
 
 pub fn run(args: &Render) -> Result<()> {
-    let (world, seed, report) = crate::load(&args.common)?;
+    // Centred on the player: by default with --world, or when asked for.
+    let player = match args.centre {
+        Some(Centre::Player) => true,
+        Some(Centre::At(_)) => false,
+        None => args.min.is_none() && args.common.world.is_some(),
+    };
+    let (world, seed, report) = crate::load(&args.common, player)?;
     let session = world.session(seed)?;
     let out = Out {
         session: &session,
@@ -136,7 +142,7 @@ pub fn run(args: &Render) -> Result<()> {
 
 impl Out<'_> {
     /// Resolves `--centre`, or its default: the player, or else the spawn, of `--world`'s save
-    /// when in the overworld; otherwise 0, 0.
+    /// when in the map's dimension; otherwise 0, 0.
     fn centre(&self, centre: Option<Centre>) -> Result<[i32; 2]> {
         let xz = |[x, _, z]: [i32; 3]| [x, z];
         match centre {
@@ -144,12 +150,13 @@ impl Out<'_> {
             Some(Centre::Player) => Ok(xz(self.origin(Origin::Player)?)),
             None => {
                 let save = self.report.map(|r| &r.save);
-                let overworld = |l: &&SaveLocation| l.dimension == "minecraft:overworld";
+                let here = self.session.world().dimension_kind();
+                let in_view = |l: &&SaveLocation| l.dimension_kind() == Some(here);
                 let place = save.and_then(|s| {
                     s.player
                         .as_ref()
-                        .filter(overworld)
-                        .or(s.spawn.as_ref().filter(overworld))
+                        .filter(in_view)
+                        .or(s.spawn.as_ref().filter(in_view))
                 });
                 Ok(place.map_or([0, 0], |l| xz(l.block())))
             }

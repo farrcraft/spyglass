@@ -220,16 +220,18 @@ fn compute(job: &Job) -> Result<Output, String> {
                 _ => job.session.biome_map(&area),
             }
             .map_err(|e| e.to_string())?;
-            let slime_chunks = if area.scale <= MAX_SLIME_SCALE {
-                features(Layers {
-                    biomes: false,
-                    slime_chunks: true,
-                    ..Layers::default()
-                })?
-                .slime_chunks
-            } else {
-                Vec::new()
+            let slime = Layers {
+                biomes: false,
+                slime_chunks: true,
+                ..Layers::default()
             };
+            // Only where the dimension has them (the Overworld).
+            let slime_chunks =
+                if area.scale <= MAX_SLIME_SCALE && slime.check(job.session.world()).is_ok() {
+                    features(slime)?.slime_chunks
+                } else {
+                    Vec::new()
+                };
             Ok(Output::Biomes(TileData {
                 biomes,
                 heights,

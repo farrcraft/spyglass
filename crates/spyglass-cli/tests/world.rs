@@ -12,13 +12,15 @@ fn bundles() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../bundles")
 }
 
+/// The command with `args`, with `--seed` on the 26.3 bundle in `bundles/` (others there may be
+/// newer).
 fn spyglass(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_spyglass"))
-        .args(args)
-        .arg("--bundles")
-        .arg(bundles())
-        .output()
-        .unwrap()
+    let mut command = Command::new(env!("CARGO_BIN_EXE_spyglass"));
+    command.args(args).arg("--bundles").arg(bundles());
+    if args.contains(&"--seed") {
+        command.args(["--game-version", "26.3"]);
+    }
+    command.output().unwrap()
 }
 
 fn json(args: &[&str]) -> Value {
@@ -73,7 +75,14 @@ fn save(dir: &Path, data_version: i32, generator: Tag, packs: &[&str], player: [
                 ("generate_structures", Tag::Byte(1)),
                 (
                     "dimensions",
-                    c([("minecraft:overworld", c([("generator", generator)]))]),
+                    c([
+                        ("minecraft:overworld", c([("generator", generator)])),
+                        (
+                            "minecraft:the_nether",
+                            c([("generator", nether_generator())]),
+                        ),
+                        ("minecraft:the_end", c([("generator", end_generator())])),
+                    ]),
                 ),
             ]),
         )]),
@@ -88,6 +97,30 @@ fn save(dir: &Path, data_version: i32, generator: Tag, packs: &[&str], player: [
             ("Dimension", s("minecraft:overworld")),
         ]),
     );
+}
+
+/// The Default preset's Nether generator.
+fn nether_generator() -> Tag {
+    c([
+        ("type", s("minecraft:noise")),
+        ("settings", s("minecraft:nether")),
+        (
+            "biome_source",
+            c([
+                ("type", s("minecraft:multi_noise")),
+                ("preset", s("minecraft:nether")),
+            ]),
+        ),
+    ])
+}
+
+/// The Default preset's End generator.
+fn end_generator() -> Tag {
+    c([
+        ("type", s("minecraft:noise")),
+        ("settings", s("minecraft:end")),
+        ("biome_source", c([("type", s("minecraft:the_end"))])),
+    ])
 }
 
 fn default_generator() -> Tag {
@@ -157,6 +190,108 @@ fn a_default_world() {
     assert_eq!(map["command"], "render");
     assert_eq!(map["world"]["name"], "Test World");
     assert_eq!(map["area"]["min"], serde_json::json!([32, -272]));
+}
+
+#[test]
+#[ignore = "needs a 26.3 bundle: spyglass-extract 26.3"]
+fn a_player_in_the_nether() {
+    let dir = tempfile::tempdir().unwrap();
+    save(
+        dir.path(),
+        5023,
+        default_generator(),
+        &["vanilla"],
+        [0.0, 0.0, 0.0],
+    );
+    std::fs::write(
+        dir.path()
+            .join("players/data/00000000-0000-0000-0000-000000000001.dat"),
+        nbt::write_compressed(
+            "",
+            &c([
+                (
+                    "Pos",
+                    Tag::List(vec![
+                        Tag::Double(-40.5),
+                        Tag::Double(70.0),
+                        Tag::Double(12.2),
+                    ]),
+                ),
+                ("Dimension", s("minecraft:the_nether")),
+            ]),
+        ),
+    )
+    .unwrap();
+    let path = dir.path().to_str().unwrap();
+
+    let info = json(&["world", "info", path]);
+    assert_eq!(
+        info["answerable_dimensions"],
+        serde_json::json!([
+            "minecraft:overworld",
+            "minecraft:the_nether",
+            "minecraft:the_end"
+        ])
+    );
+    // From the player: the player's dimension.
+    let fortress = json(&[
+        "locate",
+        "structure",
+        "minecraft:fortress",
+        "--world",
+        path,
+        "--from",
+        "player",
+    ]);
+    assert_eq!(fortress["dimension"], "minecraft:the_nether");
+    assert_eq!(fortress["from"], serde_json::json!([-41, 70, 12]));
+    let from_seed = json(&[
+        "locate",
+        "structure",
+        "minecraft:fortress",
+        "--seed",
+        "12345",
+        "--dimension",
+        "nether",
+        "--from",
+        "-41,70,12",
+    ]);
+    assert_eq!(fortress["hits"], from_seed["hits"]);
+    // Otherwise the Overworld, or what --dimension says.
+    let spawn = json(&["locate", "spawn", "--world", path]);
+    assert_eq!(spawn["dimension"], "minecraft:overworld");
+    let map = json(&[
+        "render",
+        "--world",
+        path,
+        "--size",
+        "8x8",
+        "--scale",
+        "16",
+        "-o",
+        dir.path().join("nether.png").to_str().unwrap(),
+    ]);
+    assert_eq!(map["dimension"], "minecraft:the_nether");
+    assert_eq!(map["area"]["min"], serde_json::json!([-112, -64]));
+    for args in [
+        &["locate", "slime", "--world", path, "--dimension", "nether"][..],
+        &["locate", "spawn", "--world", path, "--dimension", "end"],
+        &[
+            "locate",
+            "biome",
+            "plains",
+            "--world",
+            path,
+            "--from",
+            "player",
+            "--dimension",
+            "overworld",
+        ],
+    ] {
+        let out = spyglass(args);
+        assert!(!out.status.success(), "{args:?}");
+        assert!(out.stdout.is_empty());
+    }
 }
 
 #[test]

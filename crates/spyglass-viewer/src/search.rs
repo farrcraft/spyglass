@@ -1,6 +1,6 @@
 //! Seed search from the viewer (`docs/specs/search.md`): the panel's settings, a search on its
 //! own thread, and what opening a hit shows on the map. The searching is the library's
-//! `World::search`; the matched features come from `Session::evaluate`.
+//! `Game::search`, across dimensions; the matched features come from `GameSession::evaluate`.
 
 use std::ops::ControlFlow;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -12,8 +12,8 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use spyglass::query::{Anchor, Kind, Place, Query, Region};
 use spyglass::{
-    Evaluation, Feature, SearchOptions, SearchOutcome, SearchProgress, SearchQuery, SeedSource,
-    World,
+    Dimension, Evaluation, Feature, Game, SearchOptions, SearchOutcome, SearchProgress,
+    SearchQuery, SeedSource,
 };
 
 /// The search panel's settings, kept between runs.
@@ -116,7 +116,7 @@ pub struct Running {
 impl Running {
     /// Starts searching; `repaint` is called whenever there's news.
     pub fn start(
-        world: &'static World,
+        game: &'static Game,
         query: SearchQuery,
         options: SearchOptions,
         repaint: impl Fn() + Send + 'static,
@@ -127,7 +127,7 @@ impl Running {
         {
             let (stop, progress) = (stop.clone(), progress.clone());
             thread::spawn(move || {
-                let outcome = world.search(&query, &options, |p| {
+                let outcome = game.search(&query, &options, |p| {
                     *progress.lock().unwrap_or_else(PoisonError::into_inner) = Some(p.clone());
                     repaint();
                     if stop.load(Ordering::Relaxed) {
@@ -173,6 +173,8 @@ impl Running {
 /// Something a hit's constraint matched, to ring on the map.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Match {
+    /// The dimension `at` is in.
+    pub dimension: Dimension,
     pub at: [i32; 2],
     pub what: String,
     pub certain: bool,
@@ -206,6 +208,7 @@ pub fn matches(query: &SearchQuery, evaluation: &Evaluation) -> Vec<Match> {
                 _ => continue,
             };
             out.push(Match {
+                dimension: result.dimension,
                 at,
                 what,
                 certain,
@@ -233,8 +236,8 @@ pub fn structures(evaluation: &Evaluation) -> Vec<String> {
     ids
 }
 
-/// Where to centre the map on a hit: the first constraint's place, at the spawn for a spawn
-/// anchor.
+/// Where to centre the map on a hit: the first constraint's place, at `spawn` for a spawn
+/// anchor (the spawn in the first constraint's dimension).
 pub fn focus(query: &Query, spawn: [i32; 2]) -> [i32; 2] {
     let centre = |place: &Place| match *place {
         Place::Within {
@@ -321,14 +324,14 @@ mod tests {
     #[test]
     fn matches_ring_every_feature() {
         let fixture = spyglass_oracle::fixtures::structured_overworld(false);
-        let world = World::open(fixture.path()).unwrap();
-        let query = world
+        let game = Game::open(fixture.path()).unwrap();
+        let query = game
             .search_query(
                 "prefer 3 hut within 400 of -100,0
 prefer spawn within 9 of 0,0",
             )
             .unwrap();
-        let evaluation = world.session(4).unwrap().evaluate(&query, false).unwrap();
+        let evaluation = game.session(4).evaluate(&query, false).unwrap();
         let found = matches(&query, &evaluation);
         let huts = evaluation.constraints[0].features.len();
         assert_eq!(found.len(), huts + 1);
@@ -338,6 +341,7 @@ prefer spawn within 9 of 0,0",
                 && m.constraint == "prefer 3 minecraft:hut within 400 of -100,0"
         }));
         assert_eq!(found[huts].what, "World spawn");
+        assert!(found.iter().all(|m| m.dimension == Dimension::Overworld));
         let ids = structures(&evaluation);
         assert_eq!(
             ids,

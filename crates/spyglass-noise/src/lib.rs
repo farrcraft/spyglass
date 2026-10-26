@@ -11,5 +11,5 @@ mod perlin;
 mod stack;
 
 pub use normal::{NoiseError, NormalNoise, NormalNoiseParameters, Normalization, OctaveInfo};
-pub use perlin::PerlinNoise;
-pub use stack::{Layer, NoiseStack};
+pub use perlin::{PerlinNoise, SmearedPerlinNoise};
+pub use stack::{Layer, Noise, NoiseStack};

@@ -7,11 +7,14 @@ use std::sync::Arc;
 use serde_json::{Map, Value};
 use spyglass_data::bundle::{Bundle, BundleError};
 use spyglass_data::codec::{
-    At, LoadErrorKind, LoadResult, double, field, float, full_id, int, out_of_range,
+    At, LoadErrorKind, LoadResult, double, field, float, full_id, int, int_field, out_of_range,
 };
 use spyglass_noise::{NormalNoiseParameters, Normalization};
 
-use crate::function::{Axis, DensityFunction, Df, Gradient, Points, Spline};
+use crate::function::{
+    Axis, Binary, BlendedNoise, DensityFunction, Df, DistanceMetric, Gradient, Points, Round,
+    Spline, Tiling, Unary,
+};
 
 /// Registry paths, as the game's data packs lay them out.
 pub(crate) const DENSITY_FUNCTION: &str = "worldgen/density_function";
@@ -132,6 +135,29 @@ impl<'r, R: Resources + ?Sized> Loader<'r, R> {
             let value = field(obj, name, at)?;
             this.parse_function(value, &at.child(name))
         };
+        // The types registered from an enum's values, each id one constant.
+        if let Some(op) = binary_type(&kind) {
+            // BinaryFunction: {"left", "right"}.
+            let f = DensityFunction::Binary(op, arg(self, "left")?, arg(self, "right")?);
+            return Ok(Arc::new(f));
+        }
+        if let Some(op) = unary_type(&kind) {
+            // UnaryFunction: {"input"}.
+            return Ok(Arc::new(DensityFunction::Unary(op, arg(self, "input")?)));
+        }
+        if let Some(kind) = round_type(&kind) {
+            // RoundFunction: {"input", "multiple" (default the constant 1)}.
+            let input = arg(self, "input")?;
+            let multiple = match obj.get("multiple") {
+                Some(v) => self.parse_function(v, &at.child("multiple"))?,
+                None => Arc::new(DensityFunction::Constant(1.0)),
+            };
+            return Ok(Arc::new(DensityFunction::Round {
+                kind,
+                input,
+                multiple,
+            }));
+        }
         let f = match kind.as_str() {
             // ConstantFunction.CODEC: {"value": NOISE_VALUE_CODEC}.
             "minecraft:constant" => DensityFunction::Constant(noise_value(
@@ -168,18 +194,71 @@ impl<'r, R: Resources + ?Sized> Loader<'r, R> {
             "minecraft:shift" => DensityFunction::Shift {
                 noise: self.noise_ref(obj, at)?,
             },
-            // BinaryFunction: {"left", "right"}.
-            "minecraft:add" => DensityFunction::Add(arg(self, "left")?, arg(self, "right")?),
-            "minecraft:mul" => DensityFunction::Mul(arg(self, "left")?, arg(self, "right")?),
-            // UnaryFunction and CacheFunction: {"input"}.
-            "minecraft:abs" => DensityFunction::Abs(arg(self, "input")?),
+            // CacheFunction and BlendDensityFunction: {"input"}.
             "minecraft:cache" => DensityFunction::Cache(arg(self, "input")?),
+            "minecraft:blend_density" => DensityFunction::BlendDensity(arg(self, "input")?),
+            // ClampFunction, validated: max must not be below min.
+            "minecraft:clamp" => {
+                let input = arg(self, "input")?;
+                let min = noise_value(field(obj, "min", at)?, &at.child("min"))?;
+                let max = noise_value(field(obj, "max", at)?, &at.child("max"))?;
+                if max < min {
+                    return Err(at.error(LoadErrorKind::Invalid("max is below min")));
+                }
+                DensityFunction::Clamp { input, min, max }
+            }
+            "minecraft:pow" => DensityFunction::Pow {
+                base: arg(self, "base")?,
+                exponent: arg(self, "exponent")?,
+            },
             // LerpFunction.
             "minecraft:lerp" => DensityFunction::Lerp {
                 alpha: arg(self, "alpha")?,
                 first: arg(self, "first")?,
                 second: arg(self, "second")?,
             },
+            "minecraft:range_choice" => DensityFunction::RangeChoice {
+                input: arg(self, "input")?,
+                min_inclusive: noise_value(
+                    field(obj, "min_inclusive", at)?,
+                    &at.child("min_inclusive"),
+                )?,
+                max_exclusive: noise_value(
+                    field(obj, "max_exclusive", at)?,
+                    &at.child("max_exclusive"),
+                )?,
+                when_in_range: arg(self, "when_in_range")?,
+                when_out_of_range: arg(self, "when_out_of_range")?,
+            },
+            "minecraft:interval_select" => self.parse_interval_select(obj, at)?,
+            // SliceFunction: {"axis", "coordinate", "input"}.
+            "minecraft:slice" => DensityFunction::Slice {
+                axis: parse_axis(obj, at)?,
+                coordinate: int(field(obj, "coordinate", at)?, &at.child("coordinate"))?,
+                input: arg(self, "input")?,
+            },
+            // InterpolatedFunction: cell sizes are ExtraCodecs.POSITIVE_INT.
+            "minecraft:interpolated" => DensityFunction::Interpolated {
+                input: arg(self, "input")?,
+                cell_size_xz: int_field(obj, "cell_size_xz", (1, i32::MAX), None, at)?,
+                cell_size_y: int_field(obj, "cell_size_y", (1, i32::MAX), None, at)?,
+            },
+            // FindTopSurfaceFunction: lower_bound within twice DimensionType's y range.
+            "minecraft:find_top_surface" => DensityFunction::FindTopSurface {
+                density: arg(self, "density")?,
+                upper_bound: arg(self, "upper_bound")?,
+                lower_bound: int_field(
+                    obj,
+                    "lower_bound",
+                    (2 * DIMENSION_MIN_Y, 2 * DIMENSION_MAX_Y),
+                    None,
+                    at,
+                )?,
+                cell_height: int_field(obj, "cell_height", (1, i32::MAX), None, at)?,
+            },
+            "minecraft:old_blended_noise" => {
+                DensityFunction::OldBlendedNoise(parse_blended_noise(obj, at)?)
+            }
             "minecraft:gradient" => DensityFunction::Gradient(parse_gradient(obj, at)?),
             // SplineFunction: {"spline": CubicSpline}.
             "minecraft:spline" => {
@@ -189,6 +268,14 @@ impl<'r, R: Resources + ?Sized> Loader<'r, R> {
             // SimpleDensityFunction: no fields.
             "minecraft:blend_alpha" => DensityFunction::BlendAlpha,
             "minecraft:blend_offset" => DensityFunction::BlendOffset,
+            "minecraft:beardifier" => DensityFunction::Beardifier,
+            // The End's: DistanceToPointFunction ({"point": Vec3i, "metric"}) and
+            // EndIslandFunction (no fields).
+            "minecraft:distance_to_point" => DensityFunction::DistanceToPoint {
+                point: parse_vec3i(field(obj, "point", at)?, &at.child("point"))?,
+                metric: parse_metric(obj, at)?,
+            },
+            "minecraft:end_outer_islands" => DensityFunction::EndOuterIslands,
             _ => {
                 return Err(at.child("type").error(LoadErrorKind::Unsupported {
                     what: "density function type",
@@ -251,6 +338,155 @@ impl<'r, R: Resources + ?Sized> Loader<'r, R> {
             _ => Err(at.error(LoadErrorKind::Shape("a number or a spline object"))),
         }
     }
+
+    /// `IntervalSelectFunction.CODEC`: `{"input", "thresholds", "functions"}`, validated: one
+    /// more function than thresholds (at least two), and thresholds in `Float.compare` order.
+    fn parse_interval_select(
+        &mut self,
+        obj: &Map<String, Value>,
+        at: &At<'_>,
+    ) -> LoadResult<DensityFunction> {
+        let input = self.parse_function(field(obj, "input", at)?, &at.child("input"))?;
+        let thresholds_at = at.child("thresholds");
+        let thresholds = field(obj, "thresholds", at)?
+            .as_array()
+            .ok_or_else(|| thresholds_at.error(LoadErrorKind::Shape("a list of numbers")))?
+            .iter()
+            .enumerate()
+            .map(|(i, v)| noise_value(v, &thresholds_at.child(&format!("[{i}]"))))
+            .collect::<LoadResult<Vec<f32>>>()?;
+        let functions_at = at.child("functions");
+        let list = field(obj, "functions", at)?
+            .as_array()
+            .ok_or_else(|| functions_at.error(LoadErrorKind::Shape("a list of functions")))?;
+        if list.len() < 2 {
+            return Err(functions_at.error(LoadErrorKind::Invalid("at least two functions")));
+        }
+        let functions = list
+            .iter()
+            .enumerate()
+            .map(|(i, v)| self.parse_function(v, &functions_at.child(&format!("[{i}]"))))
+            .collect::<LoadResult<Vec<Df>>>()?;
+        if thresholds.len() != functions.len() - 1 {
+            return Err(at.error(LoadErrorKind::Invalid(
+                "there must be one fewer threshold than functions",
+            )));
+        }
+        if !thresholds.is_sorted_by(|a, b| a.total_cmp(b).is_le()) {
+            return Err(at.error(LoadErrorKind::Invalid(
+                "threshold values must be ordered from smallest to largest",
+            )));
+        }
+        Ok(DensityFunction::IntervalSelect {
+            input,
+            thresholds,
+            functions,
+        })
+    }
+}
+
+/// `DimensionType.MIN_Y` and `MAX_Y`: the y range block positions can pack.
+const DIMENSION_MIN_Y: i32 = -2032;
+const DIMENSION_MAX_Y: i32 = 2031;
+
+/// The ids `BinaryFunction.Type` registers.
+fn binary_type(kind: &str) -> Option<Binary> {
+    Some(match kind {
+        "minecraft:add" => Binary::Add,
+        "minecraft:sub" => Binary::Sub,
+        "minecraft:mul" => Binary::Mul,
+        "minecraft:div" => Binary::Div,
+        "minecraft:min" => Binary::Min,
+        "minecraft:max" => Binary::Max,
+        _ => return None,
+    })
+}
+
+/// The ids `UnaryFunction.Type` registers.
+fn unary_type(kind: &str) -> Option<Unary> {
+    Some(match kind {
+        "minecraft:abs" => Unary::Abs,
+        "minecraft:square" => Unary::Square,
+        "minecraft:cube" => Unary::Cube,
+        "minecraft:sqrt" => Unary::Sqrt,
+        "minecraft:half_negative" => Unary::HalfNegative,
+        "minecraft:quarter_negative" => Unary::QuarterNegative,
+        "minecraft:reciprocal" => Unary::Reciprocal,
+        "minecraft:negate" => Unary::Negate,
+        "minecraft:squeeze" => Unary::Squeeze,
+        "minecraft:log" => Unary::Log,
+        "minecraft:sign" => Unary::Sign,
+        _ => return None,
+    })
+}
+
+/// The ids `RoundFunction.Type` registers.
+fn round_type(kind: &str) -> Option<Round> {
+    Some(match kind {
+        "minecraft:floor" => Round::Floor,
+        "minecraft:round" => Round::Round,
+        "minecraft:ceil" => Round::Ceil,
+        "minecraft:truncate" => Round::Truncate,
+        _ => return None,
+    })
+}
+
+/// An `axis` field: `Direction.Axis.CODEC`.
+fn parse_axis(obj: &Map<String, Value>, at: &At<'_>) -> LoadResult<Axis> {
+    match field(obj, "axis", at)?.as_str() {
+        Some("x") => Ok(Axis::X),
+        Some("y") => Ok(Axis::Y),
+        Some("z") => Ok(Axis::Z),
+        _ => Err(at
+            .child("axis")
+            .error(LoadErrorKind::Shape("\"x\", \"y\" or \"z\""))),
+    }
+}
+
+/// `BlendedNoise.CODEC`: four scales in `[0.001, 1000]` and a smear multiplier in `[1, 8]`.
+fn parse_blended_noise(obj: &Map<String, Value>, at: &At<'_>) -> LoadResult<BlendedNoise> {
+    let ranged = |name: &'static str, min: f64, max: f64| -> LoadResult<f64> {
+        let json = field(obj, name, at)?;
+        let v = double(json, &at.child(name))?;
+        if (min..=max).contains(&v) {
+            Ok(v)
+        } else {
+            Err(at.child(name).error(out_of_range(json, min, max)))
+        }
+    };
+    Ok(BlendedNoise {
+        xz_scale: ranged("xz_scale", 0.001, 1000.0)?,
+        y_scale: ranged("y_scale", 0.001, 1000.0)?,
+        xz_factor: ranged("xz_factor", 0.001, 1000.0)?,
+        y_factor: ranged("y_factor", 0.001, 1000.0)?,
+        smear_scale_multiplier: ranged("smear_scale_multiplier", 1.0, 8.0)?,
+    })
+}
+
+/// `Vec3i.CODEC`: a list of exactly three ints.
+fn parse_vec3i(json: &Value, at: &At<'_>) -> LoadResult<[i32; 3]> {
+    let list = json
+        .as_array()
+        .filter(|l| l.len() == 3)
+        .ok_or_else(|| at.error(LoadErrorKind::Shape("a list of 3 ints")))?;
+    Ok([
+        int(&list[0], &at.child("[0]"))?,
+        int(&list[1], &at.child("[1]"))?,
+        int(&list[2], &at.child("[2]"))?,
+    ])
+}
+
+/// A `metric` field: `DistanceMetric.CODEC`.
+fn parse_metric(obj: &Map<String, Value>, at: &At<'_>) -> LoadResult<DistanceMetric> {
+    match field(obj, "metric", at)?.as_str() {
+        Some("euclidean") => Ok(DistanceMetric::Euclidean),
+        Some("euclidean_squared") => Ok(DistanceMetric::EuclideanSquared),
+        Some("manhattan") => Ok(DistanceMetric::Manhattan),
+        Some("chebyshev") => Ok(DistanceMetric::Chebyshev),
+        _ => Err(at.child("metric").error(LoadErrorKind::Shape(
+            "\"euclidean\", \"euclidean_squared\", \"manhattan\" or \"chebyshev\"",
+        ))),
+    }
 }
 
 /// `DensityFunctions.NOISE_VALUE_CODEC`: `Codec.floatRange(-1000000, 1000000)`.
@@ -265,24 +501,21 @@ fn noise_value(json: &Value, at: &At<'_>) -> LoadResult<f32> {
 
 /// `GradientFunction.CODEC`, which also rejects equal coordinates.
 fn parse_gradient(obj: &Map<String, Value>, at: &At<'_>) -> LoadResult<Gradient> {
-    let axis_at = at.child("axis");
-    let axis = match field(obj, "axis", at)?.as_str() {
-        Some("x") => Axis::X,
-        Some("y") => Axis::Y,
-        Some("z") => Axis::Z,
-        _ => return Err(axis_at.error(LoadErrorKind::Shape("\"x\", \"y\" or \"z\""))),
-    };
-    if let Some(tiling) = obj.get("tiling") {
-        let name = tiling.as_str().unwrap_or_default();
-        if name != "clamp_to_edge" {
-            return Err(at.child("tiling").error(LoadErrorKind::Unsupported {
-                what: "gradient tiling",
-                name: tiling.to_string(),
-            }));
+    let axis = parse_axis(obj, at)?;
+    // TilingMode.CODEC, optional with clamp_to_edge as the default.
+    let tiling = match obj.get("tiling").map(|t| t.as_str()) {
+        None | Some(Some("clamp_to_edge")) => Tiling::ClampToEdge,
+        Some(Some("repeat")) => Tiling::Repeat,
+        Some(Some("mirrored_repeat")) => Tiling::MirroredRepeat,
+        Some(_) => {
+            return Err(at.child("tiling").error(LoadErrorKind::Shape(
+                "\"clamp_to_edge\", \"repeat\" or \"mirrored_repeat\"",
+            )));
         }
-    }
+    };
     let gradient = Gradient {
         axis,
+        tiling,
         from_coordinate: int(
             field(obj, "from_coordinate", at)?,
             &at.child("from_coordinate"),

@@ -339,7 +339,7 @@ Floating-point inputs (`point`) are hex `f64` bits too, so nothing depends on de
 
 **`density.json`** has, for each golden seed, using the overworld's noise settings:
 
-- `density`: each named climate function (`name`, e.g. `minecraft:overworld/offset`) at block `pos`, via `RandomState.sampleBlockValueUncached`;
+- `density`: every named density function in the registry (`name`, e.g. `minecraft:overworld/offset`), in id order, at each block `pos`, via `RandomState.sampleBlockValueUncached`;
 - `climate`, at quart `pos`, from `RandomState.createClimateSampler` as chunk generation builds it: `method` `floats` (the six values, `f32`) and `target` (the six quantized longs of `Climate.Sampler.sample`);
 - for each of four chunks (`pos` is `[chunk x, 0, chunk z]`, full overworld height): `climate_volume_vs_point`, the number of cells where the game's volume path and point path differ for any of the six functions, and `climate_digest`, every climate float in the chunk hashed as `h = h·1000003 + bits` (wrapping `long`, `bits` the float's raw bits as unsigned, starting from `h = 1`), over quart cells with y outermost, then z, then x, and the six values in order.
 

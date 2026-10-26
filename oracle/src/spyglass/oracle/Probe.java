@@ -5,6 +5,7 @@ import java.io.StringWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Comparator;
 import java.util.List;
 import java.util.function.Function;
 
@@ -15,7 +16,6 @@ import com.google.gson.stream.JsonWriter;
 
 import net.minecraft.core.QuartPos;
 import net.minecraft.core.registries.Registries;
-import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.biome.Climate;
@@ -66,13 +66,10 @@ final class Probe {
     private static final List<ResourceKey<NormalNoise>> CLIMATE_NOISES = List.of(Noises.TEMPERATURE,
             Noises.VEGETATION, Noises.CONTINENTALNESS, Noises.EROSION, Noises.RIDGE, Noises.SHIFT);
     private static final int SEQUENCE = 8;
-    /** The overworld's climate router entries and the named functions they reach. */
-    private static final String[] DENSITY_FUNCTIONS = {
-        "minecraft:overworld/temperature", "minecraft:overworld/vegetation", "minecraft:overworld/continents",
-        "minecraft:overworld/erosion", "minecraft:overworld/depth", "minecraft:overworld/ridges",
-        "minecraft:overworld/offset", "minecraft:overworld/ridges_folded", "minecraft:shift_x", "minecraft:shift_z",
-    };
-    /** Block positions for density functions; the y sweep at the end exercises depth's gradient. */
+    /**
+     * Block positions for density functions; the y sweep at the end exercises depth's gradient. Most aren't on
+     * the 4 × 8 × 4 cell corners of interpolated functions.
+     */
     private static final int[][] BLOCKS = {
         {0, 0, 0}, {1, -1, 1}, {-1, 64, -1}, {123, -64, -456}, {-1000, 320, 1000}, {1000000, 70, -1000000},
         {-29999984, 0, 29999984}, {29999983, -63, -29999983}, {7, 100, -13}, {4096, -30, -4096},
@@ -292,10 +289,13 @@ final class Probe {
                     .orElseThrow(() -> new IllegalArgumentException("empty seed"));
             var state = RandomState.create(noises, seed, generator.generatorSettings().value());
 
-            // Each named function on its own, as RandomState evaluates a single block.
-            for (String id : DENSITY_FUNCTIONS) {
-                var function = functions.getOrThrow(ResourceKey.create(Registries.DENSITY_FUNCTION,
-                        Identifier.parse(id))).value();
+            // Every named function on its own, in id order, as RandomState evaluates a single block.
+            var named = functions.listElements()
+                    .sorted(Comparator.comparing(h -> h.key().identifier().toString()))
+                    .toList();
+            for (var holder : named) {
+                String id = holder.key().identifier().toString();
+                var function = holder.value();
                 for (int[] b : BLOCKS) {
                     var c = kase("density").seed(seed).name(id);
                     c.json.add("pos", ints(b));

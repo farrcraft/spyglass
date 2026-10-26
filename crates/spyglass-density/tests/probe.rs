@@ -4,7 +4,7 @@
 //! Needs `cargo xtask oracle probe` and a bundle for the same version. Run with
 //! `cargo test --release -p spyglass-density -- --ignored`.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 
 use spyglass_data::bundle::Bundle;
@@ -37,7 +37,9 @@ fn every_density_value_matches_the_game() {
         let bundle = bundle_for(&file.version);
         let mut loader = Loader::new(&bundle);
         let router = ClimateRouter::load(&bundle, "minecraft:overworld").unwrap();
-        let mut samplers: HashMap<(i64, String), Sampler> = HashMap::new();
+        // None for functions spyglass can't bind yet, which are skipped and listed.
+        let mut samplers: HashMap<(i64, String), Option<Sampler>> = HashMap::new();
+        let mut unsupported = BTreeSet::new();
         let mut climates = HashMap::new();
         let mut failures = Vec::new();
         for case in &file.cases {
@@ -46,15 +48,18 @@ fn every_density_value_matches_the_game() {
             let failure = match case.test.as_str() {
                 "density" => {
                     let id = case.name.clone().expect("a function id");
-                    let sampler = match samplers.get(&(seed, id.clone())) {
-                        Some(s) => s.clone(),
-                        None => {
-                            let f = loader.function(&id).unwrap();
-                            let s = Binder::new(loader.noises(), seed).bind(&f).unwrap();
-                            samplers.insert((seed, id.clone()), s.clone());
-                            s
+                    let sampler = samplers.entry((seed, id.clone())).or_insert_with(|| {
+                        let f = loader.function(&id).unwrap();
+                        match Binder::new(loader.noises(), seed).bind(&f) {
+                            Ok(s) => Some(s),
+                            Err(e) if matches!(*e.kind, LoadErrorKind::Unsupported { .. }) => {
+                                unsupported.insert(format!("{id}: {e}"));
+                                None
+                            }
+                            Err(e) => panic!("{id}: {e}"),
                         }
-                    };
+                    });
+                    let Some(sampler) = sampler else { continue };
                     let (want, got) = (case.f32_bits()[0], sampler.sample(x, y, z).to_bits());
                     (want != got).then(|| {
                         format!(
@@ -140,13 +145,21 @@ fn every_density_value_matches_the_game() {
             file.cases.len(),
             failures[..failures.len().min(20)].join("\n")
         );
-        println!("{}: all {} cases match", path.display(), file.cases.len());
+        println!(
+            "{}: all {} cases match, but for {} functions that can't be bound yet:",
+            path.display(),
+            file.cases.len(),
+            unsupported.len()
+        );
+        for u in &unsupported {
+            println!("  {u}");
+        }
     }
 }
 
 #[test]
 #[ignore = "needs a bundle: spyglass-extract 26.3"]
-fn every_bundled_density_function_loads_or_is_unsupported() {
+fn every_bundled_density_function_loads() {
     let bundle = bundle_for("26.3");
     let prefix = "data/minecraft/worldgen/density_function/";
     let ids: Vec<String> = bundle
@@ -157,19 +170,11 @@ fn every_bundled_density_function_loads_or_is_unsupported() {
         .map(|p| format!("minecraft:{p}"))
         .collect();
     assert!(ids.len() > 50, "only {} density functions", ids.len());
-    let (mut loaded, mut unsupported) = (0, Vec::new());
     for id in &ids {
-        match Loader::new(&bundle).function(id) {
-            Ok(_) => loaded += 1,
-            Err(e) if matches!(*e.kind, LoadErrorKind::Unsupported { .. }) => {
-                unsupported.push(e.to_string())
-            }
-            Err(e) => panic!("{e}"),
+        if let Err(e) = Loader::new(&bundle).function(id) {
+            panic!("{e}");
         }
     }
-    println!("{loaded} loaded, {} unsupported:", unsupported.len());
-    for u in &unsupported {
-        println!("  {u}");
-    }
+    println!("all {} density functions load", ids.len());
     ClimateRouter::load(&bundle, "minecraft:overworld").unwrap();
 }

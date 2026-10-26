@@ -20,9 +20,17 @@ Status: stable. Implemented in `spyglass-noise` for 26.3; checked against the ga
 
 **`get(x, z)`** is `get(wrap(x), 0.0, wrap(z))`.
 
+## Smeared Perlin (`SmearedPerlinNoise`)
+
+Perlin noise whose y gradient input is snapped down to a multiple of a scale `s` (`fudgeYScale`), so it smears along y. [Old blended noise](density-functions.md#old_blended_noise) is built from it. It's constructed exactly as Perlin, from the same draws. **`get(x, y, z)`**:
+
+1. As Perlin: wrapped and offset coordinates, `xi`, `yi`, `zi` and `xf`, `zf` as `f32`, but `yd = y' − yi` stays `f64`.
+2. `r = y` (the input before wrapping) if `0 ≤ y < yd`, else `yd`; `fudge = (double) floor(r / s + 1.0000000116860974E-7) · s`, where the constant is `1.0E-7f` widened and `floor` is `Mth.floor` (saturating).
+3. Perlin's corner values and lerp, with `(float)(yd − fudge)` as the y for the gradient dots and `(float) yd` for the y smoothstep.
+
 ## Noise stack (`NoiseStack`)
 
-A list of layers `(noise, frequency: f64, amplitude: f32)`. `get(x, y, z)` accumulates `sum = sum + amplitude · noise.get(x·f, y·f, z·f)` in `f32`, in layer order, starting from 0. `get(x, z)` does the same with each layer's 2D sample. Rust never contracts `a + b·c` into a fused multiply-add, and neither does Java.
+A list of layers `(noise, frequency: f64, amplitude: f32)`, all Perlin or all smeared Perlin. `get(x, y, z)` accumulates `sum = sum + amplitude · noise.get(x·f, y·f, z·f)` in `f32`, in layer order, starting from 0. `get(x, z)` does the same with each layer's 2D sample. Rust never contracts `a + b·c` into a fused multiply-add, and neither does Java.
 
 ## Normal noise (`NormalNoise`)
 
@@ -31,6 +39,8 @@ A list of layers `(noise, frequency: f64, amplitude: f32)`. `get(x, y, z)` accum
 **Octaves** (`buildOctaves`): `frequency = 2^base_octave`, `amplitude = base_amplitude`, times `2^(count−1) / (2^count − 1)` unless normalization is disabled. For each `i` in `0..octave_count`: the modifier is 1 if the list is empty, else `amplitude_modifiers[i]`. A non-zero modifier adds the octave `(index base_octave + i, frequency, amplitude · modifier)`. Then `frequency *= 2` and `amplitude *= 0.5`. The game computes the powers with `Math.pow(2.0, n)` and `Math.pow(0.5, n)`, which are exact for these integer `n`. spyglass builds them from the exponent bits.
 
 **Normalization factor:** `sum` = the octaves' `|amplitude|` summed with `DoubleStream.sum()`, which uses **Kahan compensation** (`Collectors.sumWithCompensation`; the result is the running sum minus the compensation). `deviation = sqrt(Σ (0.2702247831245211 · |amplitude|)²)`, a plain loop. The factor is 0 if `deviation` is 0, else `sum · (1/3) / (deviation · sqrt(2))`. `legacy` normalization recomputes it differently. It isn't ported yet, and spyglass refuses it with an error.
+
+**Range** (`range()`): `±(float)(sum · 0.3333333333333333 · 6.0)`, with the same `sum`. Density functions use it to compile `min` and `max` ([density-functions.md](density-functions.md#ranges)).
 
 **Creation** from a random source (`create`): fork two positional factories, `first` then `second`. For each octave, in order, make `PerlinNoise(first.fromHashOf("octave_" + index))` and `PerlinNoise(second.fromHashOf(same))`, both with amplitude `(float)(factor · octave amplitude)`. The first is at the octave's frequency, the second at `frequency · 1.0181268882175227`. The layers alternate first, second. The result is a noise stack.
 
@@ -42,4 +52,4 @@ The game describes a noise's setup with `parityConfigString`: per Perlin octave,
 
 ## Testing
 
-Committed unit tests cover `wrap`, the permutation, octave layout, the compensated sum and the `Mth` helpers ([ADR 0008](../adr/0008-game-derived-test-values-stay-local.md)). The ignored test `spyglass-noise/tests/probe.rs` reads each climate noise's parameters from the bundle, rebuilds it for every golden seed, and compares every `noise.json` sample bit for bit, plus the parity descriptions.
+Committed unit tests cover `wrap`, the permutation, octave layout, the compensated sum, smeared Perlin's fudge and random use, and the `Mth` helpers ([ADR 0008](../adr/0008-game-derived-test-values-stay-local.md)). The ignored test `spyglass-noise/tests/probe.rs` reads each climate noise's parameters from the bundle, rebuilds it for every golden seed, and compares every `noise.json` sample bit for bit, plus the parity descriptions. Smeared Perlin is checked through old blended noise, in the density probe.

@@ -100,7 +100,7 @@ impl PerlinNoise {
     }
 
     /// `sampleAndLerp(int, int, int, float, float, float, float)`. `y_smooth` is the fraction
-    /// that drives the y smoothstep; the game passes `yf` again.
+    /// that drives the y smoothstep; plain Perlin passes `yf` again, smeared Perlin doesn't.
     #[allow(
         clippy::too_many_arguments,
         reason = "mirrors the game's sampleAndLerp"
@@ -144,6 +144,61 @@ impl PerlinNoise {
     }
 }
 
+/// `SmearedPerlinNoise.SHIFT_UP_EPSILON` (`1.0E-7f`), widened as `computeFudgeY` adds it.
+const SHIFT_UP_EPSILON: f64 = 1.000_000_011_686_097_4e-7;
+
+/// `SmearedPerlinNoise`: Perlin noise whose y gradient input is shifted down to a multiple of a
+/// scale, so the noise smears along y. Old blended noise is built from it.
+#[derive(Debug, Clone)]
+pub struct SmearedPerlinNoise {
+    noise: PerlinNoise,
+    fudge_y_scale: f64,
+}
+
+impl SmearedPerlinNoise {
+    /// `SmearedPerlinNoise(RandomSource, double)`: a [`PerlinNoise`] from `random`, consuming it
+    /// the same way.
+    pub fn new(random: &mut impl RandomSource, fudge_y_scale: f64) -> Self {
+        SmearedPerlinNoise {
+            noise: PerlinNoise::new(random),
+            fudge_y_scale,
+        }
+    }
+
+    /// The underlying Perlin noise.
+    pub fn perlin(&self) -> &PerlinNoise {
+        &self.noise
+    }
+
+    /// `fudgeYScale`.
+    pub fn fudge_y_scale(&self) -> f64 {
+        self.fudge_y_scale
+    }
+
+    /// `get(double, double, double)`: as [`PerlinNoise::get`], but the gradients see
+    /// `(float)(yf − computeFudgeY(y, yf))` while the y smoothstep still sees `(float) yf`.
+    pub fn get(&self, x: f64, y: f64, z: f64) -> f32 {
+        let [ox, oy, oz] = self.noise.offset;
+        let xw = wrap(x) + ox;
+        let yw = wrap(y) + oy;
+        let zw = wrap(z) + oz;
+        let (xi, yi, zi) = (mth::floor(xw), mth::floor(yw), mth::floor(zw));
+        let xf = (xw - f64::from(xi)) as f32;
+        let yd = yw - f64::from(yi);
+        let zf = (zw - f64::from(zi)) as f32;
+        let yf = (yd - self.compute_fudge_y(y, yd)) as f32;
+        self.noise
+            .sample_and_lerp(xi, yi, zi, xf, yf, zf, yd as f32)
+    }
+
+    /// `computeFudgeY(double, double)`: `y` itself when `0 ≤ y < yd` (the input before
+    /// wrapping), else `yd`, rounded down to a multiple of the scale after a small upward shift.
+    fn compute_fudge_y(&self, y: f64, yd: f64) -> f64 {
+        let r = if y >= 0.0 && y < yd { y } else { yd };
+        f64::from(mth::floor(r / self.fudge_y_scale + SHIFT_UP_EPSILON)) * self.fudge_y_scale
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -165,6 +220,31 @@ mod tests {
         assert_eq!(wrap(3e7), 3e7 - ROUND_OFF);
         assert_eq!(wrap(ROUND_OFF + 1.5), 1.5);
         assert!(wrap(f64::NAN).is_nan());
+    }
+
+    #[test]
+    fn shift_up_epsilon_is_the_float_widened() {
+        assert_eq!(SHIFT_UP_EPSILON, f64::from(1.0e-7_f32));
+    }
+
+    #[test]
+    fn smeared_noise_consumes_the_random_as_perlin_does() {
+        let plain = PerlinNoise::new(&mut XoroshiroRandomSource::new(3));
+        let smeared = SmearedPerlinNoise::new(&mut XoroshiroRandomSource::new(3), 8.0);
+        assert_eq!(plain.offset, smeared.perlin().offset);
+        assert_eq!(plain.perms, smeared.perlin().perms);
+    }
+
+    #[test]
+    fn fudge_rounds_down_to_the_scale() {
+        let smeared = SmearedPerlinNoise::new(&mut XoroshiroRandomSource::new(3), 0.5);
+        // 0 ≤ y < yd: y itself is rounded, 1.3 → 1.0.
+        assert_eq!(smeared.compute_fudge_y(1.3, 1.9), 1.0);
+        // Otherwise yd is: 0.7 → 0.5.
+        assert_eq!(smeared.compute_fudge_y(-4.0, 0.7), 0.5);
+        assert_eq!(smeared.compute_fudge_y(f64::NAN, 0.7), 0.5);
+        // The epsilon lifts values just under a multiple onto it.
+        assert_eq!(smeared.compute_fudge_y(-1.0, 0.499_999_99), 0.5);
     }
 
     #[test]

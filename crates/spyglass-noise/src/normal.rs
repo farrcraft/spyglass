@@ -104,6 +104,8 @@ pub struct OctaveInfo {
 pub struct NormalNoise {
     octaves: Vec<OctaveInfo>,
     normalization_factor: f64,
+    /// The octaves' `|amplitude|`, summed as the game sums them.
+    amplitude_sum: f64,
 }
 
 impl NormalNoise {
@@ -128,6 +130,7 @@ impl NormalNoise {
         Ok(NormalNoise {
             normalization_factor: normalization_factor(sum, &octaves),
             octaves,
+            amplitude_sum: sum,
         })
     }
 
@@ -139,6 +142,13 @@ impl NormalNoise {
     /// `normalizationFactor`.
     pub fn normalization_factor(&self) -> f64 {
         self.normalization_factor
+    }
+
+    /// The bound of `range()`: the noise's range is `±` this, which is
+    /// `(float)(sum · TARGET_DEVIATION · 6.0)` with `sum` the octaves' summed `|amplitude|`
+    /// before normalization. Density functions use it to compile `min` and `max`.
+    pub fn range_bound(&self) -> f32 {
+        (self.amplitude_sum * TARGET_DEVIATION * 6.0) as f32
     }
 
     /// `create(RandomSource)`: two positional factories forked from `random`, and for each

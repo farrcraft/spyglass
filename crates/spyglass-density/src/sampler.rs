@@ -1,6 +1,11 @@
 //! Density functions bound to a seed, evaluated at a block position as the game's compiled
 //! samplers do (`DensitySampler.sampleValue`). Each case cites the sampler it follows.
 //!
+//! Binding follows `compileSampler`, including the choices the game makes while compiling:
+//! constant operands, `min` and `max` by their operands' ranges, `pow` by its exponent. Those
+//! choices change results in corner cases (signed zeros, NaN, skipped operands), so they're made
+//! exactly as the game makes them.
+//!
 //! Evaluation remembers values per thread (see [`Sampler::sample`]): a node referenced from
 //! several places is computed once per position, and a node whose value can't depend on y once
 //! per column. That changes when each floating-point operation runs, never which ones run, so the
@@ -12,12 +17,20 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use spyglass_data::codec::{LoadError, LoadErrorKind};
-use spyglass_noise::{NoiseError, NoiseStack, NormalNoise, NormalNoiseParameters};
+use spyglass_noise::mth::exp2i;
+use spyglass_noise::{
+    Layer, NoiseError, NoiseStack, NormalNoise, NormalNoiseParameters, SmearedPerlinNoise,
+};
 use spyglass_rng::{
     PositionalRandomFactory, RandomSource, XoroshiroPositionalRandomFactory, XoroshiroRandomSource,
 };
 
-use crate::function::{Axis, DensityFunction, Df, Spline};
+use crate::function::{
+    Axis, Binary, BlendedNoise, DensityFunction, Df, Round, Spline, Tiling, Unary,
+};
+use crate::interval::{Interval, IntervalError};
+use crate::java;
+use crate::range;
 
 /// A density function bound to a seed's noises, ready to evaluate.
 #[derive(Debug, Clone)]
@@ -60,16 +73,80 @@ enum Node {
         sy: Sampler,
         sz: Sampler,
     },
+    /// `NoiseFunction.Sampler` over one of old blended noise's smeared stacks.
+    SmearedNoise {
+        noise: Arc<NoiseStack<SmearedPerlinNoise>>,
+        xz_scale: f64,
+        y_scale: f64,
+    },
     ShiftA(Arc<NoiseStack>),
     ShiftB(Arc<NoiseStack>),
     Shift(Arc<NoiseStack>),
+    /// `AddSampler`, and `ConstAddSampler`, which computes the same float.
     Add(Sampler, Sampler),
+    /// `SubSampler` and `ConstSubSampler`; a constant right operand compiles to an add of its
+    /// negation, which is the same float.
+    Sub(Sampler, Sampler),
+    /// `MulSampler`: both operands non-constant.
     Mul(Sampler, Sampler),
-    Abs(Sampler),
+    /// `ConstMulSampler`, also a `div` by a constant (times its reciprocal).
+    MulConst(Sampler, f32),
+    /// `DivSampler`: both operands non-constant.
+    Div(Sampler, Sampler),
+    /// `ConstDivSampler`: a constant divided by the sampler.
+    ConstDiv(f32, Sampler),
+    /// `MinSampler`, with the right operand's range minimum.
+    Min(Sampler, Sampler, f32),
+    /// `ConstMinSampler`.
+    MinConst(Sampler, f32),
+    /// `MaxSampler`, with the right operand's range maximum.
+    Max(Sampler, Sampler, f32),
+    /// `ConstMaxSampler`.
+    MaxConst(Sampler, f32),
+    Unary(Unary, Sampler),
+    /// `RoundFunction.Sampler`.
+    Round(Round, Sampler, Sampler),
+    /// `RoundFunction.IntegerMultipleSampler`: a multiple that's the constant 1.
+    RoundInteger(Round, Sampler),
+    /// `ClampFunction.Sampler`.
+    Clamp(Sampler, f32, f32),
+    /// `PowFunction.Sampler`.
+    Pow(Sampler, Sampler),
+    /// `PowFunction.ConstBaseSampler`.
+    PowConstBase(f64, Sampler),
+    /// `PowFunction.ConstExponentSampler`.
+    PowConstExponent(Sampler, f64),
     Lerp {
         alpha: Sampler,
         first: Sampler,
         second: Sampler,
+    },
+    /// `RangeChoiceFunction.Sampler` (and `ConstSampler`, the same choice).
+    RangeChoice {
+        input: Sampler,
+        min_inclusive: f32,
+        max_exclusive: f32,
+        when_in_range: Sampler,
+        when_out_of_range: Sampler,
+    },
+    /// `IntervalSelectFunction.Sampler` (and `SingleThresholdSampler`, the same choice).
+    IntervalSelect {
+        input: Sampler,
+        thresholds: Vec<f32>,
+        samplers: Vec<Sampler>,
+    },
+    /// `SliceFunction`'s samplers: the input with one coordinate fixed.
+    Slice {
+        axis: Axis,
+        coordinate: i32,
+        input: Sampler,
+    },
+    /// `FindTopSurfaceFunction.Sampler`, compiled inside a slice at y 0.
+    FindTopSurface {
+        density: Sampler,
+        upper_bound: Sampler,
+        lower_bound: i32,
+        cell_height: i32,
     },
     /// `GradientFunction.ClampedSampler`.
     Gradient {
@@ -79,6 +156,15 @@ enum Node {
         max: i32,
         from_value: f32,
         factor: f32,
+    },
+    /// `GradientFunction.RepeatSampler`, and with `mirrored`, `MirroredRepeatSampler`.
+    GradientRepeat {
+        axis: Axis,
+        from: i32,
+        range: i32,
+        from_value: f32,
+        factor: f32,
+        mirrored: bool,
     },
     Spline(BoundSpline),
 }
@@ -106,6 +192,8 @@ pub struct Binder<'n> {
     /// Samplers by function identity. Each entry keeps its function alive, so its address can't
     /// be reused by another function while the binder holds it.
     bound: HashMap<*const DensityFunction, (Df, Sampler)>,
+    /// Ranges by function identity, kept alive the same way.
+    ranges: HashMap<*const DensityFunction, (Df, Interval)>,
     id: u64,
     slots: u32,
 }
@@ -120,22 +208,20 @@ impl<'n> Binder<'n> {
             random: XoroshiroRandomSource::new(seed).fork_positional(),
             noises: HashMap::new(),
             bound: HashMap::new(),
+            ranges: HashMap::new(),
             id: BINDERS.fetch_add(1, Ordering::Relaxed),
             slots: 0,
         }
     }
 
-    /// `RandomState.getOrCreateNoise`, via `Noises.instantiate`.
-    fn noise(&mut self, id: &str) -> Result<Arc<NoiseStack>, LoadError> {
-        if let Some(n) = self.noises.get(id) {
-            return Ok(n.clone());
-        }
+    /// The parameters' `NormalNoise`, which doesn't depend on the seed.
+    pub(crate) fn normal_noise(&self, id: &str) -> Result<NormalNoise, LoadError> {
         let error = |kind| LoadError::new(id, "", kind);
         let parameters = self
             .noise_parameters
             .get(id)
             .ok_or_else(|| error(LoadErrorKind::Invalid("noise wasn't loaded before binding")))?;
-        let normal = NormalNoise::new(parameters).map_err(|e| {
+        NormalNoise::new(parameters).map_err(|e| {
             error(match e {
                 NoiseError::LegacyNormalization => LoadErrorKind::Unsupported {
                     what: "noise normalization",
@@ -143,10 +229,29 @@ impl<'n> Binder<'n> {
                 },
                 other => LoadErrorKind::Invalid(other.reason()),
             })
-        })?;
+        })
+    }
+
+    /// `RandomState.getOrCreateNoise`, via `Noises.instantiate`.
+    fn noise(&mut self, id: &str) -> Result<Arc<NoiseStack>, LoadError> {
+        if let Some(n) = self.noises.get(id) {
+            return Ok(n.clone());
+        }
+        let normal = self.normal_noise(id)?;
         let stack = Arc::new(normal.create(&mut self.random.from_hash_of(id)));
         self.noises.insert(id.to_string(), stack.clone());
         Ok(stack)
+    }
+
+    /// `DensityFunction.range()`, remembered per function.
+    pub(crate) fn range(&mut self, function: &Df) -> Result<Interval, LoadError> {
+        let key = Arc::as_ptr(function);
+        if let Some((_, r)) = self.ranges.get(&key) {
+            return Ok(*r);
+        }
+        let r = range::of(self, function)?;
+        self.ranges.insert(key, (function.clone(), r));
+        Ok(r)
     }
 
     /// A sampler for `node`, with a slot unless it's a constant.
@@ -171,7 +276,18 @@ impl<'n> Binder<'n> {
         if let Some((_, s)) = self.bound.get(&key) {
             return Ok(s.clone());
         }
-        let node = match &**function {
+        let sampler = match self.compile(function)? {
+            Compiled::Node(node) => self.sampler(node),
+            Compiled::Alias(sampler) => sampler,
+        };
+        self.bound.insert(key, (function.clone(), sampler.clone()));
+        Ok(sampler)
+    }
+
+    /// The node `function` compiles to, or another sampler it compiles to as is.
+    fn compile(&mut self, function: &Df) -> Result<Compiled, LoadError> {
+        use Compiled::{Alias, Node as N};
+        Ok(N(match &**function {
             DensityFunction::Constant(v) => Node::Constant(*v),
             DensityFunction::Noise {
                 noise,
@@ -211,17 +327,33 @@ impl<'n> Binder<'n> {
             DensityFunction::ShiftA { noise } => Node::ShiftA(self.noise(noise)?),
             DensityFunction::ShiftB { noise } => Node::ShiftB(self.noise(noise)?),
             DensityFunction::Shift { noise } => Node::Shift(self.noise(noise)?),
-            // The game specializes constant operands (ConstAddSampler, ConstMulSampler), which
-            // computes the same float: IEEE addition and multiplication are commutative.
-            DensityFunction::Add(a, b) => Node::Add(self.bind(a)?, self.bind(b)?),
-            DensityFunction::Mul(a, b) => Node::Mul(self.bind(a)?, self.bind(b)?),
-            DensityFunction::Abs(a) => Node::Abs(self.bind(a)?),
-            // The compiler deduplicates caches; on the point path the value is the input's.
-            DensityFunction::Cache(a) => {
-                return self.bind(a).inspect(|s| {
-                    self.bound.insert(key, (function.clone(), s.clone()));
-                });
+            DensityFunction::Binary(op, left, right) => {
+                return self.compile_binary(*op, left, right);
             }
+            DensityFunction::Unary(op, input) => Node::Unary(*op, self.bind(input)?),
+            DensityFunction::Round {
+                kind,
+                input,
+                multiple,
+            } => {
+                let input = self.bind(input)?;
+                // A multiple that's the constant 1 skips the division and multiplication.
+                if multiple.as_constant() == Some(1.0) {
+                    Node::RoundInteger(*kind, input)
+                } else {
+                    Node::Round(*kind, input, self.bind(multiple)?)
+                }
+            }
+            DensityFunction::Clamp { input, min, max } => {
+                Node::Clamp(self.bind(input)?, *min, *max)
+            }
+            DensityFunction::Pow { base, exponent } => {
+                return self.compile_pow(base, exponent);
+            }
+            // The compiler deduplicates caches; on the point path the value is the input's.
+            DensityFunction::Cache(input) => return Ok(Alias(self.bind(input)?)),
+            // BlendDensityFunction.Sampler: the input, when nothing is blending.
+            DensityFunction::BlendDensity(input) => return Ok(Alias(self.bind(input)?)),
             DensityFunction::Lerp {
                 alpha,
                 first,
@@ -231,24 +363,212 @@ impl<'n> Binder<'n> {
                 first: self.bind(first)?,
                 second: self.bind(second)?,
             },
-            DensityFunction::Gradient(g) => Node::Gradient {
-                axis: g.axis,
-                from: g.from_coordinate,
-                min: g.from_coordinate.min(g.to_coordinate),
-                max: g.from_coordinate.max(g.to_coordinate),
-                from_value: g.from_value,
-                // (toValue - fromValue) / (float)(toCoordinate - fromCoordinate).
-                factor: (g.to_value - g.from_value)
-                    / g.to_coordinate.wrapping_sub(g.from_coordinate) as f32,
+            DensityFunction::RangeChoice {
+                input,
+                min_inclusive,
+                max_exclusive,
+                when_in_range,
+                when_out_of_range,
+            } => Node::RangeChoice {
+                input: self.bind(input)?,
+                min_inclusive: *min_inclusive,
+                max_exclusive: *max_exclusive,
+                when_in_range: self.bind(when_in_range)?,
+                when_out_of_range: self.bind(when_out_of_range)?,
             },
+            DensityFunction::IntervalSelect {
+                input,
+                thresholds,
+                functions,
+            } => Node::IntervalSelect {
+                input: self.bind(input)?,
+                thresholds: thresholds.clone(),
+                samplers: functions
+                    .iter()
+                    .map(|f| self.bind(f))
+                    .collect::<Result<_, _>>()?,
+            },
+            DensityFunction::Slice {
+                axis,
+                coordinate,
+                input,
+            } => Node::Slice {
+                axis: *axis,
+                coordinate: *coordinate,
+                input: self.bind(input)?,
+            },
+            DensityFunction::FindTopSurface {
+                density,
+                upper_bound,
+                lower_bound,
+                cell_height,
+            } => Node::FindTopSurface {
+                density: self.bind(density)?,
+                upper_bound: self.bind(upper_bound)?,
+                lower_bound: *lower_bound,
+                cell_height: *cell_height,
+            },
+            DensityFunction::OldBlendedNoise(noise) => return self.compile_blended(noise),
+            DensityFunction::Gradient(g) => {
+                // compileSampler: the factor is computed once, from the wrapped int difference.
+                let range = g.to_coordinate.wrapping_sub(g.from_coordinate);
+                let factor = (g.to_value - g.from_value) / range as f32;
+                match g.tiling {
+                    Tiling::ClampToEdge => Node::Gradient {
+                        axis: g.axis,
+                        from: g.from_coordinate,
+                        min: g.from_coordinate.min(g.to_coordinate),
+                        max: g.from_coordinate.max(g.to_coordinate),
+                        from_value: g.from_value,
+                        factor,
+                    },
+                    Tiling::Repeat | Tiling::MirroredRepeat => Node::GradientRepeat {
+                        axis: g.axis,
+                        from: g.from_coordinate,
+                        range,
+                        from_value: g.from_value,
+                        factor,
+                        mirrored: g.tiling == Tiling::MirroredRepeat,
+                    },
+                }
+            }
             DensityFunction::Spline(spline) => Node::Spline(self.bind_spline(spline)?),
-            // SimpleDensityFunction: context-bound constants, 1 and 0 when nothing blends.
+            // SimpleDensityFunction: context-bound constants, 1 and 0 when nothing blends, and
+            // 0 with no structures.
             DensityFunction::BlendAlpha => Node::Constant(1.0),
-            DensityFunction::BlendOffset => Node::Constant(0.0),
+            DensityFunction::BlendOffset | DensityFunction::Beardifier => Node::Constant(0.0),
+            DensityFunction::Interpolated { .. } => {
+                return Err(unsupported(
+                    "density function type (needs the volume path)",
+                    "minecraft:interpolated",
+                ));
+            }
+            DensityFunction::DistanceToPoint { .. } => {
+                return Err(unsupported(
+                    "density function type",
+                    "minecraft:distance_to_point",
+                ));
+            }
+            DensityFunction::EndOuterIslands => {
+                return Err(unsupported(
+                    "density function type",
+                    "minecraft:end_outer_islands",
+                ));
+            }
+        }))
+    }
+
+    /// `BinaryFunction.compileSampler`. Both operands are compiled first; then constants and,
+    /// for `min` and `max`, ranges choose the sampler.
+    fn compile_binary(&mut self, op: Binary, left: &Df, right: &Df) -> Result<Compiled, LoadError> {
+        let (a, b) = (self.bind(left)?, self.bind(right)?);
+        let (ca, cb) = (left.as_constant(), right.as_constant());
+        Ok(Compiled::Node(match op {
+            // IEEE addition is commutative, and x − c is x + (−c), so the constant samplers
+            // compute the same floats as the general ones.
+            Binary::Add => Node::Add(a, b),
+            Binary::Sub => Node::Sub(a, b),
+            Binary::Mul => match (ca, cb) {
+                (Some(c), _) => Node::MulConst(b, c),
+                (None, Some(c)) => Node::MulConst(a, c),
+                (None, None) => Node::Mul(a, b),
+            },
+            Binary::Div => match (ca, cb) {
+                (Some(c), _) => Node::ConstDiv(c, b),
+                (None, Some(c)) => Node::MulConst(a, 1.0 / c),
+                (None, None) => Node::Div(a, b),
+            },
+            Binary::Min => {
+                let (ra, rb) = (self.range(left)?, self.range(right)?);
+                // An operand that's never above the other is the value.
+                if ra.max() < rb.min() {
+                    return Ok(Compiled::Alias(a));
+                }
+                if rb.max() < ra.min() {
+                    return Ok(Compiled::Alias(b));
+                }
+                match (ca, cb) {
+                    (Some(c), _) => Node::MinConst(b, c),
+                    (None, Some(c)) => Node::MinConst(a, c),
+                    (None, None) => Node::Min(a, b, rb.min()),
+                }
+            }
+            Binary::Max => {
+                let (ra, rb) = (self.range(left)?, self.range(right)?);
+                if ra.min() > rb.max() {
+                    return Ok(Compiled::Alias(a));
+                }
+                if rb.min() > ra.max() {
+                    return Ok(Compiled::Alias(b));
+                }
+                match (ca, cb) {
+                    (Some(c), _) => Node::MaxConst(b, c),
+                    (None, Some(c)) => Node::MaxConst(a, c),
+                    (None, None) => Node::Max(a, b, rb.max()),
+                }
+            }
+        }))
+    }
+
+    /// `PowFunction.compileSampler` and `compileConstExponent`.
+    fn compile_pow(&mut self, base: &Df, exponent: &Df) -> Result<Compiled, LoadError> {
+        let (b, e) = (self.bind(base)?, self.bind(exponent)?);
+        if let Some(c) = base.as_constant() {
+            return Ok(Compiled::Node(Node::PowConstBase(f64::from(c), e)));
+        }
+        let Some(c) = exponent.as_constant() else {
+            return Ok(Compiled::Node(Node::Pow(b, e)));
         };
-        let sampler = self.sampler(node);
-        self.bound.insert(key, (function.clone(), sampler.clone()));
-        Ok(sampler)
+        // |c| of ½, 1, 2 or 3 compiles to a cheaper sampler, then a reciprocal if c < 0.
+        let magnitude = c.abs();
+        let positive = if magnitude == 0.5 {
+            self.sampler(Node::Unary(Unary::Sqrt, b))
+        } else if magnitude == 1.0 {
+            b
+        } else if magnitude == 2.0 {
+            self.sampler(Node::Unary(Unary::Square, b))
+        } else if magnitude == 3.0 {
+            self.sampler(Node::Unary(Unary::Cube, b))
+        } else {
+            return Ok(Compiled::Node(Node::PowConstExponent(b, f64::from(c))));
+        };
+        Ok(if c < 0.0 {
+            Compiled::Node(Node::Unary(Unary::Reciprocal, positive))
+        } else {
+            Compiled::Alias(positive)
+        })
+    }
+
+    /// `BlendedNoise.compileSampler`: `lerp(clamp(main + 0.5, 0, 1), minLimit, maxLimit)`, the
+    /// three noises sampled by `NoiseFunction.Sampler`.
+    fn compile_blended(&mut self, p: &BlendedNoise) -> Result<Compiled, LoadError> {
+        // CompileContext.createRandom(NOISE_SEED), then createFbmSet.
+        let mut random = self.random.from_hash_of("minecraft:terrain");
+        let xz_multiplier = 684.412 * p.xz_scale;
+        let y_multiplier = 684.412 * p.y_scale;
+        let smear = y_multiplier * p.smear_scale_multiplier;
+        let main_smear = smear / p.y_factor;
+        let min_limit = create_fbm(&mut random, -15, smear, LIMIT_FACTOR);
+        let max_limit = create_fbm(&mut random, -15, smear, LIMIT_FACTOR);
+        let main = create_fbm(&mut random, -7, main_smear, 12.75);
+        let mut noise = |noise, xz_scale, y_scale| {
+            self.sampler(Node::SmearedNoise {
+                noise: Arc::new(noise),
+                xz_scale,
+                y_scale,
+            })
+        };
+        let first = noise(min_limit, xz_multiplier, y_multiplier);
+        let second = noise(max_limit, xz_multiplier, y_multiplier);
+        let main = noise(main, xz_multiplier / p.xz_factor, y_multiplier / p.y_factor);
+        let half = self.sampler(Node::Constant(0.5));
+        let shifted = self.sampler(Node::Add(main, half));
+        let alpha = self.sampler(Node::Clamp(shifted, 0.0, 1.0));
+        Ok(Compiled::Node(Node::Lerp {
+            alpha,
+            first,
+            second,
+        }))
     }
 
     fn bind_spline(&mut self, spline: &Spline) -> Result<BoundSpline, LoadError> {
@@ -268,6 +588,60 @@ impl<'n> Binder<'n> {
     }
 }
 
+/// What a function compiles to: a new node, or a sampler that already exists (an input passed
+/// through, or a `min` or `max` operand chosen by range).
+enum Compiled {
+    Node(Node),
+    Alias(Sampler),
+}
+
+/// `BlendedNoise.LIMIT_FACTOR`.
+pub(crate) const LIMIT_FACTOR: f64 = 0.999_984_741_210_937_5;
+
+/// `BlendedNoise.createFbm`: `1 − first_octave` smeared Perlin noises from one random, in order,
+/// the first at frequency 1 and each next at half the last, amplitudes doubling from
+/// `factor / (2^n − 1)`.
+fn create_fbm(
+    random: &mut impl RandomSource,
+    first_octave: i32,
+    smear: f64,
+    factor: f64,
+) -> NoiseStack<SmearedPerlinNoise> {
+    let n = 1 - first_octave;
+    let mut frequency = 1.0;
+    let mut amplitude = factor / (exp2i(n) - 1.0);
+    let layers = (0..n)
+        .map(|_| {
+            let layer = Layer {
+                noise: SmearedPerlinNoise::new(random, smear * frequency),
+                frequency,
+                amplitude: amplitude as f32,
+            };
+            frequency /= 2.0;
+            amplitude *= 2.0;
+            layer
+        })
+        .collect();
+    NoiseStack::new(layers)
+}
+
+fn unsupported(what: &'static str, name: &str) -> LoadError {
+    LoadError::new(
+        name,
+        "",
+        LoadErrorKind::Unsupported {
+            what,
+            name: name.to_string(),
+        },
+    )
+}
+
+impl From<IntervalError> for LoadError {
+    fn from(e: IntervalError) -> Self {
+        LoadError::new("", "", LoadErrorKind::Invalid(e.reason()))
+    }
+}
+
 /// Remembered values, valid for one binder at one column and one y. Stamps tell the current
 /// column's and point's entries from stale ones, so moving on never clears anything.
 #[derive(Default)]
@@ -280,6 +654,15 @@ struct Memo {
     point_stamp: u64,
     /// By slot: the stamp the value was computed under, and the value. Stamp 0 is never valid.
     entries: Vec<(u64, f32)>,
+}
+
+/// Where a [`Memo`] was, to go back after evaluating a child somewhere else.
+struct Place {
+    binder: u64,
+    column: Option<(i32, i32)>,
+    y: Option<i32>,
+    column_stamp: u64,
+    point_stamp: u64,
 }
 
 impl Memo {
@@ -298,6 +681,26 @@ impl Memo {
             self.point_stamp = self.stamps;
         }
     }
+
+    fn place(&self) -> Place {
+        Place {
+            binder: self.binder,
+            column: self.column,
+            y: self.y,
+            column_stamp: self.column_stamp,
+            point_stamp: self.point_stamp,
+        }
+    }
+
+    /// Returns to `place`. Values computed elsewhere in between carry other stamps, so they're
+    /// never mistaken for this place's.
+    fn restore(&mut self, place: Place) {
+        self.binder = place.binder;
+        self.column = place.column;
+        self.y = place.y;
+        self.column_stamp = place.column_stamp;
+        self.point_stamp = place.point_stamp;
+    }
 }
 
 thread_local! {
@@ -315,6 +718,19 @@ struct Pos {
     zd: f64,
 }
 
+impl Pos {
+    fn new(x: i32, y: i32, z: i32) -> Self {
+        Pos {
+            x,
+            y,
+            z,
+            xd: f64::from(x),
+            yd: f64::from(y),
+            zd: f64::from(z),
+        }
+    }
+}
+
 impl Sampler {
     /// Whether the value can depend on y. When this is false, the value is the same at every y
     /// for a given x and z, bit for bit (see `docs/specs/density-functions.md`).
@@ -330,15 +746,7 @@ impl Sampler {
     pub fn sample(&self, x: i32, y: i32, z: i32) -> f32 {
         MEMO.with_borrow_mut(|memo| {
             memo.begin(self.binder, x, y, z);
-            let pos = Pos {
-                x,
-                y,
-                z,
-                xd: f64::from(x),
-                yd: f64::from(y),
-                zd: f64::from(z),
-            };
-            self.eval(memo, pos)
+            self.eval(memo, Pos::new(x, y, z))
         })
     }
 
@@ -363,6 +771,16 @@ impl Sampler {
             memo.entries.resize(slot + 1, (0, 0.0));
         }
         memo.entries[slot] = (stamp, value);
+        value
+    }
+
+    /// The value at another position than the one being evaluated, for samplers that move their
+    /// inputs (slices, `find_top_surface`).
+    fn eval_at(&self, memo: &mut Memo, x: i32, y: i32, z: i32) -> f32 {
+        let place = memo.place();
+        memo.begin(self.binder, x, y, z);
+        let value = self.eval(memo, Pos::new(x, y, z));
+        memo.restore(place);
         value
     }
 }
@@ -408,14 +826,80 @@ impl Node {
                 yd * y_scale + f64::from(sy.eval(memo, pos)),
                 zd * xz_scale + f64::from(sz.eval(memo, pos)),
             ),
+            Node::SmearedNoise {
+                noise,
+                xz_scale,
+                y_scale,
+            } => noise.get(xd * xz_scale, yd * y_scale, zd * xz_scale),
             // ShiftA: NoiseFunction.Sampler(noise, 0.25, 0.0) times 4.
             Node::ShiftA(noise) => noise.get(xd * 0.25, yd * 0.0, zd * 0.25) * 4.0,
             // ShiftB: the noise at (z/4, x/4, 0) times 4.
             Node::ShiftB(noise) => noise.get(zd * 0.25, xd * 0.25, 0.0) * 4.0,
             Node::Shift(noise) => noise.get(xd * 0.25, yd * 0.25, zd * 0.25) * 4.0,
             Node::Add(a, b) => a.eval(memo, pos) + b.eval(memo, pos),
-            Node::Mul(a, b) => a.eval(memo, pos) * b.eval(memo, pos),
-            Node::Abs(a) => a.eval(memo, pos).abs(),
+            Node::Sub(a, b) => a.eval(memo, pos) - b.eval(memo, pos),
+            // MulSampler and DivSampler: a zero left operand (either sign) gives +0.0, and the
+            // right isn't evaluated.
+            Node::Mul(a, b) => {
+                let left = a.eval(memo, pos);
+                if left == 0.0 {
+                    0.0
+                } else {
+                    left * b.eval(memo, pos)
+                }
+            }
+            Node::MulConst(a, c) => a.eval(memo, pos) * c,
+            Node::Div(a, b) => {
+                let left = a.eval(memo, pos);
+                if left == 0.0 {
+                    0.0
+                } else {
+                    left / b.eval(memo, pos)
+                }
+            }
+            Node::ConstDiv(c, b) => c / b.eval(memo, pos),
+            // MinSampler: the left value if it's at or below anything the right can be.
+            Node::Min(a, b, right_min) => {
+                let left = a.eval(memo, pos);
+                if left <= *right_min {
+                    left
+                } else {
+                    java::min(left, b.eval(memo, pos))
+                }
+            }
+            Node::MinConst(a, c) => java::min(a.eval(memo, pos), *c),
+            Node::Max(a, b, right_max) => {
+                let left = a.eval(memo, pos);
+                if left >= *right_max {
+                    left
+                } else {
+                    java::max(left, b.eval(memo, pos))
+                }
+            }
+            Node::MaxConst(a, c) => java::max(a.eval(memo, pos), *c),
+            Node::Unary(op, a) => unary(*op, a.eval(memo, pos)),
+            // RoundFunction.Sampler.apply: x if the multiple is 0, else round(x / m) * m.
+            Node::Round(kind, input, multiple) => {
+                let v = input.eval(memo, pos);
+                let m = multiple.eval(memo, pos);
+                if m == 0.0 {
+                    v
+                } else {
+                    round_to_integer(v / m, *kind) * m
+                }
+            }
+            Node::RoundInteger(kind, input) => round_to_integer(input.eval(memo, pos), *kind),
+            Node::Clamp(input, min, max) => clamp(input.eval(memo, pos), *min, *max),
+            Node::Pow(base, exponent) => {
+                let b = f64::from(base.eval(memo, pos));
+                java_pow(b, f64::from(exponent.eval(memo, pos)))
+            }
+            Node::PowConstBase(base, exponent) => {
+                java_pow(*base, f64::from(exponent.eval(memo, pos)))
+            }
+            Node::PowConstExponent(base, exponent) => {
+                java_pow(f64::from(base.eval(memo, pos)), *exponent)
+            }
             // LerpFunction.Sampler: exactly first at 0 and second at 1, Mth.lerp in between.
             Node::Lerp {
                 alpha,
@@ -432,6 +916,66 @@ impl Node {
                     a + t * (second.eval(memo, pos) - a)
                 }
             }
+            // In range when min ≤ v < max; NaN isn't. Only the chosen branch is evaluated.
+            Node::RangeChoice {
+                input,
+                min_inclusive,
+                max_exclusive,
+                when_in_range,
+                when_out_of_range,
+            } => {
+                let v = input.eval(memo, pos);
+                if v >= *min_inclusive && v < *max_exclusive {
+                    when_in_range.eval(memo, pos)
+                } else {
+                    when_out_of_range.eval(memo, pos)
+                }
+            }
+            // selectSamplerIndex: the first threshold above v, else the last function (NaN
+            // included).
+            Node::IntervalSelect {
+                input,
+                thresholds,
+                samplers,
+            } => {
+                let v = input.eval(memo, pos);
+                let i = thresholds
+                    .iter()
+                    .position(|t| v < *t)
+                    .unwrap_or(samplers.len() - 1);
+                samplers[i].eval(memo, pos)
+            }
+            Node::Slice {
+                axis,
+                coordinate,
+                input,
+            } => match axis {
+                Axis::X => input.eval_at(memo, *coordinate, y, z),
+                Axis::Y => input.eval_at(memo, x, *coordinate, z),
+                Axis::Z => input.eval_at(memo, x, y, *coordinate),
+            },
+            // FindTopSurfaceFunction.Sampler.findSurfaceFrom, inside a slice at y 0: the upper
+            // bound at (x, 0, z), then density at points down from the cell below it.
+            Node::FindTopSurface {
+                density,
+                upper_bound,
+                lower_bound,
+                cell_height,
+            } => {
+                let upper = upper_bound.eval_at(memo, x, 0, z);
+                let start = floor_f32(upper / *cell_height as f32).wrapping_mul(*cell_height);
+                if start <= *lower_bound {
+                    return *lower_bound as f32;
+                }
+                let mut y = start;
+                while y >= *lower_bound {
+                    if density.eval_at(memo, x, y, z) > 0.0 {
+                        return y as f32;
+                    }
+                    y = y.wrapping_sub(*cell_height);
+                }
+                *lower_bound as f32
+            }
             // ClampedSampler.compute: fromValue + (clamp(c, min, max) - from) * factor.
             Node::Gradient {
                 axis,
@@ -444,6 +988,28 @@ impl Node {
                 let c = axis.choose(x, y, z);
                 let clamped = if c < *min { *min } else { c.min(*max) };
                 from_value + clamped.wrapping_sub(*from) as f32 * factor
+            }
+            // RepeatSampler and MirroredRepeatSampler.compute, with Java's floorMod and
+            // floorDiv, which follow the sign of the range.
+            Node::GradientRepeat {
+                axis,
+                from,
+                range,
+                from_value,
+                factor,
+                mirrored,
+            } => {
+                let d = axis.choose(x, y, z).wrapping_sub(*from);
+                if !mirrored {
+                    return from_value + java::floor_mod(d, *range) as f32 * factor;
+                }
+                let q = java::floor_div(d, *range);
+                let rem = d.wrapping_sub(q.wrapping_mul(*range));
+                if q & 1 == 0 {
+                    from_value + rem as f32 * factor
+                } else {
+                    from_value + range.wrapping_sub(rem) as f32 * factor
+                }
             }
             Node::Spline(spline) => spline.sample(memo, pos),
         }
@@ -459,7 +1025,7 @@ impl Node {
         match self {
             Node::Constant(_) | Node::ShiftA(_) | Node::ShiftB(_) => false,
             Node::Shift(_) => true,
-            Node::Noise { y_scale, .. } => *y_scale != 0.0,
+            Node::Noise { y_scale, .. } | Node::SmearedNoise { y_scale, .. } => *y_scale != 0.0,
             Node::NoiseShiftedXz {
                 y_scale, sx, sz, ..
             } => *y_scale != 0.0 || sx.depends_on_y || sz.depends_on_y,
@@ -470,17 +1036,105 @@ impl Node {
                 sz,
                 ..
             } => *y_scale != 0.0 || sx.depends_on_y || sy.depends_on_y || sz.depends_on_y,
-            Node::Add(a, b) | Node::Mul(a, b) => a.depends_on_y || b.depends_on_y,
-            Node::Abs(a) => a.depends_on_y,
+            Node::Add(a, b)
+            | Node::Sub(a, b)
+            | Node::Mul(a, b)
+            | Node::Div(a, b)
+            | Node::Min(a, b, _)
+            | Node::Max(a, b, _)
+            | Node::Round(_, a, b)
+            | Node::Pow(a, b) => a.depends_on_y || b.depends_on_y,
+            Node::MulConst(a, _)
+            | Node::ConstDiv(_, a)
+            | Node::MinConst(a, _)
+            | Node::MaxConst(a, _)
+            | Node::Unary(_, a)
+            | Node::RoundInteger(_, a)
+            | Node::Clamp(a, _, _)
+            | Node::PowConstBase(_, a)
+            | Node::PowConstExponent(a, _) => a.depends_on_y,
             Node::Lerp {
                 alpha,
                 first,
                 second,
             } => alpha.depends_on_y || first.depends_on_y || second.depends_on_y,
-            Node::Gradient { axis, .. } => *axis == Axis::Y,
+            Node::RangeChoice {
+                input,
+                when_in_range,
+                when_out_of_range,
+                ..
+            } => input.depends_on_y || when_in_range.depends_on_y || when_out_of_range.depends_on_y,
+            Node::IntervalSelect {
+                input, samplers, ..
+            } => input.depends_on_y || samplers.iter().any(|s| s.depends_on_y),
+            Node::Slice { axis, input, .. } => *axis != Axis::Y && input.depends_on_y,
+            Node::FindTopSurface { .. } => false,
+            Node::Gradient { axis, .. } | Node::GradientRepeat { axis, .. } => *axis == Axis::Y,
             Node::Spline(spline) => spline.depends_on_y(),
         }
     }
+}
+
+/// `UnaryFunction`'s samplers.
+fn unary(op: Unary, x: f32) -> f32 {
+    match op {
+        Unary::Abs => x.abs(),
+        // Mth.square and Mth.cube: (x·x)·x.
+        Unary::Square => x * x,
+        Unary::Cube => x * x * x,
+        // Mth.sqrt: through double.
+        Unary::Sqrt => f64::from(x).sqrt() as f32,
+        // LeakyReLUSampler.apply: positive values pass, others are scaled.
+        Unary::HalfNegative => leaky_relu(0.5, x),
+        Unary::QuarterNegative => leaky_relu(0.25, x),
+        Unary::Reciprocal => 1.0 / x,
+        Unary::Negate => -x,
+        Unary::Squeeze => squeeze(x),
+        Unary::Log => f64::from(x).ln() as f32,
+        Unary::Sign => java::signum(x),
+    }
+}
+
+/// `UnaryFunction.LeakyReLUSampler.apply`.
+pub(crate) fn leaky_relu(negative_factor: f32, x: f32) -> f32 {
+    if x > 0.0 { x } else { x * negative_factor }
+}
+
+/// `UnaryFunction.SqueezeSampler.apply`: `c/2 − c³/24` with `c` clamped to `[−1, 1]`.
+pub(crate) fn squeeze(x: f32) -> f32 {
+    let c = clamp(x, -1.0, 1.0);
+    c / 2.0 - c * c * c / 24.0
+}
+
+/// `Mth.clamp(float, float, float)`: `min` if below it, else `Math.min(value, max)`.
+fn clamp(value: f32, min: f32, max: f32) -> f32 {
+    if value < min {
+        min
+    } else {
+        java::min(value, max)
+    }
+}
+
+/// `Mth.floor(float)`: through `double`, saturating.
+fn floor_f32(value: f32) -> i32 {
+    f64::from(value).floor() as i32
+}
+
+/// `RoundFunction.roundToInteger`: each rounding through `double`, except `round`, which is
+/// `Math.round(float)` to an int.
+pub(crate) fn round_to_integer(x: f32, kind: Round) -> f32 {
+    match kind {
+        Round::Floor => f64::from(x).floor() as f32,
+        Round::Round => java::round(x) as f32,
+        Round::Ceil => f64::from(x).ceil() as f32,
+        Round::Truncate if x > 0.0 => f64::from(x).floor() as f32,
+        Round::Truncate => f64::from(x).ceil() as f32,
+    }
+}
+
+/// `(float) Math.pow(base, exponent)`.
+fn java_pow(base: f64, exponent: f64) -> f32 {
+    base.powf(exponent) as f32
 }
 
 impl BoundSpline {

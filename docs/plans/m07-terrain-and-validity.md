@@ -105,17 +105,18 @@ Specs and ADRs that govern this: [density-functions.md](../specs/density-functio
 - [x] From the 26.3 bytecode, note in the specs (not in this plan): the chunk-level density path and its caches; what `getBaseHeight`, `getBaseColumn`, `getFirstFreeHeight` and `getFirstOccupiedHeight` evaluate (beardifier, blending, aquifers, material rule); `find_top_surface`; the aquifer; each structure type's terrain conditions; `addPieces` and bounding-box adjustment. In [terrain.md](../specs/terrain.md), [density-functions.md](../specs/density-functions.md) and [structure-placement.md](../specs/structure-placement.md), as drafts.
 - [x] Decide surface rules (see [Decisions](#decisions)) from what heightmaps need, and update the milestone's scope if they move. Out: no height query evaluates the material rule; the milestone's scope says so.
 - [x] Oracle: height golden files, structure format 2 with bounds and piece boxes; `cargo xtask oracle golden` regenerates them. `docs/specs/oracle.md` updated.
-- [ ] Oracle probe additions: every named density function at points, final density chunk digests, aquifer substance at points. Moved to the start of phases 2 and 3, where the tests that read them are written.
+- [ ] Oracle probe additions: every named density function at points, final density chunk digests, aquifer substance at points. Moved to the start of phases 2 and 3, where the tests that read them are written; the points are done (phase 2).
 - [x] `docs/specs/terrain.md` (new): columns, aquifers, heightmaps, the generator queries, and what's out (features, carvers, beards).
 - [x] ADR: `spyglass-terrain` and its boundary with density and structure; how terrain is bound lazily per seed; whether a new dependency is needed (none expected). [0022](../adr/0022-terrain-crate-and-volume-evaluation.md), accepted 2026-10-26: it adds a volume evaluation path, which the plan didn't foresee.
 
 ### Phase 2: density types
 
-- [ ] Fix `mul`: the point path returns `+0.0` for a zero left operand when neither operand is constant, without evaluating the right.
-- [ ] Ranges (`Interval`), and `min`/`max` compiled by them.
-- [ ] Every missing type, loaded by its codec, with point values; `div` by a constant as the game compiles it.
-- [ ] Hand-worked unit tests per type ([ADR 0008](../adr/0008-game-derived-test-values-stay-local.md)).
-- [ ] Ignored probe test: every named function at every probed point, bit for bit; every one of the 55 loads.
+- [x] Fix `mul`: the point path returns `+0.0` for a zero left operand when neither operand is constant, without evaluating the right.
+- [x] Ranges (`Interval`), and `min`/`max` compiled by them.
+- [x] Every missing type, loaded by its codec, with point values; `div` by a constant as the game compiles it. `interpolated`'s point value needs the volume path, so it loads but refuses to bind until phase 3; the End's two types load only.
+- [x] Hand-worked unit tests per type ([ADR 0008](../adr/0008-game-derived-test-values-stay-local.md)).
+- [x] Oracle probe: every named density function at the probe's blocks (`cargo xtask oracle probe`).
+- [x] Ignored probe test: every named function at every probed point, bit for bit; every one of the 55 loads. The 14 functions that reach `interpolated` or `distance_to_point` are skipped and listed until they can be bound.
 
 ### Phase 3: the volume path and aquifers
 
@@ -170,13 +171,13 @@ Specs and ADRs that govern this: [density-functions.md](../specs/density-functio
 
 ## Durable outputs
 
-- [ ] `docs/specs/terrain.md` (new)
+- [x] `docs/specs/terrain.md` (new)
 - [ ] `docs/specs/density-functions.md`: every type, the cell path
 - [ ] `docs/specs/structure-placement.md`: terrain conditions, jigsaw assembly and bounds
 - [ ] `docs/specs/locate.md`, `docs/specs/search.md`: confirmed mode
 - [ ] `docs/specs/oracle.md`: probe additions, height files, structure format 2
 - [ ] `docs/specs/cli-json.md`, `docs/specs/render.md`
-- [ ] ADR: `spyglass-terrain` and lazy terrain binding
+- [x] ADR: `spyglass-terrain` and lazy terrain binding ([0022](../adr/0022-terrain-crate-and-volume-evaluation.md))
 - [ ] `docs/architecture.md`, `README.md`, `docs/getting-started.md`
 
 ## Decisions
@@ -191,6 +192,12 @@ Agreed on 2026-10-25, as recommended:
 
 ## Notes
 
+- 2026-10-26: Phase 2 done. All 55 bundled density functions load, and the 41 that can be bound match the game at all 18 probe blocks for all 10 seeds (9,900 cases), with `cargo xtask oracle-test` still green throughout. From the bytecode:
+  - The compiler inlines references, prepares caches, then applies `SLICE_UNIFORM_AXES`, which only wraps nodes in value-preserving slices, so spyglass skips it. Constant specializations test for `ConstantFunction`, which a `cache` of a constant isn't.
+  - `old_blended_noise` compiles into existing samplers (`lerp(clamp(main + 0.5, 0, 1), minLimit, maxLimit)` over three `noise` samplers on smeared stacks), so it needed no new evaluation, only `SmearedPerlinNoise` and a stack generic over its noise.
+  - `find_top_surface` and `slice` evaluate inputs at other positions, so the per-thread memo now saves and restores its place around them.
+  - Ranges are computed at bind time, remembered per function; where the game's `Interval` throws, binding fails.
+- 2026-10-26: ADR 0022 accepted; phase 1 committed.
 - 2026-10-25: Phase 1 done but for the probe additions, which move to phases 2 and 3. From the bytecode, with three survey passes cross-checked against the oracle:
   - The generator's columns evaluate `final_density` and the aquifer only: no beardifier, no blending, no material rule (so no ore veins or surface blocks). The new height files agree: their block columns hold only stone, air, water and lava. So surface rules are out of the milestone.
   - Terrain is sampled as a **volume**, and the volume path differs from the point path for `interpolated` (different float order), for `mul`/`div` with a zero left operand, `min`/`max` with NaN or signed zeros, and noise octave coordinates with non-power-of-two scales. `min` and `max` are also compiled by their operands' ranges. So spyglass needs a second evaluation path and the game's `Interval` arithmetic: ADR 0022.

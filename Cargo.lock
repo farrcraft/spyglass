@@ -3531,6 +3531,7 @@ dependencies = [
  "spyglass-noise",
  "spyglass-oracle",
  "spyglass-rng",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

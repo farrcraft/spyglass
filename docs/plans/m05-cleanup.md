@@ -196,10 +196,10 @@ Six phases, each a commit or two that passes `cargo xtask check` and the oracle 
 
 ### 5. Density performance
 
-- [ ] Benchmarks (the `criterion` dependency gets an ADR, or the benchmarks run as a timed xtask command): one `biome_at`, a 64×64 quart region, a `/locate biome` radius 6400, and a 4×4-chunk density column fill.
-- [ ] Slot indices for shared nodes in `Binder`, and a slot cache per evaluation, so each shared node is evaluated once per position.
-- [ ] A column context instead of `at_column`'s per-column tree.
-- [ ] The ignored density, biome and spawn oracle tests pass unchanged. Record the speedups in the notes.
+- [x] Benchmarks: `cargo xtask bench` (phase 4), covering `biome_at` over 256 × 256 quarts, `/locate biome` at radius 6400, structure locates and spawn.
+- [x] Every bound node but constants gets a slot from its `Binder`; a per-thread memo stamped with the binder, the column and the y remembers values, so shared nodes run once per position and y-independent ones once per column.
+- [x] `Sampler::at_column` and `ClimateSampler::at_column` are gone: column-by-column callers get the same saving from the memo, without rebuilding trees or splitting shared nodes.
+- [x] The oracle tests pass unchanged; numbers in the notes. I5's `Spline::Multipoint` now holds a validated `Points`, and the sampler's renames (`depends_on_y`, `y_scale`, `xz_scale`) and `match` came with the rewrite.
 
 ### 6. Tests, idiom and the oracle runner
 
@@ -273,6 +273,7 @@ Agreed on 2026-10-25, as recommended:
 
 ## Notes
 
+- 2026-10-25: Phase 5 done. `cargo xtask bench`, same session, before → after (ms): village locate 363 → 51; stronghold locate in a new session 2,437 → 957; cherry grove locate 71 → 47; 65,536 `biome_at` 423 → 158; spawn origin 3.8 → 1.2. The ignored oracle suite went from about 6 minutes to under 2.
 - 2026-10-25: Phase 4 done. `cargo xtask bench`, medians in ms, before → after:
   - `World::open` 334 → 330; `World::session` 0.10 → 0.10
   - village locate 459, or 505 when resolved from text → 363 resolved, 385 from text (the text path re-parses tags; the runs are noisy by about 20%)

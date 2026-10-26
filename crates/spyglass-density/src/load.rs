@@ -11,7 +11,7 @@ use spyglass_data::codec::{
 };
 use spyglass_noise::{NormalNoiseParameters, Normalization};
 
-use crate::function::{Axis, DensityFunction, Df, Gradient, Spline};
+use crate::function::{Axis, DensityFunction, Df, Gradient, Points, Spline};
 
 /// Registry paths, as the game's data packs lay them out.
 pub(crate) const DENSITY_FUNCTION: &str = "worldgen/density_function";
@@ -244,12 +244,9 @@ impl<'r, R: Resources + ?Sized> Loader<'r, R> {
                         &at.child("derivative"),
                     )?);
                 }
-                Ok(Spline::Multipoint {
-                    coordinate,
-                    locations,
-                    values,
-                    derivatives,
-                })
+                let points = Points::new(coordinate, locations, values, derivatives)
+                    .expect("one location, value and derivative per point, and at least one");
+                Ok(Spline::Multipoint(points))
             }
             _ => Err(at.error(LoadErrorKind::Shape("a number or a spline object"))),
         }

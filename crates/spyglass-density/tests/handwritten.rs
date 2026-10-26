@@ -297,15 +297,58 @@ fn columns_fold_only_what_doesnt_depend_on_y() {
         flat.sample(13, -40, 7).to_bits(),
         flat.sample(13, 40, 7).to_bits()
     );
+    // Sampling elsewhere first forgets the column, so this value is computed from scratch.
+    let fresh = |x: i32, y: i32, z: i32| {
+        depth.sample(x.wrapping_add(1), y, z);
+        depth.sample(x, y, z)
+    };
     for (x, z) in [(0, 0), (-37, 1000), (123_456, -987_654)] {
-        let column = depth.at_column(x, z);
-        for y in -64..320 {
-            assert_eq!(
-                column.sample(x, y, z).to_bits(),
-                depth.sample(x, y, z).to_bits(),
-                "({x}, {y}, {z})"
-            );
-        }
+        let expected: Vec<u32> = (-64..320).map(|y| fresh(x, y, z).to_bits()).collect();
+        // Down the column, y-independent parts are remembered; up it, and twice per point too.
+        let down: Vec<u32> = (-64..320)
+            .map(|y| depth.sample(x, y, z).to_bits())
+            .collect();
+        let up: Vec<u32> = (-64..320)
+            .rev()
+            .map(|y| {
+                depth.sample(x, y, z);
+                depth.sample(x, y, z).to_bits()
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        assert_eq!(down, expected, "({x}, {z})");
+        assert_eq!(up, expected, "({x}, {z})");
+    }
+}
+
+#[test]
+fn binders_never_share_remembered_values() {
+    let map = resources(vec![
+        (
+            "worldgen/noise/minecraft:n".to_string(),
+            json!({"base_octave": -4, "octave_count": 2}),
+        ),
+        df(
+            "minecraft:tall",
+            json!({"type": "noise", "noise": "n", "xz_scale": 1, "y_scale": 1}),
+        ),
+    ]);
+    let mut loader = Loader::new(&map);
+    let f = loader.function("tall").unwrap();
+    let a = Binder::new(loader.noises(), 0).bind(&f).unwrap();
+    let b = Binder::new(loader.noises(), 1).bind(&f).unwrap();
+    let alone = |s: &Sampler| {
+        s.sample(99, 9, 9);
+        s.sample(5, 6, 7)
+    };
+    let (a0, b0) = (alone(&a), alone(&b));
+    assert_ne!(a0, b0);
+    // The same position, alternating between two seeds' samplers.
+    for _ in 0..3 {
+        assert_eq!(a.sample(5, 6, 7), a0);
+        assert_eq!(b.sample(5, 6, 7), b0);
     }
 }
 

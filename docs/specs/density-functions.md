@@ -48,17 +48,22 @@ A loaded graph doesn't depend on the seed. Binding creates the seed's noises as 
 
 The game has two paths: `sampleValue` at a point, and `sampleVolume` over a buffer, which chunk generation uses. The probe compares them for the six climate functions over whole chunks (4 chunks × 10 seeds in 26.3). They agree bit for bit, so spyglass ports only the point path. The probe test fails if that ever changes.
 
-## Column evaluation
+## Remembered values
 
-`Sampler::depends_on_y` says whether a bound function's value can depend on y. `Sampler::at_column(x, z)` replaces every subtree that can't with a constant, its value at `(x, 0, z)`, and keeps everything else, splines included, with the same structure. The folded sampler gives the same bits as the original at that column, because folding changes no floating-point operation, only when it runs. This works like the game's `SLICE_UNIFORM_AXES` rewrite and `cache_2d`.
+Evaluation remembers values per thread, so work isn't repeated:
+
+- **Shared nodes** (a named function referenced from several places, as after `INLINE_REFERENCE`) are computed once per position, across every function bound by the same `Binder`. The six climate functions share their shifts and the continents, erosion and ridges noises this way.
+- **Nodes that don't depend on y** are computed once per column: consecutive samples at the same `(x, z)` reuse them, as the game's `SLICE_UNIFORM_AXES` rewrite and `cache_2d` do. Callers that fill a region go column by column.
+
+Each `Binder` numbers its nodes' slots, and the memo is stamped with the binder, the column and the y it was filled at, so values never leak between seeds, columns or heights. Remembering changes when a floating-point operation runs, never which ones run or their order, so the results are the same bits. Tests compare remembered values with fresh ones down and up columns, and between two seeds' samplers alternating at one position.
+
+`Sampler::depends_on_y` says whether a bound function's value can depend on y.
 
 What depends on y:
 
 - `shift` and a `gradient` along y do. Constants, `shift_a`, `shift_b` and other gradients don't.
 - A `noise` depends on y if its `y_scale` isn't 0 or its `shift_y` depends on y. With a y scale of 0 the y input is `+0.0` or `-0.0`, depending on the sign of y (plus a y-independent shift). Each Perlin octave adds its y offset, `nextDouble() · 256`, which is never `-0.0`, so the two zeros give the same noise.
 - Everything else depends on y if any input does, including a spline's coordinate or any of its point values.
-
-`ClimateSampler::at_column(qx, qz)` folds all six climate functions for a quart column.
 
 ## The climate sampler
 

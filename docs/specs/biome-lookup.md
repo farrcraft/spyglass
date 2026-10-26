@@ -53,7 +53,7 @@ The tree and brute force are compared on random lists with frequent ties, and on
 
 ## Region fill
 
-`Biomes::biomes_in(min, size)` returns the box's lookups, x fastest, then z, then y. Each column evaluates the climate once with every y-independent subtree folded to a constant (`ClimateSampler::at_column`, [density-functions.md](density-functions.md#column-evaluation)). The folding is exact, so the region fill and `biome_at` give the same answer on every cell. Tests check this on random regions and on a sample of golden cells.
+`Biomes::biomes_in(min, size)` returns the box's lookups, x fastest, then z, then y. It goes column by column, so each column's y-independent climate is computed once ([density-functions.md](density-functions.md#remembered-values)). That's exact, so the region fill and `biome_at` give the same answer on every cell. Tests check this on random regions and on a sample of golden cells.
 
 In 26.3's overworld, five climate functions don't depend on y at all, and depth is a y gradient plus a y-independent offset, so a column costs the 2D work once.
 

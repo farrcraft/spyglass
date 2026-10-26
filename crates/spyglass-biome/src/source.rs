@@ -281,9 +281,9 @@ impl Biomes<'_> {
         }
     }
 
-    /// Every biome in the box of `size` quarts from `min`. Each column's y-independent climate
-    /// is evaluated once ([`ClimateSampler::at_column`]), which gives the same answers as
-    /// [`biome_at`](Self::biome_at) on every cell.
+    /// Every biome in the box of `size` quarts from `min`, column by column, so each column's
+    /// y-independent climate is evaluated once (`spyglass_density::Sampler::sample`). The answers
+    /// are [`biome_at`](Self::biome_at)'s on every cell.
     pub fn biomes_in(&self, min: [i32; 3], size: [u32; 3]) -> BiomeRegion {
         let [sx, sy, sz] = size.map(|s| s as usize);
         let mut cells = vec![BiomeId(0); sx * sy * sz];
@@ -293,10 +293,9 @@ impl Biomes<'_> {
             let qz = min[2].wrapping_add(z as i32);
             for x in 0..sx {
                 let qx = min[0].wrapping_add(x as i32);
-                let column = self.climate.at_column(qx, qz);
                 for y in 0..sy {
                     let qy = min[1].wrapping_add(y as i32);
-                    let target = TargetPoint::quantize(column.sample(qx, qy, qz));
+                    let target = TargetPoint::quantize(self.climate.sample(qx, qy, qz));
                     let lookup = self.source.tree.lookup_with(&target, &mut hits);
                     let index = (y * sz + z) * sx + x;
                     cells[index] = lookup.biome();

@@ -10,7 +10,7 @@ mod load;
 mod router;
 mod sampler;
 
-pub use function::{Axis, DensityFunction, Df, Gradient, Spline};
+pub use function::{Axis, DensityFunction, Df, Gradient, Points, Spline};
 pub use load::{Loader, Resources};
 pub use router::{CLIMATE_ENTRIES, ClimateRouter, ClimateSampler, NOISE_SETTINGS};
 pub use sampler::{Binder, Sampler};

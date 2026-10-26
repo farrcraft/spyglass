@@ -56,17 +56,15 @@ impl ClimateRouter {
             .get("noise_router")
             .ok_or_else(|| error("", LoadErrorKind::Missing("noise_router")))?;
         let mut loader = Loader::new(resources);
-        let mut functions = Vec::with_capacity(6);
-        for entry in CLIMATE_ENTRIES {
-            let path = format!("noise_router.{entry}");
+        let [t, h, c, e, d, w] = CLIMATE_ENTRIES.map(|entry| {
             let value = router
                 .get(entry)
                 .ok_or_else(|| error("noise_router", LoadErrorKind::Missing(entry)))?;
             // References in the vanilla data; data packs may write functions inline.
-            functions.push(loader.inline(&id, &path, value)?);
-        }
+            loader.inline(&id, &format!("noise_router.{entry}"), value)
+        });
         Ok(ClimateRouter {
-            functions: functions.try_into().expect("six entries"),
+            functions: [t?, h?, c?, e?, d?, w?],
             noises: loader.noises().clone(),
         })
     }
@@ -84,11 +82,8 @@ impl ClimateRouter {
     /// The climate sampler for `seed`.
     pub fn sampler(&self, seed: i64) -> Result<ClimateSampler, LoadError> {
         let mut binder = Binder::new(&self.noises, seed);
-        let mut bound = Vec::with_capacity(6);
-        for f in &self.functions {
-            bound.push(binder.bind(f)?);
-        }
-        Ok(ClimateSampler(bound.try_into().expect("six samplers")))
+        let [t, h, c, e, d, w] = self.functions.each_ref().map(|f| binder.bind(f));
+        Ok(ClimateSampler([t?, h?, c?, e?, d?, w?]))
     }
 }
 
@@ -98,18 +93,12 @@ pub struct ClimateSampler([Sampler; 6]);
 
 impl ClimateSampler {
     /// The six climate values at quart `(qx, qy, qz)`, sampled at block `4 * q` (`QuartPos.toBlock`),
-    /// in temperature, humidity, continentalness, erosion, depth, weirdness order.
+    /// in temperature, humidity, continentalness, erosion, depth, weirdness order. The six share
+    /// their common subtrees, and sampling a column in sequence computes each y-independent
+    /// subtree once ([`Sampler::sample`]).
     pub fn sample(&self, qx: i32, qy: i32, qz: i32) -> [f32; 6] {
         let (x, y, z) = (qx.wrapping_mul(4), qy.wrapping_mul(4), qz.wrapping_mul(4));
         std::array::from_fn(|i| self.0[i].sample(x, y, z))
-    }
-
-    /// This sampler for the column at quart `(qx, qz)`, with every y-independent subtree
-    /// evaluated once ([`Sampler::at_column`]). It gives the same values as this sampler, but
-    /// only at this `qx` and `qz`.
-    pub fn at_column(&self, qx: i32, qz: i32) -> ClimateSampler {
-        let (x, z) = (qx.wrapping_mul(4), qz.wrapping_mul(4));
-        ClimateSampler(std::array::from_fn(|i| self.0[i].at_column(x, z)))
     }
 
     /// One climate function, by [`CLIMATE_ENTRIES`] index.

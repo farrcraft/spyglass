@@ -119,15 +119,55 @@ pub struct Gradient {
 pub enum Spline {
     /// `CubicSpline.Constant`, or a bare number.
     Constant(f32),
-    /// `CubicSpline.Multipoint`: points sorted by location.
-    Multipoint {
-        /// `coordinate`: the function whose value picks the interval.
+    /// `CubicSpline.Multipoint`.
+    Multipoint(Points),
+}
+
+/// `CubicSpline.Multipoint`'s coordinate and points: at least one point, each with a location,
+/// a value and a derivative, in the order given.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Points {
+    coordinate: Df,
+    locations: Vec<f32>,
+    values: Vec<Spline>,
+    derivatives: Vec<f32>,
+}
+
+impl Points {
+    /// The points, or `None` unless there's at least one and the three lists have the same
+    /// length.
+    pub fn new(
         coordinate: Df,
-        /// Each point's `location`.
         locations: Vec<f32>,
-        /// Each point's `value`.
         values: Vec<Spline>,
-        /// Each point's `derivative`.
         derivatives: Vec<f32>,
-    },
+    ) -> Option<Self> {
+        let n = locations.len();
+        (n > 0 && values.len() == n && derivatives.len() == n).then_some(Points {
+            coordinate,
+            locations,
+            values,
+            derivatives,
+        })
+    }
+
+    /// `coordinate`: the function whose value picks the interval.
+    pub fn coordinate(&self) -> &Df {
+        &self.coordinate
+    }
+
+    /// Each point's `location`.
+    pub fn locations(&self) -> &[f32] {
+        &self.locations
+    }
+
+    /// Each point's `value`.
+    pub fn values(&self) -> &[Spline] {
+        &self.values
+    }
+
+    /// Each point's `derivative`.
+    pub fn derivatives(&self) -> &[f32] {
+        &self.derivatives
+    }
 }

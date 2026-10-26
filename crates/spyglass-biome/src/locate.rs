@@ -141,9 +141,9 @@ impl Biomes<'_> {
         for [ox, oz] in spiral_around(radius.div_euclid(horizontal_step)) {
             let x = from[0].wrapping_add(ox.wrapping_mul(horizontal_step));
             let z = from[2].wrapping_add(oz.wrapping_mul(horizontal_step));
-            let column = self.climate().at_column(x >> 2, z >> 2);
             for &y in &ys {
-                let target = crate::TargetPoint::quantize(column.sample(x >> 2, y >> 2, z >> 2));
+                let target =
+                    crate::TargetPoint::quantize(self.climate().sample(x >> 2, y >> 2, z >> 2));
                 let lookup = self.source().lookup(&target);
                 let hit = matches(lookup.biome());
                 let disagree = lookup.candidates().iter().any(|&b| matches(b) != hit);

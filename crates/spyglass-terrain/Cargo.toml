@@ -1,0 +1,21 @@
+[package]
+name = "spyglass-terrain"
+description = "The generator's terrain before chunks exist: density columns, the aquifer and heights."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde_json.workspace = true
+spyglass-data.workspace = true
+spyglass-density.workspace = true
+spyglass-noise.workspace = true
+spyglass-rng.workspace = true
+
+[dev-dependencies]
+spyglass-oracle.workspace = true

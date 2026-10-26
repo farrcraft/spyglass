@@ -2,3 +2,6 @@
 [default.extend-words]
 # flate2, the deflate and gzip crate (ADR 0013).
 flate = "flate"
+# Positions counted along y and z, beside ix.
+iy = "iy"
+iz = "iz"

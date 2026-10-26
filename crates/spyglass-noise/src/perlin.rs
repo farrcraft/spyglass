@@ -3,6 +3,7 @@
 use spyglass_rng::RandomSource;
 
 use crate::mth;
+use crate::volume::Volume;
 
 /// `GradientNoise.GRADIENT`: the 16 gradient vectors (12 cube edges, 4 repeated).
 const GRADIENT: [[i32; 3]; 16] = [
@@ -99,6 +100,107 @@ impl PerlinNoise {
         self.get(wrap(x), 0.0, wrap(z))
     }
 
+    /// `addToVolume(DensityBuffer, DensityVolume, double, double, float)`: adds
+    /// `factor · noise` at every position of `volume` to `buffer`.
+    ///
+    /// Not the point path in a loop: each coordinate is `wrap(block · scale) + offset`, with the
+    /// caller's scale already multiplied by any octave frequency, and each corner's gradient dot
+    /// is `(gx·xf + gz·zf) + gy·yf`.
+    pub fn add_to_volume(
+        &self,
+        buffer: &mut [f32],
+        volume: &Volume,
+        xz_scale: f64,
+        y_scale: f64,
+        factor: f32,
+    ) {
+        self.add_to_volume_with(buffer, volume, xz_scale, y_scale, factor, |_, yw, yi| {
+            let yf = (yw - f64::from(yi)) as f32;
+            (yf, yf)
+        });
+    }
+
+    /// The loop both Perlin noises' `addToVolume` share. `fractions(y, yw, yi)` gives, from the
+    /// unwrapped coordinate `y`, the wrapped and offset `yw` and its floor, the y fraction the
+    /// gradients see and the one the smoothstep sees.
+    fn add_to_volume_with(
+        &self,
+        buffer: &mut [f32],
+        volume: &Volume,
+        xz_scale: f64,
+        y_scale: f64,
+        factor: f32,
+        fractions: impl Fn(f64, f64, i32) -> (f32, f32),
+    ) {
+        let [ox, oy, oz] = self.offset;
+        let grad = |i: i32| GRADIENT[(self.permute(i) & 15) as usize];
+        let mut index = 0;
+        for iz in 0..volume.size[2] {
+            let zw = wrap(f64::from(volume.block_z(iz)) * xz_scale) + oz;
+            let zi = mth::floor(zw);
+            let zf = (zw - f64::from(zi)) as f32;
+            let tz = mth::smoothstep(zf);
+            for ix in 0..volume.size[0] {
+                let xw = wrap(f64::from(volume.block_x(ix)) * xz_scale) + ox;
+                let xi = mth::floor(xw);
+                let xf = (xw - f64::from(xi)) as f32;
+                let h0 = self.permute(xi);
+                let h1 = self.permute(xi.wrapping_add(1));
+                let tx = mth::smoothstep(xf);
+                // Each corner's dotXz and gradient y, recomputed only when the y cell changes.
+                let mut last_yi = i32::MIN;
+                let mut corners = [(0.0_f32, 0.0_f32); 8];
+                for iy in 0..volume.size[1] {
+                    let y = f64::from(volume.block_y(iy)) * y_scale;
+                    let yw = wrap(y) + oy;
+                    let yi = mth::floor(yw);
+                    let (yf, y_smooth) = fractions(y, yw, yi);
+                    let ty = mth::smoothstep(y_smooth);
+                    if last_yi != yi {
+                        let add = |p: i32, q: i32| p.wrapping_add(q);
+                        let h00 = self.permute(add(h0, yi));
+                        let h01 = self.permute(add(add(h0, yi), 1));
+                        let h10 = self.permute(add(h1, yi));
+                        let h11 = self.permute(add(add(h1, yi), 1));
+                        // Corners in lerp3's order: x fastest, then y, then z.
+                        let hashes = [
+                            (add(h00, zi), xf, zf),
+                            (add(h10, zi), xf - 1.0, zf),
+                            (add(h01, zi), xf, zf),
+                            (add(h11, zi), xf - 1.0, zf),
+                            (add(add(h00, zi), 1), xf, zf - 1.0),
+                            (add(add(h10, zi), 1), xf - 1.0, zf - 1.0),
+                            (add(add(h01, zi), 1), xf, zf - 1.0),
+                            (add(add(h11, zi), 1), xf - 1.0, zf - 1.0),
+                        ];
+                        corners = hashes.map(|(h, cx, cz)| {
+                            let [gx, gy, gz] = grad(h);
+                            (gx as f32 * cx + gz as f32 * cz, gy as f32)
+                        });
+                        last_yi = yi;
+                    }
+                    let c = |i: usize, fy: f32| corners[i].0 + corners[i].1 * fy;
+                    let y1 = yf - 1.0;
+                    let value = mth::lerp3(
+                        tx,
+                        ty,
+                        tz,
+                        c(0, yf),
+                        c(1, yf),
+                        c(2, y1),
+                        c(3, y1),
+                        c(4, yf),
+                        c(5, yf),
+                        c(6, y1),
+                        c(7, y1),
+                    );
+                    buffer[index] += factor * value;
+                    index += 1;
+                }
+            }
+        }
+    }
+
     /// `sampleAndLerp(int, int, int, float, float, float, float)`. `y_smooth` is the fraction
     /// that drives the y smoothstep; plain Perlin passes `yf` again, smeared Perlin doesn't.
     #[allow(
@@ -191,6 +293,23 @@ impl SmearedPerlinNoise {
             .sample_and_lerp(xi, yi, zi, xf, yf, zf, yd as f32)
     }
 
+    /// `addToVolume`: as [`PerlinNoise::add_to_volume`], with the gradients' y fraction smeared
+    /// as [`get`](Self::get) smears it, from the unwrapped `block · y_scale`.
+    pub fn add_to_volume(
+        &self,
+        buffer: &mut [f32],
+        volume: &Volume,
+        xz_scale: f64,
+        y_scale: f64,
+        factor: f32,
+    ) {
+        self.noise
+            .add_to_volume_with(buffer, volume, xz_scale, y_scale, factor, |y, yw, yi| {
+                let yd = yw - f64::from(yi);
+                ((yd - self.compute_fudge_y(y, yd)) as f32, yd as f32)
+            });
+    }
+
     /// `computeFudgeY(double, double)`: `y` itself when `0 ≤ y < yd` (the input before
     /// wrapping), else `yd`, rounded down to a multiple of the scale after a small upward shift.
     fn compute_fudge_y(&self, y: f64, yd: f64) -> f64 {
@@ -245,6 +364,48 @@ mod tests {
         assert_eq!(smeared.compute_fudge_y(f64::NAN, 0.7), 0.5);
         // The epsilon lifts values just under a multiple onto it.
         assert_eq!(smeared.compute_fudge_y(-1.0, 0.499_999_99), 0.5);
+    }
+
+    /// At a scale of 1 the volume path's coordinates are the point path's, and its dots differ
+    /// only in the sign of an exact zero, so the values agree.
+    #[test]
+    fn volume_matches_points_at_unit_scale() {
+        let plain = PerlinNoise::new(&mut XoroshiroRandomSource::new(11));
+        let smeared = SmearedPerlinNoise::new(&mut XoroshiroRandomSource::new(12), 0.75);
+        let volume = Volume::new([3, 7, 2], [-5, -3, 1000], [2, 3, 5]);
+        for factor in [1.0, 0.5] {
+            let mut a = vec![10.0; volume.len()];
+            let mut b = vec![10.0; volume.len()];
+            plain.add_to_volume(&mut a, &volume, 1.0, 1.0, factor);
+            smeared.add_to_volume(&mut b, &volume, 1.0, 1.0, factor);
+            for iz in 0..2 {
+                for ix in 0..3 {
+                    for iy in 0..7 {
+                        let i = volume.index(ix, iy, iz);
+                        let (x, y, z) = (
+                            f64::from(volume.block_x(ix)),
+                            f64::from(volume.block_y(iy)),
+                            f64::from(volume.block_z(iz)),
+                        );
+                        assert_eq!(a[i], 10.0 + factor * plain.get(x, y, z));
+                        assert_eq!(b[i], 10.0 + factor * smeared.get(x, y, z));
+                    }
+                }
+            }
+        }
+    }
+
+    /// The volume path multiplies the scale into the coordinate before wrapping, so a scale that
+    /// isn't a power of two can round differently from scaling the point's coordinate.
+    #[test]
+    fn volume_scales_blocks_directly() {
+        let noise = PerlinNoise::new(&mut XoroshiroRandomSource::new(5));
+        let volume = Volume::blocks([1, 1, 1], [12345, 67, -891]);
+        let mut buffer = [0.0];
+        let scale = 0.666_666_666_666_666_6;
+        noise.add_to_volume(&mut buffer, &volume, scale, scale, 1.0);
+        let want = noise.get(12345.0 * scale, 67.0 * scale, -891.0 * scale);
+        assert_eq!(buffer[0], want);
     }
 
     #[test]

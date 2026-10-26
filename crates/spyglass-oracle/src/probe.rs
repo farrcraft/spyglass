@@ -58,6 +58,10 @@ pub struct Case {
     pub bound: Option<i32>,
     /// A block position.
     pub pos: Option<[i32; 3]>,
+    /// A volume's height in blocks, from `pos` up.
+    pub height: Option<i32>,
+    /// A density the case was evaluated with, as hex `f64` bits.
+    pub density: Option<String>,
     /// A name hashed by `seedFromHashOf`, or a noise id.
     pub name: Option<String>,
     /// A sample point, as hex `f64` bits.
@@ -161,6 +165,18 @@ impl Case {
             .iter()
             .map(|h| f64::from_bits(u64::from_str_radix(h, 16).expect("hex bits")))
             .collect()
+    }
+
+    /// The [`density`](Self::density) parameter as an `f64`, if there is one.
+    ///
+    /// # Panics
+    ///
+    /// If it isn't hex `f64` bits.
+    pub fn density_f64(&self) -> Option<f64> {
+        let bits = self.density.as_ref()?;
+        Some(f64::from_bits(
+            u64::from_str_radix(bits, 16).expect("hex bits"),
+        ))
     }
 }
 

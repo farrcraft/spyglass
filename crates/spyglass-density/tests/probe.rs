@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use spyglass_data::bundle::Bundle;
 use spyglass_data::codec::LoadErrorKind;
-use spyglass_density::{Binder, ClimateRouter, Loader, Sampler};
+use spyglass_density::{Binder, ClimateRouter, Loader, Sampler, Volume};
 use spyglass_oracle::probe::{ProbeFile, probe_files};
 
 fn bundle_for(version: &str) -> Bundle {
@@ -123,6 +123,47 @@ fn every_density_value_matches_the_game() {
                     }
                     (case.i64s() != [digest])
                         .then(|| format!("{}: chunk digest differs", case.label()))
+                }
+                // The volume path, as the generator's columns and chunks use it: every value of
+                // the volume, hashed in its index order as the harness does.
+                "density_column" | "density_column_values" | "density_chunk" => {
+                    let id = case.name.clone().expect("a function id");
+                    let sampler = samplers.entry((seed, id.clone())).or_insert_with(|| {
+                        let f = loader.function(&id).unwrap();
+                        match Binder::new(loader.noises(), seed).bind(&f) {
+                            Ok(s) => Some(s),
+                            Err(e) if matches!(*e.kind, LoadErrorKind::Unsupported { .. }) => {
+                                unsupported.insert(format!("{id}: {e}"));
+                                None
+                            }
+                            Err(e) => panic!("{id}: {e}"),
+                        }
+                    });
+                    let Some(sampler) = sampler else { continue };
+                    let height = case.height.expect("a height");
+                    let width = if case.test == "density_chunk" { 16 } else { 1 };
+                    let volume = Volume::blocks([width, height, width], [x, y, z]);
+                    let values = sampler.sample_volume(&volume);
+                    if case.test == "density_column_values" {
+                        let want = case.f32_bits();
+                        let got: Vec<u32> = values.iter().map(|v| v.to_bits()).collect();
+                        want.iter().zip(&got).position(|(w, g)| w != g).map(|i| {
+                            format!(
+                                "{} at y {}\n    game:     {}\n    spyglass: {}",
+                                case.label(),
+                                y + i as i32,
+                                f32::from_bits(want[i]),
+                                f32::from_bits(got[i])
+                            )
+                        })
+                    } else {
+                        let digest = values.iter().fold(1_i64, |h, v| {
+                            h.wrapping_mul(1_000_003)
+                                .wrapping_add(i64::from(v.to_bits()))
+                        });
+                        (case.i64s() != [digest])
+                            .then(|| format!("{}: volume digest differs", case.label()))
+                    }
                 }
                 // A fact about the game, not spyglass: if its volume path ever stops matching its
                 // point path, porting only the point path is no longer enough.

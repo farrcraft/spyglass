@@ -71,7 +71,17 @@ const TESTS: &[(&str, &str, &[Input])] = &[
     ),
     (
         "spyglass-density",
-        "every_bundled_density_function_loads_or_is_unsupported",
+        "every_bundled_density_function_loads",
+        &[Input::Bundle],
+    ),
+    (
+        "spyglass-terrain",
+        "every_aquifer_block_matches_the_game",
+        &[Input::Probe, Input::Bundle],
+    ),
+    (
+        "spyglass-terrain",
+        "surface_levels_over_a_volume_are_their_points",
         &[Input::Bundle],
     ),
     (

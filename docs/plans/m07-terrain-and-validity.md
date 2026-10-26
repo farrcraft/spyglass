@@ -105,7 +105,7 @@ Specs and ADRs that govern this: [density-functions.md](../specs/density-functio
 - [x] From the 26.3 bytecode, note in the specs (not in this plan): the chunk-level density path and its caches; what `getBaseHeight`, `getBaseColumn`, `getFirstFreeHeight` and `getFirstOccupiedHeight` evaluate (beardifier, blending, aquifers, material rule); `find_top_surface`; the aquifer; each structure type's terrain conditions; `addPieces` and bounding-box adjustment. In [terrain.md](../specs/terrain.md), [density-functions.md](../specs/density-functions.md) and [structure-placement.md](../specs/structure-placement.md), as drafts.
 - [x] Decide surface rules (see [Decisions](#decisions)) from what heightmaps need, and update the milestone's scope if they move. Out: no height query evaluates the material rule; the milestone's scope says so.
 - [x] Oracle: height golden files, structure format 2 with bounds and piece boxes; `cargo xtask oracle golden` regenerates them. `docs/specs/oracle.md` updated.
-- [ ] Oracle probe additions: every named density function at points, final density chunk digests, aquifer substance at points. Moved to the start of phases 2 and 3, where the tests that read them are written; the points are done (phase 2).
+- [x] Oracle probe additions: every named density function at points, final density chunk digests, aquifer substance at points. Moved to phases 2 and 3, where the tests that read them are written. The aquifer's are whole columns (`terrain.json`) rather than points.
 - [x] `docs/specs/terrain.md` (new): columns, aquifers, heightmaps, the generator queries, and what's out (features, carvers, beards).
 - [x] ADR: `spyglass-terrain` and its boundary with density and structure; how terrain is bound lazily per seed; whether a new dependency is needed (none expected). [0022](../adr/0022-terrain-crate-and-volume-evaluation.md), accepted 2026-10-26: it adds a volume evaluation path, which the plan didn't foresee.
 
@@ -120,13 +120,13 @@ Specs and ADRs that govern this: [density-functions.md](../specs/density-functio
 
 ### Phase 3: the volume path and aquifers
 
-- [ ] The volume path: `interpolated` (`sampleWithBlockStep`), `mul`/`div`/`min`/`max` and noise as the game's volume samplers compute them; for a column and for a chunk.
-- [ ] Tests: column against chunk evaluation; remembered against fresh values; probe chunk digests (ignored).
-- [ ] Aquifers, with hand-worked tests and probe points.
+- [x] The volume path: `interpolated` (`sampleWithBlockStep`), `mul`/`div`/`min`/`max` and noise as the game's volume samplers compute them; for a column and for a chunk.
+- [x] Tests: column against chunk evaluation; remembered against fresh values; probe column and chunk digests (ignored).
+- [x] Aquifers, with hand-worked tests and probe columns. In `spyglass-terrain`, created for them (phase 4's first task, done early).
 
 ### Phase 4: `spyglass-terrain` and heightmaps
 
-- [ ] Create the crate (`[lints] workspace = true`; architecture table updated).
+- [x] Create the crate (`[lints] workspace = true`; architecture table updated). Done in phase 3, with the noise settings terrain needs (`TerrainSettings`).
 - [ ] Columns, `base_height` for both heightmaps, `base_column`, first free and first occupied heights; a per-seed column cache.
 - [ ] Ignored golden test: every height in the height golden files, and the block columns, listed in `xtask/src/oracle_test.rs` with a new `Heights` input. Exit criterion 1.
 - [ ] `Session::height_at` and `heights_in`, bound lazily. First speed measurement against the targets.
@@ -172,10 +172,10 @@ Specs and ADRs that govern this: [density-functions.md](../specs/density-functio
 ## Durable outputs
 
 - [x] `docs/specs/terrain.md` (new)
-- [ ] `docs/specs/density-functions.md`: every type, the cell path
+- [x] `docs/specs/density-functions.md`: every type, the cell path
 - [ ] `docs/specs/structure-placement.md`: terrain conditions, jigsaw assembly and bounds
 - [ ] `docs/specs/locate.md`, `docs/specs/search.md`: confirmed mode
-- [ ] `docs/specs/oracle.md`: probe additions, height files, structure format 2
+- [x] `docs/specs/oracle.md`: probe additions, height files, structure format 2
 - [ ] `docs/specs/cli-json.md`, `docs/specs/render.md`
 - [x] ADR: `spyglass-terrain` and lazy terrain binding ([0022](../adr/0022-terrain-crate-and-volume-evaluation.md))
 - [ ] `docs/architecture.md`, `README.md`, `docs/getting-started.md`
@@ -191,6 +191,13 @@ Agreed on 2026-10-25, as recommended:
 - **One plan**, phased like m06-seed-search. Phases 6 to 9 become a second plan if this one grows.
 
 ## Notes
+
+- 2026-10-26: Phase 3 done. The aquifer (`spyglass-terrain`, with `TerrainSettings` loading and binding final density and the aquifer functions with one binder) matches the game block for block in 320 probe columns: 8 columns × 10 seeds, with each column's own density and with densities −1, −0.02 and 0. A mutation that drops the `sim13 > 0` condition fails 160; one that breaks ties the other way fails none (no ties in these columns), so a unit test pins the tie rule. From the bytecode, beyond the spec's phase 1 draft: pressure compares the two statuses' blocks at y, not their fluids; each of the last two pressure terms needs its own positive similarity; the aquifer prefills surface levels over its region as a quart-stepped volume at y 0, which equals points for 26.3 (checked by an ignored test). The terrain spec's open questions are all settled.
+  - `cargo xtask oracle-test` listed the density loading test under an old name, so `--exact` skipped it silently; fixed, and the two terrain tests added. All 28 pass.
+- 2026-10-26: Phase 3's volume path done. Every type has a volume path (`Sampler::sample_volume`, over the noise crate's new `Volume`), and `interpolated` binds, so 53 of the 55 bundled functions bind (the End's two don't). The probe gained column digests for every named function (8 columns × 10 seeds), full `final_density` columns and `final_density` chunk digests (4 chunks × 10 seeds); all 14,660 density cases match, and a mutation of `fillCell`'s y accumulation fails 604 of them. From the bytecode:
+  - Over a volume every sampler samples its inputs over the same volume and combines them per position; `lerp`, `range_choice` and `interval_select` sample every branch. Only `interpolated`, `mul`/`div` (no zero test), `min`/`max` (compare and replace, no range shortcut), unshifted noise (`addToVolume`: scale times frequency first, `dotXz` then y) and `shift_b` (the 4 in each layer's weight, exact) compute differently.
+  - Caches aren't modelled. Over a volume they only save work; a point inside a cache's last volume would return the volume's value, but every cache reachable from point-sampled functions (the aquifer's, `find_top_surface`'s density) holds only types whose volume and point values agree, checked over the 26.3 data. Recorded in the density spec.
+  - The probe can't tell the noise volume path from the point path: a one-ulp `f64` coordinate difference rarely survives into the `f32` fraction. A unit test pins it.
 
 - 2026-10-26: Phase 2 done. All 55 bundled density functions load, and the 41 that can be bound match the game at all 18 probe blocks for all 10 seeds (9,900 cases), with `cargo xtask oracle-test` still green throughout. From the bytecode:
   - The compiler inlines references, prepares caches, then applies `SLICE_UNIFORM_AXES`, which only wraps nodes in value-preserving slices, so spyglass skips it. Constant specializations test for `ConstantFunction`, which a `cache` of a constant isn't.

@@ -1,6 +1,6 @@
 # Terrain
 
-Status: draft. Covers what the Overworld's generator answers about terrain before any chunk exists, for 26.3. To be implemented in `spyglass-terrain` ([ADR 0022](../adr/0022-terrain-crate-and-volume-evaluation.md)) and checked against the oracle's [height golden files](oracle.md#height-golden-files). Ported from the 26.3 bytecode; worldgen before 26.x (surface rules, noise router fields, `blocksMotion`) doesn't apply.
+Status: draft. Covers what the Overworld's generator answers about terrain before any chunk exists, for 26.3, in `spyglass-terrain` ([ADR 0022](../adr/0022-terrain-crate-and-volume-evaluation.md)). The aquifer is implemented and matches the oracle's [probe files](oracle.md#probe-files); the column and its queries are to be implemented and checked against the [height golden files](oracle.md#height-golden-files). Ported from the 26.3 bytecode; worldgen before 26.x (surface rules, noise router fields, `blocksMotion`) doesn't apply.
 
 Structures decide where they start, and at what height, before their chunks are generated. They ask the chunk generator for heights and block columns, which it computes from the density graph and the aquifer alone. That's this spec. Real chunks differ from these answers: structures' terrain adaptation (the beardifier), the material rule (surface blocks, ore veins, frozen-ocean holes, swamp water), carvers and features all come later. Classes are in `net.minecraft.world.level.levelgen` unless stated otherwise.
 
@@ -52,7 +52,9 @@ A fluid status `(level, fluid)` gives the fluid below `level` and air at or abov
 
 **Grid.** Cells are 16 × 12 × 16 blocks: `gridX(x) = x >> 4`, `gridY(y) = floorDiv(y, 12)`, `gridZ(z) = z >> 4`. A cell's centre is `(16·gx + ox, 12·gy + oy, 16·gz + oz)`. A block looks at the cells from `gridX(x − 5)`, `gridY(y + 1) − 1`, `gridZ(z − 5)`, two along x, three along y and two along z.
 
-**Surface level.** `surfaceLevel(x, z)` snaps x and z down to multiples of 4, then takes `floor((double) surface_level(x', 0, z'))`, at y 0. The game prefills these for its whole region with a volume sample at a step of 4. That must agree with point sampling for results not to depend on the region (open, below).
+**Region.** An aquifer is built for a region of blocks (a column, or a chunk), and remembers each cell's centre and status. Its cells run from `gridX(minX − 5)` to `gridX(maxX − 5) + 1`, `gridY(minY + 1) − 1` to `gridY(maxY + 1) + 1`, and likewise for z.
+
+**Surface level.** `surfaceLevel(x, z)` snaps x and z down to multiples of 4, then takes `Mth.floor` of `surface_level` at `(x', 0, z')`, remembered. When the aquifer is built, the quart columns from `fromGridX(minCellX, 0)` to `fromGridX(maxCellX, 9)` (and z alike) are sampled at once, as a volume at y 0 with steps of 4, which fills those entries; others are sampled at a point when asked for. That agrees with point sampling, so results don't depend on the region (below).
 
 ### `computeSubstance(x, y, z, density)`
 
@@ -60,19 +62,19 @@ Returns nothing (the default block) or a block state:
 
 1. A positive density: nothing.
 2. `g` = the fluid picker's status at the block. Above `skipSamplingAboveY` (below), return `g` at y. If `g` gives lava at y, return lava.
-3. Find the nearest four of the 12 candidate centres, by squared integer distance, visiting x outermost, then y, then z. A centre takes a slot if its distance is at most the slot's (`>=`), so on ties the later centre wins the better slot, pushing the others down.
+3. Find the nearest four of the 12 candidate centres, by squared integer distance, visiting x outermost, then y, then z. A centre takes the first slot whose distance is at least its own (`>=`), so on ties the later centre wins the better slot, pushing the others down. The fourth slot only decides when the game schedules fluid updates.
 4. `s1` = the nearest centre's fluid status, and `state = s1` at y. With `similarity(a, b) = 1.0 − (double)(b − a) / 25.0`, if `similarity(d1, d2) ≤ 0`, return `state`.
 5. If `state` is water and the fluid picker gives lava at `y − 1`, return `state`.
-6. Otherwise, the barrier noise is sampled at most once per call, and only when a pressure needs it. Return nothing if `density + sim12 · pressure(s1, s2) > 0`, or, where the similarity is positive, `density + (sim12 · sim13) · pressure(s1, s3) > 0`, or `density + (sim12 · sim23) · pressure(s2, s3) > 0`, in that order. Else return `state`.
+6. Otherwise, the barrier noise is sampled at most once per call, and only when a pressure needs it. Return nothing if `density + sim12 · pressure(s1, s2) > 0`; or, if `sim13 = similarity(d1, d3)` is positive, `density + (sim12 · sim13) · pressure(s1, s3) > 0`; or, if `sim23 = similarity(d2, d3)` is positive, `density + (sim12 · sim23) · pressure(s2, s3) > 0`, in that order. Else return `state`.
 
 **Pressure** between statuses `a` and `b` at y:
 
-- Lava against water, either way round: 2.0.
+- Lava against water at y (`a.at(y)` and `b.at(y)`, so a status whose level is at or below y is air there), either way round: 2.0.
 - Equal levels: 0.0.
 - Otherwise, with `avg = 0.5 · (double)(la + lb)`, `e = (double) y + 0.5 − avg`, and `o = (double)|la − lb| / 2.0 − |e|`:
   - if `e > 0`: `q = 0.0 + o`, and `r = q / 1.5` if positive, else `q / 2.5`;
   - otherwise: `q = 3.0 + o`, and `r = q / 3.0` if positive, else `q / 10.0`.
-- If `r` is outside −2 to 2, the barrier term `s` is 0; otherwise it's the barrier noise at the block. The pressure is `2.0 · (s + r)`.
+- If `r < −2` or `r > 2`, the barrier term `s` is 0; otherwise (NaN included) it's the barrier noise at the block. The pressure is `2.0 · (s + r)`.
 
 ### A centre's fluid status
 
@@ -100,12 +102,16 @@ If the full threshold is positive, the level is `g`'s. Else, if the partial one 
 
 `skipSamplingAboveY` is `12·(gridY(max + 20) + 1) + 11 − 1`, where `max` is the largest surface level in the aquifer's region. Above it, `computeSubstance` returns the fluid picker's status without visiting centres. The full path would give the same answer there, as long as no surface level is below −64: then every centre a block can see is above −54, and returns `g` at its first step. So the aquifer doesn't depend on its region, and a column answers as a chunk would. spyglass skips the same way, for speed, not for different results.
 
-## What's open
+## Settled questions
 
-- **Volume against point.** That `final_density` gives each block the same value in a column volume as in a chunk volume, and that `surface_level` (a `find_top_surface`) gives the same value sampled over a volume as at a point. Both are needed for the oracle's heights, which come from columns, to be the heights chunks start from. [density-functions.md](density-functions.md) has the cell path.
-- **The lower bound.** That `find_top_surface` never returns below its `lower_bound` (−64 in 26.3), which the skipping argument needs.
+Open when this spec was drafted, and settled since:
+
+- **Surface levels over a volume.** `surface_level` (a `find_top_surface`) gives the same value prefilled over the aquifer's region as at a point, so the aquifer doesn't depend on its region. Its volume path samples `upper_bound` over the volume and `density` at points, and 26.3's `upper_bound` holds no type whose volume and point values differ ([density-functions.md](density-functions.md#point-and-volume-evaluation)). An ignored test checks it over quart grids for three seeds.
+- **Columns against chunks.** `final_density` gives each block the same value in a column volume as in a chunk volume: `interpolated`'s volume arithmetic depends on a block's offsets in its cell and on where the volume's lowest y falls in its cell, and both start at the noise settings' minimum y, a cell corner. The probe's column and chunk digests match spyglass's volume path for both ([oracle.md](oracle.md#probe-files)).
+- **The lower bound.** `find_top_surface` never returns below its `lower_bound` (−64 in 26.3), which the skipping argument needs: it returns the lower bound or a y it reached from above without passing it.
 
 ## Testing
 
-- **Unit tests** on hand-written density functions and aquifer settings: the slot order and ties, pressure cases, the fluid picker's boundaries, skipping against the full path.
+- **Unit tests** on hand-written density functions and aquifer settings: the slot order and ties, pressure cases, the fluid picker's boundaries, skipping against the full path, and answers independent of the order of questions.
+- **The ignored aquifer test** (`spyglass-terrain/tests/probe.rs`) compares every block of the probe's aquifer columns.
 - **The ignored golden test** compares every height in the [height golden files](oracle.md#height-golden-files), both heightmaps, and every sampled block column, run by `cargo xtask oracle-test`.

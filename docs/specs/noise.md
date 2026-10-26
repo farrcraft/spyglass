@@ -28,9 +28,17 @@ Perlin noise whose y gradient input is snapped down to a multiple of a scale `s`
 2. `r = y` (the input before wrapping) if `0 ≤ y < yd`, else `yd`; `fudge = (double) floor(r / s + 1.0000000116860974E-7) · s`, where the constant is `1.0E-7f` widened and `floor` is `Mth.floor` (saturating).
 3. Perlin's corner values and lerp, with `(float)(yd − fudge)` as the y for the gradient dots and `(float) yd` for the y smoothstep.
 
+## Volumes (`addToVolume`)
+
+Density functions' [volume path](density-functions.md#point-and-volume-evaluation) samples noise over a `DensityVolume` at once: `addToVolume(buffer, volume, xzScale, yScale, factor)` adds `factor · value` to each position's entry, in the volume's order. Not the point path in a loop:
+
+- **Perlin:** for each position, z outermost, then x, then y: `z' = wrap(blockZ · xzScale) + offsetZ`, likewise x, and `y' = wrap(blockY · yScale) + offsetY`, then floors and `f32` fractions as `get` computes them. Each corner's gradient dot is `(gx·xf + gz·zf) + gy·yf` (`Gradient.dotXz`, then the y term), against `get`'s `(gx·xf + gy·yf) + gz·zf`; the corners and `lerp3` are `get`'s. The value added is `factor · lerp3(...)`.
+- **Smeared Perlin:** the same, with the gradients' y fraction `(float)(yd − fudge)` and `fudge` from the unwrapped `blockY · yScale`, as `get` computes it from its `y`.
+- **Stack:** each layer in order adds its noise with `xzScale · f`, `yScale · f` and `factor · amplitude`: scales and weights are multiplied first, where `get` multiplies the coordinate.
+
 ## Noise stack (`NoiseStack`)
 
-A list of layers `(noise, frequency: f64, amplitude: f32)`, all Perlin or all smeared Perlin. `get(x, y, z)` accumulates `sum = sum + amplitude · noise.get(x·f, y·f, z·f)` in `f32`, in layer order, starting from 0. `get(x, z)` does the same with each layer's 2D sample. Rust never contracts `a + b·c` into a fused multiply-add, and neither does Java.
+A list of layers `(noise, frequency: f64, amplitude: f32)`, all Perlin or all smeared Perlin. `get(x, y, z)` accumulates `sum = sum + amplitude · noise.get(x·f, y·f, z·f)` in `f32`, in layer order, starting from 0. `get(x, z)` does the same with each layer's 2D sample. Rust never contracts `a + b·c` into a fused multiply-add, and neither does Java. Its volume path is [above](#volumes-addtovolume).
 
 ## Normal noise (`NormalNoise`)
 

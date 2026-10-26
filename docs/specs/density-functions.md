@@ -1,6 +1,6 @@
 # Density functions
 
-Status: stable for every type's point path but `interpolated`'s, implemented in `spyglass-density` for 26.3 and checked against the game by the oracle's [probe files](oracle.md#probe-files). The volume path, which `interpolated` needs, is a draft ([below](#point-and-volume-evaluation)).
+Status: stable for every type's point and volume paths but the End's two, implemented in `spyglass-density` for 26.3 and checked against the game by the oracle's [probe files](oracle.md#probe-files).
 
 26.3 reworked density functions since 1.21. They are compiled into samplers (`DensityFunctionCompiler`, package `net.minecraft.world.level.levelgen.densityfunction`) that return `float`, after rewrite rules (`DfRewriteRule.INLINE_REFERENCE`, `SLICE_UNIFORM_AXES`). Older ports, which evaluate in `double`, don't apply. Ported from the 26.3 bytecode.
 
@@ -68,7 +68,7 @@ The types terrain needs ([terrain.md](terrain.md)), and the rest of 26.3's 44 ty
 | `gradient` tilings `repeat`, `mirrored_repeat` | as `gradient`                                                                                                                            | `from_value + (float) floorMod(c − from, r) · factor` with the int `r = to − from`, negative when `to < from` (`floorMod` and `floorDiv` follow its sign); mirrored: `q = floorDiv(c − from, r)`, `rem = (c − from) − q·r`, and `rem` or `r − rem` by the parity of `q`. Unused in vanilla |
 | `distance_to_point`, `end_outer_islands`       | `point` (three ints), `metric` (`euclidean`, `euclidean_squared`, `manhattan`, `chebyshev`); none                                        | The End's (milestone 08 on the [roadmap](../roadmap/README.md)): they load, and are specified when they're implemented                                                                                                                                                                     |
 
-Binding a function that reaches `interpolated` (until the volume path is ported), `distance_to_point` or `end_outer_islands` fails with an unsupported-type error, rather than giving a value the game wouldn't.
+Binding a function that reaches `distance_to_point` or `end_outer_islands` fails with an unsupported-type error, rather than giving a value the game wouldn't.
 
 **`Math.pow` and `Math.log`** aren't required by Java to be correctly rounded, and spyglass uses Rust's `powf` and `ln`. So `pow`, `log` and `pow`'s range bounds may differ from the game's in the last bit of the `f64`, before it's narrowed to `f32`. No vanilla function uses them. `Math.sqrt` is correctly rounded in both.
 
@@ -78,7 +78,9 @@ Cells are `cell_size_xz × cell_size_y × cell_size_xz` blocks, aligned to absol
 
 - **Point:** with `f` = `floorMod` of each coordinate by its cell size, if all three are 0 the value is the input's at the point. Otherwise the eight corners of the cell are sampled as a 2 × 2 × 2 volume, and the value is `Mth.lerp3(fx / (float) cxz, fy / (float) cy, fz / (float) cxz, …)`: x, then y, then z, with each `t` a division.
 - **Volume** (what terrain uses; `sampleWithBlockStep`): the corners of every cell the volume touches are sampled as one volume. For each cell, z outer, then x, then y: per `dz`, `tz = (float) dz · (1.0f / cxz)` and the four z lerps; per `dx`, `tx` likewise and two x lerps, `b0` and `b1`; then `step = (b1 − b0) · (1.0f / cy)`, the first value is `b0 + step · (float) dy0`, and each next y adds `step` to the last value. So volume values differ from point values in the low bits, and depend on where in its cell the volume's lowest y is (not on its x and z origin). Columns and chunks both start at the noise settings' minimum y, so they agree.
-- A volume whose step equals the cell size and whose origin is on a cell corner is the input's own volume.
+- **Corners** (`sampleWithBlockStep`): with `first` and `last` the cells (`floorDiv`) of the volume's minimum and maximum block on each axis, the corner volume starts at `first · size`, one cell apart, with `last − first + 1` corners, plus one unless the maximum block is itself on a corner. Cell `i`'s far corner is `min(i + 1, corners − 1)`. In `fillCell`, a cell's blocks outside the volume are skipped: offsets run from `max(0, −origin)` to `min(size, volume size − origin) − 1`, with `origin` the cell's first block minus the volume's.
+- A volume that is on cell corners (each axis one position deep or a cell apart, and each minimum a multiple of the cell size) is the input's own volume.
+- A volume with any step above 1 (`sampleWithNonBlockStep`) is interpolated over every block it spans, then each position's value is picked.
 
 #### `find_top_surface`
 
@@ -154,18 +156,24 @@ A loaded graph doesn't depend on the seed. Binding creates the seed's noises as 
 
 ## Point and volume evaluation
 
-Status: draft. spyglass has the point path; the volume path isn't implemented yet.
+The game has two paths: `sampleValue` at a point, and `sampleVolume` over a buffer (`DensityVolume`: sizes, minimum block and step per axis; values with y fastest, then x, then z). Climate lookups and the aquifer use points. Chunk generation and the generator's columns ([terrain.md](terrain.md)) sample `final_density` as a volume, so terrain values follow the volume path. spyglass has both ([ADR 0022](../adr/0022-terrain-crate-and-volume-evaluation.md)): `Sampler::sample` and `Sampler::sample_volume`.
 
-The game has two paths: `sampleValue` at a point, and `sampleVolume` over a buffer (`DensityVolume`: sizes, minimum, steps; y fastest, then x, then z). Climate lookups and the aquifer use points. Chunk generation and the generator's columns ([terrain.md](terrain.md)) sample `final_density` as a volume, so terrain values follow the volume path. The two agree for every type except:
+Over a volume, each sampler samples its inputs over the same volume, then combines them position by position with its point formula, except:
 
 - **`interpolated`**: different arithmetic, [above](#interpolated). A point inside a cell still samples its corners through the volume path.
-- **`mul`** of two non-constant operands, and **`div`**: the point path returns `+0.0` for a zero `left`; the volume path multiplies or divides.
-- **`min`, `max`**: the volume path compares and replaces, so it differs from `Math.min`/`Math.max` only for NaN and signed zeros.
-- **`noise`**: each octave samples at `(X · scale) · f` on the point path and `X · (scale · f)` on the volume path, which differ when neither the scale nor the octave's frequency is a power of two (a normal noise's second stack, `f = 2^k · 1.0181268882175227`, with scales like 0.75 or 1.5). Perlin's volume path also sums its gradient dot as `(gx·x + gz·z) + gy·y`, which differs only in the sign of an exact zero.
+- **`mul`** of two non-constant operands, and **`div`**: no zero test; the volume path multiplies or divides, so `0 · −1` is `−0` and `0 · ∞` NaN where the point path gives `+0`.
+- **`min`, `max`**: no range shortcut and no `Math.min`/`Math.max`: the right value replaces the left only if it's strictly below (above) it. A constant operand likewise. They differ from the point path only for NaN and signed zeros.
+- **`noise`** with no shifts (`NoiseFunction.Sampler`, also `shift_a`, `shift`, and old blended noise's stacks): the stack's own volume path (`addToVolume`) from a buffer of zeros. Each layer is passed `scale · f` and `1.0f · amplitude`, and each Perlin octave samples `wrap(block · scale) + offset`, against `wrap((X · scale) · f) + offset` on the point path. They differ when neither the scale nor the octave's frequency is a power of two (a normal noise's second stack, `f = 2^k · 1.0181268882175227`, with y scales like 0.67), though rarely after the fraction is narrowed to `f32`. Perlin's volume path sums each corner's gradient dot as `(gx·xf + gz·zf) + gy·yf` (the game's `dotXz`, then y), which differs only in the sign of an exact zero. A noise with shifts samples its shifts over the volume, then the noise's point path at `block · scale + shift`.
+- **`shift_b`**: the noise over a volume with x and z swapped and y 0 (`(sizeZ, sizeX, 1)` from `(minZ, minX, 0)`), with the `4` folded into each layer's weight (`4.0f · amplitude`), copied up each column. Scaling by 4 is exact, so it equals the point value.
+- **`lerp`**, **`range_choice`** and **`interval_select`** sample every branch over the whole volume, then choose per position as the point path does.
+- **`find_top_surface`** samples `upper_bound` over the volume (the game requires it one block deep, which its slice guarantees), then searches each column with `density` at points.
+- **Splines** sample every coordinate they hold over the volume, then evaluate per position.
 
-The climate's scales are 0.25 and 1, so its volume and point values are equal: the probe compares them for the six climate functions over whole chunks (4 chunks × 10 seeds in 26.3), and fails if that changes. spyglass ports the point path for everything, and the volume path for what terrain samples ([ADR 0022](../adr/0022-terrain-crate-and-volume-evaluation.md)).
+The climate's scales are 0.25 and 1, so its volume and point values are equal: the probe compares them for the six climate functions over whole chunks (4 chunks × 10 seeds in 26.3), and fails if that changes.
 
-**Caches.** `cache` is 26.3's only caching type (there's no `flat_cache` or `cache_2d`); structurally equal inputs share one. With caches on, as in chunk generation, a point inside a volume the cache already filled returns the volume's value.
+**Slices.** `SLICE_UNIFORM_AXES` wraps nodes that don't depend on an axis in a slice at coordinate 0, so over a volume they're sampled one position deep and copied along it. spyglass does the same for y alone, with the nodes [that don't depend on y](#remembered-values), as a speed-up: a node that doesn't depend on y has the same volume value at every y.
+
+**Caches.** `cache` is 26.3's only caching type (there's no `flat_cache` or `cache_2d`); structurally equal inputs share one. In chunk generation and the generator's columns caches are on: each keeps the last volume it filled and the last point it computed. A volume sample of a cache returns what its input gives over that same volume, so it only saves work. A point sample inside the cache's last volume returns that volume's value instead of the point value, which differs only where the input's volume and point values differ. spyglass doesn't model caches. In 26.3's overworld, the points sampled through caches are `find_top_surface`'s density and the aquifer's functions. None of the caches they reach holds an `interpolated`, a `min` or `max`, a `mul` or `div` of two non-constant operands, or an unshifted noise at a scale that isn't a power of two: only splines, shifted noises, gradients and arithmetic with a constant operand, whose volume and point values agree. So the result is the same, and a data pack that broke this could make spyglass differ. The probe's column and chunk cases are sampled through caching contexts and agree bit for bit.
 
 ## Remembered values
 
@@ -191,4 +199,4 @@ What depends on y:
 
 ## Testing
 
-Committed tests use hand-written JSON ([ADR 0008](../adr/0008-game-derived-test-values-stay-local.md)): shorthands, sharing, cycles, error paths, codec defaults and validation, each type's values worked out by hand, the compile choices where they're visible (the zero short-circuit, `div` by a constant, `min` and `max` by range through signed zeros and NaN, `pow` by exponent), and column folding against per-cell evaluation. Unit tests cover `Interval`'s arithmetic and the spline and blended-noise ranges. The ignored tests in `spyglass-density/tests/probe.rs` check every `density.json` case, including the chunk digests, and that every density function in the bundle loads. Functions that can't be bound yet are skipped and listed.
+Committed tests use hand-written JSON ([ADR 0008](../adr/0008-game-derived-test-values-stay-local.md)): shorthands, sharing, cycles, error paths, codec defaults and validation, each type's values worked out by hand, the compile choices where they're visible (the zero short-circuit, `div` by a constant, `min` and `max` by range through signed zeros and NaN, `pow` by exponent), and column folding against per-cell evaluation. For the volume path: `interpolated`'s point and volume arithmetic worked out from the corners, columns against chunks and stepped volumes against block volumes, the volume-only signed zeros of `min`, `max` and `mul`, y-independent nodes, `find_top_surface`, and remembered against fresh values with points and volumes mixed. Unit tests cover `Interval`'s arithmetic and the spline and blended-noise ranges, and the noise crate covers Perlin's volume path. The ignored tests in `spyglass-density/tests/probe.rs` check every `density.json` case, including the column and chunk digests, and that every density function in the bundle loads. Functions that can't be bound yet are skipped and listed.

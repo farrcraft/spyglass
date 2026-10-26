@@ -3600,6 +3600,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "spyglass-terrain"
+version = "0.0.0"
+dependencies = [
+ "serde_json",
+ "spyglass-data",
+ "spyglass-density",
+ "spyglass-noise",
+ "spyglass-oracle",
+ "spyglass-rng",
+]
+
+[[package]]
 name = "spyglass-viewer"
 version = "0.0.0"
 dependencies = [

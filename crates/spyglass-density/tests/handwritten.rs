@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 use spyglass_data::codec::LoadErrorKind;
-use spyglass_density::{Binary, Binder, ClimateRouter, DensityFunction, Loader, Sampler};
+use spyglass_density::{Binary, Binder, ClimateRouter, DensityFunction, Loader, Sampler, Volume};
 use spyglass_noise::Normalization;
 
 /// Resources from `registry/id` keys.
@@ -638,13 +638,247 @@ fn old_blended_noise_depends_on_the_seed() {
     assert!(matches!(err, LoadErrorKind::OutOfRange { .. }), "{err}");
 }
 
+/// A noise that varies along x, y and z, as `minecraft:f`, with whatever else `extra` adds.
+fn with_noise(f: Value, extra: Vec<(String, Value)>) -> Map {
+    let mut entries = vec![
+        (
+            "worldgen/noise/minecraft:n".to_string(),
+            json!({"base_octave": -3, "octave_count": 2}),
+        ),
+        df("minecraft:f", f),
+    ];
+    entries.extend(extra);
+    resources(entries)
+}
+
+fn noise(xz: f64, y: f64) -> Value {
+    json!({"type": "noise", "noise": "n", "xz_scale": xz, "y_scale": y})
+}
+
+fn interpolated(input: Value, xz: i32, y: i32) -> Value {
+    json!({"type": "interpolated", "input": input, "cell_size_xz": xz, "cell_size_y": y})
+}
+
+/// `(x, y, z)` from a volume's position index, in its index order.
+fn positions(v: &Volume) -> Vec<(i32, i32, i32)> {
+    let mut out = Vec::new();
+    for iz in 0..v.size[2] {
+        for ix in 0..v.size[0] {
+            for iy in 0..v.size[1] {
+                out.push((v.block_x(ix), v.block_y(iy), v.block_z(iz)));
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn interpolated_points_lerp_the_cell_corners() {
+    let map = with_noise(
+        interpolated(noise(1.0, 1.0), 4, 8),
+        vec![df("minecraft:raw", noise(1.0, 1.0))],
+    );
+    let f = bind_one(&map, "f");
+    let raw = bind_one(&map, "raw");
+    // On a corner, the input itself.
+    assert_eq!(f.sample(8, -16, 4), raw.sample(8, -16, 4));
+    // Inside a cell, lerp3 of the eight corners with t = offset / size.
+    let c = |x, y, z| raw.sample(x, y, z);
+    let lerp = |t: f32, a: f32, b: f32| a + t * (b - a);
+    let (tx, ty, tz) = (1.0 / 4.0, 3.0 / 8.0, 2.0 / 4.0);
+    let at_y = |y| {
+        let z0 = lerp(tx, c(4, y, -8), c(8, y, -8));
+        let z1 = lerp(tx, c(4, y, -4), c(8, y, -4));
+        (z0, z1)
+    };
+    let ((a0, a1), (b0, b1)) = (at_y(16), at_y(24));
+    let want = lerp(tz, lerp(ty, a0, b0), lerp(ty, a1, b1));
+    assert_eq!(f.sample(5, 19, -6), want);
+}
+
+#[test]
+fn interpolated_volumes_accumulate_down_each_cell() {
+    let map = with_noise(
+        interpolated(noise(1.0, 1.0), 4, 8),
+        vec![df("minecraft:raw", noise(1.0, 1.0))],
+    );
+    let f = bind_one(&map, "f");
+    let raw = bind_one(&map, "raw");
+    let column = Volume::blocks([1, 20, 1], [5, -3, -6]);
+    let values = f.sample_volume(&column);
+    // fillCell: z, then x lerps, then b0 + step · dy, adding step for each next y.
+    let c = |x, y, z| raw.sample(x, y, z);
+    let lerp = |t: f32, a: f32, b: f32| a + t * (b - a);
+    let (tx, tz) = (1.0 * 0.25, 2.0 * 0.25);
+    let b = |y| {
+        lerp(
+            tx,
+            lerp(tz, c(4, y, -8), c(4, y, -4)),
+            lerp(tz, c(8, y, -8), c(8, y, -4)),
+        )
+    };
+    let mut want = Vec::new();
+    for (y0, dys) in [(-8, 5..8), (0, 0..8), (8, 0..8), (16, 0..1)] {
+        let (b0, b1) = (b(y0), b(y0 + 8));
+        let step = (b1 - b0) * 0.125;
+        let mut v = b0 + step * dys.start as f32;
+        for _ in dys {
+            want.push(v);
+            v += step;
+        }
+    }
+    assert_eq!(values, want);
+    // Points inside cells use lerp3 instead, which isn't always the same float.
+    let points: Vec<f32> = (-3..17).map(|y| f.sample(5, y, -6)).collect();
+    assert_ne!(points, values);
+}
+
+#[test]
+fn volumes_agree_wherever_they_overlap_in_y_phase() {
+    // A column and a chunk both start at the same y, so they give a block the same value; a
+    // volume with steps samples the same blocks as one without.
+    let f = interpolated(
+        bin("add", noise(1.0, 1.0), op("square", noise(0.5, 2.0))),
+        4,
+        8,
+    );
+    let sampler = bind_one(&with_noise(f, vec![]), "f");
+    let chunk = Volume::blocks([16, 40, 16], [-16, -64, 32]);
+    let values = sampler.sample_volume(&chunk);
+    for (x, z) in [(-16, 32), (-13, 39), (-1, 47)] {
+        let column = sampler.sample_volume(&Volume::blocks([1, 40, 1], [x, -64, z]));
+        for (iy, v) in column.iter().enumerate() {
+            assert_eq!(*v, values[chunk.index(x + 16, iy as i32, z - 32)]);
+        }
+    }
+    let stepped = Volume::new([5, 9, 3], [-15, -63, 33], [3, 4, 5]);
+    let got = sampler.sample_volume(&stepped);
+    let full = sampler.sample_volume(&Volume::blocks([15, 36, 15], [-15, -63, 33]));
+    let full_volume = Volume::blocks([15, 36, 15], [-15, -63, 33]);
+    for (i, (x, y, z)) in positions(&stepped).into_iter().enumerate() {
+        assert_eq!(got[i], full[full_volume.index(x + 15, y + 63, z - 33)]);
+    }
+    // A volume on the corners of its cells, a cell apart, is the input's own volume.
+    let corners = Volume::new([3, 4, 2], [-16, -64, 32], [4, 8, 4]);
+    let input = bind_one(
+        &with_noise(
+            bin("add", noise(1.0, 1.0), op("square", noise(0.5, 2.0))),
+            vec![],
+        ),
+        "f",
+    );
+    assert_eq!(
+        sampler.sample_volume(&corners),
+        input.sample_volume(&corners)
+    );
+}
+
+#[test]
+fn interpolated_points_remember_nothing_wrong() {
+    // Points inside cells run the input's volume path inside the point path; values down and up
+    // a column, mixed with volumes, must equal a fresh sampler's at each point.
+    let f = bin(
+        "add",
+        interpolated(op("abs", noise(1.0, 1.0)), 4, 8),
+        op("abs", noise(0.5, 0.0)),
+    );
+    let map = with_noise(f, vec![]);
+    let kept = bind_one(&map, "f");
+    for y in (-20..20).chain((-20..20).rev()) {
+        let fresh = bind_one(&map, "f");
+        assert_eq!(kept.sample(3, y, -5), fresh.sample(3, y, -5), "y {y}");
+        if y % 7 == 0 {
+            let v = Volume::blocks([1, 3, 1], [3, y, -5]);
+            assert_eq!(kept.sample_volume(&v), fresh.sample_volume(&v));
+        }
+    }
+}
+
+#[test]
+fn volumes_follow_the_volume_samplers() {
+    // Volumes of the leaf types are their points.
+    let y = json!({"type": "gradient", "axis": "y", "from_coordinate": 0, "from_value": 0,
+        "to_coordinate": 1, "to_value": 1});
+    let column = Volume::blocks([1, 3, 1], [0, 0, 0]);
+    let at = |f: Value| bind_one(&with_noise(f, vec![]), "f").sample_volume(&column);
+    // −y is +0 at y 0, and −0 · ... below: y · −1 at y 0 is −0.
+    let minus_y = bin("mul", y.clone(), json!(-1));
+    // MinSampler over a volume: the right replaces the left only if below it, so +0 stays
+    // where Math.min, on the point path, gives −0.
+    let min = bin("min", y.clone(), minus_y.clone());
+    assert_eq!(bits(at(min.clone())[0]), 0);
+    assert_eq!(bits(value(min, 0, 0, 0)), bits(-0.0));
+    let max = bin("max", minus_y.clone(), y.clone());
+    assert_eq!(bits(at(max.clone())[0]), bits(-0.0));
+    assert_eq!(bits(value(max, 0, 0, 0)), 0);
+    // MulSampler over a volume multiplies a zero left too: +0 · −1 is −0, where the point
+    // path returns +0 without evaluating the right.
+    let mul = bin("mul", y.clone(), bin("add", minus_y.clone(), json!(-1)));
+    assert_eq!(bits(at(mul.clone())[0]), bits(-0.0));
+    assert_eq!(bits(value(mul, 0, 0, 0)), 0);
+    // Away from those cases a volume is its points.
+    let mixed = bin(
+        "add",
+        noise(1.0, 1.0),
+        json!({"type": "range_choice", "input": y.clone(), "min_inclusive": 1, "max_exclusive": 2,
+            "when_in_range": op("cube", noise(1.0, 1.0)), "when_out_of_range": -1}),
+    );
+    let sampler = bind_one(&with_noise(mixed, vec![]), "f");
+    let volume = Volume::blocks([2, 3, 2], [-1, 0, 7]);
+    let points: Vec<f32> = positions(&volume)
+        .into_iter()
+        .map(|(x, y, z)| sampler.sample(x, y, z))
+        .collect();
+    assert_eq!(sampler.sample_volume(&volume), points);
+}
+
+#[test]
+fn y_independent_parts_of_a_volume_are_its_points() {
+    // shift_b, a spline over y-independent coordinates, and a slice sampled over a tall volume.
+    let shifted = json!({"type": "noise", "noise": "n", "xz_scale": 0.25, "y_scale": 0,
+        "shift_x": {"type": "shift_a", "noise": "n"}, "shift_z": {"type": "shift_b", "noise": "n"}});
+    let spline = json!({"type": "spline", "spline": {"coordinate": shifted.clone(), "points": [
+        {"location": -0.5, "value": -1, "derivative": 0},
+        {"location": 0.5, "value": {"coordinate": "minecraft:g", "points": [
+            {"location": 0, "value": 0, "derivative": 1}, {"location": 1, "value": 2, "derivative": 0}]},
+            "derivative": 2}]}});
+    let f = bin(
+        "add",
+        spline,
+        json!({"type": "slice", "axis": "y", "coordinate": 5, "input": noise(1.0, 1.0)}),
+    );
+    let g = json!({"type": "gradient", "axis": "x", "from_coordinate": -10, "from_value": 0,
+        "to_coordinate": 10, "to_value": 1});
+    let sampler = bind_one(&with_noise(f, vec![df("minecraft:g", g)]), "f");
+    let volume = Volume::blocks([3, 7, 2], [-9, -2, 100]);
+    let points: Vec<f32> = positions(&volume)
+        .into_iter()
+        .map(|(x, y, z)| sampler.sample(x, y, z))
+        .collect();
+    assert_eq!(sampler.sample_volume(&volume), points);
+}
+
+#[test]
+fn find_top_surface_over_a_volume() {
+    let density = json!({"type": "gradient", "axis": "y", "from_coordinate": 0, "from_value": 1,
+        "to_coordinate": 100, "to_value": -1});
+    let upper = json!({"type": "gradient", "axis": "x", "from_coordinate": 0, "from_value": 40,
+        "to_coordinate": 100, "to_value": 140});
+    let f = json!({"type": "find_top_surface", "density": density, "upper_bound": upper,
+        "lower_bound": -64, "cell_height": 8});
+    let sampler = bind_one(&with_noise(f, vec![]), "f");
+    let volume = Volume::blocks([3, 4, 1], [10, -10, 0]);
+    let points: Vec<f32> = positions(&volume)
+        .into_iter()
+        .map(|(x, y, z)| sampler.sample(x, y, z))
+        .collect();
+    assert_eq!(sampler.sample_volume(&volume), points);
+    assert_eq!(points[0], 48.0);
+}
+
 #[test]
 fn types_without_a_point_path_load_but_dont_bind() {
     let map = resources(vec![
-        df(
-            "minecraft:i",
-            json!({"type": "interpolated", "input": 1, "cell_size_xz": 4, "cell_size_y": 8}),
-        ),
         df(
             "minecraft:d",
             json!({"type": "distance_to_point", "point": [1, 2, 3], "metric": "manhattan"}),
@@ -652,7 +886,7 @@ fn types_without_a_point_path_load_but_dont_bind() {
         df("minecraft:e", json!({"type": "end_outer_islands"})),
     ]);
     let mut loader = Loader::new(&map);
-    for id in ["i", "d", "e"] {
+    for id in ["d", "e"] {
         let f = loader.function(id).unwrap();
         let err = Binder::new(loader.noises(), 0).bind(&f).unwrap_err();
         assert!(

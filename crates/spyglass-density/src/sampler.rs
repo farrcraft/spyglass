@@ -1,5 +1,6 @@
 //! Density functions bound to a seed, evaluated at a block position as the game's compiled
-//! samplers do (`DensitySampler.sampleValue`). Each case cites the sampler it follows.
+//! samplers do (`DensitySampler.sampleValue`). Each case cites the sampler it follows. The
+//! volume path (`sampleVolume`) is in `volume.rs`.
 //!
 //! Binding follows `compileSampler`, including the choices the game makes while compiling:
 //! constant operands, `min` and `max` by their operands' ranges, `pow` by its exponent. Those
@@ -17,9 +18,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use spyglass_data::codec::{LoadError, LoadErrorKind};
-use spyglass_noise::mth::exp2i;
+use spyglass_noise::mth::{self, exp2i};
 use spyglass_noise::{
-    Layer, NoiseError, NoiseStack, NormalNoise, NormalNoiseParameters, SmearedPerlinNoise,
+    Layer, NoiseError, NoiseStack, NormalNoise, NormalNoiseParameters, SmearedPerlinNoise, Volume,
 };
 use spyglass_rng::{
     PositionalRandomFactory, RandomSource, XoroshiroPositionalRandomFactory, XoroshiroRandomSource,
@@ -35,20 +36,20 @@ use crate::range;
 /// A density function bound to a seed's noises, ready to evaluate.
 #[derive(Debug, Clone)]
 pub struct Sampler {
-    node: Arc<Node>,
+    pub(crate) node: Arc<Node>,
     /// Whether the value can depend on y; see [`Sampler::depends_on_y`].
-    depends_on_y: bool,
+    pub(crate) depends_on_y: bool,
     /// The [`Binder`] that made it, which numbered its slots.
     binder: u64,
     /// Where its value is remembered, or [`NO_SLOT`] for constants.
-    slot: u32,
+    pub(crate) slot: u32,
 }
 
 /// The slot of a node that isn't worth remembering.
-const NO_SLOT: u32 = u32::MAX;
+pub(crate) const NO_SLOT: u32 = u32::MAX;
 
 #[derive(Debug)]
-enum Node {
+pub(crate) enum Node {
     Constant(f32),
     /// `NoiseFunction.Sampler`: no shifts.
     Noise {
@@ -141,6 +142,14 @@ enum Node {
         coordinate: i32,
         input: Sampler,
     },
+    /// `InterpolatedFunction.Sampler`, with the reciprocals of its cell sizes.
+    Interpolated {
+        input: Sampler,
+        cell_xz: i32,
+        cell_y: i32,
+        inv_xz: f32,
+        inv_y: f32,
+    },
     /// `FindTopSurfaceFunction.Sampler`, compiled inside a slice at y 0.
     FindTopSurface {
         density: Sampler,
@@ -170,7 +179,7 @@ enum Node {
 }
 
 #[derive(Debug)]
-enum BoundSpline {
+pub(crate) enum BoundSpline {
     Constant(f32),
     Multipoint {
         coordinate: Sampler,
@@ -437,12 +446,18 @@ impl<'n> Binder<'n> {
             // 0 with no structures.
             DensityFunction::BlendAlpha => Node::Constant(1.0),
             DensityFunction::BlendOffset | DensityFunction::Beardifier => Node::Constant(0.0),
-            DensityFunction::Interpolated { .. } => {
-                return Err(unsupported(
-                    "density function type (needs the volume path)",
-                    "minecraft:interpolated",
-                ));
-            }
+            // InterpolatedFunction.compileSampler: the reciprocals are 1.0f / (float) size.
+            DensityFunction::Interpolated {
+                input,
+                cell_size_xz,
+                cell_size_y,
+            } => Node::Interpolated {
+                input: self.bind(input)?,
+                cell_xz: *cell_size_xz,
+                cell_y: *cell_size_y,
+                inv_xz: 1.0 / *cell_size_xz as f32,
+                inv_y: 1.0 / *cell_size_y as f32,
+            },
             DensityFunction::DistanceToPoint { .. } => {
                 return Err(unsupported(
                     "density function type",
@@ -645,7 +660,7 @@ impl From<IntervalError> for LoadError {
 /// Remembered values, valid for one binder at one column and one y. Stamps tell the current
 /// column's and point's entries from stale ones, so moving on never clears anything.
 #[derive(Default)]
-struct Memo {
+pub(crate) struct Memo {
     binder: u64,
     column: Option<(i32, i32)>,
     y: Option<i32>,
@@ -704,12 +719,12 @@ impl Memo {
 }
 
 thread_local! {
-    static MEMO: RefCell<Memo> = RefCell::new(Memo::default());
+    pub(crate) static MEMO: RefCell<Memo> = RefCell::new(Memo::default());
 }
 
 /// A block position, in both the `int` and `double` forms the samplers use.
 #[derive(Clone, Copy)]
-struct Pos {
+pub(crate) struct Pos {
     x: i32,
     y: i32,
     z: i32,
@@ -719,7 +734,7 @@ struct Pos {
 }
 
 impl Pos {
-    fn new(x: i32, y: i32, z: i32) -> Self {
+    pub(crate) fn new(x: i32, y: i32, z: i32) -> Self {
         Pos {
             x,
             y,
@@ -751,7 +766,7 @@ impl Sampler {
     }
 
     /// The value at `pos`, remembered in its slot.
-    fn eval(&self, memo: &mut Memo, pos: Pos) -> f32 {
+    pub(crate) fn eval(&self, memo: &mut Memo, pos: Pos) -> f32 {
         if self.slot == NO_SLOT {
             return self.node.compute(memo, pos);
         }
@@ -776,7 +791,7 @@ impl Sampler {
 
     /// The value at another position than the one being evaluated, for samplers that move their
     /// inputs (slices, `find_top_surface`).
-    fn eval_at(&self, memo: &mut Memo, x: i32, y: i32, z: i32) -> f32 {
+    pub(crate) fn eval_at(&self, memo: &mut Memo, x: i32, y: i32, z: i32) -> f32 {
         let place = memo.place();
         memo.begin(self.binder, x, y, z);
         let value = self.eval(memo, Pos::new(x, y, z));
@@ -787,7 +802,7 @@ impl Sampler {
 
 impl Node {
     /// The node's value at `pos`, its children's through `memo`.
-    fn compute(&self, memo: &mut Memo, pos: Pos) -> f32 {
+    pub(crate) fn compute(&self, memo: &mut Memo, pos: Pos) -> f32 {
         let Pos {
             x,
             y,
@@ -878,15 +893,9 @@ impl Node {
             }
             Node::MaxConst(a, c) => java::max(a.eval(memo, pos), *c),
             Node::Unary(op, a) => unary(*op, a.eval(memo, pos)),
-            // RoundFunction.Sampler.apply: x if the multiple is 0, else round(x / m) * m.
             Node::Round(kind, input, multiple) => {
                 let v = input.eval(memo, pos);
-                let m = multiple.eval(memo, pos);
-                if m == 0.0 {
-                    v
-                } else {
-                    round_to_integer(v / m, *kind) * m
-                }
+                round_to_multiple(v, multiple.eval(memo, pos), *kind)
             }
             Node::RoundInteger(kind, input) => round_to_integer(input.eval(memo, pos), *kind),
             Node::Clamp(input, min, max) => clamp(input.eval(memo, pos), *min, *max),
@@ -954,8 +963,47 @@ impl Node {
                 Axis::Y => input.eval_at(memo, x, *coordinate, z),
                 Axis::Z => input.eval_at(memo, x, y, *coordinate),
             },
-            // FindTopSurfaceFunction.Sampler.findSurfaceFrom, inside a slice at y 0: the upper
-            // bound at (x, 0, z), then density at points down from the cell below it.
+            // InterpolatedFunction.Sampler.sampleValue: the input itself on a cell corner, else
+            // the cell's corners as a 2 × 2 × 2 volume, interpolated by Mth.lerp3 with each t a
+            // division.
+            Node::Interpolated {
+                input,
+                cell_xz,
+                cell_y,
+                ..
+            } => {
+                let (cxz, cy) = (*cell_xz, *cell_y);
+                let (fx, fy, fz) = (
+                    java::floor_mod(x, cxz),
+                    java::floor_mod(y, cy),
+                    java::floor_mod(z, cxz),
+                );
+                if fx == 0 && fy == 0 && fz == 0 {
+                    return input.eval(memo, pos);
+                }
+                let corners = Volume::new(
+                    [2, 2, 2],
+                    [x.wrapping_sub(fx), y.wrapping_sub(fy), z.wrapping_sub(fz)],
+                    [cxz, cy, cxz],
+                );
+                let c = input.volume_in(memo, &corners);
+                let at = |x, y, z| c[corners.index(x, y, z)];
+                mth::lerp3(
+                    fx as f32 / cxz as f32,
+                    fy as f32 / cy as f32,
+                    fz as f32 / cxz as f32,
+                    at(0, 0, 0),
+                    at(1, 0, 0),
+                    at(0, 1, 0),
+                    at(1, 1, 0),
+                    at(0, 0, 1),
+                    at(1, 0, 1),
+                    at(0, 1, 1),
+                    at(1, 1, 1),
+                )
+            }
+            // FindTopSurfaceFunction.Sampler, inside a slice at y 0: the upper bound at
+            // (x, 0, z), then findSurfaceFrom.
             Node::FindTopSurface {
                 density,
                 upper_bound,
@@ -963,18 +1011,7 @@ impl Node {
                 cell_height,
             } => {
                 let upper = upper_bound.eval_at(memo, x, 0, z);
-                let start = floor_f32(upper / *cell_height as f32).wrapping_mul(*cell_height);
-                if start <= *lower_bound {
-                    return *lower_bound as f32;
-                }
-                let mut y = start;
-                while y >= *lower_bound {
-                    if density.eval_at(memo, x, y, z) > 0.0 {
-                        return y as f32;
-                    }
-                    y = y.wrapping_sub(*cell_height);
-                }
-                *lower_bound as f32
+                find_surface(memo, density, x, z, upper, *lower_bound, *cell_height)
             }
             // ClampedSampler.compute: fromValue + (clamp(c, min, max) - from) * factor.
             Node::Gradient {
@@ -1068,6 +1105,7 @@ impl Node {
                 input, samplers, ..
             } => input.depends_on_y || samplers.iter().any(|s| s.depends_on_y),
             Node::Slice { axis, input, .. } => *axis != Axis::Y && input.depends_on_y,
+            Node::Interpolated { input, .. } => input.depends_on_y,
             Node::FindTopSurface { .. } => false,
             Node::Gradient { axis, .. } | Node::GradientRepeat { axis, .. } => *axis == Axis::Y,
             Node::Spline(spline) => spline.depends_on_y(),
@@ -1075,8 +1113,33 @@ impl Node {
     }
 }
 
+/// `FindTopSurfaceFunction.Sampler.findSurfaceFrom`: from the cell below `upper` down to
+/// `lower`, the first y where `density`, sampled at a point, is positive.
+pub(crate) fn find_surface(
+    memo: &mut Memo,
+    density: &Sampler,
+    x: i32,
+    z: i32,
+    upper: f32,
+    lower: i32,
+    cell_height: i32,
+) -> f32 {
+    let start = floor_f32(upper / cell_height as f32).wrapping_mul(cell_height);
+    if start <= lower {
+        return lower as f32;
+    }
+    let mut y = start;
+    while y >= lower {
+        if density.eval_at(memo, x, y, z) > 0.0 {
+            return y as f32;
+        }
+        y = y.wrapping_sub(cell_height);
+    }
+    lower as f32
+}
+
 /// `UnaryFunction`'s samplers.
-fn unary(op: Unary, x: f32) -> f32 {
+pub(crate) fn unary(op: Unary, x: f32) -> f32 {
     match op {
         Unary::Abs => x.abs(),
         // Mth.square and Mth.cube: (x·x)·x.
@@ -1107,7 +1170,7 @@ pub(crate) fn squeeze(x: f32) -> f32 {
 }
 
 /// `Mth.clamp(float, float, float)`: `min` if below it, else `Math.min(value, max)`.
-fn clamp(value: f32, min: f32, max: f32) -> f32 {
+pub(crate) fn clamp(value: f32, min: f32, max: f32) -> f32 {
     if value < min {
         min
     } else {
@@ -1118,6 +1181,15 @@ fn clamp(value: f32, min: f32, max: f32) -> f32 {
 /// `Mth.floor(float)`: through `double`, saturating.
 fn floor_f32(value: f32) -> i32 {
     f64::from(value).floor() as i32
+}
+
+/// `RoundFunction.Sampler.apply`: `x` if the multiple is 0, else `round(x / m) · m`.
+pub(crate) fn round_to_multiple(x: f32, m: f32, kind: Round) -> f32 {
+    if m == 0.0 {
+        x
+    } else {
+        round_to_integer(x / m, kind) * m
+    }
 }
 
 /// `RoundFunction.roundToInteger`: each rounding through `double`, except `round`, which is
@@ -1133,7 +1205,7 @@ pub(crate) fn round_to_integer(x: f32, kind: Round) -> f32 {
 }
 
 /// `(float) Math.pow(base, exponent)`.
-fn java_pow(base: f64, exponent: f64) -> f32 {
+pub(crate) fn java_pow(base: f64, exponent: f64) -> f32 {
     base.powf(exponent) as f32
 }
 
@@ -1147,8 +1219,14 @@ impl BoundSpline {
         }
     }
 
-    /// `CubicSpline.Multipoint.sample`, all in `f32`.
+    /// `CubicSpline.Multipoint.sample` at a point.
     fn sample(&self, memo: &mut Memo, pos: Pos) -> f32 {
+        self.sample_with(&mut |s: &Sampler| s.eval(memo, pos))
+    }
+
+    /// `CubicSpline.Multipoint.sample`, all in `f32`, with each coordinate's value from
+    /// `coordinate_value`. Only the coordinates of points the value reaches are asked for.
+    pub(crate) fn sample_with(&self, coordinate_value: &mut dyn FnMut(&Sampler) -> f32) -> f32 {
         let (coordinate, locations, values, derivatives) = match self {
             BoundSpline::Constant(v) => return *v,
             BoundSpline::Multipoint {
@@ -1158,7 +1236,7 @@ impl BoundSpline {
                 derivatives,
             } => (coordinate, locations, values, derivatives),
         };
-        let c = coordinate.eval(memo, pos);
+        let c = coordinate_value(coordinate);
         // findIntervalStart: Mth.binarySearch for the first location above c, minus one. The
         // game's test is `c < location`, so a NaN coordinate finds no location and extends past
         // the last point; the negation keeps that.
@@ -1170,7 +1248,7 @@ impl BoundSpline {
         let last = locations.len() - 1;
         // linearExtend outside the points.
         let mut extend = |i: usize| {
-            let value = values[i].sample(memo, pos);
+            let value = values[i].sample_with(coordinate_value);
             let d = derivatives[i];
             if d == 0.0 {
                 value
@@ -1187,7 +1265,8 @@ impl BoundSpline {
         }
         let (x0, x1) = (locations[i], locations[i + 1]);
         let t = (c - x0) / (x1 - x0);
-        let (f0, f1) = (values[i].sample(memo, pos), values[i + 1].sample(memo, pos));
+        let f0 = values[i].sample_with(coordinate_value);
+        let f1 = values[i + 1].sample_with(coordinate_value);
         let a = derivatives[i] * (x1 - x0) - (f1 - f0);
         let b = -derivatives[i + 1] * (x1 - x0) + (f1 - f0);
         let lerp = |t: f32, p: f32, q: f32| p + t * (q - p);

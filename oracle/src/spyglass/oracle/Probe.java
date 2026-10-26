@@ -16,11 +16,18 @@ import com.google.gson.stream.JsonWriter;
 
 import net.minecraft.core.QuartPos;
 import net.minecraft.core.registries.Registries;
+import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.biome.Climate;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.levelgen.Aquifer;
 import net.minecraft.world.level.levelgen.LegacyRandomSource;
 import net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator;
+import net.minecraft.world.level.levelgen.NoiseChunk;
+import net.minecraft.world.level.levelgen.NoiseGeneratorSettings;
+import net.minecraft.world.level.levelgen.blending.Blender;
 import net.minecraft.world.level.levelgen.Noises;
 import net.minecraft.world.level.levelgen.PositionalRandomFactory;
 import net.minecraft.world.level.levelgen.RandomState;
@@ -83,6 +90,15 @@ final class Probe {
     };
     /** Chunks where the climate sampler's volume path is compared with its point path. */
     private static final int[][] CHUNKS = {{0, 0}, {-1, -1}, {62500, -62500}, {-1874999, 1874999}};
+    /**
+     * Block columns {@code (x, z)} sampled as the generator samples them: one 1 × height × 1 volume. Some x and z
+     * are on interpolated cell corners and some aren't, which changes how many corners a column needs.
+     */
+    private static final int[][] COLUMNS = {
+        {0, 0}, {1, -1}, {-517, 3}, {123, -456}, {4096, -4096}, {1000000, -1000000}, {-29999984, 29999984},
+        {29999983, -29999983},
+    };
+    private static final String FINAL_DENSITY = "minecraft:overworld/final_density";
 
     private Probe() {}
 
@@ -91,6 +107,7 @@ final class Probe {
         write(outDir.resolve("rng.json"), game, rng());
         write(outDir.resolve("noise.json"), game, noise(game, seeds));
         write(outDir.resolve("density.json"), game, density(game, seeds));
+        write(outDir.resolve("terrain.json"), game, terrain(game, seeds));
         return 0;
     }
 
@@ -303,6 +320,54 @@ final class Probe {
                 }
             }
 
+            // Every named function through the volume path, as NoiseBasedChunkGenerator.iterateNoiseColumn
+            // samples final_density: a fresh caching context per column (its NoiseChunk's, with no beardifier and
+            // nothing blending), over the noise settings' whole y range. Then final_density over whole chunks, as
+            // chunk generation's NoiseChunk samples it.
+            var noiseSettings = generator.generatorSettings().value().noiseSettings();
+            int minY = noiseSettings.minY();
+            int height = noiseSettings.height();
+            var columnPool = state.acquireDensityBufferPool();
+            try {
+                for (var holder : named) {
+                    String id = holder.key().identifier().toString();
+                    for (int[] col : COLUMNS) {
+                        var context = SamplerContext.builder().enableCaches().useBufferArena(columnPool).build();
+                        var volume = new DensityVolume(1, height, 1, col[0], minY, col[1]);
+                        var buffer = DensityBuffer.createUnpooled(volume.size());
+                        state.samplersWithContext(context).get(holder.value()).sampleVolume(buffer, volume);
+                        var c = kase("density_column").seed(seed).name(id);
+                        c.json.add("pos", ints(new int[] {col[0], minY, col[1]}));
+                        c.json.addProperty("height", height);
+                        cases.add(c.longs(digest(buffer, volume.size())).json);
+                        if (id.equals(FINAL_DENSITY)) {
+                            float[] values = new float[volume.size()];
+                            for (int i = 0; i < values.length; i++) {
+                                values[i] = buffer.get(i);
+                            }
+                            var cv = kase("density_column_values").seed(seed).name(id);
+                            cv.json.add("pos", ints(new int[] {col[0], minY, col[1]}));
+                            cv.json.addProperty("height", height);
+                            cases.add(cv.floats(values).json);
+                        }
+                    }
+                }
+                var finalDensity = functions.getOrThrow(
+                        ResourceKey.create(Registries.DENSITY_FUNCTION, Identifier.parse(FINAL_DENSITY))).value();
+                for (int[] chunk : CHUNKS) {
+                    var context = SamplerContext.builder().enableCaches().useBufferArena(columnPool).build();
+                    var volume = new DensityVolume(16, height, 16, chunk[0] * 16, minY, chunk[1] * 16);
+                    var buffer = DensityBuffer.createUnpooled(volume.size());
+                    state.samplersWithContext(context).get(finalDensity).sampleVolume(buffer, volume);
+                    var c = kase("density_chunk").seed(seed).name(FINAL_DENSITY);
+                    c.json.add("pos", ints(new int[] {chunk[0] * 16, minY, chunk[1] * 16}));
+                    c.json.addProperty("height", height);
+                    cases.add(c.longs(digest(buffer, volume.size())).json);
+                }
+            } finally {
+                state.releaseDensityBufferPool(columnPool);
+            }
+
             // The climate sampler as chunk generation builds it (ChunkGenerator.doCreateBiomes).
             var pool = state.acquireDensityBufferPool();
             try {
@@ -383,6 +448,108 @@ final class Probe {
             }
         }
         return cases;
+    }
+
+    // ---- Terrain: the aquifer ----
+
+    /**
+     * Densities the aquifer is asked about besides each column's own: well below zero (fluid levels and
+     * statuses), slightly below (where barriers decide), and zero.
+     */
+    private static final double[] AQUIFER_DENSITIES = {-1.0, -0.02, 0.0};
+
+    /**
+     * The aquifer as NoiseBasedChunkGenerator.iterateNoiseColumn builds it, for one column: a NoiseChunk over a
+     * 1 × height × 1 volume, with no beardifier and nothing blending. Each case asks computeSubstance about
+     * every block from the top down, as the column does, with the column's own final_density or with one fixed
+     * density, and records each block bottom-up as one character.
+     */
+    private static JsonArray terrain(Game game, List<String> seedArgs) {
+        var cases = new JsonArray();
+        var stem = game.stem("minecraft:overworld");
+        if (!(stem.generator() instanceof NoiseBasedChunkGenerator generator)) {
+            throw new IllegalStateException("the overworld isn't noise-based");
+        }
+        NoiseGeneratorSettings settings = generator.generatorSettings().value();
+        Aquifer.FluidPicker picker;
+        try {
+            var create = NoiseBasedChunkGenerator.class.getDeclaredMethod("createFluidPicker",
+                    NoiseGeneratorSettings.class);
+            create.setAccessible(true);
+            picker = (Aquifer.FluidPicker) create.invoke(null, settings);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("can't build the generator's fluid picker", e);
+        }
+        var noises = game.access.lookupOrThrow(Registries.NOISE);
+        int minY = settings.noiseSettings().minY();
+        int height = settings.noiseSettings().height();
+        for (String seedArg : seedArgs) {
+            long seed = WorldOptions.parseSeed(seedArg)
+                    .orElseThrow(() -> new IllegalArgumentException("empty seed"));
+            var state = RandomState.create(noises, seed, settings);
+            for (int[] col : COLUMNS) {
+                var volume = new DensityVolume(1, height, 1, col[0], minY, col[1]);
+                for (int d = -1; d < AQUIFER_DENSITIES.length; d++) {
+                    try (var chunk = new NoiseChunk(state, null, settings, picker, Blender.empty(), volume)) {
+                        Aquifer aquifer = chunk.aquifer();
+                        float[] density = null;
+                        if (d < 0) {
+                            var sampler = chunk.cachingSamplers().get(settings.noiseRouter().finalDensity());
+                            try (var buffer = sampler.sampleVolume(volume)) {
+                                density = new float[height];
+                                for (int i = 0; i < height; i++) {
+                                    density[i] = buffer.get(i);
+                                }
+                            }
+                        }
+                        char[] blocks = new char[height];
+                        for (int i = height - 1; i >= 0; i--) {
+                            int y = minY + i;
+                            double value = d < 0 ? density[i] : AQUIFER_DENSITIES[d];
+                            blocks[i] = blockChar(aquifer.computeSubstance(col[0], y, col[1], value));
+                        }
+                        var c = kase("aquifer_column").seed(seed)
+                                .method(d < 0 ? "final_density" : "fixed");
+                        c.json.add("pos", ints(new int[] {col[0], minY, col[1]}));
+                        c.json.addProperty("height", height);
+                        if (d >= 0) {
+                            c.json.addProperty("density", hex(Double.doubleToRawLongBits(AQUIFER_DENSITIES[d])));
+                        }
+                        cases.add(c.text(new String(blocks)).json);
+                    }
+                }
+            }
+        }
+        return cases;
+    }
+
+    /** {@code s} for nothing (the default block), else air, water or lava's first letter. */
+    private static char blockChar(BlockState state) {
+        if (state == null) {
+            return 's';
+        }
+        if (state.isAir()) {
+            return 'a';
+        }
+        if (state.is(Blocks.WATER)) {
+            return 'w';
+        }
+        if (state.is(Blocks.LAVA)) {
+            return 'l';
+        }
+        throw new IllegalStateException("unexpected aquifer block " + state);
+    }
+
+    /**
+     * A buffer's floats in index order (y fastest, then x, then z), condensed as the climate digest is:
+     * {@code h = h * 1000003 + unsigned bits}, from 1.
+     */
+    private static long digest(DensityBuffer buffer, int size) {
+        long digest = 1;
+        for (int i = 0; i < size; i++) {
+            digest = digest * 1000003L + (Float.floatToRawIntBits(buffer.get(i)) & 0xFFFFFFFFL);
+        }
+        return digest;
     }
 
     /** {@code get(x, y, z)} and {@code get(x, z)} at every probe point, one case each. */

@@ -9,7 +9,9 @@ pub mod mth;
 mod normal;
 mod perlin;
 mod stack;
+mod volume;
 
 pub use normal::{NoiseError, NormalNoise, NormalNoiseParameters, Normalization, OctaveInfo};
 pub use perlin::{PerlinNoise, SmearedPerlinNoise};
 pub use stack::{Layer, Noise, NoiseStack};
+pub use volume::Volume;

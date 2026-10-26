@@ -205,7 +205,7 @@ impl NormalNoise {
         NoiseStack::new(layers)
     }
 
-    /// `createForLegacyNetherBiome(RandomSource)`: two [legacy stacks](legacy_fbm) from
+    /// `createForLegacyNetherBiome(RandomSource)`: two legacy stacks (`LegacyFbmInitializer`) from
     /// `random` in turn, then one stack of the first's layers at their frequencies and the
     /// second's at `INPUT_FACTOR` times theirs, every amplitude times
     /// `(float)(normalizationFactor · base_amplitude)` in `f32`. Not interleaved.

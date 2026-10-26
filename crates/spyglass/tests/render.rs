@@ -220,3 +220,40 @@ fn rendering_is_deterministic_and_writes_png() {
     assert_eq!(png(5), png(5));
     assert_ne!(png(5), png(6));
 }
+
+#[test]
+#[ignore = "needs a bundle: spyglass-extract 26.3"]
+fn the_real_world_renders_the_same_in_tiles() {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../bundles/26.3");
+    let world = World::open(dir).unwrap();
+    let session = world.session(-4_893_098_694_207_956_070).unwrap();
+    for scale in [1, 4, 16, 64] {
+        let layers = Layers {
+            biomes: true,
+            ties: true,
+            highlight: vec![world.biome_query("minecraft:cherry_grove").unwrap()],
+            structures: vec![
+                world.structure_query("#minecraft:village").unwrap(),
+                world.structure_query("minecraft:stronghold").unwrap(),
+            ],
+            slime_chunks: scale <= spyglass::MAX_SLIME_SCALE,
+            spawn: true,
+        };
+        let area = MapArea::centred_on([200, -300], [160, 120], scale, 64).unwrap();
+        let whole = session.render(&area, &layers).unwrap();
+        let pixels: Vec<[u8; 3]> = (0..120)
+            .flat_map(|j| (0..160).map(move |i| [i, j]))
+            .map(|p| whole.pixel(p))
+            .collect();
+        assert_eq!(pixels, tiled(&session, &area, &layers, 64), "scale {scale}");
+        let map = session.biome_map(&area).unwrap();
+        for [i, j] in [[0, 0], [159, 119], [80, 60], [13, 101]] {
+            let [x, z] = area.block([i, j]);
+            assert_eq!(
+                world.biomes()[map.biome([i, j])],
+                session.biome_at([x, 64, z]).biome,
+                "scale {scale} pixel ({i}, {j})"
+            );
+        }
+    }
+}

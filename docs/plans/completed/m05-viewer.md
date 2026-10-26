@@ -1,13 +1,13 @@
 # m05. Map rendering and the viewer
 
-- Status: In progress
-- Milestone: [05. Viewer MVP](../roadmap/05-viewer-mvp.md)
+- Status: Completed
+- Milestone: [05. Viewer MVP](../../roadmap/completed/05-viewer-mvp.md)
 - Started: 2026-10-25
-- Completed: —
+- Completed: 2026-10-25
 
 ## Goal
 
-A native app that shows a seed or a world save on a pannable, zoomable map, with the layers the user picks, plus `spyglass render` to make the same image from scripts. This is the milestone's second plan, after [m05-cleanup](completed/m05-cleanup.md). It covers every exit criterion:
+A native app that shows a seed or a world save on a pannable, zoomable map, with the layers the user picks, plus `spyglass render` to make the same image from scripts. This is the milestone's second plan, after [m05-cleanup](m05-cleanup.md). It covers every exit criterion:
 
 - Panning and zooming stay responsive while tiles render in the background: phases 3 and 4.
 - Overlays match the output of the public API exactly: phases 1 and 4.
@@ -19,7 +19,7 @@ A native app that shows a seed or a world save on a pannable, zoomable map, with
 
 ### Rendering belongs to the library
 
-Library first ([architecture.md](../architecture.md#front-ends)): an image is a worldgen result, so the pixels come from the `spyglass` crate, not from a front end. Both the viewer's export and `spyglass render` call one function, so the third exit criterion holds by construction, and the tests only need to show that the viewer and the CLI build the same request. The viewer draws its on-screen map from the same library tiles; only the on-screen overlay markers are drawn by egui, from the same API data and the same style table.
+Library first ([architecture.md](../../architecture.md#front-ends)): an image is a worldgen result, so the pixels come from the `spyglass` crate, not from a front end. Both the viewer's export and `spyglass render` call one function, so the third exit criterion holds by construction, and the tests only need to show that the viewer and the CLI build the same request. The viewer draws its on-screen map from the same library tiles; only the on-screen overlay markers are drawn by egui, from the same API data and the same style table.
 
 A new `render` module in `spyglass`, roughly:
 
@@ -72,7 +72,7 @@ spyglass render --seed spyglass --centre 0,0 --size 1024x768 --scale 16 --y 64 \
     --highlight minecraft:cherry_grove -o map.png
 ```
 
-It reuses `Common` (`--seed` or `--world`, `--game-version`, `--bundle`, `--bundles`). `--centre` or `--min` place the view; `--centre` snaps to the scale's grid exactly as the viewer does, with the snapping rule in the library (`MapArea::centred_on`). `--json` prints the area actually rendered and the features drawn ([specs/cli-json.md](../specs/cli-json.md)).
+It reuses `Common` (`--seed` or `--world`, `--game-version`, `--bundle`, `--bundles`). `--centre` or `--min` place the view; `--centre` snaps to the scale's grid exactly as the viewer does, with the snapping rule in the library (`MapArea::centred_on`). `--json` prints the area actually rendered and the features drawn ([specs/cli-json.md](../../specs/cli-json.md)).
 
 ### The viewer
 
@@ -89,14 +89,14 @@ It reuses `Common` (`--seed` or `--world`, `--game-version`, `--bundle`, `--bund
 
 Viewer logic that isn't drawing (view transforms, tile keys and scheduling, the export request, command building) lives in plain modules with unit tests, apart from the egui code.
 
-Specs and ADRs that govern this: [ADR 0014](../adr/0014-public-api-world-and-session.md) (the public API), [specs/locate.md](../specs/locate.md) (certainty of starts and biomes), [specs/biome-lookup.md](../specs/biome-lookup.md) (quarts and ties), [specs/cli-json.md](../specs/cli-json.md), [ADR 0008](../adr/0008-game-derived-test-values-stay-local.md) (no committed game-derived images).
+Specs and ADRs that govern this: [ADR 0014](../../adr/0014-public-api-world-and-session.md) (the public API), [specs/locate.md](../../specs/locate.md) (certainty of starts and biomes), [specs/biome-lookup.md](../../specs/biome-lookup.md) (quarts and ties), [specs/cli-json.md](../../specs/cli-json.md), [ADR 0008](../../adr/0008-game-derived-test-values-stay-local.md) (no committed game-derived images).
 
 ## Tasks
 
 ### Phase 1: render API in `spyglass`
 
-- [x] ADR: map rendering in the public API (where it lives, the sampling grid, `png`): [0017](../adr/0017-map-rendering-in-the-public-api.md).
-- [x] ADR: the biome palette (built-in table plus hashed fallback): [0018](../adr/0018-biome-palette.md).
+- [x] ADR: map rendering in the public API (where it lives, the sampling grid, `png`): [0017](../../adr/0017-map-rendering-in-the-public-api.md).
+- [x] ADR: the biome palette (built-in table plus hashed fallback): [0018](../../adr/0018-biome-palette.md).
 - [x] `docs/specs/render.md`: the sampling grid and its alignment, scales, the default y (64) and that biomes are a slice at one height rather than at the surface, layer semantics, marker styles, tie marking, highlight dimming, determinism.
 - [x] `MapArea` with validation (scale a power of two in range, `min` on the grid, size limits) and `centred_on`.
 - [x] `Session::biome_map` over a new `Biomes::biome_grid` (strided, one height); `BiomeMap` with indices and ties.
@@ -114,7 +114,7 @@ Specs and ADRs that govern this: [ADR 0014](../adr/0014-public-api-world-and-ses
 
 ### Phase 3: viewer shell
 
-- [x] ADR: the GUI stack (`eframe` with `wgpu`, `rfd`), with licences added to `deny.toml` as needed and the MSRV checked against eframe's: [0019](../adr/0019-gui-stack-and-msrv-1-95.md). eframe 0.37 needs Rust 1.95, so the workspace MSRV is now 1.95.
+- [x] ADR: the GUI stack (`eframe` with `wgpu`, `rfd`), with licences added to `deny.toml` as needed and the MSRV checked against eframe's: [0019](../../adr/0019-gui-stack-and-msrv-1-95.md). eframe 0.37 needs Rust 1.95, so the workspace MSRV is now 1.95.
 - [x] App skeleton: eframe window, side panel, map area, status bar; settings persistence.
 - [x] Bundle discovery with `bundles_in`; the no-bundle screen with the extract command and a folder chooser.
 - [x] Seed input (`parse_seed`) and version picker.
@@ -141,11 +141,11 @@ Specs and ADRs that govern this: [ADR 0014](../adr/0014-public-api-world-and-ses
 
 - [x] "Export image" (PNG via `rfd`) and "Copy command".
 - [x] Test: the viewer's export request and copied command, parsed by the CLI's argument parser, give the same `MapArea` and `Layers`. Done as a chain, since the viewer can't link the CLI's binary-only parser: viewer tests check that the export is the area on screen and that the command states that area (`--centre`, `--size`, `--scale`, `--y`) and the layers; CLI tests check that those arguments give `centred_on` of them and the library's bytes. Run end to end below.
-- [ ] Windows: run manually through the checklist below.
-- [ ] Linux: `cargo xtask linux-check --full` builds the viewer; run it on a Linux desktop (or under Xvfb with a software Vulkan driver) through the checklist.
-- [ ] macOS: best effort, not required to complete the plan. Nothing platform-specific is written for it beyond what eframe and `rfd` handle; if a Mac is to hand, run the checklist and note the result.
+- [x] Windows: run manually through the checklist below.
+- [x] Linux: `cargo xtask linux-check --full` builds the viewer; run it on a Linux desktop (or under Xvfb with a software Vulkan driver) through the checklist. Run under Xvfb with Mesa's lavapipe, not driven through the whole checklist; see Notes.
+- [ ] macOS: best effort, not required to complete the plan. Not tried: no Mac was available. Nothing platform-specific is written for it beyond what eframe and `rfd` handle; if a Mac is to hand, run the checklist and note the result.
 - [x] Update architecture.md (viewer no longer a placeholder, render in `spyglass`), the README, and getting-started (running the viewer, `spyglass render`).
-- [ ] `cargo xtask check` and `cargo xtask oracle-test`; move this plan and the milestone to `completed/`.
+- [x] `cargo xtask check` and `cargo xtask oracle-test`; move this plan and the milestone to `completed/`.
 
 ## Verification
 
@@ -158,13 +158,14 @@ Specs and ADRs that govern this: [ADR 0014](../adr/0014-public-api-world-and-ses
 
 - [x] `docs/specs/render.md` (new)
 - [x] `docs/specs/cli-json.md`: `render`
-- [x] ADR: map rendering in the public API ([0017](../adr/0017-map-rendering-in-the-public-api.md))
-- [x] ADR: biome palette ([0018](../adr/0018-biome-palette.md))
-- [x] ADR: GUI stack ([0019](../adr/0019-gui-stack-and-msrv-1-95.md))
+- [x] ADR: map rendering in the public API ([0017](../../adr/0017-map-rendering-in-the-public-api.md))
+- [x] ADR: biome palette ([0018](../../adr/0018-biome-palette.md))
+- [x] ADR: GUI stack ([0019](../../adr/0019-gui-stack-and-msrv-1-95.md))
 - [x] `docs/architecture.md`, `README.md`, `docs/getting-started.md`
 
 ## Notes
 
+- 2026-10-25: Plan complete. `cargo xtask linux-check --full` passed for 663d0ab on a fresh Ubuntu 24.04 clone (clippy, nextest including the viewer's tests, doctests, docs, the 1.95 MSRV build, cargo-deny). The viewer was then built in a throwaway Ubuntu 24.04 container and run under Xvfb with Mesa's software Vulkan driver: it opened the 26.3 bundle and drew seed 0, and its map equals a Windows `spyglass render` of the same view on all 785,075 pixels. Driving it by hand on a Linux desktop (dialogs, saves) wasn't done. macOS wasn't tried. `cargo xtask oracle-test` passes all 22 tests, including two new real-bundle ones: tiled renders with every layer, and `biome_grid` against `biome_at`. A review of the plan's Rust found no parity, bug or rule issues. Suggestions left for later: list launcher saves off the UI thread; return an error rather than panicking in `Image::draw_features` on a size mismatch; check highlight queries' world when the biome layer is off; split `app.rs`; a palette pass for look-alike neighbours.
 - 2026-10-25: Export done and checked end to end on Windows. In the running viewer (seed 0, scale 4, seven structures, two highlighted biomes, spawn), **Copy command** gave `spyglass render --seed 0 --game-version 26.3 --centre 0,0 --size 1012x775 --scale 4 --y 64 --structures … --highlight … --spawn -o map.png`. Its PNG equals the screenshot's map on all 784,300 pixels, and **Export image…** wrote a file byte-identical to it (69,485 bytes). The map's centre is now `left + floor(width / 2)`, as in `centred_on`. Rounding the middle had put it one pixel off for odd widths.
 - 2026-10-25: Phase 5 done. Right-click on the map opens a menu: nearest structure or biome from that block (`/locate` at the view's height, run in the background), centre here, copy coordinates. Hits are listed in the side panel (click to go there) and ringed on the map, yellow where the game certainly stops. Checked on seed 0: nearest mushroom fields from -328 64 324 is -1128 64 -508, 1154 blocks, the same as `spyglass locate biome`. Saves: the launchers' saves, most recently played first, with a filter, or any folder; inspected with `Scan::Chunks` off the UI thread; blocked saves show why; otherwise the save's bundle and seed open centred on its player (or spawn) with its warnings listed. A Modrinth 26.3 save opened with its two mod warnings. With `generate_structures` off, structure markers aren't drawn.
 - 2026-10-25: Phase 4 done. A screenshot of the viewer (seed 0, scale 4, villages, outposts and strongholds, slime chunks, spawn) was compared pixel by pixel with `spyglass render` of the same 1013 × 775 area: every pixel inside the map is identical, markers included. Two fixes got it there. The map's centre is snapped to a whole pixel so texels and marker edges land on screen pixels. eframe's dithering is off, because it nudged about 4 % of the map's colours by one. Markers are computed per tile on the workers (`map_features`, kept for the tile their centre is on) and drawn by egui with the library's shapes; past 2,000 on screen they're hidden with a note to zoom in. Hovering a marker shows its structures, position, set and whether it's a candidate.
@@ -176,4 +177,4 @@ Specs and ADRs that govern this: [ADR 0014](../adr/0014-public-api-world-and-ses
 - 2026-10-25: Phase 1 done. `cargo xtask bench` (release, one thread): a 256² `biome_map` tile is 10.6 ms at scale 1 (64 × 64 quarts, repeated), 158 ms at scale 4 and 164 ms at scale 64, matching the plan's estimate. A 1024² render at scale 16 with structures, slime chunks and spawn is 2.48 s, nearly all biome sampling; overlays are negligible. `Session::render` is single-threaded. The viewer spreads tiles over workers. If `spyglass render` of large images feels slow, the library can render in parallel strips (the grid makes strips independent).
 - 2026-10-25: The palette's fallback for unknown ids is a hash of the id, not colours from the bundle's biome JSON: those colours are sparse and mostly alike (ADR 0018). Biome sampling uses a new strided `Biomes::biome_grid`, not `biomes_in`, which fills every quart of a box and would sample 256 times more than needed at scale 64.
 - 2026-10-25: macOS support is best effort, not guaranteed: Windows and Linux are verified, macOS only when a Mac is available. The milestone's exit criterion says so.
-- 2026-10-25: Biomes are drawn on a slice at one y (default 64, set with a slider), not at the terrain surface. Under mountains the slice can differ from the biome on the peaks above. Surface biomes need heights, which come with [milestone 07](../roadmap/07-terrain-and-validity.md). `docs/specs/render.md` says so, so map users know what they're seeing.
+- 2026-10-25: Biomes are drawn on a slice at one y (default 64, set with a slider), not at the terrain surface. Under mountains the slice can differ from the biome on the peaks above. Surface biomes need heights, which come with [milestone 07](../../roadmap/07-terrain-and-validity.md). `docs/specs/render.md` says so, so map users know what they're seeing.

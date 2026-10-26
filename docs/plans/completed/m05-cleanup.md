@@ -1,7 +1,7 @@
 # m05. Cleanup before the viewer
 
 - Status: Completed
-- Milestone: [05. Viewer MVP](../../roadmap/05-viewer-mvp.md)
+- Milestone: [05. Viewer MVP](../../roadmap/completed/05-viewer-mvp.md)
 - Started: 2026-10-25
 - Completed: 2026-10-25
 

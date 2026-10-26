@@ -1,6 +1,6 @@
 # Map rendering
 
-Status: draft. Covers map images of the Overworld from the `spyglass` crate's `render` module ([ADR 0017](../adr/0017-map-rendering-in-the-public-api.md)), which the viewer and `spyglass render` both use. Rendering adds no worldgen of its own: every pixel and marker comes from a query the API already answers ([locate.md](locate.md), [biome-lookup.md](biome-lookup.md)).
+Status: stable. Covers map images of the Overworld from the `spyglass` crate's `render` module ([ADR 0017](../adr/0017-map-rendering-in-the-public-api.md)), which the viewer and `spyglass render` both use. Rendering adds no worldgen of its own: every pixel and marker comes from a query the API already answers ([locate.md](locate.md), [biome-lookup.md](biome-lookup.md)).
 
 ## Map areas
 
@@ -52,4 +52,4 @@ Markers have a fixed size in pixels at every scale. A marker can overlap an area
 
 ## Testing
 
-On fixture bundles, without game data: a view equals itself assembled from tiles at every scale, layers on; each pixel's biome equals `Session::biome_at` at its sample block; the features drawn are exactly those `structures_in`, `slime_chunks` and `spawn_origin` give for the area and its margin; invalid areas are errors. `spyglass render` writes the same bytes as `Session::render` for the same request.
+On fixture bundles, without game data: a view equals itself assembled from tiles at every scale, layers on; each pixel's biome equals `Session::biome_at` at its sample block; the features drawn are exactly those `structures_in`, `slime_chunks` and `spawn_origin` give for the area and its margin; invalid areas are errors. `spyglass render` writes the same bytes as `Session::render` for the same request. Ignored tests on the real bundle (`cargo xtask oracle-test`) check tiling and sampling there too, and `Biomes::biome_grid` against `biome_at`.

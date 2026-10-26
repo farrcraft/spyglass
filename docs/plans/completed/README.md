@@ -14,3 +14,4 @@ Plans that have been fully implemented. See [development-process.md](../../devel
 | [m03-api-cli](m03-api-cli.md)         | 03. Structure placement and locate queries | 2026-10-25 |
 | [m04-world-saves](m04-world-saves.md) | 04. World saves                            | 2026-10-25 |
 | [m05-cleanup](m05-cleanup.md)         | 05. Viewer MVP                             | 2026-10-25 |
+| [m05-viewer](m05-viewer.md)           | 05. Viewer MVP                             | 2026-10-25 |

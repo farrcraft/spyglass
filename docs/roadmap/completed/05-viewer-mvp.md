@@ -1,8 +1,8 @@
 # 05. Viewer MVP
 
-- Status: In progress
-- Depends on: [03](completed/03-structure-placement.md), [04](completed/04-world-saves.md)
-- Plans: [m05-cleanup](../plans/completed/m05-cleanup.md) (completed), [m05-viewer](../plans/m05-viewer.md)
+- Status: Completed
+- Depends on: [03](03-structure-placement.md), [04](04-world-saves.md)
+- Plans: [m05-cleanup](../../plans/completed/m05-cleanup.md), [m05-viewer](../../plans/completed/m05-viewer.md) (both completed)
 
 ## Goal
 
@@ -20,8 +20,8 @@ A native app to preview a seed or a world save on a map, rendering exactly the t
 
 ## Exit criteria
 
-- [ ] Panning and zooming stay responsive while tiles render in the background.
-- [ ] Overlays match the output of the public API exactly.
-- [ ] `spyglass render` produces the same image as the viewer for the same view and layers.
-- [ ] Runs on Windows and Linux. macOS is best effort: built and tried when a Mac is available, not guaranteed.
-- [ ] The viewer explains what to do when no bundle has been extracted yet.
+- [x] Panning and zooming stay responsive while tiles render in the background.
+- [x] Overlays match the output of the public API exactly.
+- [x] `spyglass render` produces the same image as the viewer for the same view and layers.
+- [x] Runs on Windows and Linux. macOS is best effort: built and tried when a Mac is available, not guaranteed.
+- [x] The viewer explains what to do when no bundle has been extracted yet.

@@ -96,6 +96,11 @@ const TESTS: &[(&str, &str, &[Input])] = &[
     ),
     (
         "spyglass-biome",
+        "grid_equals_point_lookups",
+        &[Input::Bundle],
+    ),
+    (
+        "spyglass-biome",
         "spawn_origin_matches_the_game",
         &[Input::Spawn, Input::Bundle],
     ),
@@ -123,6 +128,11 @@ const TESTS: &[(&str, &str, &[Input])] = &[
         "spyglass",
         "locate_agrees_with_the_game",
         &[Input::Locate, Input::Bundle],
+    ),
+    (
+        "spyglass",
+        "the_real_world_renders_the_same_in_tiles",
+        &[Input::Bundle],
     ),
     ("spyglass-cli", "structures", &[Input::Bundle]),
     ("spyglass-cli", "biomes", &[Input::Bundle]),

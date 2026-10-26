@@ -224,3 +224,28 @@ fn region_fill_equals_point_lookups() {
         }
     }
 }
+
+#[test]
+#[ignore = "needs a bundle: spyglass-extract 26.3"]
+fn grid_equals_point_lookups() {
+    let source = BiomeSource::overworld(&bundle_for("26.3")).unwrap();
+    // Map tiles' grids: every quart, then one in 16 and one in 64 (scales 4, 64 and 256).
+    for (seed, origin, step) in [
+        (0, [-40, 25], 1),
+        (-4_893_098_694_207_956_070, [-1024, 512], 16),
+        (i64::MIN, [7_000_000, -7_000_000], 64),
+    ] {
+        let biomes = source.with_seed(seed).unwrap();
+        let size = [24, 18];
+        let grid = biomes.biome_grid(origin, 16, step, size);
+        for (i, cell) in grid.iter().enumerate() {
+            let (x, z) = ((i % 24) as i32, (i / 24) as i32);
+            let (qx, qz) = (origin[0] + x * step, origin[1] + z * step);
+            assert_eq!(
+                *cell,
+                biomes.biome_at(qx, 16, qz),
+                "seed {seed} quart ({qx}, 16, {qz})"
+            );
+        }
+    }
+}

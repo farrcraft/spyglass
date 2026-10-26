@@ -4,7 +4,9 @@
 use std::cell::OnceCell;
 
 use spyglass_biome::BiomeId;
-use spyglass_search::{Anchor, Count, Importance, Kind, Place, Region, Sampling};
+use spyglass_search::{
+    Anchor, Count, Importance, Kind, Place, Region, Sampling, distance_sqr, largest_group,
+};
 
 use super::{Resolved, SearchQuery, Target};
 use crate::{BiomeAt, Result, Session, SpawnOrigin, StructureQuery, StructureStart};
@@ -172,6 +174,61 @@ impl Session<'_> {
     }
 }
 
+impl Session<'_> {
+    /// The fast path a search calls: `Some(score)` if this seed is reported and its score is at
+    /// least `threshold`, else `None`. The same answer as [`Session::evaluate`], with required
+    /// constraints checked cheapest first and stopping at the first that fails, and preferred
+    /// constraints skipped once the score can no longer reach `threshold`.
+    pub(crate) fn check(
+        &self,
+        query: &SearchQuery,
+        certain: bool,
+        threshold: u64,
+    ) -> Result<Option<u64>> {
+        self.check_world(query.world, query.to_string().trim_end())?;
+        let judge = Judge {
+            session: self,
+            spawn: OnceCell::new(),
+        };
+        let constraints = query.query.constraints();
+        for &i in &query.order {
+            if constraints[i].importance != Importance::Required {
+                continue;
+            }
+            let result = judge.constraint(&constraints[i].kind, &query.resolved[i]);
+            let kept = match result.outcome {
+                Outcome::Met => true,
+                Outcome::PossiblyMet => !certain,
+                Outcome::Failed => false,
+            };
+            if !kept {
+                return Ok(None);
+            }
+        }
+        let weight = |i: usize| match constraints[i].importance {
+            Importance::Preferred { weight } => Some(u64::from(weight)),
+            Importance::Required => None,
+        };
+        let mut remaining: u64 = (0..constraints.len())
+            .filter_map(weight)
+            .map(|w| w * 1000)
+            .sum();
+        let mut score = 0;
+        for &i in &query.order {
+            let Some(w) = weight(i) else {
+                continue;
+            };
+            if score + remaining < threshold {
+                return Ok(None);
+            }
+            let result = judge.constraint(&constraints[i].kind, &query.resolved[i]);
+            remaining -= w * 1000;
+            score += w * u64::from(if certain { result.worst } else { result.best });
+        }
+        Ok((score >= threshold).then_some(score))
+    }
+}
+
 /// A place in blocks.
 #[derive(Debug, Clone, Copy)]
 enum Area {
@@ -245,11 +302,6 @@ impl Area {
 fn within(a: [i32; 2], b: [i32; 2], radius: u32) -> Option<u32> {
     let d2 = distance_sqr(a, b);
     (d2 <= u64::from(radius).pow(2)).then(|| d2.isqrt() as u32)
-}
-
-fn distance_sqr(a: [i32; 2], b: [i32; 2]) -> u64 {
-    let d = |i: usize| i64::from(a[i]) - i64::from(b[i]);
-    (d(0) * d(0) + d(1) * d(1)).unsigned_abs()
 }
 
 /// The points one feature earns at distance `d` in a place of radius `radius`.
@@ -669,54 +721,8 @@ fn count_matches(
     (matched, judged)
 }
 
-/// The largest group of `points` (up to `cap` members) every two of which are at most `apart`
-/// apart, as indices; the first such group in index order.
-fn largest_group(points: &[[i32; 2]], apart: u32, cap: usize) -> Vec<usize> {
-    let limit = u64::from(apart).pow(2);
-    let near = |a: usize, b: usize| distance_sqr(points[a], points[b]) <= limit;
-    let mut best = Vec::new();
-    let mut group = Vec::new();
-    for i in 0..points.len() {
-        if best.len() >= cap {
-            break;
-        }
-        let rest: Vec<usize> = (i + 1..points.len()).filter(|&j| near(i, j)).collect();
-        group.push(i);
-        extend(&mut group, &rest, &mut best, cap, &near);
-        group.pop();
-    }
-    best
-}
-
-/// Grows `group` with members of `rest`, each near every member, keeping the largest in
-/// `best`.
-fn extend(
-    group: &mut Vec<usize>,
-    rest: &[usize],
-    best: &mut Vec<usize>,
-    cap: usize,
-    near: &impl Fn(usize, usize) -> bool,
-) {
-    if group.len() > best.len() {
-        *best = group.clone();
-    }
-    for (k, &next) in rest.iter().enumerate() {
-        if best.len() >= cap || group.len() + rest.len() - k <= best.len() {
-            return;
-        }
-        let narrowed: Vec<usize> = rest[k + 1..]
-            .iter()
-            .copied()
-            .filter(|&j| near(next, j))
-            .collect();
-        group.push(next);
-        extend(group, &narrowed, best, cap, near);
-        group.pop();
-    }
-}
-
 /// Whether a constraint depends on where the spawn is.
-fn uses_spawn(kind: &Kind) -> bool {
+pub(super) fn uses_spawn(kind: &Kind) -> bool {
     let place = |p: &Place| {
         matches!(
             p,
@@ -816,17 +822,5 @@ mod tests {
             .grid(16),
             [([5, 5], 0)]
         );
-    }
-
-    #[test]
-    fn groups_are_the_largest_close_set() {
-        let pts = [[0, 0], [1000, 0], [100, 0], [1050, 0], [1100, 0], [50, 80]];
-        assert_eq!(largest_group(&pts, 100, 64), [0, 2, 5]);
-        assert_eq!(largest_group(&pts, 100, 2), [0, 2]);
-        assert_eq!(largest_group(&pts, 10, 64).len(), 1);
-        assert!(largest_group(&[], 10, 2).is_empty());
-        // Every two within 100: the triangle [0,0], [100,0], [50,80] is (100, 94, 94).
-        assert_eq!(largest_group(&pts[..3], 100, 64), [0, 2]);
-        assert_eq!(largest_group(&[pts[0], pts[2], pts[5]], 100, 64), [0, 1, 2]);
     }
 }

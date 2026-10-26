@@ -6,11 +6,17 @@
 //! crate, which resolves a query against a world and evaluates seeds. See
 //! `docs/specs/search.md`.
 
+mod group;
 mod parse;
+mod prefilter;
 mod query;
+mod run;
 
+pub use group::{distance_sqr, largest_group};
 pub use parse::ParseError;
+pub use prefilter::{Named, Prefilter, SPAWN_REACH};
 pub use query::{
     Anchor, Constraint, Count, DEFAULT_STEP, DEFAULT_Y, Importance, Kind, MAX_COORDINATE,
     MAX_PLACE_SIDE, MAX_SAMPLES, Place, Query, Region, Sampling,
 };
+pub use run::{Hit, Progress, RunOptions, SeedSource, run};

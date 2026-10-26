@@ -4,7 +4,12 @@
 //! Each test works out the expected answer from the session's own queries and the spec's
 //! formulas, independently of `Session::evaluate`.
 
-use spyglass::{Error, Feature, Outcome, Session, StructureStart, World};
+use std::ops::ControlFlow;
+
+use spyglass::{
+    Error, Feature, Outcome, SearchOptions, SearchOutcome, SeedSource, Session, StructureStart,
+    World,
+};
 use spyglass_oracle::fixtures;
 
 #[test]
@@ -441,4 +446,184 @@ fn the_real_world_resolves_and_counts_like_structures_in() {
         seen[c.outcome as usize] += 1;
     }
     assert!(seen[1] > 0, "no seed possibly had two huts: {seen:?}");
+}
+
+/// The top `n` of `seeds` by `evaluate`, ranked as the spec says: score, then index.
+fn brute_force(
+    world: &World,
+    query: &spyglass::SearchQuery,
+    source: &SeedSource,
+    indices: std::ops::Range<u64>,
+    n: usize,
+    certain: bool,
+) -> Vec<(u64, i64, u64)> {
+    let mut hits: Vec<(u64, i64, u64)> = indices
+        .filter_map(|index| {
+            let seed = match source {
+                SeedSource::All => index.rotate_right(16) as i64,
+                SeedSource::Range { first, .. } => first + index as i64,
+                SeedSource::List(seeds) => seeds[index as usize],
+            };
+            let e = world.session(seed).unwrap().evaluate(query).unwrap();
+            e.reported(certain).then(|| (index, seed, e.score(certain)))
+        })
+        .collect();
+    hits.sort_by(|a, b| b.2.cmp(&a.2).then(a.0.cmp(&b.0)));
+    hits.truncate(n);
+    hits
+}
+
+fn ranked(outcome: &SearchOutcome) -> Vec<(u64, i64, u64)> {
+    outcome
+        .hits
+        .iter()
+        .map(|h| (h.index, h.seed, h.score))
+        .collect()
+}
+
+fn search(world: &World, query: &spyglass::SearchQuery, options: &SearchOptions) -> SearchOutcome {
+    world
+        .search(query, options, |_| ControlFlow::Continue(()))
+        .unwrap()
+}
+
+const RANKED: &str = "require 2 tower within 400 of -200,0\n\
+                      prefer 3 hut within 300 of -100,0 weight 2\n\
+                      prefer cluster 2 hut within 150 of each other in -600,-300 to 0,300\n\
+                      prefer no monument within 200 of 0,0";
+
+#[test]
+fn searches_rank_like_brute_force_on_any_thread_count() {
+    let fixture = fixtures::structured_overworld(false);
+    let world = World::open(fixture.path()).unwrap();
+    let query = world.search_query(RANKED).unwrap();
+    let source = SeedSource::Range {
+        first: -300,
+        last: 300,
+    };
+    for certain in [false, true] {
+        let expected = brute_force(&world, &query, &source, 10..560, 12, certain);
+        assert!(expected.len() == 12, "too few hits: {expected:?}");
+        for threads in [1, 2, 8] {
+            let options = SearchOptions {
+                source: source.clone(),
+                from: 10,
+                seeds: Some(550),
+                top: 12,
+                threads: Some(threads),
+                certain,
+                ..SearchOptions::default()
+            };
+            let outcome = search(&world, &query, &options);
+            assert_eq!(
+                ranked(&outcome),
+                expected,
+                "{threads} threads, certain {certain}"
+            );
+            assert_eq!(outcome.progress.evaluated, 550);
+            assert_eq!(outcome.progress.next, Some(560));
+            for hit in &outcome.hits {
+                assert!(hit.evaluation.reported(certain));
+                assert_eq!(hit.evaluation.score(certain), hit.score);
+            }
+        }
+    }
+}
+
+#[test]
+fn a_range_searched_in_two_parts_ranks_the_same() {
+    let fixture = fixtures::structured_overworld(false);
+    let world = World::open(fixture.path()).unwrap();
+    let query = world.search_query(RANKED).unwrap();
+    let source = SeedSource::List((0..400).map(|i| i * 1_000_003 - 7).collect());
+    let options = |from, seeds| SearchOptions {
+        source: source.clone(),
+        from,
+        seeds,
+        top: 8,
+        ..SearchOptions::default()
+    };
+    let whole = search(&world, &query, &options(0, None));
+    assert_eq!(whole.progress.next, None);
+    let first = search(&world, &query, &options(0, Some(150)));
+    let second = search(&world, &query, &options(first.progress.next.unwrap(), None));
+    let mut merged: Vec<(u64, i64, u64)> =
+        ranked(&first).into_iter().chain(ranked(&second)).collect();
+    merged.sort_by(|a, b| b.2.cmp(&a.2).then(a.0.cmp(&b.0)));
+    merged.truncate(8);
+    assert_eq!(merged, ranked(&whole));
+}
+
+#[test]
+fn searching_every_seed_uses_the_prefilter() {
+    let fixture = fixtures::structured_overworld(false);
+    let world = World::open(fixture.path()).unwrap();
+    let query = world
+        .search_query("require 3 hut within 150 of 40,-30\nprefer 2 tower within 300 of 0,0")
+        .unwrap();
+    // Two lower-48 values, 1,500 seeds each, from the middle of their groups.
+    for lower in [0_u64, 7] {
+        let from = (lower << 16) + 20_000;
+        let options = SearchOptions {
+            from,
+            seeds: Some(1500),
+            top: 5,
+            ..SearchOptions::default()
+        };
+        let outcome = search(&world, &query, &options);
+        let expected = brute_force(
+            &world,
+            &query,
+            &SeedSource::All,
+            from..from + 1500,
+            5,
+            false,
+        );
+        assert_eq!(ranked(&outcome), expected, "lower 48 bits {lower}");
+        let p = &outcome.progress;
+        assert_eq!(p.prefiltered + p.checked, 1500);
+        // One prefilter answer covers all of them.
+        assert!(p.prefiltered == 0 || p.prefiltered == 1500, "{p:?}");
+    }
+}
+
+#[test]
+fn progress_reports_and_can_stop() {
+    let fixture = fixtures::structured_overworld(false);
+    let world = World::open(fixture.path()).unwrap();
+    let query = world.search_query(RANKED).unwrap();
+    let options = SearchOptions {
+        source: SeedSource::Range {
+            first: 0,
+            last: 1_000_000,
+        },
+        top: 3,
+        threads: Some(1),
+        ..SearchOptions::default()
+    };
+    let mut rounds = 0;
+    let outcome = world
+        .search(&query, &options, |p| {
+            rounds += 1;
+            assert!(p.top.len() <= 3);
+            assert_eq!(p.prefiltered + p.checked, p.evaluated);
+            if rounds == 2 {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
+        })
+        .unwrap();
+    assert_eq!(rounds, 2);
+    let next = outcome.progress.next.unwrap();
+    // The same count again gives the same hits.
+    let again = search(
+        &world,
+        &query,
+        &SearchOptions {
+            seeds: Some(next),
+            ..options
+        },
+    );
+    assert_eq!(ranked(&again), ranked(&outcome));
 }

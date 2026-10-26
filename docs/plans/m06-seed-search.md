@@ -142,16 +142,16 @@ Specs and ADRs that govern this: [ADR 0014](../adr/0014-public-api-world-and-ses
 
 ### Phase 4: the fast path
 
-- [ ] Seed-only placement in `spyglass-structure` (random-spread cells, frequency, exclusion zones; concentric rings and exclusion zones against them report "can't decide"), with `Placements` built on it. Golden tests still pass.
-- [ ] The placement prefilter in `spyglass-search`: necessary conditions per required constraint over the lower 48 bits.
-- [ ] `Session::check`: cost order, early exit on a failed required constraint.
-- [ ] Soundness and equality tests: over seed ranges on fixture bundles (and, `#[ignore]`d, the 26.3 bundle), for every seed, the prefilter never rejects a seed `Session::evaluate` keeps, and `check`'s verdict and score equal `evaluate`'s. Queries chosen so that a useful share of seeds pass each stage.
+- [x] Seed-only placement in `spyglass-structure` (random-spread cells, frequency, exclusion zones; concentric rings and exclusion zones against them report "can't decide"), with `Placements` built on it. Golden tests still pass.
+- [x] The placement prefilter in `spyglass-search`: necessary conditions per required constraint over the lower 48 bits.
+- [x] `Session::check`: cost order, early exit on a failed required constraint.
+- [x] Soundness and equality tests: over seed ranges on fixture bundles (and, `#[ignore]`d, the 26.3 bundle), for every seed, the prefilter never rejects a seed `Session::evaluate` keeps, and `check`'s verdict and score equal `evaluate`'s. Queries chosen so that a useful share of seeds pass each stage.
 
 ### Phase 5: running a search
 
-- [ ] Seed sources and index mapping; batches; budgets; `next`; progress callback with stage counts; cancellation through the callback.
-- [ ] `World::search` on `rayon`, with a thread-count option; top list merged under the total order; final hits re-evaluated with `Session::evaluate`.
-- [ ] Determinism tests: same results for 1, 2 and 8 threads, and for one run against the same range split into two with `from`.
+- [x] Seed sources and index mapping; batches; budgets; `next`; progress callback with stage counts; cancellation through the callback.
+- [x] `World::search` on `rayon`, with a thread-count option; top list merged under the total order; final hits re-evaluated with `Session::evaluate`.
+- [x] Determinism tests: same results for 1, 2 and 8 threads, and for one run against the same range split into two with `from`.
 
 ### Phase 6: `spyglass search`
 
@@ -204,6 +204,7 @@ Agreed on 2026-10-25, as recommended:
 
 ## Notes
 
+- 2026-10-25: Phases 4 and 5 done. `SeedPlacements` answers placement from the lower 48 bits, and `Placements` now asks it first; the structure golden tests and `/locate` checks still pass, and on 26.3 it decides every random-spread set exactly (every exclusion zone there is against a random-spread set). Over 200 fixture seeds and 6 queries the prefilter never rejected a seed `evaluate` reports, and `check` equalled `evaluate` at six thresholds in both modes; the same holds for 40 seeds and 5 queries on 26.3 (an ignored test). The runner works in rounds of 1,024-index batches, 4 per thread, merged in rank order; the threshold it passes to `check` is the current Nth score, ties included, so pruning can't change the list. Indices are counted in `u128` inside the runner so `All`'s 2⁶⁴ seeds have an end. `largest_group` moved to `spyglass-search`, which the prefilter needs too, with a brute-force test over every subset of 12 points.
 - 2026-10-25: Phases 2 and 3 done. `Session::evaluate` takes 9.2 ms in a new session on 26.3 for four constraints (two swamp-hut counts, villages, cherry grove presence within 500), most of it the cherry grove's 3,000 biome samples. Places are now limited to 65,536 blocks on a side (radius 32,767): without it a count like `slime within 30000000 of spawn` would enumerate 10¹³ chunks. The real bundle caught the spec's example using `minecraft:village`, which is only a tag (`#minecraft:village`). The fixture world with structures moved from the public API's tests into `spyglass_oracle::fixtures::structured_overworld`, for the search tests to share. Evaluations keep both cases' scores, so `certain` is an option of the search, not of evaluating a seed.
 - 2026-10-25: Phase 1 done. Writing the grammar settled three things the draft left open. The weight goes at the end of the line (`weight N`), since `prefer 3 …` would otherwise be ambiguous between a weight and a count. A cluster is N starts every two at most D apart, which stays in integers, unlike a common centre. Each constraint is evaluated in a best and a worst case, which gives the three outcomes and the two scoring modes. The engine's layering changed too: per-seed evaluation lives in `spyglass` (`Session::evaluate`, plain, and `Session::check`, fast, over shared per-constraint functions), and `spyglass-search` holds the language, the placement prefilter and the runner, so constraint semantics aren't written twice (ADR 0021).
 - 2026-10-25: Started, with the open questions decided as recommended.

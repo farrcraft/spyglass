@@ -20,6 +20,6 @@ pub use load::{Entry, Structure, StructureSet, StructureSets, StructureType};
 pub use locate::{LOCATE_RADIUS, MAX_UNCERTAIN, StructureHit, StructureSearch};
 pub use placement::{
     ConcentricRings, ExclusionZone, FrequencyReduction, Placement, PlacementKind, Placements,
-    RandomSpread, RingPosition, SpreadType,
+    RandomSpread, RingPosition, SeedPlacements, SpreadType,
 };
 pub use slime::is_slime_chunk;

@@ -121,6 +121,11 @@ const TESTS: &[(&str, &str, &[Input])] = &[
     ),
     (
         "spyglass-structure",
+        "seed_placements_decide_random_spread_from_48_bits",
+        &[Input::Bundle],
+    ),
+    (
+        "spyglass-structure",
         "structures_match_the_oracle",
         &[Input::Structures, Input::Bundle],
     ),
@@ -137,6 +142,11 @@ const TESTS: &[(&str, &str, &[Input])] = &[
     (
         "spyglass",
         "the_real_world_resolves_and_counts_like_structures_in",
+        &[Input::Bundle],
+    ),
+    (
+        "spyglass",
+        "search::tests::the_fast_path_agrees_with_evaluate_on_the_real_world",
         &[Input::Bundle],
     ),
     ("spyglass-cli", "structures", &[Input::Bundle]),

@@ -42,7 +42,10 @@ pub use save::{
     LauncherSave, PackConcern, SaveInfo, SaveInspector, SaveLocation, SaveReport, SaveWarning,
     Scan, find_save, inspect_save, launcher_saves,
 };
-pub use search::{ConstraintResult, Evaluation, Feature, Outcome, SearchQuery};
+pub use search::{
+    ConstraintResult, Evaluation, Feature, Outcome, RankedSeed, SearchHit, SearchOptions,
+    SearchOutcome, SearchProgress, SearchQuery, SeedSource,
+};
 pub use spyglass_structure::LOCATE_RADIUS;
 
 /// A search query's syntax tree, from [`SearchQuery::query`] (`docs/specs/search.md`).

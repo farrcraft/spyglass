@@ -92,3 +92,34 @@ fn selects_starts_near_the_origin() {
     }
     println!("in {:?}", start.elapsed());
 }
+
+#[test]
+#[ignore = "needs bundles/26.3"]
+fn seed_placements_decide_random_spread_from_48_bits() {
+    let bundle = bundle();
+    let source = BiomeSource::overworld(&bundle).unwrap();
+    let sets = StructureSets::overworld(&bundle, &source).unwrap();
+    let (min, max) = ([-200, -200], [200, 200]);
+    for lower in [0_i64, 1, 0x1234_5678_9abc, 0xffff_ffff_ffff] {
+        let seeds = [0_i64, 1, 0x7fff, -1].map(|upper| (upper << 48) | lower);
+        let biomes = source.with_seed(seeds[0]).unwrap();
+        let placements = sets.with_seed(seeds[0], &biomes);
+        for (i, set) in sets.sets().iter().enumerate() {
+            let PlacementKind::RandomSpread(_) = set.placement.kind else {
+                assert!(
+                    sets.seed_placements(seeds[0])
+                        .possible_chunks_in(i, min, max)
+                        .is_none()
+                );
+                continue;
+            };
+            let exact = placements.structure_chunks_in(i, min, max);
+            for seed in seeds {
+                let possible = sets.seed_placements(seed).possible_chunks_in(i, min, max);
+                // In 26.3 every exclusion zone is against a random-spread set, so the lower
+                // 48 bits decide every chunk exactly.
+                assert_eq!(possible.as_ref(), Some(&exact), "{} seed {seed}", set.id);
+            }
+        }
+    }
+}

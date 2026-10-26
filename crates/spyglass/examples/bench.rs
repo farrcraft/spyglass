@@ -32,7 +32,14 @@ fn main() -> spyglass::Result<()> {
     report("locate_structure #village (resolved)", 10, || {
         black_box(
             session
-                .locate_structure(&villages, [0, 64, 0], spyglass::LOCATE_RADIUS)
+                .locate_structure(
+                    &villages,
+                    [0, 64, 0],
+                    &spyglass::LocateOptions {
+                        radius: spyglass::LOCATE_RADIUS,
+                        confirm: false,
+                    },
+                )
                 .unwrap(),
         );
     });
@@ -40,7 +47,14 @@ fn main() -> spyglass::Result<()> {
         let query = world.structure_query("#minecraft:village").unwrap();
         black_box(
             session
-                .locate_structure(&query, [0, 64, 0], spyglass::LOCATE_RADIUS)
+                .locate_structure(
+                    &query,
+                    [0, 64, 0],
+                    &spyglass::LocateOptions {
+                        radius: spyglass::LOCATE_RADIUS,
+                        confirm: false,
+                    },
+                )
                 .unwrap(),
         );
     });
@@ -49,7 +63,14 @@ fn main() -> spyglass::Result<()> {
         let session = world.session(*seeds.next().unwrap()).unwrap();
         black_box(
             session
-                .locate_structure(&stronghold, [0, 64, 0], spyglass::LOCATE_RADIUS)
+                .locate_structure(
+                    &stronghold,
+                    [0, 64, 0],
+                    &spyglass::LocateOptions {
+                        radius: spyglass::LOCATE_RADIUS,
+                        confirm: false,
+                    },
+                )
                 .unwrap(),
         );
     });
@@ -145,7 +166,7 @@ fn main() -> spyglass::Result<()> {
         let query = world.search_query(text)?;
         report(&format!("evaluate {name}, new session"), 5, || {
             let session = world.session(*seeds.next().unwrap()).unwrap();
-            black_box(session.evaluate(&query).unwrap());
+            black_box(session.evaluate(&query, false).unwrap());
         });
     }
     // Six huts can't fit within 300 blocks, so placement rejects every lower 48 bits.

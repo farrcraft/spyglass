@@ -95,7 +95,7 @@ A feature is in a place when its point is. With a **structure anchor**, `within 
 
 ## Outcomes
 
-Some answers aren't known before terrain: candidate structure starts, tied biome cells, a platform-dependent spawn. So each constraint is evaluated twice, in two **cases**:
+Some answers aren't known: candidate structure starts (most, unless [confirmed](#confirmed-mode)), tied biome cells, a platform-dependent spawn. So each constraint is evaluated twice, in two **cases**:
 
 - **Best case**: everything uncertain goes the constraint's way.
 - **Worst case**: everything uncertain goes against it.
@@ -156,6 +156,12 @@ Every division below rounds down.
 - **Cluster**: `1000 × min(G, N) / N`, where G is the size of the largest group whose members are every two at most D apart.
 - **Coverage**: `min(1000, 100000 × matching / (P × samples))`.
 
+### Confirmed mode
+
+`confirm` (in `SearchOptions`, and an argument of `Session::evaluate`) decides structure starts with each seed's terrain, as [locate](locate.md#confirmed-mode) does. The query language doesn't change. Confirmed, a start is a candidate only behind a tied biome cell, a platform-dependent ring position, or a mineshaft whose check spyglass can't place in a column that's partly in its biomes; ties, a platform-dependent spawn and those starts are what keeps a constraint possibly met.
+
+Terrain only removes candidates or makes them certain, so it only narrows each constraint: its confirmed best case is no better than its unconfirmed one, and its confirmed worst case no worse, in what holds and in satisfaction (cluster sizes included, since the largest group of a subset is no larger). The fast path relies on this. Confirmed, it first checks the required constraints unconfirmed, in their best case; a seed that fails there fails confirmed, and its terrain is never bound. The rest runs confirmed, and gives the same answer as the plain confirmed evaluation.
+
 ## Verdict and ranking
 
 A seed's **verdict** is failed if any required constraint failed, possibly met if any is possibly met and none failed, and met otherwise (including when there are no required constraints). A search reports a seed when its verdict is met, or possibly met outside certain mode.
@@ -188,5 +194,5 @@ Nothing in the semantics depends on floating point: positions, distances and sco
 
 - **Language**: every example in this spec parses; canonical text parses back to the same query; malformed input gives an error with a line and column, never a panic.
 - **Evaluation**: hand-checked answers for each constraint form on fixture bundles, including candidates, tied cells, a platform-dependent spawn and certain mode.
-- **The fast path**: for every seed in test ranges, the placement prefilter never rejects a seed the plain evaluation reports, and the fast check's verdict and score equal the plain evaluation's.
+- **The fast path**: for every seed in test ranges, the placement prefilter never rejects a seed the plain evaluation reports, and the fast check's verdict and score equal the plain evaluation's, confirmed or not. Confirming must narrow every result, as above.
 - **Determinism**: equal results for 1, 2 and 8 threads, and for a range run whole or in two parts.

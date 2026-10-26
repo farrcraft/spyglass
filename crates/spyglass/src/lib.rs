@@ -7,7 +7,7 @@
 //! let world = spyglass::World::open("bundles/26.3")?;
 //! let session = world.session(spyglass::parse_seed("spyglass")?)?;
 //! let village = world.structure_query("#minecraft:village")?;
-//! let villages = session.locate_structure(&village, [0, 64, 0], spyglass::LOCATE_RADIUS)?;
+//! let villages = session.locate_structure(&village, [0, 64, 0], &spyglass::LocateOptions::default())?;
 //! if let Some(hit) = villages.hits.first() {
 //!     println!("{:?} certain: {}", hit.start.position, hit.start.certain);
 //! }
@@ -18,9 +18,9 @@
 //! a [`StructureQuery`] or [`BiomeQuery`], which every session of that world can reuse. Worlds,
 //! sessions and queries are `Send + Sync`, so one world can serve many threads.
 //!
-//! Answers say how sure they are. A biome cell can be tied, a structure start can need terrain
-//! spyglass doesn't compute yet, and some results depend on the platform the game runs on;
-//! each result type says which applies. See `docs/specs/locate.md`.
+//! Answers say how sure they are. A biome cell can be tied, a structure start can depend on
+//! terrain (unless it's confirmed, which computes it), and some results depend on the platform
+//! the game runs on; each result type says which applies. See `docs/specs/locate.md`.
 
 mod render;
 mod save;
@@ -33,7 +33,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use spyglass_biome::{BiomeId, BiomeSource, Biomes, SearchVolume, SpawnSearch, SpawnTargets};
 use spyglass_data::bundle::{Bundle, BundleError};
 use spyglass_data::codec::{LoadError, full_id};
-use spyglass_structure::{Placements, Starts, StructureSets};
+use spyglass_structure::{Assembly, JigsawPools, Placements, Starts, StructureSets};
 use spyglass_terrain::{Terrain, TerrainSettings};
 
 pub use render::{
@@ -269,6 +269,8 @@ pub struct World {
     sets: StructureSets,
     spawn: SpawnTargets,
     terrain: TerrainSettings,
+    /// Loaded on first use: they read most of the bundle's structure templates.
+    pools: OnceLock<JigsawPools>,
     /// Each biome's map colour, by [`BiomeId`].
     palette: Vec<[u8; 3]>,
 }
@@ -299,8 +301,18 @@ impl World {
             sets,
             spawn,
             terrain,
+            pools: OnceLock::new(),
             palette,
         })
+    }
+
+    /// The jigsaw structures' template pools, loaded the first time they're asked for.
+    fn pools(&self) -> Result<&JigsawPools> {
+        if let Some(pools) = self.pools.get() {
+            return Ok(pools);
+        }
+        let pools = JigsawPools::load(&self.bundle, &self.sets)?;
+        Ok(self.pools.get_or_init(|| pools))
     }
 
     /// The game version, e.g. `26.3`.
@@ -455,8 +467,58 @@ pub struct StructureStart {
     /// The structures that may start here, in the order the game tries them.
     pub structures: Vec<String>,
     /// Whether the game certainly starts one of them here. Otherwise it's a candidate: the
-    /// start depends on terrain, a tied biome cell, or a platform-dependent ring position.
+    /// start depends on terrain (unless confirmed), a tied biome cell, or a platform-dependent
+    /// ring position.
     pub certain: bool,
+}
+
+/// How [`Session::locate_structure`] searches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LocateOptions {
+    /// How many rings of placement cells to search; the game's `/locate` searches
+    /// [`LOCATE_RADIUS`].
+    pub radius: i32,
+    /// Decide each candidate with the seed's terrain, as the game does, so that only ties and
+    /// platform-dependent results stay uncertain. Binds the seed's terrain.
+    pub confirm: bool,
+}
+
+impl Default for LocateOptions {
+    /// `/locate`'s radius, confirmed.
+    fn default() -> Self {
+        LocateOptions {
+            radius: LOCATE_RADIUS,
+            confirm: true,
+        }
+    }
+}
+
+/// A block-aligned box, corners included.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BlockBox {
+    /// The minimum corner.
+    pub min: [i32; 3],
+    /// The maximum corner.
+    pub max: [i32; 3],
+}
+
+impl From<spyglass_structure::BoundingBox> for BlockBox {
+    fn from(b: spyglass_structure::BoundingBox) -> Self {
+        BlockBox {
+            min: b.min,
+            max: b.max,
+        }
+    }
+}
+
+/// A jigsaw structure's pieces, from [`Session::structure_layout`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StructureLayout {
+    /// Each piece's box, the start piece first, before placement moves any.
+    pub pieces: Vec<BlockBox>,
+    /// The structure's bounds: the box around its pieces, grown by 12 on every side when the
+    /// structure adapts the terrain around it.
+    pub bounds: BlockBox,
 }
 
 /// A hit in [`Session::locate_structure`]'s answer.
@@ -611,18 +673,27 @@ impl<'w> Session<'w> {
         }
     }
 
-    /// `/locate structure <argument>` run at `from`, and `radius` is how many rings of
-    /// placement cells to search ([`LOCATE_RADIUS`] in the game). Follows the game's search
-    /// order and distance; see `docs/specs/locate.md`.
+    /// The structure starts for this seed: from the climate alone, or confirmed with its
+    /// terrain.
+    fn starts(&self, confirm: bool) -> Starts<'_> {
+        if confirm {
+            Starts::with_terrain(&self.placements, &self.biomes, self.terrain())
+        } else {
+            Starts::new(&self.placements, &self.biomes)
+        }
+    }
+
+    /// `/locate structure <argument>` run at `from`. Follows the game's search order and
+    /// distance; see `docs/specs/locate.md`.
     pub fn locate_structure(
         &self,
         query: &StructureQuery,
         from: [i32; 3],
-        radius: i32,
+        options: &LocateOptions,
     ) -> Result<StructureLocate> {
         self.check_world(query.world, &query.argument)?;
-        let starts = Starts::new(&self.placements, &self.biomes);
-        let search = starts.locate(&query.targets, from, radius);
+        let starts = self.starts(options.confirm);
+        let search = starts.locate(&query.targets, from, options.radius);
         let hits = search
             .hits
             .iter()
@@ -648,15 +719,17 @@ impl<'w> Session<'w> {
     }
 
     /// Every chunk in `min..=max` (chunk coordinates, inclusive) where a structure that `query`
-    /// names may start, by set, then in each set's chunk order.
+    /// names may start, by set, then in each set's chunk order. With `confirm`, each is decided
+    /// with the seed's terrain, which it binds.
     pub fn structures_in(
         &self,
         query: &StructureQuery,
         min: [i32; 2],
         max: [i32; 2],
+        confirm: bool,
     ) -> Result<Vec<StructureStart>> {
         self.check_world(query.world, &query.argument)?;
-        Ok(self.starts_by_set(&query.targets, |_| (min, max)))
+        Ok(self.starts_by_set(&query.targets, |_| (min, max), confirm))
     }
 
     /// Every chunk in each set's `chunks(locate offset)` range (inclusive) where one of
@@ -665,8 +738,9 @@ impl<'w> Session<'w> {
         &self,
         targets: &[usize],
         chunks: impl Fn([i32; 3]) -> ([i32; 2], [i32; 2]),
+        confirm: bool,
     ) -> Vec<StructureStart> {
-        let starts = Starts::new(&self.placements, &self.biomes);
+        let starts = self.starts(confirm);
         let sets = &self.world.sets;
         let mut out = Vec::new();
         for (i, set) in sets.sets().iter().enumerate() {
@@ -687,6 +761,41 @@ impl<'w> Session<'w> {
             }
         }
         out
+    }
+
+    /// The pieces of jigsaw structure `structure` (an id, e.g. `minecraft:village_plains`) if
+    /// it starts in `chunk`, as the game assembles them, with its bounds. Whether it starts
+    /// there is [`structures_in`](Self::structures_in)'s question; this one assumes it does.
+    /// `None` if the structure isn't a jigsaw, or has no start piece there. Binds the seed's
+    /// terrain, and the first call in a world loads its template pools, which takes a while
+    /// (about a second for 26.3).
+    pub fn structure_layout(
+        &self,
+        structure: &str,
+        chunk: [i32; 2],
+    ) -> Result<Option<StructureLayout>> {
+        let sets = &self.world.sets;
+        let index = sets
+            .structure_index(structure)
+            .ok_or_else(|| Error::Unknown {
+                what: "structure",
+                id: structure.to_string(),
+            })?;
+        if sets.structures()[index].jigsaw.is_none() {
+            return Ok(None);
+        }
+        let pools = self.world.pools()?;
+        let starts = self.starts(true).with_pools(pools);
+        Ok(match starts.assemble(index, chunk) {
+            Some(Assembly::Built(layout)) => Some(StructureLayout {
+                pieces: layout.pieces.into_iter().map(BlockBox::from).collect(),
+                bounds: layout.bounds.into(),
+            }),
+            Some(Assembly::NoStart) | None => None,
+            Some(Assembly::NeedsTerrain) => {
+                unreachable!("confirmed starts have the seed's terrain")
+            }
+        })
     }
 
     /// `/locate biome <biome>` run at `from`, searching `radius` blocks

@@ -164,6 +164,11 @@ const TESTS: &[(&str, &str, &[Input])] = &[
     ),
     (
         "spyglass",
+        "layouts_agree_with_the_game",
+        &[Input::Structures, Input::Bundle],
+    ),
+    (
+        "spyglass",
         "the_real_world_renders_the_same_in_tiles",
         &[Input::Bundle],
     ),

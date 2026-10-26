@@ -760,7 +760,7 @@ impl App {
                         self.opening = Some(Pending::spawn(ui.ctx(), move || {
                             world
                                 .session(seed)
-                                .and_then(|s| s.evaluate(&query))
+                                .and_then(|s| s.evaluate(&query, false))
                                 .map(|e| (seed, e))
                                 .map_err(|e| e.to_string())
                         }));

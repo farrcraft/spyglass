@@ -52,7 +52,14 @@ pub fn run(session: &Session<'_>, target: Target, from: [i32; 3]) -> Result<Foun
         Target::Structure(id) => {
             let query = world.structure_query(id).map_err(|e| e.to_string())?;
             let found = session
-                .locate_structure(&query, from, LOCATE_RADIUS)
+                .locate_structure(
+                    &query,
+                    from,
+                    &spyglass::LocateOptions {
+                        radius: LOCATE_RADIUS,
+                        confirm: false,
+                    },
+                )
                 .map_err(|e| e.to_string())?;
             let hits = found
                 .hits
@@ -161,7 +168,14 @@ mod tests {
         let found = run(&session, Target::Structure("minecraft:tower".into()), from).unwrap();
         let query = world.structure_query("minecraft:tower").unwrap();
         let expected = session
-            .locate_structure(&query, from, LOCATE_RADIUS)
+            .locate_structure(
+                &query,
+                from,
+                &spyglass::LocateOptions {
+                    radius: LOCATE_RADIUS,
+                    confirm: false,
+                },
+            )
             .unwrap();
         assert_eq!(found.hits.len(), expected.hits.len());
         let first = &expected.hits[0];

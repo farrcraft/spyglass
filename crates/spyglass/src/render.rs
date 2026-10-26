@@ -491,14 +491,18 @@ impl Session<'_> {
                 }
             }
             let [[x0, x1], [z0, z1]] = area.reach_blocks();
-            let mut starts = self.starts_by_set(&targets, |offset| {
-                // The chunks whose position, chunk·16 + offset, is in reach.
-                let chunk = |b: i64, o: i32| saturate((b - i64::from(o)).div_euclid(16));
-                (
-                    [chunk(x0, offset[0]), chunk(z0, offset[2])],
-                    [chunk(x1, offset[0]), chunk(z1, offset[2])],
-                )
-            });
+            let mut starts = self.starts_by_set(
+                &targets,
+                |offset| {
+                    // The chunks whose position, chunk·16 + offset, is in reach.
+                    let chunk = |b: i64, o: i32| saturate((b - i64::from(o)).div_euclid(16));
+                    (
+                        [chunk(x0, offset[0]), chunk(z0, offset[2])],
+                        [chunk(x1, offset[0]), chunk(z1, offset[2])],
+                    )
+                },
+                false,
+            );
             starts.retain(|s| area.reaches([s.position[0], s.position[2]]));
             starts.sort_by(|a, b| {
                 (&a.set, a.chunk[1], a.chunk[0]).cmp(&(&b.set, b.chunk[1], b.chunk[0]))

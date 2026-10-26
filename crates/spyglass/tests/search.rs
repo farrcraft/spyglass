@@ -113,7 +113,12 @@ fn starts_in(
 ) -> Vec<StructureStart> {
     let q = world.structure_query(structure).unwrap();
     session
-        .structures_in(&q, min.map(|b| (b >> 4) - 1), max.map(|b| (b >> 4) + 1))
+        .structures_in(
+            &q,
+            min.map(|b| (b >> 4) - 1),
+            max.map(|b| (b >> 4) + 1),
+            false,
+        )
         .unwrap()
         .into_iter()
         .filter(|s| (0..2).all(|i| (min[i]..=max[i]).contains(&xz(s)[i])))
@@ -163,7 +168,7 @@ fn structure_counts_agree_with_structures_in() {
     let mut met = 0;
     for seed in 0..30 {
         let session = world.session(seed).unwrap();
-        let e = session.evaluate(&query).unwrap();
+        let e = session.evaluate(&query, false).unwrap();
 
         let towers = starts_near(&world, &session, "tower", [-200, 30], 500);
         let certain: Vec<u32> = towers.iter().filter(|t| t.0.certain).map(|t| t.1).collect();
@@ -220,7 +225,7 @@ fn structure_anchors_pair_starts() {
     let mut paired_seeds = 0;
     for seed in 0..30 {
         let session = world.session(seed).unwrap();
-        let e = session.evaluate(&query).unwrap();
+        let e = session.evaluate(&query, false).unwrap();
 
         let anchors = starts_near(&world, &session, "tower", [-300, 0], 600);
         let huts = starts_near(&world, &session, "hut", [-300, 0], 800);
@@ -272,7 +277,7 @@ fn clusters_slime_and_spawn() {
             sz - 40
         );
         let query = world.search_query(&text).unwrap();
-        let e = session.evaluate(&query).unwrap();
+        let e = session.evaluate(&query, false).unwrap();
 
         let slime: Vec<u32> = session
             .slime_chunks(
@@ -333,7 +338,7 @@ fn biomes_on_the_gradient() {
              prefer biome plains covers 100% in -1000,0 to 999,0 step 1",
         )
         .unwrap();
-    let e = session.evaluate(&query).unwrap();
+    let e = session.evaluate(&query, false).unwrap();
     let outcomes: Vec<Outcome> = e.constraints.iter().map(|c| c.outcome).collect();
     assert_eq!(
         outcomes,
@@ -377,7 +382,7 @@ fn tied_cells_are_possible_matches() {
              prefer biome forest covers 10% in -100,0 to 99,0 step 1",
         )
         .unwrap();
-    let e = session.evaluate(&query).unwrap();
+    let e = session.evaluate(&query, false).unwrap();
     let outcomes: Vec<Outcome> = e.constraints.iter().map(|c| c.outcome).collect();
     assert_eq!(
         outcomes,
@@ -409,7 +414,7 @@ fn queries_belong_to_their_world() {
         World::open(b.path()).unwrap(),
     );
     let query = wa.search_query("require hut within 10 of spawn").unwrap();
-    let e = wb.session(0).unwrap().evaluate(&query).unwrap_err();
+    let e = wb.session(0).unwrap().evaluate(&query, false).unwrap_err();
     assert!(matches!(e, Error::OtherWorld(_)), "{e}");
 }
 
@@ -431,9 +436,9 @@ fn the_real_world_resolves_and_counts_like_structures_in() {
     let mut seen = [0; 3];
     for seed in 0..20 {
         let session = world.session(seed).unwrap();
-        let e = session.evaluate(&query).unwrap();
+        let e = session.evaluate(&query, false).unwrap();
         assert_eq!(e.constraints.len(), 10);
-        let e = session.evaluate(&huts).unwrap();
+        let e = session.evaluate(&huts, false).unwrap();
         let near = starts_near(&world, &session, "minecraft:swamp_hut", [300, -700], 2000);
         let certain = near.iter().filter(|(s, _)| s.certain).count();
         let c = &e.constraints[0];
@@ -464,7 +469,7 @@ fn brute_force(
                 SeedSource::Range { first, .. } => first + index as i64,
                 SeedSource::List(seeds) => seeds[index as usize],
             };
-            let e = world.session(seed).unwrap().evaluate(query).unwrap();
+            let e = world.session(seed).unwrap().evaluate(query, false).unwrap();
             e.reported(certain).then(|| (index, seed, e.score(certain)))
         })
         .collect();

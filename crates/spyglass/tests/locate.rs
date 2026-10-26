@@ -1,4 +1,5 @@
-//! Locate queries against the real game's `/locate` answers (`docs/specs/oracle.md`, ADR 0015).
+//! Locate queries against the real game's `/locate` answers (`docs/specs/oracle.md`, ADR 0015),
+//! structures both from the climate alone and confirmed with terrain.
 //!
 //! Needs `cargo xtask oracle locate` and a bundle for the same version. Run with
 //! `cargo test --release -p spyglass --test locate -- --ignored --nocapture`.
@@ -20,6 +21,9 @@ fn locate_agrees_with_the_game() {
     let root = spyglass_oracle::default_dir();
     let mut failures = Vec::new();
     let (mut cases, mut first, mut inconclusive) = (0, 0, 0);
+    // Confirmed structure cases, and those whose hits were all certain, so that spyglass's
+    // answer was exactly the game's.
+    let (mut confirmed, mut decided) = (0, 0);
     for entry in std::fs::read_dir(&root).expect("no oracle-out/").flatten() {
         let version = entry.file_name().to_string_lossy().into_owned();
         let Ok(files) = std::fs::read_dir(entry.path().join("locate")) else {
@@ -40,6 +44,49 @@ fn locate_agrees_with_the_game() {
                 report.open_world().unwrap()
             });
             let session = from_save.as_ref().unwrap_or(&world).session(seed).unwrap();
+            let structure_cases = json["cases"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|c| c["kind"] == "structure");
+            for case in structure_cases {
+                let target = case["target"].as_str().unwrap();
+                let from: Vec<i32> = ints(&case["from"]).into_iter().flatten().collect();
+                let from = [from[0], from[1], from[2]];
+                let game = case["answer"].as_array().map(|_| ints(&case["answer"]));
+                let name = format!("seed {seed}: {target} from {from:?}, confirmed");
+                let query = session.world().structure_query(target).unwrap();
+                let r = session
+                    .locate_structure(&query, from, &spyglass::LocateOptions::default())
+                    .unwrap();
+                confirmed += 1;
+                let hits: Vec<[Option<i32>; 3]> = r
+                    .hits
+                    .iter()
+                    .map(|h| [Some(h.start.position[0]), None, Some(h.start.position[2])])
+                    .collect();
+                let ours = r.certain_answer.map(|i| hits[i]);
+                let all_certain = r.complete && r.hits.iter().all(|h| h.start.certain);
+                let game = game.map(|a| [a[0], a[1], a[2]]);
+                if all_certain {
+                    decided += 1;
+                    if ours != game {
+                        failures.push(format!("{name}: the game's {game:?}, ours {ours:?}"));
+                    }
+                } else if let Some(answer) = game
+                    && r.complete
+                    && !hits.contains(&answer)
+                {
+                    failures.push(format!(
+                        "{name}: the game's {answer:?} isn't among our {} hits",
+                        hits.len()
+                    ));
+                } else if game.is_none() && ours.is_some() {
+                    failures.push(format!(
+                        "{name}: the game found nothing, we're certain of {ours:?}"
+                    ));
+                }
+            }
             for case in json["cases"].as_array().unwrap() {
                 cases += 1;
                 let target = case["target"].as_str().unwrap();
@@ -54,7 +101,14 @@ fn locate_agrees_with_the_game() {
                         "structure" => {
                             let query = session.world().structure_query(target).unwrap();
                             let r = session
-                                .locate_structure(&query, from, spyglass::LOCATE_RADIUS)
+                                .locate_structure(
+                                    &query,
+                                    from,
+                                    &spyglass::LocateOptions {
+                                        radius: spyglass::LOCATE_RADIUS,
+                                        confirm: false,
+                                    },
+                                )
                                 .unwrap();
                             (
                                 r.hits
@@ -107,7 +161,65 @@ fn locate_agrees_with_the_game() {
     assert!(cases > 0, "no locate files; run cargo xtask oracle locate");
     println!(
         "{cases} cases: the game's answer was our first hit in {first}; \
-         {inconclusive} beyond our candidate cap"
+         {inconclusive} beyond our candidate cap. {confirmed} structure cases confirmed, \
+         {decided} with every hit certain, all equal to the game's"
     );
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+#[ignore = "needs oracle-out/<version>/structures and bundles/<version>: cargo xtask oracle structures"]
+fn layouts_agree_with_the_game() {
+    let root = spyglass_oracle::default_dir();
+    let version = "26.3";
+    let world = World::open(root.join("../bundles").join(version)).unwrap();
+    let dir = root.join(version).join("structures/overworld");
+    // One file is enough here: the structure crate compares every start.
+    let file = std::fs::read_dir(&dir)
+        .expect("no structure golden files")
+        .flatten()
+        .next()
+        .unwrap();
+    let json: Value = serde_json::from_str(&std::fs::read_to_string(file.path()).unwrap()).unwrap();
+    let session = world.session(json["seed"].as_i64().unwrap()).unwrap();
+    let box_of = |v: &Value| {
+        let b: Vec<i32> = ints(v).into_iter().flatten().collect();
+        spyglass::BlockBox {
+            min: [b[0], b[1], b[2]],
+            max: [b[3], b[4], b[5]],
+        }
+    };
+    let mut layouts = 0;
+    for set in json["sets"].as_array().unwrap() {
+        for c in set["chunks"].as_array().unwrap() {
+            let chunk: Vec<i32> = ints(&c["chunk"]).into_iter().flatten().collect();
+            for t in c["tries"].as_array().unwrap() {
+                let Some(bounds) = t.get("bounds") else {
+                    continue;
+                };
+                let id = t["structure"].as_str().unwrap();
+                let Some(layout) = session.structure_layout(id, [chunk[0], chunk[1]]).unwrap()
+                else {
+                    continue; // not a jigsaw
+                };
+                let pieces: Vec<_> = t["pieces"].as_array().unwrap().iter().map(box_of).collect();
+                assert_eq!(layout.bounds, box_of(bounds), "{id} at {chunk:?}");
+                assert_eq!(layout.pieces, pieces, "{id} at {chunk:?}");
+                layouts += 1;
+            }
+        }
+    }
+    assert!(layouts > 10, "only {layouts} jigsaw layouts");
+    assert!(
+        session
+            .structure_layout("minecraft:swamp_hut", [0, 0])
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        session
+            .structure_layout("minecraft:nothing", [0, 0])
+            .is_err()
+    );
+    println!("{layouts} layouts equal to the game's");
 }

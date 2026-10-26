@@ -2,7 +2,7 @@
 
 Status: stable. Covers `/locate structure` and `/locate biome` in the Overworld of the Default world preset, implemented in `spyglass-structure` and `spyglass-biome` and exposed by the `spyglass` crate ([ADR 0014](../adr/0014-public-api-world-and-session.md)). Checked against the real game's `/locate` ([ADR 0015](../adr/0015-locate-checks-on-a-real-server.md)) for 26.3.
 
-`/locate` doesn't return the nearest structure or biome. It returns the first one its search order finds, so spyglass ports the search order and the distance measure exactly. Where spyglass can't decide whether the game generates a structure in a chunk (terrain, until milestone 07 on the [roadmap](../roadmap/README.md)), it returns every place the game's answer may be, in search order, each labelled `certain` or not.
+`/locate` doesn't return the nearest structure or biome. It returns the first one its search order finds, so spyglass ports the search order and the distance measure exactly. Where spyglass can't decide whether the game generates a structure in a chunk, it returns every place the game's answer may be, in search order, each labelled `certain` or not. [Confirmed](#confirmed-mode), terrain decides nearly every chunk.
 
 ## Text seeds
 
@@ -42,7 +42,11 @@ spyglass follows the same loop. Each set's list in a ring ends at its first cert
 - `complete`: the search ended where the game's does (a ring with a certain hit, or the radius). Then the game's answer is one of the hits, or nothing if every hit is a candidate it rejects. Otherwise spyglass stopped after 32 candidates, or a ring position's alternatives are unknown;
 - `certain_answer`: the game's answer if every candidate fails.
 
-For most surface structures, every hit is a candidate until terrain is ported, so lists run to the 32-candidate cap. In practice the game's answer is usually the first hit; see [Testing](#testing).
+Unconfirmed, most surface structures' hits are all candidates, so lists run to the 32-candidate cap. In practice the game's answer is usually the first hit; see [Testing](#testing).
+
+### Confirmed mode
+
+`LocateOptions::confirm`, on by default, decides each chunk with the seed's terrain ([structure-placement.md](structure-placement.md#with-terrain)): the check runs at its real position, and terrain's own rejections apply. Hits are then candidates only behind a tied biome cell, a platform-dependent ring position, or a mineshaft whose check spyglass can't place (its piece layout isn't ported) in a column that's partly in its biomes. A list whose hits are all certain is the game's answer, at `certain_answer`. The first confirmed locate in a session binds the seed's terrain, and each candidate chunk costs a few height queries.
 
 **Distance shown.** `/locate` prints `Mth.floor(Mth.sqrt((float) (dx·dx + dz·dz)))` for structures, horizontal and in `int` arithmetic. spyglass reports the same as `blocks_away`.
 
@@ -61,4 +65,4 @@ A tied cell whose biomes disagree on the predicate is a candidate: the game's an
 
 - **Unit tests**: the spiral and `outFromOrigin` orders, text seeds, the shown distance, and the ring alternatives' rounding.
 - **The structure golden test** checks that every ring position where the game differs from spyglass is flagged, and that the game's chunk is spyglass's or one of its alternatives. For 26.3: 61 of 1,280 differ, all with the game's chunk among known alternatives.
-- **The `/locate` comparison** `crates/spyglass/tests/locate.rs` runs every case in `oracle-out/<version>/locate/` ([oracle.md](oracle.md#locate-answers)). The game's answer must be among spyglass's hits, unless spyglass's list stopped at the candidate cap first. If the game finds nothing, spyglass must have no certain hit. For 26.3: 300 cases (4 seeds, 3 positions, 18 structure arguments and 7 biomes) all agree, and in 286 the game's answer is spyglass's first hit. Run it with `cargo test --release -p spyglass --test locate -- --ignored --nocapture`.
+- **The `/locate` comparison** `crates/spyglass/tests/locate.rs` runs every case in `oracle-out/<version>/locate/` ([oracle.md](oracle.md#locate-answers)). The game's answer must be among spyglass's hits, unless spyglass's list stopped at the candidate cap first. If the game finds nothing, spyglass must have no certain hit. For 26.3: 300 cases (4 seeds, 3 positions, 18 structure arguments and 7 biomes) all agree, and in 286 the game's answer is spyglass's first hit. Every structure case is run again confirmed: where all of spyglass's hits are certain, its certain answer must be exactly the game's (or nothing where the game finds nothing). For 26.3 that's 212 of the 216 structure cases, all equal; the other 4 are strongholds behind tie- or platform-dependent ring positions. Run it with `cargo test --release -p spyglass --test locate -- --ignored --nocapture`.

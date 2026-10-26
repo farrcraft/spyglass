@@ -8,7 +8,14 @@ use crate::{Out, SHOWN};
 pub fn structure(out: &Out<'_>, target: &str, from: [i32; 3], radius: i32) -> Result<()> {
     let session = out.session;
     let query = session.world().structure_query(target)?;
-    let found = session.locate_structure(&query, from, radius)?;
+    let found = session.locate_structure(
+        &query,
+        from,
+        &spyglass::LocateOptions {
+            radius,
+            confirm: false,
+        },
+    )?;
     if out.json {
         let hits = found
             .hits

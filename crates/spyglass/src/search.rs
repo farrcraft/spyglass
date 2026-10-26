@@ -200,10 +200,13 @@ pub struct SearchOptions {
     /// Report only seeds whose required constraints are certainly met, and rank by the worst
     /// case.
     pub certain: bool,
+    /// Decide structure starts with each seed's terrain, as the game does. Slower: terrain is
+    /// checked last, for the seeds that pass everything else.
+    pub confirm: bool,
 }
 
 impl Default for SearchOptions {
-    /// Every seed from index 0, until stopped, keeping the best 10, on all cores.
+    /// Every seed from index 0, until stopped, keeping the best 10, on all cores, unconfirmed.
     fn default() -> Self {
         SearchOptions {
             source: SeedSource::All,
@@ -213,6 +216,7 @@ impl Default for SearchOptions {
             top: 10,
             threads: None,
             certain: false,
+            confirm: false,
         }
     }
 }
@@ -264,13 +268,16 @@ impl World {
         };
         let accepts =
             |seed| query.prefilter.is_empty() || query.prefilter.accepts(&self.sets, seed);
-        let check = |seed, threshold| self.session(seed)?.check(query, options.certain, threshold);
+        let check = |seed, threshold| {
+            self.session(seed)?
+                .check(query, options.certain, threshold, options.confirm)
+        };
         let progress = spyglass_search::run(&run, accepts, check, progress)?;
         let hits = progress
             .top
             .iter()
             .map(|hit| {
-                let evaluation = self.session(hit.seed)?.evaluate(query)?;
+                let evaluation = self.session(hit.seed)?.evaluate(query, options.confirm)?;
                 debug_assert!(
                     evaluation.reported(options.certain)
                         && evaluation.score(options.certain) == hit.score,
@@ -306,50 +313,77 @@ mod tests {
         "require 2 keep within 2000 of 0,0\nprefer 2 hut within 300 of -200,0",
     ];
 
+    /// Terrain only narrows a result: the confirmed best case is no better than the
+    /// unconfirmed one, and the confirmed worst case no worse. The confirmed fast path relies
+    /// on it.
+    fn narrows(plain: &Evaluation, confirmed: &Evaluation, context: &str) {
+        assert!(confirmed.best_score <= plain.best_score, "{context}");
+        assert!(confirmed.worst_score >= plain.worst_score, "{context}");
+        for (p, c) in plain.constraints.iter().zip(&confirmed.constraints) {
+            assert!(c.best <= p.best && c.worst >= p.worst, "{context}");
+            // Met stays met, failed stays failed.
+            if p.outcome != Outcome::PossiblyMet {
+                assert_eq!(c.outcome, p.outcome, "{context}");
+            }
+        }
+    }
+
     /// For every seed in a range: a seed the prefilter rejects is never reported, the prefilter
-    /// answers the same for every upper 16 bits, and `check` gives `evaluate`'s answer.
-    fn fast_path_agrees(world: &World, seeds: impl Iterator<Item = i64>) -> (usize, usize) {
+    /// answers the same for every upper 16 bits, `check` gives `evaluate`'s answer, confirmed
+    /// or not, and confirming only narrows. Counts rejected seeds, reported seeds and
+    /// constraints that confirming decided.
+    fn fast_path_agrees(world: &World, seeds: impl Iterator<Item = i64>) -> (usize, usize, usize) {
         let queries: Vec<SearchQuery> = QUERIES
             .iter()
             .map(|q| world.search_query(q).unwrap())
             .collect();
-        let (mut rejected, mut reported) = (0, 0);
+        let (mut rejected, mut reported, mut decided) = (0, 0, 0);
         for seed in seeds {
             let session = world.session(seed).unwrap();
             for query in &queries {
                 let accepts = query.prefilter.accepts(&world.sets, seed);
                 let flipped = seed ^ (0x5a5a << 48);
                 assert_eq!(accepts, query.prefilter.accepts(&world.sets, flipped));
-                let e = session.evaluate(query).unwrap();
+                let plain = session.evaluate(query, false).unwrap();
+                let confirmed = session.evaluate(query, true).unwrap();
+                narrows(&plain, &confirmed, &format!("seed {seed}: {query}"));
+                decided += plain
+                    .constraints
+                    .iter()
+                    .zip(&confirmed.constraints)
+                    .filter(|(p, c)| p.outcome != c.outcome)
+                    .count();
                 if !accepts {
                     rejected += 1;
-                    assert_eq!(e.verdict, Outcome::Failed, "seed {seed}: {query}");
+                    assert_eq!(plain.verdict, Outcome::Failed, "seed {seed}: {query}");
                 }
-                for certain in [false, true] {
-                    reported += usize::from(e.reported(certain));
-                    for threshold in [0, 1, 500, 1000, 1500, 2501] {
-                        let expected = match (e.reported(certain), e.score(certain)) {
-                            (false, _) => Checked::Failed,
-                            (true, s) if s >= threshold => Checked::Scored(s),
-                            (true, _) => Checked::Below,
-                        };
-                        assert_eq!(
-                            session.check(query, certain, threshold).unwrap(),
-                            expected,
-                            "seed {seed} certain {certain} threshold {threshold}: {query}"
-                        );
+                for (confirm, e) in [(false, &plain), (true, &confirmed)] {
+                    for certain in [false, true] {
+                        reported += usize::from(e.reported(certain));
+                        for threshold in [0, 1, 500, 1000, 1500, 2501] {
+                            let expected = match (e.reported(certain), e.score(certain)) {
+                                (false, _) => Checked::Failed,
+                                (true, s) if s >= threshold => Checked::Scored(s),
+                                (true, _) => Checked::Below,
+                            };
+                            assert_eq!(
+                                session.check(query, certain, threshold, confirm).unwrap(),
+                                expected,
+                                "seed {seed} confirm {confirm} certain {certain} threshold {threshold}: {query}"
+                            );
+                        }
                     }
                 }
             }
         }
-        (rejected, reported)
+        (rejected, reported, decided)
     }
 
     #[test]
     fn the_fast_path_agrees_with_evaluate() {
         let fixture = fixtures::structured_overworld(false);
         let world = World::open(fixture.path()).unwrap();
-        let (rejected, reported) = fast_path_agrees(&world, 0..200);
+        let (rejected, reported, _) = fast_path_agrees(&world, 0..200);
         assert!(rejected > 100, "the prefilter rejected only {rejected}");
         assert!(reported > 100, "only {reported} reported");
     }
@@ -387,26 +421,39 @@ mod tests {
             .iter()
             .map(|q| world.search_query(q).unwrap())
             .collect();
-        let mut rejected = 0;
+        let (mut rejected, mut decided) = (0, 0);
         for seed in (0..40).map(|i: i64| i.wrapping_mul(0x1e37_79b9_7f4a_7c15)) {
             let session = world.session(seed).unwrap();
             for query in &queries {
                 let accepts = query.prefilter.accepts(&world.sets, seed);
-                let e = session.evaluate(query).unwrap();
+                let plain = session.evaluate(query, false).unwrap();
+                let confirmed = session.evaluate(query, true).unwrap();
+                narrows(&plain, &confirmed, &format!("seed {seed}: {query}"));
+                decided += usize::from(plain != confirmed);
                 if !accepts {
                     rejected += 1;
-                    assert_eq!(e.verdict, Outcome::Failed, "seed {seed}: {query}");
+                    assert_eq!(plain.verdict, Outcome::Failed, "seed {seed}: {query}");
                 }
-                for certain in [false, true] {
-                    let expected = if e.reported(certain) {
-                        Checked::Scored(e.score(certain))
-                    } else {
-                        Checked::Failed
-                    };
-                    assert_eq!(session.check(query, certain, 0).unwrap(), expected);
+                for (confirm, e) in [(false, &plain), (true, &confirmed)] {
+                    for certain in [false, true] {
+                        let expected = if e.reported(certain) {
+                            Checked::Scored(e.score(certain))
+                        } else {
+                            Checked::Failed
+                        };
+                        assert_eq!(
+                            session.check(query, certain, 0, confirm).unwrap(),
+                            expected,
+                            "seed {seed} confirm {confirm} certain {certain}: {query}"
+                        );
+                    }
                 }
             }
         }
         assert!(rejected > 20, "the prefilter rejected only {rejected}");
+        assert!(
+            decided > 20,
+            "confirming changed only {decided} evaluations"
+        );
     }
 }

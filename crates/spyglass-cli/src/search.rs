@@ -45,6 +45,7 @@ pub fn run(args: &Search) -> Result<()> {
         top: args.top,
         threads: args.threads,
         certain: args.certain,
+        confirm: false,
     };
 
     let stop = Arc::new(AtomicBool::new(false));

@@ -14,9 +14,9 @@ use crate::{BiomeAt, Result, Session, SpawnOrigin, StructureQuery, StructureStar
 /// Whether a constraint, or a seed, meets a query (`docs/specs/search.md#outcomes`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Outcome {
-    /// It holds in the worst case: whatever terrain and ties decide.
+    /// It holds in the worst case: whatever terrain (unless confirmed) and ties decide.
     Met,
-    /// It holds only in the best case: it depends on what spyglass can't decide yet.
+    /// It holds only in the best case: it depends on what spyglass doesn't decide.
     PossiblyMet,
     /// It fails in both cases.
     Failed,
@@ -128,18 +128,27 @@ impl Judged {
 struct Judge<'a, 's> {
     session: &'a Session<'s>,
     spawn: OnceCell<SpawnOrigin>,
+    /// Whether structure starts are confirmed with the seed's terrain.
+    confirm: bool,
+}
+
+impl<'a, 's> Judge<'a, 's> {
+    fn new(session: &'a Session<'s>, confirm: bool) -> Self {
+        Judge {
+            session,
+            spawn: OnceCell::new(),
+            confirm,
+        }
+    }
 }
 
 impl Session<'_> {
     /// Judges this seed against `query`: every constraint, in full, with what it matched. The
     /// plain implementation of `docs/specs/search.md`; searches check their answers against
-    /// it.
-    pub fn evaluate(&self, query: &SearchQuery) -> Result<Evaluation> {
+    /// it. With `confirm`, structure starts are decided with the seed's terrain.
+    pub fn evaluate(&self, query: &SearchQuery, confirm: bool) -> Result<Evaluation> {
         self.check_world(query.world, query.to_string().trim_end())?;
-        let judge = Judge {
-            session: self,
-            spawn: OnceCell::new(),
-        };
+        let judge = Judge::new(self, confirm);
         let constraints: Vec<ConstraintResult> = query
             .query
             .constraints()
@@ -180,17 +189,35 @@ impl Session<'_> {
     /// `threshold`, what it is. The same answer as [`Session::evaluate`], with required
     /// constraints checked cheapest first and stopping at the first that fails, and preferred
     /// constraints skipped once the score can no longer reach `threshold`.
+    ///
+    /// With `confirm`, terrain comes last: the required constraints are first judged without
+    /// it, in their best case. Terrain only narrows each constraint's best and worst cases
+    /// (`docs/specs/search.md#confirmed-mode`), so a seed that fails there fails confirmed too,
+    /// and its terrain is never bound.
     pub(crate) fn check(
         &self,
         query: &SearchQuery,
         certain: bool,
         threshold: u64,
+        confirm: bool,
     ) -> Result<Checked> {
         self.check_world(query.world, query.to_string().trim_end())?;
-        let judge = Judge {
-            session: self,
-            spawn: OnceCell::new(),
-        };
+        // An unreachable threshold stops before any preferred constraint.
+        if confirm && self.check_with(query, false, u64::MAX, false) == Checked::Failed {
+            return Ok(Checked::Failed);
+        }
+        Ok(self.check_with(query, certain, threshold, confirm))
+    }
+
+    /// [`check`](Self::check) in one pass.
+    fn check_with(
+        &self,
+        query: &SearchQuery,
+        certain: bool,
+        threshold: u64,
+        confirm: bool,
+    ) -> Checked {
+        let judge = Judge::new(self, confirm);
         let constraints = query.query.constraints();
         for &i in &query.order {
             if constraints[i].importance != Importance::Required {
@@ -203,7 +230,7 @@ impl Session<'_> {
                 Outcome::Failed => false,
             };
             if !kept {
-                return Ok(Checked::Failed);
+                return Checked::Failed;
             }
         }
         let weight = |i: usize| match constraints[i].importance {
@@ -220,17 +247,17 @@ impl Session<'_> {
                 continue;
             };
             if score + remaining < threshold {
-                return Ok(Checked::Below);
+                return Checked::Below;
             }
             let result = judge.constraint(&constraints[i].kind, &query.resolved[i]);
             remaining -= w * 1000;
             score += w * u64::from(if certain { result.worst } else { result.best });
         }
-        Ok(if score >= threshold {
+        if score >= threshold {
             Checked::Scored(score)
         } else {
             Checked::Below
-        })
+        }
     }
 }
 
@@ -561,7 +588,8 @@ impl Judge<'_, '_> {
                 [hi(max[0], offset[0]), hi(max[1], offset[2])],
             )
         };
-        self.session.starts_by_set(&query.targets, chunks)
+        self.session
+            .starts_by_set(&query.targets, chunks, self.confirm)
     }
 
     /// The slime chunks whose centre is in `min..=max`.

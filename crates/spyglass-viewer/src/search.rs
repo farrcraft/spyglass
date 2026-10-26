@@ -93,6 +93,7 @@ impl SearchSettings {
             top: self.top.clamp(1, 1000),
             threads: Some(threads),
             certain: self.certain,
+            confirm: false,
         })
     }
 }
@@ -319,7 +320,7 @@ mod tests {
 prefer spawn within 9 of 0,0",
             )
             .unwrap();
-        let evaluation = world.session(4).unwrap().evaluate(&query).unwrap();
+        let evaluation = world.session(4).unwrap().evaluate(&query, false).unwrap();
         let found = matches(&query, &evaluation);
         let huts = evaluation.constraints[0].features.len();
         assert_eq!(found.len(), huts + 1);

@@ -40,7 +40,14 @@ fn a_certain_structure_ends_the_search() {
     for seed in [0, 1, 42] {
         let session = world.session(seed).unwrap();
         let found = session
-            .locate_structure(&towers, [100, 64, 0], spyglass::LOCATE_RADIUS)
+            .locate_structure(
+                &towers,
+                [100, 64, 0],
+                &spyglass::LocateOptions {
+                    radius: spyglass::LOCATE_RADIUS,
+                    confirm: false,
+                },
+            )
             .unwrap();
         assert!(found.complete);
         let last = found.hits.len() - 1;
@@ -53,7 +60,7 @@ fn a_certain_structure_ends_the_search() {
         // A certain answer is in structures_in too.
         let [cx, cz] = hit.start.chunk;
         let around = session
-            .structures_in(&towers, [cx - 1, cz - 1], [cx + 1, cz + 1])
+            .structures_in(&towers, [cx - 1, cz - 1], [cx + 1, cz + 1], false)
             .unwrap();
         assert!(around.iter().any(|s| s.chunk == [cx, cz] && s.certain));
     }
@@ -66,7 +73,14 @@ fn candidates_stop_at_the_limit() {
     let huts = world.structure_query("minecraft:hut").unwrap();
     let session = world.session(7).unwrap();
     let found = session
-        .locate_structure(&huts, [-5000, 64, 0], spyglass::LOCATE_RADIUS)
+        .locate_structure(
+            &huts,
+            [-5000, 64, 0],
+            &spyglass::LocateOptions {
+                radius: spyglass::LOCATE_RADIUS,
+                confirm: false,
+            },
+        )
         .unwrap();
     // Huts depend on terrain, so none is certain, and the search gives up.
     assert!(!found.complete);
@@ -85,7 +99,14 @@ fn tags_expand_in_order() {
     assert_eq!(all.argument(), "#minecraft:everything");
     let session = world.session(3).unwrap();
     let found = session
-        .locate_structure(&all, [-3000, 64, 0], spyglass::LOCATE_RADIUS)
+        .locate_structure(
+            &all,
+            [-3000, 64, 0],
+            &spyglass::LocateOptions {
+                radius: spyglass::LOCATE_RADIUS,
+                confirm: false,
+            },
+        )
         .unwrap();
     assert!(found.complete);
     assert!(
@@ -104,14 +125,21 @@ fn rings_find_a_certain_keep() {
     let keeps = world.structure_query("minecraft:keep").unwrap();
     let session = world.session(99).unwrap();
     let found = session
-        .locate_structure(&keeps, [0, 64, 0], spyglass::LOCATE_RADIUS)
+        .locate_structure(
+            &keeps,
+            [0, 64, 0],
+            &spyglass::LocateOptions {
+                radius: spyglass::LOCATE_RADIUS,
+                confirm: false,
+            },
+        )
         .unwrap();
     assert!(found.complete);
     assert!(found.certain_answer.is_some());
     // Six positions in the first ring, 4·distance·... chunks out; all in the box structures_in
     // sees around the origin.
     let all = session
-        .structures_in(&keeps, [-200, -200], [200, 200])
+        .structures_in(&keeps, [-200, -200], [200, 200], false)
         .unwrap();
     assert!(!all.is_empty() && all.len() <= 6, "{all:?}");
 }
@@ -149,7 +177,14 @@ fn queries_belong_to_their_world() {
     let err = wb
         .session(0)
         .unwrap()
-        .locate_structure(&towers, [0, 64, 0], 1)
+        .locate_structure(
+            &towers,
+            [0, 64, 0],
+            &spyglass::LocateOptions {
+                radius: 1,
+                confirm: false,
+            },
+        )
         .unwrap_err();
     assert!(matches!(err, Error::OtherWorld(_)), "{err}");
     assert!(matches!(
@@ -175,13 +210,20 @@ fn coordinates_at_the_edge_of_the_world_wrap() {
     for name in ["minecraft:monument", "minecraft:tower", "minecraft:hut"] {
         let query = world.structure_query(name).unwrap();
         session
-            .structures_in(&query, [far - 16, far - 16], [far, far])
+            .structures_in(&query, [far - 16, far - 16], [far, far], false)
             .unwrap();
         session
-            .structures_in(&query, [-far - 1, -far - 1], [-far + 15, -far + 15])
+            .structures_in(&query, [-far - 1, -far - 1], [-far + 15, -far + 15], false)
             .unwrap();
         session
-            .locate_structure(&query, [i32::MAX - 100, 64, i32::MIN + 100], 2)
+            .locate_structure(
+                &query,
+                [i32::MAX - 100, 64, i32::MIN + 100],
+                &spyglass::LocateOptions {
+                    radius: 2,
+                    confirm: false,
+                },
+            )
             .unwrap();
     }
 }

@@ -425,7 +425,7 @@ mod tests {
         // Together, exactly the starts in the blocks the tiles cover.
         let query = session.world().structure_query("minecraft:tower").unwrap();
         let mut expected = session
-            .structures_in(&query, [-200, -10], [10, 200])
+            .structures_in(&query, [-200, -10], [10, 200], false)
             .unwrap();
         expected
             .retain(|s| (-1536..0).contains(&s.position[0]) && (0..1024).contains(&s.position[2]));

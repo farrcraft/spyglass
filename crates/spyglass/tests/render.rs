@@ -131,7 +131,7 @@ fn features_are_the_queries_answers() {
     let mut expected = Vec::new();
     for query in &layers.structures {
         for start in session
-            .structures_in(query, [-100, -100], [100, 100])
+            .structures_in(query, [-100, -100], [100, 100], false)
             .unwrap()
         {
             let [x, _, z] = start.position.map(i64::from);

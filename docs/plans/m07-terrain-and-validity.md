@@ -145,9 +145,10 @@ Specs and ADRs that govern this: [density-functions.md](../specs/density-functio
 
 ### Phase 7: confirmed mode in the library
 
-- [ ] `confirm` in locate and `structures_in`; starts carry check positions and bounds.
-- [ ] `Session::evaluate` and `Session::check` with `confirm`, terrain as the last stage; soundness and equality tests as in m06-seed-search phase 4, extended to confirmed mode.
-- [ ] `docs/specs/search.md`: the `confirm` option and what's still uncertain in it.
+- [x] `confirm` in locate (`LocateOptions`, confirmed by default) and `structures_in`. Bounds come from `Session::structure_layout` rather than a field on every start, and check positions aren't exposed (see Notes).
+- [x] `Session::evaluate` and `Session::check` with `confirm`, terrain as the last stage; soundness and equality tests as in m06-seed-search phase 4, extended to confirmed mode.
+- [x] `docs/specs/search.md`: the `confirm` option and what's still uncertain in it. `docs/specs/locate.md`: confirmed mode.
+- [x] The confirmed `/locate` comparison (moved from phase 5).
 
 ### Phase 8: speed and benchmarks
 
@@ -174,7 +175,7 @@ Specs and ADRs that govern this: [density-functions.md](../specs/density-functio
 - [x] `docs/specs/terrain.md` (new)
 - [x] `docs/specs/density-functions.md`: every type, the cell path
 - [x] `docs/specs/structure-placement.md`: terrain conditions, jigsaw assembly and bounds
-- [ ] `docs/specs/locate.md`, `docs/specs/search.md`: confirmed mode
+- [x] `docs/specs/locate.md`, `docs/specs/search.md`: confirmed mode
 - [x] `docs/specs/oracle.md`: probe additions, height files, structure format 2
 - [ ] `docs/specs/cli-json.md`, `docs/specs/render.md`
 - [x] ADR: `spyglass-terrain` and lazy terrain binding ([0022](../adr/0022-terrain-crate-and-volume-evaluation.md))
@@ -192,6 +193,10 @@ Agreed on 2026-10-25, as recommended:
 
 ## Notes
 
+- 2026-10-26: Phase 7 done. `Session` decides starts with `Starts::with_terrain` when asked to confirm; every front end still asks for unconfirmed answers until phase 9 gives them the option. Confirmed `/locate` against the oracle: in 212 of the 216 structure cases every hit is certain and the answer is exactly the game's; the other 4 are strongholds behind tie- or platform-dependent ring positions. Choices that differ from the plan's rough API:
+  - Bounds are a separate call, `Session::structure_layout(structure, chunk)`, not a field of every `StructureStart`: a village takes about 200 ms to assemble, and a hit can name several structures, of which the one that starts isn't always known. The world loads its template pools on the first call.
+  - Check positions aren't exposed, for the same reason: they belong to one structure, and a start lists the structures that may start. Nothing asks for them yet.
+  - The confirmed fast path is a cheap first pass (required constraints unconfirmed, best case) and then the full confirmed check, not a per-start stage inside each constraint. That's sound because terrain only narrows each constraint's best and worst cases, which the equality tests now assert on every seed and query (a mutation that prunes on the worst case instead fails both tests). Whether it's fast enough is phase 8's measurement.
 - 2026-10-26: Phase 6 done. Exit criterion 2 is met: with terrain, all 301 jigsaw starts in the structure golden files (villages, outposts, abandoned camps, trail ruins, ancient cities, and 165 trial chambers with their pool aliases) assemble to the game's pieces, 47,534 boxes equal in order, and to the game's bounds. Mutations that make the queue last-in-first-out or drop the expansion hack fail 246 and 52 of them. From the bytecode and the data:
   - 26.3 templates write block-state properties as `properties` (with `id` for the name), so the jigsaw orientation is read from there.
   - A template missing from the bundle is empty, as `StructureTemplateManager.getOrCreate` makes it: 26.3's ancient city pool `walls/no_corners` names `intact_horizontal_wall_stairs_5`, which doesn't exist. Loading no longer fails on it.

@@ -1,6 +1,6 @@
 # Locate queries
 
-Status: draft. Covers `/locate structure` and `/locate biome` in the Overworld of the Default world preset, implemented in `spyglass-structure` and `spyglass-biome` and exposed by the `spyglass` crate ([ADR 0014](../adr/0014-public-api-world-and-session.md)). Checked against the real game's `/locate` ([ADR 0015](../adr/0015-locate-checks-on-a-real-server.md)) for 26.3.
+Status: stable. Covers `/locate structure` and `/locate biome` in the Overworld of the Default world preset, implemented in `spyglass-structure` and `spyglass-biome` and exposed by the `spyglass` crate ([ADR 0014](../adr/0014-public-api-world-and-session.md)). Checked against the real game's `/locate` ([ADR 0015](../adr/0015-locate-checks-on-a-real-server.md)) for 26.3.
 
 `/locate` doesn't return the nearest structure or biome. It returns the first one its search order finds, so spyglass ports the search order and the distance measure exactly. Where spyglass can't decide whether the game generates a structure in a chunk (terrain, until milestone 07 on the [roadmap](../roadmap/README.md)), it returns every place the game's answer may be, in search order, each labelled `certain` or not.
 

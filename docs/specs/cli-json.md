@@ -1,6 +1,6 @@
 # CLI JSON output
 
-Status: draft, format 1. Covers `spyglass locate` with `--json`.
+Status: stable, format 1. Covers `spyglass locate` and `spyglass world` with `--json`.
 
 Scripts depend on this format, so it's versioned. Within a format version, fields are only ever added. Removing or changing the meaning of a field bumps `format`. The CLI writes the JSON from the library's results ([ADR 0014](../adr/0014-public-api-world-and-session.md)); the library types themselves aren't the format.
 

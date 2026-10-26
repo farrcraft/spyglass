@@ -1,6 +1,6 @@
 # World saves
 
-Status: draft. Implemented in `spyglass-world` (reading) and `spyglass` (assessment, `inspect_save`), for saves of any version; answers need a bundle with the save's data version, and the Default preset.
+Status: stable. Implemented in `spyglass-world` (reading) and `spyglass` (assessment, `inspect_save`), for saves of any version; answers need a bundle with the save's data version, and the Default preset.
 
 spyglass reads a save to answer for it: its seed, version, generators, data packs, spawn and single player. It never writes to a save. Answers are only as exact as the world allows, so the assessment lists everything that makes them inexact or impossible ([warnings](#warnings)).
 

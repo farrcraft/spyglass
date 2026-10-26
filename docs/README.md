@@ -7,7 +7,7 @@
 | [development-process.md](development-process.md) | How milestones become plans and code, and where each kind of doc lives. |
 | [roadmap/](roadmap/README.md)                    | Milestones (one file each), stretch goals and what is out of scope.     |
 | [plans/](plans/README.md)                        | Implementation plans for milestones.                                    |
-| [specs/](specs/)                                 | Behavior the code must match: data sources, bundles, the oracle.        |
+| [specs/](specs/)                                 | Behavior the code must match, one spec per area.                        |
 | [adr/](adr/)                                     | Architecture Decision Records: why significant choices were made.       |
 | [research/](research/)                           | Prior art and open questions. Background reading, not requirements.     |
 

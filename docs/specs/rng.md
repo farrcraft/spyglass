@@ -1,6 +1,6 @@
 # Random sources
 
-Status: draft. Implemented in `spyglass-rng` for 26.3; checked against the game by the oracle's [probe files](oracle.md#probe-files).
+Status: stable. Implemented in `spyglass-rng` for 26.3; checked against the game by the oracle's [probe files](oracle.md#probe-files).
 
 Worldgen draws all its randomness from two random sources and the factories that derive per-position and per-name sources from them. Every call must consume exactly the values the game's does: one extra or missing call shifts everything after it. Ported from the 26.3 bytecode (`net.minecraft.world.level.levelgen`).
 

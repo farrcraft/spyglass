@@ -714,10 +714,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "spyglass-search"
-version = "0.0.0"
-
-[[package]]
 name = "spyglass-structure"
 version = "0.0.0"
 dependencies = [
@@ -728,10 +724,6 @@ dependencies = [
  "spyglass-rng",
  "tempfile",
 ]
-
-[[package]]
-name = "spyglass-terrain"
-version = "0.0.0"
 
 [[package]]
 name = "spyglass-viewer"

@@ -1,6 +1,6 @@
 # Data sources
 
-Status: draft.
+Status: stable.
 
 Everything spyglass knows about a game version comes from Mojang's own distribution.
 

@@ -99,7 +99,6 @@ Both skip the install if a matching JDK is already there. On Linux, install your
 cargo build                 # whole workspace
 cargo test                  # all tests (or: cargo nextest run, as the hooks do)
 cargo test -p spyglass-rng  # one crate
-cargo run -p spyglass-viewer
 cargo run -p spyglass-data --bin spyglass-extract
 ```
 

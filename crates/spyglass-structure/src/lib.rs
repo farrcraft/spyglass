@@ -1,4 +1,4 @@
-//! Structure placement, biome validation, terrain-dependent validity and jigsaw assembly.
+//! Structure placement, biome validation and terrain-dependent validity, with the start piece of jigsaw structures.
 //!
 //! [`StructureSets::load`] reads a bundle's structure sets for one biome source;
 //! [`StructureSets::with_seed`] binds them to a seed as [`Placements`], which answer where each

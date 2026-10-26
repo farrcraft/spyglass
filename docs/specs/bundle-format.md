@@ -1,6 +1,6 @@
 # Version bundle format
 
-Status: draft. The format is decided in [ADR 0006](../adr/0006-bundle-format-raw-json-tree.md).
+Status: stable. The format is decided in [ADR 0006](../adr/0006-bundle-format-raw-json-tree.md).
 
 A version bundle holds every worldgen parameter spyglass needs for one game version. `spyglass-extract` builds it locally from the user's own server jar ([data-sources.md](data-sources.md)). Bundles are never committed: they live in `/bundles`, which is gitignored.
 

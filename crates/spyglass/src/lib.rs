@@ -74,8 +74,9 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// trimmed of characters up to U+0020, then a decimal `long` (an optional sign, then digits),
 /// else `String.hashCode` of the trimmed text, widened.
 ///
-/// Empty text is an error (the game picks a random seed). So is text that `Long.parseLong`
-/// might read with non-ASCII digits, which spyglass doesn't implement.
+/// Empty text is an error (the game picks a random seed). So is text made only of non-ASCII
+/// numerals: `Long.parseLong` reads some of them as digits, which spyglass doesn't implement, so
+/// it refuses the whole class (any `char::is_numeric`) rather than guess.
 pub fn parse_seed(text: &str) -> Result<i64> {
     let trimmed = text.trim_matches(|c: char| c <= ' ');
     if trimmed.is_empty() {
@@ -87,7 +88,7 @@ pub fn parse_seed(text: &str) -> Result<i64> {
     let digits = trimmed.strip_prefix(['+', '-']).unwrap_or(trimmed);
     if !digits.is_empty() && digits.chars().all(char::is_numeric) && !digits.is_ascii() {
         return Err(Error::Seed(
-            "seed text with non-ASCII digits isn't supported",
+            "seed text of non-ASCII numerals isn't supported",
         ));
     }
     // String.hashCode: s[0]·31^(n-1) + ... over UTF-16 code units, wrapping.
@@ -345,7 +346,9 @@ impl<'w> Session<'w> {
         }
     }
 
-    /// The biome at block `(x, y, z)`: its quart's, as the game stores it.
+    /// The biome at block `(x, y, z)`: its quart's, as the game stores it. This isn't always the
+    /// biome the F3 screen shows, which `BiomeManager` picks from the nearby quarts with a
+    /// seed-dependent offset.
     pub fn biome_at(&self, [x, y, z]: [i32; 3]) -> BiomeAt {
         self.biome_names(&self.biomes.biome_at(x >> 2, y >> 2, z >> 2))
     }

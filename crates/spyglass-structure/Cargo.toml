@@ -1,10 +1,9 @@
 [package]
 name = "spyglass-structure"
-description = "Structure placement, biome validation, terrain-dependent validity and jigsaw assembly."
+description = "Structure placement, biome validation and terrain-dependent validity, with the start piece of jigsaw structures."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-repository.workspace = true
 license.workspace = true
 publish.workspace = true
 

@@ -4,7 +4,7 @@
 
 A local-only seed explorer for Minecraft: Java Edition. Describe what you want in a world, and spyglass searches for the seeds that fit best, shows them on a map, and finds where things are in worlds you already play. Output aims to match the game exactly on current versions.
 
-> Status: scaffolding only. Nothing works yet.
+> Status: early. For game version 26.3, the `spyglass` command answers `/locate`-style questions (structures, biomes, slime chunks, spawn) for any seed or a world save in the Overworld, with `--json` for scripts. The map viewer, seed search, terrain and the Nether and End are still to come ([roadmap](docs/roadmap/README.md)).
 
 Not affiliated with or endorsed by Mojang or Microsoft.
 
@@ -58,15 +58,16 @@ See [docs/getting-started.md](docs/getting-started.md) for the full walkthrough,
 | `spyglass-rng`       | Bit-exact ports of the game's RNGs.                         |
 | `spyglass-noise`     | Bit-exact ports of the game's noise.                        |
 | `spyglass-data`      | Version bundles, the manifest client and the extractor CLI. |
+| `spyglass-oracle`    | Test support: reads the oracle's golden files.              |
 | `spyglass-density`   | Loads and evaluates density-function graphs.                |
 | `spyglass-biome`     | Climate sampling and biome lookup.                          |
-| `spyglass-terrain`   | Heightmaps and surface rules.                               |
 | `spyglass-structure` | Structure placement and validity checks.                    |
-| `spyglass-search`    | Parallel, ranked seed search.                               |
+| `spyglass-world`     | Reads your world saves.                                     |
 | `spyglass`           | The public API that every front end uses.                   |
 | `spyglass-cli`       | The `spyglass` command, with `--json` for scripts.          |
-| `spyglass-world`     | Reads your world saves.                                     |
-| `spyglass-viewer`    | Native map app.                                             |
+| `spyglass-viewer`    | Native map app (a placeholder for now).                     |
+
+Planned: `spyglass-terrain` (heightmaps and surface rules) and `spyglass-search` (parallel, ranked seed search).
 
 See [docs/architecture.md](docs/architecture.md) for how they fit together.
 

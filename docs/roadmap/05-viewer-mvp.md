@@ -1,8 +1,8 @@
 # 05. Viewer MVP
 
-- Status: Planned
+- Status: In progress
 - Depends on: [03](completed/03-structure-placement.md), [04](completed/04-world-saves.md)
-- Plans: none yet
+- Plans: [m05-cleanup](../plans/m05-cleanup.md)
 
 ## Goal
 

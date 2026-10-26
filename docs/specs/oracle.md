@@ -1,6 +1,6 @@
 # Differential oracle
 
-Status: draft. Biome grids, structure placement and the spawn origin are specified; heightmaps and full structure bounds come later.
+Status: stable. Biome grids, structure placement and the spawn origin are specified; heightmaps and full structure bounds come later.
 
 Correctness is tested against the real game, not assumed.
 

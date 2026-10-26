@@ -4,7 +4,6 @@ description = "Climate sampling and biome lookup for the Overworld, Nether and E
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-repository.workspace = true
 license.workspace = true
 publish.workspace = true
 

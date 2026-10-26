@@ -1,6 +1,6 @@
 # Density functions
 
-Status: draft. Covers the types the overworld's climate needs, implemented in `spyglass-density` for 26.3 and checked against the game by the oracle's [probe files](oracle.md#probe-files).
+Status: stable. Covers the types the overworld's climate needs, implemented in `spyglass-density` for 26.3 and checked against the game by the oracle's [probe files](oracle.md#probe-files).
 
 26.3 reworked density functions since 1.21. They are compiled into samplers (`DensityFunctionCompiler`, package `net.minecraft.world.level.levelgen.densityfunction`) that return `float`, after rewrite rules (`DfRewriteRule.INLINE_REFERENCE`, `SLICE_UNIFORM_AXES`). Older ports, which evaluate in `double`, don't apply. Ported from the 26.3 bytecode.
 

@@ -23,15 +23,15 @@ spyglass separates what the game _does_ (algorithms, written in Rust) from the _
 | `spyglass-oracle`    | Test support: reads the oracle's golden files. A dev-dependency only, never a normal one.                                                         | —                                        |
 | `spyglass-density`   | Loads and evaluates density-function graphs.                                                                                                      | noise, data                              |
 | `spyglass-biome`     | Climate sampling and biome lookup at quart (1:4) resolution; Overworld, Nether, End. The spawn's climate search; `/locate biome`.                 | rng, noise, density, data                |
-| `spyglass-terrain`   | Heightmaps and surface rules.                                                                                                                     | density, data                            |
+| `spyglass-terrain`   | _Planned._ Heightmaps and surface rules.                                                                                                          | density, data                            |
 | `spyglass-structure` | Placement (seed-only, cheap), then biome validation, then terrain-dependent validity, with optional jigsaw for exact bounds; `/locate structure`. | rng, biome, density, data; later terrain |
-| `spyglass-search`    | Parallel seed search (`rayon`) with required and preferred constraints, ranked results, checks ordered cheapest first.                            | rng, biome, structure                    |
+| `spyglass-search`    | _Planned._ Parallel seed search (`rayon`) with required and preferred constraints, ranked results, checks ordered cheapest first.                 | rng, biome, structure                    |
 | `spyglass-world`     | Reads local world saves: seed, version, generators, data packs, spawn and player; chunk versions from region files; launcher folders.             | data                                     |
 | `spyglass`           | The public API: a `World` (one dimension of a bundle) and seed-bound `Session`s with locate queries, and world saves; later render and search.    | biome, structure, world, density, data   |
 | `spyglass-cli`       | The `spyglass` command: locate now; world info, render and search later. Human-readable output, or `--json` for scripts.                          | spyglass                                 |
-| `spyglass-viewer`    | Native map app (`egui` + `wgpu`): tiled on-demand rendering, zoom levels, selectable layers.                                                      | spyglass                                 |
+| `spyglass-viewer`    | _Placeholder._ Native map app (`egui` + `wgpu`): tiled on-demand rendering, zoom levels, selectable layers.                                       | spyglass                                 |
 
-Dependencies only point down this table. A lower crate must never depend on a higher one. Planned crates are added in the milestone that needs them. Front ends depend only on `spyglass` ([ADR 0014](adr/0014-public-api-world-and-session.md)).
+A crate may depend only on crates listed above it in this table, never on one below it. Planned crates are created in the milestone that needs them. Front ends depend only on `spyglass` ([ADR 0014](adr/0014-public-api-world-and-session.md)).
 
 ## Front ends
 

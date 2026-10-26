@@ -209,8 +209,8 @@ Specs and ADRs that govern this: [noise.md](../specs/noise.md), [rng.md](../spec
 
 ### Phase 4: terrain
 
-- [ ] Terrain binding with legacy randomness; heights and block columns in both dimensions.
-- [ ] Golden height tests in both; `Session::height_at` per dimension.
+- [x] Terrain binding with legacy randomness; heights and block columns in both dimensions.
+- [x] Golden height tests in both; `Session::height_at` per dimension.
 
 ### Phase 5: structures
 
@@ -281,6 +281,7 @@ Agreed on 2026-10-26, as recommended:
 
 ## Notes
 
+- 2026-10-26: Phase 4 done. With legacy binding from phase 3, every height and block column in the Nether's and End's height golden files matches: 6,135,300 values in 30 files across the three dimensions. No terrain code changed beyond accepting legacy randomness.
 - 2026-10-26: Phase 3 done but for `check-save`, which needs a save with Nether and End chunks. Every golden biome cell matches: the Nether's 42,598,400 cells (8,064 tied, every tie set equal) and the End's 42,598,400, and the 30 spawn files. `BiomeSource` is multi-noise or the End's; biome names moved to `BiomeNames`, which structure loading takes instead of the parameter list. `World::open_dimension` reads each dimension's type from the preset. Terrain settings accept legacy randomness (refusing it only with aquifers, which no vanilla dimension combines), a phase 4 task done early because opening a world loads terrain.
 - 2026-10-26: Phase 2 done. All 19,660 density probe cases match bit for bit: 14,660 in the Overworld, 2,240 in the Nether and 2,760 in the End, now including the router's inline entries. Every density function in the 26.3 bundle binds. Skipping 17,291 draws instead of 17,292 for the End's islands fails 548 cases. The binder takes a legacy flag (`Binder::with_legacy_random`) and the climate router reads it; terrain settings still refuse legacy until phase 4. Legacy normalization is ported but only hand-tested, since no 26.3 noise uses it.
 - 2026-10-26: Phase 1 done. The golden set now covers all three dimensions (biomes, structures, spawn, heights), and `oracle locate` asks Nether and End cases with `execute in` (locate format 2, a dimension per case; the Rust comparison skips other dimensions until phase 5). Specs have drafts for everything below. From the 26.3 bytecode, beyond the plan's expectations:

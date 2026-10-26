@@ -22,8 +22,9 @@ fn height_files() -> Vec<PathBuf> {
         .flatten()
         .flatten()
         .flat_map(|v| {
-            fs::read_dir(v.path().join("heights/overworld"))
+            ["overworld", "the_nether", "the_end"]
                 .into_iter()
+                .flat_map(move |d| fs::read_dir(v.path().join("heights").join(d)))
                 .flatten()
         })
         .flatten()
@@ -54,8 +55,16 @@ fn check(path: &Path) -> (Vec<String>, usize) {
     let seed = file["seed"].as_i64().unwrap();
     let bundle = Bundle::open(root().join("../bundles").join(version))
         .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {version}"));
-    let settings =
-        TerrainSettings::load(&bundle, "minecraft:overworld", "minecraft:overworld").unwrap();
+    // The Default preset's noise settings for the file's dimension; its type has the
+    // dimension's id.
+    let dimension = file["dimension"].as_str().unwrap();
+    let noise_settings = match dimension {
+        "minecraft:overworld" => "minecraft:overworld",
+        "minecraft:the_nether" => "minecraft:nether",
+        "minecraft:the_end" => "minecraft:end",
+        other => panic!("unknown dimension {other}"),
+    };
+    let settings = TerrainSettings::load(&bundle, noise_settings, dimension).unwrap();
     assert_eq!(file["min_y"], settings.level_min_y);
     assert_eq!(file["height"], settings.level_height);
     let terrain = Terrain::new(&settings, seed).unwrap();

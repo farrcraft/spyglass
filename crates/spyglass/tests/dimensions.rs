@@ -46,6 +46,15 @@ fn each_dimension_opens() {
     let origin = nether.session(1).unwrap().spawn_origin();
     assert_eq!(origin.chunk, [0, 0]);
     assert_eq!(origin.position, None);
+    // Terrain binds with legacy randomness: the Nether's surface height is its solid ceiling,
+    // one above the noise range's top block (127); the End's void has no blocks.
+    let height = |w: &World, at| {
+        w.session(0)
+            .unwrap()
+            .height_at(at, spyglass::Heightmap::WorldSurfaceWg)
+    };
+    assert_eq!(height(&nether, [0, 0]), 128);
+    assert_eq!(height(&end, [5000, 5000]), 0);
     let overworld = World::open(bundle()).unwrap();
     assert_eq!(overworld.dimension_kind(), Dimension::Overworld);
     assert_eq!(overworld.coordinate_scale(), 1.0);

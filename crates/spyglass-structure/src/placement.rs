@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use std::f64::consts::PI;
 use std::sync::OnceLock;
 
-use spyglass_biome::Biomes;
+use spyglass_biome::{Biomes, HorizontalArea};
 use spyglass_rng::{LegacyRandomSource, RandomSource, worldgen};
 
 use crate::biomes::BiomeSet;
@@ -155,7 +155,7 @@ impl RandomSpread {
 }
 
 /// `Math.round(double)`: the closest `long`, ties towards positive infinity, saturating; NaN is 0.
-pub fn java_round(x: f64) -> i64 {
+pub(crate) fn java_round(x: f64) -> i64 {
     let floor = x.floor();
     // Exact: x - floor(x) has no rounding error for any finite x.
     let rounded = if x - floor >= 0.5 { floor + 1.0 } else { floor };
@@ -165,7 +165,7 @@ pub fn java_round(x: f64) -> i64 {
 /// `(int) Math.round(trig * scale)`, where `trig` is a `Math.sin` or `Math.cos` result, and the
 /// other value it rounds to if `trig` moves by up to 4 ulps either way (ADR 0012): `None` when
 /// the answer is the same on every platform.
-pub fn round_trig_product(trig: f64, scale: f64) -> (i32, Option<i32>) {
+pub(crate) fn round_trig_product(trig: f64, scale: f64) -> (i32, Option<i32>) {
     let answer = java_round(trig * scale) as i32;
     let (mut up, mut down) = (trig, trig);
     let mut other = None;
@@ -264,15 +264,16 @@ impl ConcentricRings {
         biomes: &Biomes<'_>,
         random: &mut LegacyRandomSource,
     ) -> RingPosition {
+        let area = HorizontalArea {
+            center: [(x << 4).wrapping_add(8), 0, (z << 4).wrapping_add(8)],
+            radius: 112,
+            increment: 1,
+            find_closest: false,
+        };
         let search = biomes.find_biome_horizontal(
-            (x << 4).wrapping_add(8),
-            0,
-            (z << 4).wrapping_add(8),
-            112,
-            1,
+            area,
             |biome| self.preferred_biomes.contains(biome),
             random,
-            false,
         );
         // No match leaves the ring point where it was.
         let chunk_of = |p: Option<[i32; 3]>| p.map_or([x, z], |p| [p[0] >> 4, p[2] >> 4]);

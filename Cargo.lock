@@ -629,6 +629,7 @@ dependencies = [
  "spyglass-oracle",
  "spyglass-structure",
  "spyglass-world",
+ "tempfile",
  "thiserror",
 ]
 
@@ -650,6 +651,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "clap",
+ "serde",
  "serde_json",
  "spyglass",
  "spyglass-data",
@@ -711,6 +713,8 @@ version = "0.0.0"
 dependencies = [
  "serde",
  "serde_json",
+ "spyglass-data",
+ "tempfile",
  "thiserror",
 ]
 
@@ -729,8 +733,8 @@ dependencies = [
  "serde_json",
  "spyglass-biome",
  "spyglass-data",
+ "spyglass-oracle",
  "spyglass-rng",
- "tempfile",
 ]
 
 [[package]]

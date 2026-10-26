@@ -6,6 +6,4 @@ Code must not reference plans. Anything durable a plan produces belongs in a spe
 
 ## Active
 
-| Plan                          | Milestone      | Status      |
-| ----------------------------- | -------------- | ----------- |
-| [m05-cleanup](m05-cleanup.md) | 05. Viewer MVP | In progress |
+None. [m05-cleanup](completed/m05-cleanup.md) is complete; milestone [05](../roadmap/05-viewer-mvp.md) needs its viewer plan next.

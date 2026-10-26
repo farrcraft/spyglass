@@ -15,14 +15,11 @@ mod slime;
 
 pub use biomes::BiomeSet;
 pub use check::{Check, Selection, Starts};
-pub use jigsaw::{
-    BoundingBox, GenerationHeights, HeightProvider, Jigsaw, JigsawBlock, JigsawCheck, Pool,
-    PoolElement, Rotation, Template, VerticalAnchor,
-};
+pub use jigsaw::{GenerationHeights, Jigsaw, JigsawCheck};
 pub use load::{Entry, Structure, StructureSet, StructureSets, StructureType};
 pub use locate::{LOCATE_RADIUS, MAX_UNCERTAIN, StructureHit, StructureSearch};
 pub use placement::{
     ConcentricRings, ExclusionZone, FrequencyReduction, Placement, PlacementKind, Placements,
-    RandomSpread, RingPosition, SpreadType, java_round, round_trig_product,
+    RandomSpread, RingPosition, SpreadType,
 };
 pub use slime::is_slime_chunk;

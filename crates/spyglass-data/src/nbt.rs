@@ -480,6 +480,28 @@ fn decode_modified_utf8(bytes: &[u8]) -> Option<String> {
 }
 
 impl Tag {
+    /// The tag as JSON, the way the game's codecs see NBT through `NbtOps`: numbers for every
+    /// numeric tag (booleans are bytes), lists and arrays as arrays, compounds as objects.
+    pub fn to_json(&self) -> serde_json::Value {
+        use serde_json::{Number, Value};
+        match self {
+            Tag::Byte(v) => Value::from(*v),
+            Tag::Short(v) => Value::from(*v),
+            Tag::Int(v) => Value::from(*v),
+            Tag::Long(v) => Value::from(*v),
+            Tag::Float(v) => Number::from_f64(f64::from(*v)).map_or(Value::Null, Value::Number),
+            Tag::Double(v) => Number::from_f64(*v).map_or(Value::Null, Value::Number),
+            Tag::String(s) => Value::from(s.as_str()),
+            Tag::ByteArray(a) => Value::from(a.clone()),
+            Tag::IntArray(a) => Value::from(a.clone()),
+            Tag::LongArray(a) => Value::from(a.clone()),
+            Tag::List(l) => Value::Array(l.iter().map(Tag::to_json).collect()),
+            Tag::Compound(c) => {
+                Value::Object(c.iter().map(|(k, v)| (k.clone(), v.to_json())).collect())
+            }
+        }
+    }
+
     /// The tag's type byte.
     pub fn id(&self) -> u8 {
         match self {
@@ -683,6 +705,60 @@ mod tests {
             b.extend((bad.len() as u16).to_be_bytes());
             b.extend(bad);
             assert!(matches!(read(&b), Err(NbtError::String { .. })));
+        }
+    }
+
+    #[test]
+    fn json_as_the_codecs_see_it() {
+        let c = Tag::Compound(Compound::from([
+            ("features".to_string(), Tag::Byte(0)),
+            ("type".to_string(), Tag::String("minecraft:flat".into())),
+            (
+                "ys".to_string(),
+                Tag::List(vec![Tag::Int(-64), Tag::Int(320)]),
+            ),
+        ]));
+        assert_eq!(
+            c.to_json(),
+            serde_json::json!({"features": 0, "type": "minecraft:flat", "ys": [-64, 320]})
+        );
+    }
+
+    #[test]
+    fn damaged_data_is_an_error_not_a_panic() {
+        let root = Tag::Compound(Compound::from([
+            ("DataVersion".to_string(), Tag::Int(5023)),
+            (
+                "list".to_string(),
+                Tag::List(vec![
+                    Tag::Compound(Compound::from([(
+                        "name".to_string(),
+                        Tag::String("é\u{0}😀".into()),
+                    )])),
+                    Tag::Compound(Compound::new()),
+                ]),
+            ),
+            ("bytes".to_string(), Tag::ByteArray(vec![1, -2, 3])),
+            ("ints".to_string(), Tag::IntArray(vec![7, -8])),
+            ("longs".to_string(), Tag::LongArray(vec![i64::MIN])),
+            ("d".to_string(), Tag::Double(0.5)),
+        ]));
+        let bytes = write("", &root);
+        assert_eq!(read(&bytes).unwrap().1, root);
+        // Every truncation fails cleanly.
+        for len in 0..bytes.len() {
+            assert!(read(&bytes[..len]).is_err(), "{len}");
+            let _ = read_root_int(&bytes[..len], "DataVersion");
+        }
+        // Every byte, replaced by values that break lengths, types and strings, reads or fails;
+        // nothing panics or allocates wildly.
+        for i in 0..bytes.len() {
+            for v in [0x00, 0x01, 0x0c, 0x0d, 0x7f, 0x80, 0xc0, 0xed, 0xff] {
+                let mut damaged = bytes.clone();
+                damaged[i] = v;
+                let _ = read(&damaged);
+                let _ = read_root_int(&damaged, "DataVersion");
+            }
         }
     }
 

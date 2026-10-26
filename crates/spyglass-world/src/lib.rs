@@ -205,27 +205,6 @@ impl Fields<'_> {
     }
 }
 
-/// NBT as JSON, the way the game's codecs see it through `NbtOps`: numbers for every numeric
-/// tag (booleans are bytes), lists and arrays as arrays, compounds as objects.
-pub fn to_json(tag: &Tag) -> Value {
-    match tag {
-        Tag::Byte(v) => Value::from(*v),
-        Tag::Short(v) => Value::from(*v),
-        Tag::Int(v) => Value::from(*v),
-        Tag::Long(v) => Value::from(*v),
-        Tag::Float(v) => {
-            serde_json::Number::from_f64(f64::from(*v)).map_or(Value::Null, Value::Number)
-        }
-        Tag::Double(v) => serde_json::Number::from_f64(*v).map_or(Value::Null, Value::Number),
-        Tag::String(s) => Value::from(s.as_str()),
-        Tag::ByteArray(a) => Value::from(a.clone()),
-        Tag::IntArray(a) => Value::from(a.clone()),
-        Tag::LongArray(a) => Value::from(a.clone()),
-        Tag::List(l) => Value::Array(l.iter().map(to_json).collect()),
-        Tag::Compound(c) => Value::Object(c.iter().map(|(k, v)| (k.clone(), to_json(v))).collect()),
-    }
-}
-
 /// `UUIDUtil.uuidFromIntArray` as the hyphenated lower-case text player files are named by.
 fn uuid_text(ints: &[i32]) -> Option<String> {
     let [a, b, c, d] = *ints else { return None };
@@ -338,7 +317,7 @@ impl Save {
                 ("options", "Data.generatorOptions"),
             ] {
                 if let Some(v) = lf.get(level, field) {
-                    generator.insert(key.into(), to_json(v));
+                    generator.insert(key.into(), v.to_json());
                 }
             }
             let generators = BTreeMap::from([(
@@ -381,7 +360,7 @@ impl Save {
             .ok_or_else(|| sf.error(&field("dimensions"), "a compound of dimensions"))?;
         let generators = dimensions
             .iter()
-            .filter_map(|(id, dim)| Some((id.clone(), to_json(dim.get("generator")?))))
+            .filter_map(|(id, dim)| Some((id.clone(), dim.get("generator")?.to_json())))
             .collect();
         Ok((
             layout,
@@ -460,17 +439,5 @@ mod tests {
             "057a1bb7-1493-462e-b89a-e92cb3de0f42"
         );
         assert_eq!(uuid_text(&[1, 2]), None);
-    }
-
-    #[test]
-    fn json_from_nbt() {
-        let mut c = nbt::Compound::new();
-        c.insert("features".into(), Tag::Byte(0));
-        c.insert("type".into(), Tag::String("minecraft:flat".into()));
-        c.insert("ys".into(), Tag::List(vec![Tag::Int(-64), Tag::Int(320)]));
-        assert_eq!(
-            to_json(&Tag::Compound(c)),
-            serde_json::json!({"features": 0, "type": "minecraft:flat", "ys": [-64, 320]})
-        );
     }
 }

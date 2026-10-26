@@ -146,7 +146,9 @@ impl SearchTree {
         self.resolve(hits)
     }
 
-    /// The same answer as [`lookup`](Self::lookup), from `ParameterPoint::fitness` on every point.
+    /// The same answer as [`lookup`](Self::lookup), from `ParameterPoint::fitness` on every point:
+    /// a slow reference for tests.
+    #[doc(hidden)]
     pub fn brute_force(&self, target: &TargetPoint) -> Lookup {
         let mut hits = Vec::new();
         self.brute_force_hits(target, &mut hits);

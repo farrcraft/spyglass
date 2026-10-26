@@ -171,42 +171,46 @@ pub fn run(cmd: OracleCmd) -> Result<()> {
             let harness = build(&common)?;
             harness.spawn()
         }
-        OracleCmd::Golden { common, threads } => {
-            let harness = build(&common)?;
-            harness.probe()?;
-            harness.structures()?;
-            harness.spawn()?;
-            let dir = repo_root().join("oracle-out").join(&harness.version);
-            // Leave nothing from an earlier seed or region set for tests to pick up.
-            let biomes = dir.join("biomes");
-            if biomes.exists() {
-                fs::remove_dir_all(&biomes)?;
+        OracleCmd::Golden { common, threads } => golden(&common, threads),
+    }
+}
+
+/// Every golden file: probes, structures, spawn, and the biome grids.
+fn golden(common: &Common, threads: Option<usize>) -> Result<()> {
+    let harness = build(common)?;
+    harness.probe()?;
+    harness.structures()?;
+    harness.spawn()?;
+    let dir = repo_root().join("oracle-out").join(&harness.version);
+    // Leave nothing from an earlier seed or region set for tests to pick up.
+    let biomes = dir.join("biomes");
+    if biomes.exists() {
+        fs::remove_dir_all(&biomes)?;
+    }
+    harness.biomes(&golden_jobs(&biomes), threads)?;
+    println!("golden files in {}", dir.display());
+    Ok(())
+}
+
+/// One job per golden dimension, seed and region, writing under `biomes/<dimension>/<seed>/`.
+fn golden_jobs(biomes: &Path) -> Vec<Job> {
+    let mut jobs = Vec::new();
+    for dimension in GOLDEN_DIMENSIONS {
+        let dim_dir = dimension.rsplit(':').next().unwrap_or(dimension);
+        for seed in GOLDEN_SEEDS {
+            for &(name, x, z, size) in GOLDEN_REGIONS {
+                jobs.push(Job {
+                    seed: seed.to_string(),
+                    dimension: dimension.to_string(),
+                    x,
+                    z,
+                    size,
+                    out: biomes.join(dim_dir).join(seed).join(format!("{name}.bin")),
+                });
             }
-            let mut jobs = Vec::new();
-            for dimension in GOLDEN_DIMENSIONS {
-                let dim_dir = dimension.rsplit(':').next().unwrap_or(dimension);
-                for seed in GOLDEN_SEEDS {
-                    for &(name, x, z, size) in GOLDEN_REGIONS {
-                        jobs.push(Job {
-                            seed: seed.to_string(),
-                            dimension: dimension.to_string(),
-                            x,
-                            z,
-                            size,
-                            out: dir
-                                .join("biomes")
-                                .join(dim_dir)
-                                .join(seed)
-                                .join(format!("{name}.bin")),
-                        });
-                    }
-                }
-            }
-            harness.biomes(&jobs, threads)?;
-            println!("golden files in {}", dir.display());
-            Ok(())
         }
     }
+    jobs
 }
 
 struct Job {

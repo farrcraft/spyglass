@@ -149,6 +149,7 @@ Project-level commands live in the `xtask` crate and run as `cargo xtask <comman
 | `cargo xtask linux-check` | Checks a fresh clone on a clean Linux machine, in Docker. |
 | `cargo xtask msrv`        | Builds the workspace with its minimum Rust version.       |
 | `cargo xtask oracle`      | Builds and runs the oracle harness (below).               |
+| `cargo xtask oracle-test` | Runs the ignored comparisons with the game (below).       |
 
 ## 6. The oracle
 
@@ -160,7 +161,7 @@ cargo xtask oracle golden --game-version 26.3    # or for a specific version
 cargo xtask oracle check-save "<path to a world>" # check the harness against a save made in that version
 ```
 
-The first run downloads the server jar (about 60 MB) and compiles the harness. Startup takes about 10 seconds; the full golden set about a minute more on a few cores. Golden-file tests are `#[ignore]`d until the files exist: run them with `cargo test -- --ignored`.
+The first run downloads the server jar (about 60 MB) and compiles the harness. Startup takes about 10 seconds; the full golden set about a minute more on a few cores. Golden-file tests are `#[ignore]`d, since the files are local. `cargo xtask oracle-test` runs every one whose files and bundle exist, in a release build, and says which it skipped; or run a crate's with `cargo test -- --ignored`, as below.
 
 `cargo xtask oracle probe` (also part of `golden`) writes the game's raw random-source, noise and density-function values into `oracle-out/<version>/probe/`. The RNG, noise and density crates check against them, and the noise and density tests also need a bundle for the same version ([Game data](#8-game-data)):
 

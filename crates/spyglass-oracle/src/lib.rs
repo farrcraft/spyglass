@@ -1,4 +1,5 @@
-//! Reads the oracle's golden and probe files. Test support: use it only as a dev-dependency.
+//! Reads the oracle's golden and probe files, and builds small test bundles ([`fixtures`]). Test
+//! support: use it only as a dev-dependency.
 //!
 //! Golden files are generated locally by `cargo xtask oracle golden` into `oracle-out/` and never
 //! committed. The format and the comparison rule are specified in `docs/specs/oracle.md`.
@@ -10,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+pub mod fixtures;
 pub mod probe;
 
 const MAGIC: &[u8; 8] = b"SPYBIOME";

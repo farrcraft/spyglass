@@ -56,6 +56,8 @@ Both sources use `MarsagliaPolarGaussian`: draw `v1 = 2·nextDouble() − 1` and
 
 `ln` is a transcendental function: Java's `Math.log` and Rust's `f64::ln` aren't guaranteed to agree in the last bit. Every probed Gaussian matches, and climate sampling doesn't use Gaussians, so no exact `log` is ported yet. If a mismatch appears, port fdlibm's `log` (what `StrictMath.log` uses) and check `Math.log` against it.
 
+`java.util.Random.nextGaussian` is the same method with `StrictMath.log`, so it isn't an exact reference: for `new Random(42)` the first pair is `1.1419053154730547, 0.9194079489827879` with `StrictMath` but `1.141905315473055, 0.919407948982788` with `Math.log` (JDK 25, Windows x86_64, checked 2026-10-25). spyglass's values on that machine are the `Math` ones, the game's.
+
 ## Testing
 
 Committed unit tests use only values from outside the game ([ADR 0008](../adr/0008-game-derived-test-values-stay-local.md)): `java.util.Random` sequences, the JDK's own `jdk.internal.random.Xoroshiro128PlusPlus`, RFC 1321's MD5 suite, SplitMix64's first output and `String.hashCode()`. The ignored test `spyglass-rng/tests/probe.rs` replays every case of `rng.json`.

@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use anyhow::{Context, Result, bail, ensure};
 use clap::Args;
-use spyglass_extract::manifest;
+use spyglass_extract::extract;
 
 use crate::{command, first_line, repo_root};
 
@@ -130,23 +130,7 @@ fn pinned_channel() -> Result<String> {
 
 pub fn run(args: &LinuxCheck) -> Result<()> {
     let started = Instant::now();
-    if first_line("docker", &["version", "--format", "{{.Server.Version}}"]).is_none() {
-        bail!("Docker isn't available; install Docker and make sure its daemon is running");
-    }
-    let Some(head) = first_line("git", &["rev-parse", "HEAD"]) else {
-        bail!("not a git repository, or git not found");
-    };
-    if first_line("git", &["status", "--porcelain"]).is_some_and(|l| !l.is_empty()) {
-        println!(
-            "note: the working tree has uncommitted changes; only the committed HEAD is checked"
-        );
-    }
-    let manifest = manifest::fetch_manifest().context("fetching the version manifest")?;
-    let version = manifest::fetch_version(manifest.resolve(&args.game_version)?)?;
-    let Some(java) = version.java_version.as_ref().map(|j| j.major_version) else {
-        bail!("{} doesn't state a Java version", version.id);
-    };
-    let channel = pinned_channel()?;
+    let target = preflight(&args.game_version)?;
 
     step("build image");
     let status = command("docker")
@@ -158,11 +142,61 @@ pub fn run(args: &LinuxCheck) -> Result<()> {
     let mut c = Container::start()?;
     c.keep = args.keep;
 
-    step(&format!("fresh clone of {head:.12}"));
+    clone_and_set_up(&c, &target)?;
+    java_and_extraction(&c, &target)?;
+    if args.full {
+        step("cargo xtask check");
+        c.must("cargo xtask check")?;
+    }
+
+    let minutes = started.elapsed().as_secs_f64() / 60.0;
+    println!(
+        "\nLinux check passed for {:.12} in {minutes:.1} min.",
+        target.head
+    );
+    Ok(())
+}
+
+/// What the check runs against, settled before any container starts.
+struct Target {
+    /// The commit cloned.
+    head: String,
+    /// The game version extracted, and the Java major it needs.
+    version: String,
+    java: u32,
+    /// `channel` from rust-toolchain.toml.
+    channel: String,
+}
+
+fn preflight(game_version: &str) -> Result<Target> {
+    if first_line("docker", &["version", "--format", "{{.Server.Version}}"]).is_none() {
+        bail!("Docker isn't available; install Docker and make sure its daemon is running");
+    }
+    let Some(head) = first_line("git", &["rev-parse", "HEAD"]) else {
+        bail!("not a git repository, or git not found");
+    };
+    if first_line("git", &["status", "--porcelain"]).is_some_and(|l| !l.is_empty()) {
+        println!(
+            "note: the working tree has uncommitted changes; only the committed HEAD is checked"
+        );
+    }
+    let server = extract::resolve(game_version)?;
+    Ok(Target {
+        head,
+        version: server.version,
+        java: server.java_major,
+        channel: pinned_channel()?,
+    })
+}
+
+/// A fresh clone of the commit, the setup script, and the default toolchain it leaves.
+fn clone_and_set_up(c: &Container, target: &Target) -> Result<()> {
+    step(&format!("fresh clone of {:.12}", target.head));
     // The mount is owned by the host user, which git refuses to read from without an exception.
     c.must(&format!(
-        "git config --global --add safe.directory /src/.git && git clone -q /src {CLONE} && cd {CLONE} && git checkout -q {head} \
-         && git log --oneline -1"
+        "git config --global --add safe.directory /src/.git && git clone -q /src {CLONE} && cd {CLONE} && git checkout -q {} \
+         && git log --oneline -1",
+        target.head
     ))?;
 
     step("scripts/setup.sh");
@@ -173,6 +207,7 @@ pub fn run(args: &LinuxCheck) -> Result<()> {
     }
 
     step("default toolchain");
+    let channel = &target.channel;
     let out = c.capture(USER, "cd / && rustup default")?;
     let default = text(&out);
     print!("{default}");
@@ -180,14 +215,16 @@ pub fn run(args: &LinuxCheck) -> Result<()> {
         out.status.success() && default.starts_with(&format!("{channel}-")),
         "the default toolchain should be the pinned channel ({channel})"
     );
+    Ok(())
+}
 
+/// The extractor's error without Java, then with Java: doctor, extraction and a clean tree.
+fn java_and_extraction(c: &Container, target: &Target) -> Result<()> {
+    let (id, java) = (&target.version, target.java);
     step("extract without Java");
     let out = c.capture(
         USER,
-        &format!(
-            "cargo run -q -p spyglass-extract -- {} --out /tmp/no-java",
-            version.id
-        ),
+        &format!("cargo run -q -p spyglass-extract -- {id} --out /tmp/no-java"),
     )?;
     let error = text(&out);
     print!("{error}");
@@ -212,13 +249,12 @@ pub fn run(args: &LinuxCheck) -> Result<()> {
     println!("installed openjdk-{java}-jre-headless");
 
     step("cargo xtask doctor");
-    c.must(&format!("cargo xtask doctor --game-version {}", version.id))?;
+    c.must(&format!("cargo xtask doctor --game-version {id}"))?;
 
-    step(&format!("extract {}", version.id));
+    step(&format!("extract {id}"));
     c.must(&format!(
         "cargo run -q -p spyglass-extract -- {id} \
-         && cargo run -q -p spyglass-extract -- verify bundles/{id}",
-        id = version.id
+         && cargo run -q -p spyglass-extract -- verify bundles/{id}"
     ))?;
 
     step("git status");
@@ -229,13 +265,5 @@ pub fn run(args: &LinuxCheck) -> Result<()> {
         "the clone isn't clean after setup and extraction:\n{status}"
     );
     println!("clean");
-
-    if args.full {
-        step("cargo xtask check");
-        c.must("cargo xtask check")?;
-    }
-
-    let minutes = started.elapsed().as_secs_f64() / 60.0;
-    println!("\nLinux check passed for {head:.12} in {minutes:.1} min.");
     Ok(())
 }

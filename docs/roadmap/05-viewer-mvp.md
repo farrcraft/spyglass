@@ -2,7 +2,7 @@
 
 - Status: In progress
 - Depends on: [03](completed/03-structure-placement.md), [04](completed/04-world-saves.md)
-- Plans: [m05-cleanup](../plans/m05-cleanup.md)
+- Plans: [m05-cleanup](../plans/completed/m05-cleanup.md) (completed); the viewer plan is next
 
 ## Goal
 

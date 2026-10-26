@@ -11,6 +11,7 @@ use spyglass_extract::{java, manifest};
 mod linux_check;
 mod locate;
 mod oracle;
+mod oracle_test;
 
 #[derive(Parser)]
 #[command(about = "spyglass project commands")]
@@ -52,6 +53,9 @@ enum Cmd {
         #[arg(long)]
         print: bool,
     },
+    /// Run the ignored tests that compare spyglass with the game, in release, for which this
+    /// machine has the bundles and oracle outputs. Run it before completing a plan.
+    OracleTest,
     /// Build and run the oracle harness: the real game's answers, for golden files.
     Oracle {
         #[command(subcommand)]
@@ -69,6 +73,7 @@ fn main() -> ExitCode {
         Cmd::LinuxCheck(args) => linux_check::run(&args),
         Cmd::Msrv { print } => msrv(print),
         Cmd::Oracle { cmd } => oracle::run(cmd),
+        Cmd::OracleTest => oracle_test::run(),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -266,7 +271,20 @@ impl Report {
 fn doctor(game_version: &str, explicit_java: Option<&Path>) -> Result<()> {
     let mut r = Report { failures: 0 };
     let setup = "run scripts/setup.ps1 (Windows) or scripts/setup.sh";
+    rust_checks(&mut r, setup);
+    hook_checks(&mut r, setup);
+    java_checks(&mut r, game_version, explicit_java);
+    docker_check(&mut r);
+    println!();
+    if r.failures > 0 {
+        bail!("{} check(s) failed", r.failures);
+    }
+    println!("Ready.");
+    Ok(())
+}
 
+/// The toolchain, its components, the cargo tools the hooks need, and the MSRV toolchain.
+fn rust_checks(r: &mut Report, setup: &str) {
     // Rust: this binary compiled, so the toolchain and linker work.
     let rustc = first_line("rustc", &["--version"]).unwrap_or_else(|| "unknown".into());
     r.line(Status::Ok, "Rust toolchain", &rustc, None);
@@ -309,7 +327,10 @@ fn doctor(game_version: &str, explicit_java: Option<&Path>) -> Result<()> {
         }
         Err(err) => r.line(Status::Fail, "MSRV toolchain", &format!("{err:#}"), None),
     }
+}
 
+/// The hook runner, and whether the hooks are installed.
+fn hook_checks(r: &mut Report, setup: &str) {
     match hook_runner() {
         Some((name, version)) => r.line(
             Status::Ok,
@@ -356,9 +377,10 @@ fn doctor(game_version: &str, explicit_java: Option<&Path>) -> Result<()> {
             None,
         ),
     }
+}
 
-    java_checks(&mut r, game_version, explicit_java);
-
+/// Docker, which only `cargo xtask linux-check` and the dev container need.
+fn docker_check(r: &mut Report) {
     // Only cargo xtask linux-check and the dev container need Docker, so this never fails.
     match first_line("docker", &["version", "--format", "{{.Server.Version}}"]) {
         Some(v) => r.line(Status::Ok, "Docker", &format!("server {v}"), None),
@@ -369,13 +391,6 @@ fn doctor(game_version: &str, explicit_java: Option<&Path>) -> Result<()> {
             Some("install Docker Desktop (Windows, macOS) or Docker Engine (Linux)"),
         ),
     }
-
-    println!();
-    if r.failures > 0 {
-        bail!("{} check(s) failed", r.failures);
-    }
-    println!("Ready.");
-    Ok(())
 }
 
 fn java_checks(r: &mut Report, game_version: &str, explicit: Option<&Path>) {

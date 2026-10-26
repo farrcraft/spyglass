@@ -17,7 +17,7 @@ Work flows from roadmap milestones to implementation plans to code. Milestones a
 1. **Milestone.** Each milestone in [roadmap/](roadmap/) states its goal, scope and exit criteria. Its status is `Planned` until a plan starts, then `In progress`.
 2. **Plan.** Before implementing, write one or more plans in [plans/](plans/) from [plans/template.md](plans/template.md). A plan is named after its milestone (`m01-bundle-format.md`) and links back to it; the milestone lists its plans. Large milestones get several plans, each small enough to finish and verify on its own.
 3. **Implement.** Work through the plan, keeping its task list current. Decisions made along the way that will outlast the plan go into an ADR. Behavior the code must keep matching goes into a spec.
-4. **Complete the plan.** When every task is done and verified, check that nothing durable lives only in the plan, then `git mv` it to `plans/completed/`, set its status to `Completed` and fix links to it.
+4. **Complete the plan.** When every task is done and verified, run `cargo xtask check`, and `cargo xtask oracle-test` if the plan touched worldgen, so the game comparisons that the hooks can't run pass too. Check that nothing durable lives only in the plan, then `git mv` it to `plans/completed/`, set its status to `Completed` and fix links to it.
 5. **Complete the milestone.** When all its plans are complete and its exit criteria are met, `git mv` it to `roadmap/completed/`, set its status to `Completed`, update the table in [roadmap/README.md](roadmap/README.md) and fix links to it.
 
 When moving a file, search the docs for its filename and update every relative link.

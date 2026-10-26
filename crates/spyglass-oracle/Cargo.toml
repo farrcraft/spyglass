@@ -13,4 +13,6 @@ workspace = true
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+spyglass-data.workspace = true
+tempfile.workspace = true
 thiserror.workspace = true

@@ -27,7 +27,7 @@ mod save;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use spyglass_biome::{BiomeId, BiomeSource, Biomes, SpawnSearch, SpawnTargets};
+use spyglass_biome::{BiomeId, BiomeSource, Biomes, SearchVolume, SpawnSearch, SpawnTargets};
 use spyglass_data::bundle::{Bundle, BundleError};
 use spyglass_data::codec::{LoadError, full_id};
 use spyglass_structure::{Placements, Starts, StructureSets};
@@ -611,15 +611,17 @@ impl<'w> Session<'w> {
         let heights = self.world.sets.heights();
         let min_y = heights.level_min_y;
         let max_y = min_y.wrapping_add(heights.level_height).wrapping_sub(1);
-        let search = self.biomes.find_closest_biome_3d(
+        let volume = SearchVolume {
             from,
             radius,
-            BIOME_HORIZONTAL_STEP,
-            BIOME_VERTICAL_STEP,
+            horizontal_step: BIOME_HORIZONTAL_STEP,
+            vertical_step: BIOME_VERTICAL_STEP,
             min_y,
             max_y,
-            |b| Some(b) == target,
-        );
+        };
+        let search = self
+            .biomes
+            .find_closest_biome_3d(volume, |b| Some(b) == target);
         let hits = search
             .hits
             .iter()

@@ -179,12 +179,15 @@ impl SpawnSearch {
             if other_x.is_some() || other_z.is_some() {
                 let xs = [Some(dx), other_x];
                 let zs = [Some(dz), other_z];
+                // The other positions only; `replaces` already answers for (dx, dz).
                 platform_dependent |= replaces
                     || xs.iter().flatten().any(|&x| {
                         zs.iter().flatten().any(|&z| {
-                            self.fitness_at(cx.wrapping_add(x), cz.wrapping_add(z))
-                                .fitness
-                                < best.fitness
+                            (x, z) != (dx, dz)
+                                && self
+                                    .fitness_at(cx.wrapping_add(x), cz.wrapping_add(z))
+                                    .fitness
+                                    < best.fitness
                         })
                     });
             }

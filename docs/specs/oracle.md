@@ -41,6 +41,10 @@ CI runs the Rust crates against these for a fixed set of seeds per supported ver
 
 The harness runs with `target/oracle/<version>/run/` as its working directory, where the game writes `logs/`, and with `oracle/log4j2.xml` so only the game's warnings reach the console.
 
+### Running the comparisons
+
+The Rust tests that compare spyglass with these files are `#[ignore]`d, since the files are local ([ADR 0008](../adr/0008-game-derived-test-values-stay-local.md)), so neither the git hooks nor `cargo xtask check` run them. `cargo xtask oracle-test` does: it runs, in a release build, every comparison whose inputs (a bundle, and the probe, biome, structure, spawn or locate outputs of some version) exist, and names each one it skips and the command that would make its inputs. Running it is part of completing any plan that touches worldgen ([development-process.md](../development-process.md#lifecycle)). A new ignored comparison test goes in its list in `xtask/src/oracle_test.rs`.
+
 ### What the harness does
 
 - **Game state.** `SharedConstants.tryDetectVersion`, `Bootstrap.bootStrap`, then the `WorldLoader` sequence with only the vanilla pack: static registries, tags, then the worldgen registries into the `WORLD` layer. The static registries' tags (blocks, items) are then bound, as `ReloadableServerResources.updateStaticRegistryTags` does, because structure pieces read them. Dimensions come from `WorldPresets.createNormalWorldDimensions`, which is what a new Default world gets. A seed becomes a `RandomState` through `RandomState.create`, as `ChunkMap` does. Text seeds are converted by `WorldOptions.parseSeed`, as the world-creation screen does.

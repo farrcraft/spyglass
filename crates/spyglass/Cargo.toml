@@ -20,3 +20,4 @@ thiserror.workspace = true
 
 [dev-dependencies]
 spyglass-oracle.workspace = true
+tempfile.workspace = true

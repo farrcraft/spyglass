@@ -513,11 +513,8 @@ fn offset(json: &Value, at: &At<'_>) -> LoadResult<[i32; 3]> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-    use std::fs;
-
     use serde_json::json;
-    use spyglass_data::bundle::{FORMAT, MANIFEST, Manifest};
+    use spyglass_oracle::fixtures::TestBundle;
 
     use super::*;
     use crate::placement::{FrequencyReduction, PlacementKind, SpreadType};
@@ -538,7 +535,6 @@ mod tests {
     /// Loads a bundle of the given `(path, json)` files, plus a minimal preset, dimension type,
     /// noise settings and biome registry.
     fn load(files: &[(String, Value)]) -> LoadResult<StructureSets> {
-        let dir = tempfile::tempdir().unwrap();
         let mut all: Vec<(String, Value)> = vec![
             (
                 "data/minecraft/worldgen/world_preset/normal.json".into(),
@@ -558,28 +554,8 @@ mod tests {
             all.push((format!("data/minecraft/worldgen/biome/{b}.json"), json!({})));
         }
         all.extend(files.iter().cloned());
-        let mut listed = BTreeMap::new();
-        for (path, value) in &all {
-            let file = dir.path().join(path);
-            fs::create_dir_all(file.parent().unwrap()).unwrap();
-            fs::write(&file, value.to_string()).unwrap();
-            listed.insert(path.clone(), String::new());
-        }
-        let manifest = Manifest {
-            format: FORMAT,
-            version: "test".into(),
-            data_version: 1,
-            jar_sha1: String::new(),
-            java_version: String::new(),
-            extractor: String::new(),
-            files: listed,
-        };
-        fs::write(
-            dir.path().join(MANIFEST),
-            serde_json::to_string(&manifest).unwrap(),
-        )
-        .unwrap();
-        let bundle = Bundle::open(dir.path()).unwrap();
+        let fixture = TestBundle::new(&all);
+        let bundle = fixture.open();
         StructureSets::load_with(
             &bundle,
             "minecraft:normal",

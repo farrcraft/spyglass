@@ -97,11 +97,30 @@ impl BiomeSearch {
     }
 }
 
+/// Where [`Biomes::find_closest_biome_3d`] looks: `BiomeSource.findClosestBiome3d`'s
+/// arguments and the level's height, in blocks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SearchVolume {
+    /// The centre.
+    pub from: [i32; 3],
+    /// How far out, horizontally.
+    pub radius: i32,
+    /// Between columns. Must be positive.
+    pub horizontal_step: i32,
+    /// Between heights in a column. Must be positive.
+    pub vertical_step: i32,
+    /// The level's lowest block.
+    pub min_y: i32,
+    /// The level's highest block.
+    pub max_y: i32,
+}
+
 /// The most uncertain hits [`Biomes::find_closest_biome_3d`] collects before giving up.
 pub const MAX_UNCERTAIN: usize = 16;
 
 impl Biomes<'_> {
-    /// `BiomeSource.findClosestBiome3d(from, radius, horizontal_step, vertical_step, matches)`:
+    /// `BiomeSource.findClosestBiome3d(from, radius, horizontal_step, vertical_step, matches)`,
+    /// with the volume's fields:
     /// columns at `from + horizontal_step * offset` for offsets from
     /// [`spiral_around`]`(radius / horizontal_step)` (floor division), and in each column the
     /// heights [`out_from_origin`]`(from.y, min_y + 1, max_y + 1, vertical_step)`, where `min_y`
@@ -111,17 +130,19 @@ impl Biomes<'_> {
     ///
     /// A tied cell is a hit if its candidates disagree on `matches`, so the list holds every
     /// cell the game could stop at. Steps must be positive.
-    #[allow(clippy::too_many_arguments)]
     pub fn find_closest_biome_3d(
         &self,
-        from: [i32; 3],
-        radius: i32,
-        horizontal_step: i32,
-        vertical_step: i32,
-        min_y: i32,
-        max_y: i32,
+        volume: SearchVolume,
         matches: impl Fn(BiomeId) -> bool,
     ) -> BiomeSearch {
+        let SearchVolume {
+            from,
+            radius,
+            horizontal_step,
+            vertical_step,
+            min_y,
+            max_y,
+        } = volume;
         assert!(
             horizontal_step > 0 && vertical_step > 0,
             "steps must be positive"

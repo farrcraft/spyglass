@@ -104,6 +104,8 @@ pub fn sha1_hex(mut reader: impl Read) -> io::Result<String> {
 pub struct Bundle {
     dir: PathBuf,
     manifest: Manifest,
+    /// Whether the manifest lists structure templates; older bundles have none.
+    has_templates: bool,
 }
 
 impl Bundle {
@@ -111,7 +113,15 @@ impl Bundle {
     pub fn open(dir: impl Into<PathBuf>) -> Result<Self, BundleError> {
         let dir = dir.into();
         let manifest = read_manifest(&dir)?;
-        Ok(Bundle { dir, manifest })
+        let has_templates = manifest
+            .files
+            .keys()
+            .any(|p| p.starts_with("data/minecraft/structure/"));
+        Ok(Bundle {
+            dir,
+            manifest,
+            has_templates,
+        })
     }
 
     /// The bundle directory.
@@ -185,12 +195,7 @@ impl Bundle {
     pub fn structure_template(&self, id: &str) -> Result<Vec<u8>, BundleError> {
         let path = Self::resource_path("structure", id)?;
         let path = format!("{}.nbt", path.strip_suffix(".json").unwrap_or(&path));
-        if !self
-            .manifest
-            .files
-            .keys()
-            .any(|p| p.starts_with("data/minecraft/structure/"))
-        {
+        if !self.has_templates {
             return Err(BundleError::Layout(format!(
                 "{} has no structure templates; extract it again with this version of spyglass",
                 self.dir.display()

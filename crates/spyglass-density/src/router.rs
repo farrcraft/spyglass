@@ -100,9 +100,4 @@ impl ClimateSampler {
         let (x, y, z) = (qx.wrapping_mul(4), qy.wrapping_mul(4), qz.wrapping_mul(4));
         std::array::from_fn(|i| self.0[i].sample(x, y, z))
     }
-
-    /// One climate function, by [`CLIMATE_ENTRIES`] index.
-    pub fn function(&self, i: usize) -> &Sampler {
-        &self.0[i]
-    }
 }

@@ -96,7 +96,10 @@ pub fn chunk_versions(dir: &Path) -> std::io::Result<ChunkVersions> {
             .collect();
         let mut total = ChunkVersions::default();
         for handle in handles {
-            total.merge(handle.join().expect("region reader panicked")?);
+            let counts = handle
+                .join()
+                .map_err(|_| std::io::Error::other("a region file reader panicked"))?;
+            total.merge(counts?);
         }
         Ok(total)
     })

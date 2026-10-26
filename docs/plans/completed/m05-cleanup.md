@@ -1,9 +1,9 @@
 # m05. Cleanup before the viewer
 
-- Status: In progress
-- Milestone: [05. Viewer MVP](../roadmap/05-viewer-mvp.md)
+- Status: Completed
+- Milestone: [05. Viewer MVP](../../roadmap/05-viewer-mvp.md)
 - Started: 2026-10-25
-- Completed: YYYY-MM-DD
+- Completed: 2026-10-25
 
 ## Goal
 
@@ -169,7 +169,7 @@ Six phases, each a commit or two that passes `cargo xtask check` and the oracle 
 
 ### 3. Crate split and codec
 
-- [x] ADR: the `spyglass-extract` crate, and the read-only `spyglass-data` ([ADR 0016](../adr/0016-extractor-crate-and-read-only-data.md)).
+- [x] ADR: the `spyglass-extract` crate, and the read-only `spyglass-data` ([ADR 0016](../../adr/0016-extractor-crate-and-read-only-data.md)).
 - [x] `crates/spyglass-extract`: manifest, cache, java, datagen, bundler, extract, `write` (the bundle-writing half of `bundle`, with `WriteError`) and the binary. `cargo run -p spyglass-extract` in docs and `xtask linux-check`.
 - [x] `spyglass-data` depends on `flate2`, `serde`, `serde_json`, `sha1` and `thiserror` only. `cargo tree -p spyglass -e normal` has no `ureq`, `clap`, `anyhow`, `tempfile` or TLS; `zip` and `directories` remain, from `spyglass-world`.
 - [x] `BundleError` keeps reading errors only; `Zip` and `Exists` are `WriteError`'s.
@@ -189,7 +189,7 @@ Six phases, each a commit or two that passes `cargo xtask check` and the oracle 
 - [x] `Error` is `#[non_exhaustive]`, with `Io`, `NoBundle`, `AmbiguousSave` and `OtherWorld`; bundle, load and save failures are `Data(Cause)`/`Save(Cause)`, an opaque `Cause`. `save.rs` uses `AmbiguousSave` and `Io`; `Unknown`'s doc includes world saves. The CLI's tests pass unchanged.
 - [x] `spyglass::find_bundle(dir, version)`: newest, or the one whose `BundleInfo.version` matches. The CLI uses it, so `--game-version` matches the bundle's version, not its folder name.
 - [x] `Session::slime_chunks_near(centre, radius)`, used by the CLI.
-- [ ] `Session::structures_in`: kept (the viewer needs it); its test comes with phase 6's synthetic-bundle tests.
+- [x] `Session::structures_in`: kept (the viewer needs it), and tested on the fixture world (phase 6).
 - [x] `SaveInspector` reads each bundle's world presets once, for `world list`; `inspect_save` is one inspector, one save. A missing `bundles/` has no bundles, and each save's `NoBundle` warning says to extract one.
 - [x] ADR 0014's decision stands (handles refine its methods); `locate.md` describes the queries.
 - [x] `cargo xtask bench` (`crates/spyglass/examples/bench.rs`), brought forward from phase 5 to measure this phase.
@@ -203,64 +203,70 @@ Six phases, each a commit or two that passes `cargo xtask check` and the oracle 
 
 ### 6. Tests, idiom and the oracle runner
 
-- [ ] `cargo xtask oracle-test`: release build, `--ignored`. It lists each test whose inputs are missing and fails only on real failures. Document it in getting-started and the oracle spec, and add "run `cargo xtask oracle-test`" to completing a plan in `development-process.md`.
-- [ ] Structure unit tests on the synthetic bundle:
-  - `select`
-  - the locate loop
-  - `MAX_UNCERTAIN`
-  - `certain_answer`
-  - `ConcentricRings::positions`
-  - `Session::biome_at`
-- [ ] `inspect_save` tests without a bundle: `StructuresDisabled`, `DataPack`, `Modded`.
-- [ ] Biome: `find_biome_horizontal` (reservoir sampling and tie replay, on a fixed source) and `find_closest_biome_3d`.
-- [ ] RNG: `Gaussian` and `LegacyPositionalRandomFactory`, from `java.util.Random` values (allowed by ADR 0008: these are standard library values, not game data).
-- [ ] World:
-  - `Save::packs()` (folders, zips, missing and uninspectable)
-  - region edge cases (short file, offset past the end of the file, length 0, missing `.mcc`)
-- [ ] NBT: a deterministic fuzz-style test feeding truncated and mutated valid NBT; it must return errors, never panic.
-- [ ] I1: make test-only items `pub(crate)`, or `#[doc(hidden)]` where integration tests need them. Delete `file_packs` or have `packs()` use it.
-- [ ] I2:
-  - split `find_biome_horizontal` into `scan_cells` and `replay_ties`
-  - add a `BiomeSearch` options struct for both search functions (no more `too_many_arguments`)
-  - split xtask's `doctor`, `linux_check` and the oracle runner where a step reads as its own function
-- [ ] I4: typed `Serialize` structs for every CLI JSON output, and `main.rs` split into `args.rs`, `locate.rs` and `world.rs`. The JSON must be byte-identical before and after on the CLI tests.
-- [ ] I5:
-  - validating constructor for `Spline::Multipoint`
-  - renames `depends_on_y` and `y_scale`
-  - a `match` in place of the nested `let-else`
-  - a direct `[_; 6]` in `router.rs`
-  - reuse the computed sample in `spawn.rs`
-  - checked size in `biomes_in`
-  - `StructureType::Jigsaw(Jigsaw)`
-  - "has templates" computed once in `Bundle::open`
-  - map the region reader's panic to an error
-  - move `to_json` next to `nbt`
+- [x] `cargo xtask oracle-test` runs, in release, every ignored comparison whose inputs exist, and names each one it skips and the command that makes its inputs. In getting-started, the oracle spec, CLAUDE.md, and step 4 of `development-process.md`.
+- [x] `spyglass_oracle::fixtures`: a hand-written Overworld bundle (plains west of x = 0, desert east, optionally forest tied with plains) that the public API opens. The structure crate's own test bundles use its writer too.
+- [x] API tests on it (`crates/spyglass/tests/synthetic.rs`):
+  - biome lookup
+  - a certain answer ending the search, and the same chunk in `structures_in`
+  - candidates stopping at `MAX_UNCERTAIN`
+  - tags expanding in order
+  - concentric rings
+  - biome locates
+  - queries tied to their world
+  - coordinates at the edge of the world (fails on the code before C5)
+  - slime ordering
+  - spawn and `find_bundle`
+- [x] `inspect_save` on saves built in the test: no warnings, every non-blocking warning, another generator, and no bundles folder (`crates/spyglass/tests/save_warnings.rs`).
+- [x] Biome searches on the fixture: closest and random horizontal matches, tie replay at and over the limit, the 3D search's certain and uncertain hits, and region fills (`crates/spyglass-biome/tests/search.rs`).
+- [x] RNG: Gaussians against Java (see notes) and the legacy positional factory against the spec's `getSeed`.
+- [x] World: `Save::packs()` and the region edge cases (phase 2).
+- [x] NBT: every truncation and nine damaging values at every byte of a valid file return errors or values, never panic.
+- [x] I1: `java_round` and `round_trig_product` are crate-private; the jigsaw internals aren't re-exported; `BiomeSource::tree` and `SearchTree::brute_force` are `#[doc(hidden)]` for the golden test; the unused `ClimateSampler::function` is gone; `Save::file_packs` went in phase 2.
+- [x] I2:
+  - `find_biome_horizontal` takes a `HorizontalArea` and is split into `scan_cells`, `choose` and `replay_ties`
+  - `find_closest_biome_3d` takes a `SearchVolume`
+  - xtask's `doctor`, `linux-check` and `oracle golden` are split into their steps
+- [x] I4: typed `Serialize` output (`json.rs`), and `main.rs` split into `args.rs`, `locate.rs`, `world.rs` and `json.rs`. Fifteen `--json` and text outputs, from seeds and saves, are byte-identical before and after.
+- [x] I5: all but one, which was declined (see decisions).
+  - the spline `Points` type, the renames and the `match` (phase 5)
+  - router arrays built directly
+  - spawn's duplicate sample skipped
+  - `biomes_in`'s size checked
+  - `Bundle` knows whether it has templates
+  - a panicking region reader is an I/O error
+  - `Tag::to_json` in `spyglass_data::nbt`
 
 ## Verification
 
+Done on 2026-10-25:
+
 - `cargo xtask check` passes after each phase.
-- `cargo xtask oracle-test` passes after each phase: all 23 oracle and golden tests, including `locate_agrees_with_the_game` and `structures_match_the_oracle`.
-- `cargo xtask oracle locate` agrees with the game on a fresh run, for seeds and for a save copy.
-- `cargo tree -p spyglass -e normal` shows no network, zip or CLI crates.
-- CLI JSON output is byte-identical before and after on the CLI tests and a sample of real seeds and saves.
-- Benchmarks show that sessions, locates and density sampling are no slower anywhere and faster where intended. Numbers are in the notes.
-- Every new test fails on the code before its fix.
+- `cargo xtask oracle-test`: all 20 comparisons pass after each phase that touched worldgen, and the oracle suite now takes under 2 minutes instead of about 6.
+- `cargo xtask oracle golden` regenerates the golden set through the restructured command.
+- `cargo xtask oracle locate` runs against the real server and the game's answers still agree (phase 2).
+- All 191 saves on this machine read. One 1.12 save has 85 unreadable chunks, as it did before the limits.
+- A fresh `spyglass-extract 26.3` writes a byte-identical `bundle.json`.
+- `cargo tree -p spyglass -e normal` has no `ureq`, `clap`, `anyhow`, `tempfile` or TLS crates.
+- The CLI's JSON and text output is byte-identical across the refactor.
+- Bugs fixed with a test that fails before the fix: C1 (`Binder`), C2 (decompression bomb), C5 (edge coordinates).
 
 ## Durable outputs
 
-- [ ] ADR: `spyglass-extract` split and the read-only `spyglass-data`
-- [ ] ADR superseding 0014, if the API handles change its decision
-- [ ] ADR for the benchmark harness, if it adds a dependency
-- [ ] `docs/architecture.md`: crate table, planned crates, dependency wording
-- [ ] `docs/specs/README.md`: status definitions and real statuses
-- [ ] `docs/specs/oracle.md` and getting-started: `cargo xtask oracle-test`
-- [ ] `docs/development-process.md`: run the oracle tests when completing a plan
-- [ ] `docs/specs/density-functions.md`: inline router entries
-- [ ] `docs/specs/noise.md`: `Mth.floor`
-- [ ] `docs/specs/world-saves.md`: size limits and refused pack names
-- [ ] `docs/specs/bundle-format.md`, `data-sources.md`: the extractor's new crate
-- [ ] `docs/specs/cli-json.md`: status line
-- [ ] README, `docs/README.md`, getting-started
+- [x] ADR: `spyglass-extract` split and the read-only `spyglass-data` ([ADR 0016](../../adr/0016-extractor-crate-and-read-only-data.md))
+- [x] ADR superseding 0014: not needed; the handles refine its methods and `locate.md` describes them
+- [x] ADR for the benchmark harness: not needed; it adds no dependency
+- [x] `docs/architecture.md`: crate table, planned crates, dependency wording, `spyglass-extract`, the oracle crate's fixtures
+- [x] `docs/specs/README.md`: status definitions and real statuses
+- [x] `docs/specs/oracle.md` and getting-started: `cargo xtask oracle-test`, `cargo xtask bench`
+- [x] `docs/development-process.md`: run the checks and the oracle tests when completing a plan
+- [x] `docs/specs/density-functions.md`: inline router entries; remembered values instead of column folding
+- [x] `docs/specs/noise.md`: `Mth.floor` needed no change (the code matched the bytecode)
+- [x] `docs/specs/rng.md`: `java.util.Random` Gaussians differ from the game's in the last bit
+- [x] `docs/specs/world-saves.md`: size limits and refused pack names
+- [x] `docs/specs/bundle-format.md`, `data-sources.md`: the extractor's new crate; the limited and shallow NBT reads
+- [x] `docs/specs/cli-json.md`: status line; paths
+- [x] `docs/specs/locate.md`, `biome-lookup.md`: queries; region fills
+- [x] README, `docs/README.md`, getting-started, CLAUDE.md
 
 ## Decisions
 
@@ -270,9 +276,15 @@ Agreed on 2026-10-25, as recommended:
 - **`repository` in `Cargo.toml`:** dropped until the repo is on GitHub.
 - **Benchmarks:** a timed `cargo xtask bench`, with no new dependency.
 - **Phase 5:** in this plan.
+- **`StructureType::Jigsaw(Jigsaw)`** (I5): declined. `StructureType` is a `Copy` key matched throughout the crate, and the loader is the only code that pairs a jigsaw kind with its settings, so the `expect` can't fire. Moving the settings into the enum would cost more than it buys.
+- **Shared `io_err`** (I3): declined. Each of the three builds its own module's error type.
 
 ## Notes
 
+- 2026-10-25: Completed. Milestone 05 continues with the viewer plan.
+- 2026-10-25: Phase 6 done.
+  - The fixture world's temperature gradient first crossed exactly 0 at x = 0, tying a whole column of cells between plains and desert. That's correct behavior (the ring search reported its alternatives as unknown), but not what the tests wanted, so the gradient now ends at 1001.
+  - `java.util.Random(42).nextGaussian()` and spyglass differ in the last bit of the first pair. `java.util.Random` uses `StrictMath.log`, the game's `MarsagliaPolarGaussian` uses `Math.log`, and spyglass matches `Math.log` here. The test accepts either result for that pair, since Rust's `ln` is platform-dependent too; `rng.md` records it.
 - 2026-10-25: Phase 5 done. `cargo xtask bench`, same session, before → after (ms): village locate 363 → 51; stronghold locate in a new session 2,437 → 957; cherry grove locate 71 → 47; 65,536 `biome_at` 423 → 158; spawn origin 3.8 → 1.2. The ignored oracle suite went from about 6 minutes to under 2.
 - 2026-10-25: Phase 4 done. `cargo xtask bench`, medians in ms, before → after:
   - `World::open` 334 → 330; `World::session` 0.10 → 0.10

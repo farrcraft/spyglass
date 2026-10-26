@@ -154,6 +154,59 @@ mod tests {
     // (same seed scrambling, LCG and derived methods).
 
     #[test]
+    fn gaussians_match_java() {
+        // MarsagliaPolarGaussian calls Math.log; java.util.Random.nextGaussian, the same method,
+        // calls StrictMath.log. For seed 42 the first pair's log differs by an ulp between the
+        // two (JDK 25, x86_64), and Rust's ln may match either, so either is accepted there.
+        let mut r = LegacyRandomSource::new(42);
+        let values: Vec<f64> = (0..4).map(|_| r.next_gaussian()).collect();
+        let math = [1.141_905_315_473_055, 0.919_407_948_982_788];
+        let strict = [1.141_905_315_473_054_7, 0.919_407_948_982_787_9];
+        assert!(values[..2] == math || values[..2] == strict, "{values:?}");
+        assert_eq!(
+            values[2..],
+            [-0.949_866_636_890_895_9, -1.106_990_286_399_337_7]
+        );
+        // The second value of a pair is cached across other draws, as in nextGaussian.
+        let mut r = LegacyRandomSource::new(-7);
+        assert_eq!(r.next_int(), 1_155_869_324);
+        assert_eq!(r.next_gaussian(), -0.843_337_356_931_750_7);
+        assert_eq!(r.next_double(), 0.198_127_216_998_333_8);
+        assert_eq!(r.next_gaussian(), -0.439_905_056_295_394_45);
+    }
+
+    /// `Mth.getSeed`, written out from `docs/specs/rng.md`.
+    fn get_seed(x: i32, y: i32, z: i32) -> i64 {
+        let s = i64::from(x.wrapping_mul(3_129_871))
+            ^ i64::from(z).wrapping_mul(116_129_781)
+            ^ i64::from(y);
+        let s = s
+            .wrapping_mul(s)
+            .wrapping_mul(42_317_861)
+            .wrapping_add(s.wrapping_mul(11));
+        s >> 16
+    }
+
+    #[test]
+    fn positional_factory_follows_the_spec() {
+        let factory = LegacyPositionalRandomFactory::new(-123_456_789);
+        for (x, y, z) in [(0, 0, 0), (1, -64, 1), (-30_000_000, 320, 29_999_999)] {
+            let want = LegacyRandomSource::new(get_seed(x, y, z) ^ -123_456_789).next_long();
+            assert_eq!(factory.at(x, y, z).next_long(), want, "({x}, {y}, {z})");
+        }
+        // "test".hashCode() is 3556498.
+        assert_eq!(
+            factory.from_hash_of("test").next_long(),
+            LegacyRandomSource::new(3_556_498 ^ -123_456_789).next_long()
+        );
+        // fromSeed ignores the factory's seed.
+        assert_eq!(
+            factory.from_seed(5).next_long(),
+            LegacyRandomSource::new(5).next_long()
+        );
+    }
+
+    #[test]
     fn matches_java_util_random_ints_and_longs() {
         let mut r = LegacyRandomSource::new(0);
         assert_eq!(

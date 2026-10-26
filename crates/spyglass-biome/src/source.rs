@@ -127,7 +127,8 @@ impl BiomeSource {
         self.tree.lookup(target)
     }
 
-    /// The search tree.
+    /// The search tree, for tests that compare it with [`SearchTree::brute_force`].
+    #[doc(hidden)]
     pub fn tree(&self) -> &SearchTree {
         &self.tree
     }
@@ -171,7 +172,7 @@ impl Biomes<'_> {
 
     /// `BiomeSource.findBiomeHorizontal(x, y, z, radius, increment, predicate, random,
     /// findClosest)`, in block coordinates: a biome matching `matches` among the quarts of the
-    /// square of `radius` blocks around `(x, z)` at height `y`.
+    /// square of `area.radius` blocks around `area.center` at its height.
     ///
     /// With `find_closest`, rings are scanned outwards from the centre and the first match is
     /// returned. Otherwise the whole square is scanned, z outer and x inner, and one match is
@@ -184,33 +185,67 @@ impl Biomes<'_> {
     /// other outcome is listed in [`HorizontalSearch::alternatives`]. With more than
     /// [`MAX_REPLAYED_TIES`] such cells, nothing is replayed and the alternatives are unknown.
     ///
-    /// `increment` must be positive: the game's loops never end otherwise.
-    #[allow(clippy::too_many_arguments)]
+    /// `area.increment` must be positive: the game's loops never end otherwise.
     pub fn find_biome_horizontal<R: RandomSource + Clone>(
         &self,
-        x: i32,
-        y: i32,
-        z: i32,
-        radius: i32,
-        increment: i32,
+        area: HorizontalArea,
         matches: impl Fn(BiomeId) -> bool,
         random: &mut R,
-        find_closest: bool,
     ) -> HorizontalSearch {
-        assert!(increment > 0, "increment must be positive");
-        let (qx, qy, qz, qr) = (x >> 2, y >> 2, z >> 2, radius >> 2);
-        // The cells that can matter, in scan order: every hit, and every cell that could be one.
-        let mut cells: Vec<(i32, i32, Lookup, bool)> = Vec::new();
-        let mut ambiguous = 0;
-        let mut r = if find_closest { 0 } else { qr };
-        'scan: while r <= qr {
+        assert!(area.increment > 0, "increment must be positive");
+        let cells = self.scan_cells(&area, &matches);
+        let y = area.center[1];
+        let position = |i: Option<usize>| i.map(|i| [cells[i].x << 2, y, cells[i].z << 2]);
+        let start = random.clone();
+        let answer = choose(
+            &cells,
+            area.find_closest,
+            &|_, c| matches(c.lookup.biome()),
+            random,
+        );
+        let tied = cells.iter().filter(|c| c.tied).count();
+        let alternatives_known = tied <= MAX_REPLAYED_TIES;
+        let alternatives = if tied > 0 && alternatives_known {
+            replay_ties(&cells, area.find_closest, &matches, &start)
+                .into_iter()
+                .map(position)
+                .filter(|p| *p != position(answer))
+                .fold(Vec::new(), |mut out, p| {
+                    if !out.contains(&p) {
+                        out.push(p);
+                    }
+                    out
+                })
+        } else {
+            Vec::new()
+        };
+        HorizontalSearch {
+            found: answer.map(|i| HorizontalMatch {
+                position: position(Some(i)).expect("a match"),
+                biome: cells[i].lookup.clone(),
+            }),
+            alternatives,
+            alternatives_known,
+        }
+    }
+
+    /// The cells that can matter, in the game's scan order: every hit, and every tied cell that
+    /// could be one. With `find_closest`, the scan stops at the first certain hit, since nothing
+    /// after it changes the closest one.
+    fn scan_cells(&self, area: &HorizontalArea, matches: &impl Fn(BiomeId) -> bool) -> Vec<Cell> {
+        let [x, y, z] = area.center;
+        let (qx, qy, qz, qr) = (x >> 2, y >> 2, z >> 2, area.radius >> 2);
+        let step = area.increment;
+        let mut cells = Vec::new();
+        let mut r = if area.find_closest { 0 } else { qr };
+        while r <= qr {
             let mut dz = -r;
             while dz <= r {
                 let z_edge = dz.wrapping_abs() == r;
                 let mut dx = -r;
                 while dx <= r {
-                    if find_closest && dx.wrapping_abs() != r && !z_edge {
-                        dx = dx.wrapping_add(increment);
+                    if area.find_closest && dx.wrapping_abs() != r && !z_edge {
+                        dx = dx.wrapping_add(step);
                         continue;
                     }
                     let (cx, cz) = (qx.wrapping_add(dx), qz.wrapping_add(dz));
@@ -218,67 +253,23 @@ impl Biomes<'_> {
                     let hit = matches(lookup.biome());
                     let tied = lookup.candidates().iter().any(|&b| matches(b) != hit);
                     if hit || tied {
-                        ambiguous += usize::from(tied);
-                        cells.push((cx, cz, lookup, tied));
-                        // Nothing after a certain match changes the closest one.
-                        if find_closest && hit && !tied {
-                            break 'scan;
+                        cells.push(Cell {
+                            x: cx,
+                            z: cz,
+                            lookup,
+                            tied,
+                        });
+                        if area.find_closest && hit && !tied {
+                            return cells;
                         }
                     }
-                    dx = dx.wrapping_add(increment);
+                    dx = dx.wrapping_add(step);
                 }
-                dz = dz.wrapping_add(increment);
+                dz = dz.wrapping_add(step);
             }
-            r = r.wrapping_add(increment);
+            r = r.wrapping_add(step);
         }
-
-        // The game's draws, given which cells match.
-        let choose = |is_match: &dyn Fn(usize) -> bool, random: &mut R| -> Option<usize> {
-            let mut chosen = None;
-            let mut count = 0_i32;
-            for i in 0..cells.len() {
-                if !is_match(i) {
-                    continue;
-                }
-                if chosen.is_none() || random.next_int_bounded(count + 1) == 0 {
-                    chosen = Some(i);
-                    if find_closest {
-                        return chosen;
-                    }
-                }
-                count += 1;
-            }
-            chosen
-        };
-        let start = random.clone();
-        let answer = choose(&|i| matches(cells[i].2.biome()), random);
-        let position = |i: Option<usize>| i.map(|i| [cells[i].0 << 2, y, cells[i].1 << 2]);
-        let mut alternatives = Vec::new();
-        let alternatives_known = ambiguous <= MAX_REPLAYED_TIES;
-        if ambiguous > 0 && alternatives_known {
-            let tied: Vec<usize> = (0..cells.len()).filter(|&i| cells[i].3).collect();
-            for mask in 1_u32..1 << ambiguous {
-                let flipped = |i: usize| {
-                    let hit = matches(cells[i].2.biome());
-                    match tied.iter().position(|&t| t == i) {
-                        Some(bit) if mask >> bit & 1 == 1 => !hit,
-                        _ => hit,
-                    }
-                };
-                let other = position(choose(&flipped, &mut start.clone()));
-                if other != position(answer) && !alternatives.contains(&other) {
-                    alternatives.push(other);
-                }
-            }
-        }
-        HorizontalSearch {
-            found: answer.map(|i| HorizontalMatch {
-                position: position(Some(i)).expect("a match"),
-                biome: cells[i].2.clone(),
-            }),
-            alternatives,
-            alternatives_known,
-        }
+        cells
     }
 
     /// Every biome in the box of `size` quarts from `min`, column by column, so each column's
@@ -286,7 +277,11 @@ impl Biomes<'_> {
     /// are [`biome_at`](Self::biome_at)'s on every cell.
     pub fn biomes_in(&self, min: [i32; 3], size: [u32; 3]) -> BiomeRegion {
         let [sx, sy, sz] = size.map(|s| s as usize);
-        let mut cells = vec![BiomeId(0); sx * sy * sz];
+        let count = sx
+            .checked_mul(sy)
+            .and_then(|n| n.checked_mul(sz))
+            .expect("a region small enough to count its cells");
+        let mut cells = vec![BiomeId(0); count];
         let mut ties = BTreeMap::new();
         let mut hits = Vec::new();
         for z in 0..sz {
@@ -312,6 +307,78 @@ impl Biomes<'_> {
             ties,
         }
     }
+}
+
+/// Where [`Biomes::find_biome_horizontal`] looks: `BiomeSource.findBiomeHorizontal`'s
+/// position and search arguments, in blocks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HorizontalArea {
+    /// The centre; its y is the height searched.
+    pub center: [i32; 3],
+    /// Half the square's side.
+    pub radius: i32,
+    /// The step between cells, in quarts. Must be positive.
+    pub increment: i32,
+    /// Scan rings outwards and stop at the first match, rather than choosing at random among
+    /// every match in the square.
+    pub find_closest: bool,
+}
+
+/// A cell [`Biomes::find_biome_horizontal`] kept: a hit, or a tie that could be one.
+struct Cell {
+    x: i32,
+    z: i32,
+    lookup: Lookup,
+    /// Whether the cell's candidates disagree on `matches`.
+    tied: bool,
+}
+
+/// The game's draws over `cells`, given which match: the first, with `find_closest`, else
+/// reservoir sampling with `random`.
+fn choose<R: RandomSource>(
+    cells: &[Cell],
+    find_closest: bool,
+    is_match: &dyn Fn(usize, &Cell) -> bool,
+    random: &mut R,
+) -> Option<usize> {
+    let mut chosen = None;
+    let mut count = 0_i32;
+    for (i, cell) in cells.iter().enumerate() {
+        if !is_match(i, cell) {
+            continue;
+        }
+        if chosen.is_none() || random.next_int_bounded(count + 1) == 0 {
+            chosen = Some(i);
+            if find_closest {
+                return chosen;
+            }
+        }
+        count += 1;
+    }
+    chosen
+}
+
+/// Every answer the game could give if the tied cells went another way: the search replayed
+/// from `start` for each combination of their outcomes but the one `matches` gives.
+fn replay_ties<R: RandomSource + Clone>(
+    cells: &[Cell],
+    find_closest: bool,
+    matches: &impl Fn(BiomeId) -> bool,
+    start: &R,
+) -> Vec<Option<usize>> {
+    let tied: Vec<usize> = (0..cells.len()).filter(|&i| cells[i].tied).collect();
+    (1_u32..1 << tied.len())
+        .map(|mask| {
+            let flipped = |i: usize, cell: &Cell| {
+                let hit = matches(cell.lookup.biome());
+                match tied.iter().position(|&t| t == i) {
+                    Some(bit) if mask >> bit & 1 == 1 => !hit,
+                    _ => hit,
+                }
+            };
+            choose(cells, find_closest, &flipped, &mut start.clone())
+        })
+        .collect()
 }
 
 /// A match from [`Biomes::find_biome_horizontal`].

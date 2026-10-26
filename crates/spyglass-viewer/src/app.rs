@@ -8,9 +8,14 @@ use std::thread;
 
 use eframe::egui::{self, Color32, Key, Pos2, Rect, Sense, TextureOptions, Vec2};
 use serde::{Deserialize, Serialize};
-use spyglass::{BiomeQuery, BundleInfo, Image, Session, World};
+use spyglass::{
+    BiomeQuery, BundleInfo, Image, Session, SpawnOrigin, StructureQuery, StructureStart, World,
+};
 
-use crate::tiles::{Cache, Job, Pool, Style, TileKey, slime_features};
+use crate::markers::{self, Picked};
+use crate::tiles::{
+    Cache, Entry, Job, JobKey, MarkerKey, Output, Pool, Style, TileKey, slime_features,
+};
 use crate::view::{TILE, Tile, View};
 
 /// The key settings are saved under.
@@ -25,6 +30,10 @@ const SCROLL_PER_STEP: f32 = 50.0;
 const KEY_PAN: f32 = 64.0;
 /// What the map shows where there's no tile yet.
 const EMPTY: Color32 = Color32::from_rgb(0x20, 0x20, 0x20);
+/// Tiles' structure markers kept.
+const CACHE_MARKERS: usize = 512;
+/// The most structure markers drawn at once; more is a zoom level too far out to read.
+const MAX_MARKERS: usize = 2_000;
 
 /// What's remembered between runs.
 #[derive(Serialize, Deserialize)]
@@ -37,6 +46,11 @@ struct Settings {
     view: View,
     ties: bool,
     slime_chunks: bool,
+    spawn: bool,
+    /// Structure ids to mark.
+    structures: Vec<String>,
+    /// Biome ids to keep bright.
+    highlight: Vec<String>,
 }
 
 impl Default for Settings {
@@ -48,6 +62,9 @@ impl Default for Settings {
             view: View::default(),
             ties: false,
             slime_chunks: false,
+            spawn: true,
+            structures: Vec::new(),
+            highlight: Vec::new(),
         }
     }
 }
@@ -101,6 +118,15 @@ struct Shown {
     /// Numbers tile keys; new for every session.
     id: u64,
     session: Arc<Session<'static>>,
+    spawn: SpawnOrigin,
+}
+
+/// The structures chosen, resolved against the world shown.
+#[derive(Default)]
+struct Selection {
+    /// Numbers marker keys; new for every change.
+    id: u64,
+    queries: Arc<[StructureQuery]>,
 }
 
 pub struct App {
@@ -114,7 +140,13 @@ pub struct App {
     seed_error: Option<String>,
     next_id: u64,
     pool: Pool,
-    cache: Cache,
+    cache: Cache<TileKey, Entry>,
+    markers: Cache<MarkerKey, Result<Vec<StructureStart>, String>>,
+    selection: Selection,
+    structure_filter: String,
+    biome_filter: String,
+    /// Whether the last frame had more markers than it could show.
+    too_many_markers: bool,
     goto: String,
     goto_error: bool,
     /// Scrolling not yet turned into a zoom step.
@@ -145,6 +177,11 @@ impl App {
             next_id: 0,
             pool: Pool::new(move || ctx.request_repaint()),
             cache: Cache::new(CACHE_TILES),
+            markers: Cache::new(CACHE_MARKERS),
+            selection: Selection::default(),
+            structure_filter: String::new(),
+            biome_filter: String::new(),
+            too_many_markers: false,
             goto: String::new(),
             goto_error: false,
             scrolled: 0.0,
@@ -224,18 +261,40 @@ impl App {
                 self.next_id += 1;
                 self.shown = Some(Shown {
                     id: self.next_id,
+                    spawn: session.spawn_origin(),
                     session: Arc::new(session),
                 });
                 self.cache.clear();
+                self.markers.clear();
+                self.select();
             }
             Err(e) => self.seed_error = Some(e.to_string()),
         }
     }
 
+    /// Resolves the structures chosen against the world shown. Ids the world doesn't have
+    /// (from another version) are kept in the settings but not marked.
+    fn select(&mut self) {
+        let Some(world) = self.world else {
+            return;
+        };
+        let queries: Vec<StructureQuery> = self
+            .settings
+            .structures
+            .iter()
+            .filter_map(|s| world.structure_query(s).ok())
+            .collect();
+        self.next_id += 1;
+        self.selection = Selection {
+            id: self.next_id,
+            queries: queries.into(),
+        };
+    }
+
     fn style(&self) -> Style {
         Style {
             ties: self.settings.ties,
-            highlight: Vec::new(),
+            highlight: self.settings.highlight.clone(),
             slime_chunks: self.settings.slime_chunks
                 && self.settings.view.scale <= spyglass::MAX_SLIME_SCALE,
         }
@@ -380,15 +439,57 @@ impl App {
             egui::Checkbox::new(&mut self.settings.slime_chunks, "Slime chunks"),
         )
         .on_disabled_hover_text("Zoom in to 16 blocks per pixel or closer to see slime chunks.");
+        ui.checkbox(&mut self.settings.spawn, "World spawn")
+            .on_hover_text("Where the game's spawn search starts.");
+        let Some(world) = self.world else {
+            return;
+        };
+        let structures: Vec<&str> = world.structures().collect();
+        let header = match self.settings.structures.len() {
+            0 => "Structures".to_string(),
+            n => format!("Structures ({n})"),
+        };
+        let changed = egui::CollapsingHeader::new(header)
+            .id_salt("structures")
+            .show(ui, |ui| {
+                pick_list(
+                    ui,
+                    "structure list",
+                    &structures,
+                    &mut self.settings.structures,
+                    &mut self.structure_filter,
+                )
+            })
+            .body_returned
+            .unwrap_or(false);
+        if changed {
+            self.select();
+        }
+        let biomes: Vec<&str> = world.biomes().iter().map(String::as_str).collect();
+        let header = match self.settings.highlight.len() {
+            0 => "Highlight biomes".to_string(),
+            n => format!("Highlight biomes ({n})"),
+        };
+        egui::CollapsingHeader::new(header)
+            .id_salt("highlight")
+            .show(ui, |ui| {
+                pick_list(
+                    ui,
+                    "biome list",
+                    &biomes,
+                    &mut self.settings.highlight,
+                    &mut self.biome_filter,
+                )
+            });
     }
 
-    /// The screen shown until there's a bundle to read.
     /// The bundles folder, made absolute so it's clear where it is.
     fn bundles_dir(&self) -> PathBuf {
         std::path::absolute(&self.settings.bundles)
             .unwrap_or_else(|_| self.settings.bundles.clone())
     }
 
+    /// The screen shown until there's a bundle to read.
     fn no_bundle(&mut self, ui: &mut egui::Ui) {
         let width = ui.available_width().min(560.0);
         let margin = (ui.available_width() - width) / 2.0;
@@ -437,7 +538,12 @@ impl App {
 
     fn map(&mut self, ui: &mut egui::Ui) {
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
-        let centre = rect.center();
+        // On a whole physical pixel, so tile texels and marker edges land on screen pixels.
+        let ppp = ui.ctx().pixels_per_point();
+        let centre = Pos2::new(
+            (rect.center().x * ppp).round() / ppp,
+            (rect.center().y * ppp).round() / ppp,
+        );
         let offset = |p: Pos2| [p.x - centre.x, p.y - centre.y];
         let view = &mut self.settings.view;
         if response.dragged() {
@@ -483,7 +589,7 @@ impl App {
         let (Some(shown), Some(world)) = (&self.shown, self.world) else {
             return;
         };
-        let (source, session) = (shown.id, shown.session.clone());
+        let (source, session, spawn) = (shown.id, shown.session.clone(), shown.spawn);
         let view = self.settings.view;
         let tiles = view.tiles([rect.width(), rect.height()]);
         let key = |tile: Tile| TileKey {
@@ -491,21 +597,54 @@ impl App {
             y: view.y,
             tile,
         };
+        let selection = self.selection.id;
+        let marker_key = |tile: Tile| MarkerKey {
+            source,
+            selection,
+            tile,
+        };
         for (done, result) in self.pool.finished() {
-            if done.source == source {
-                self.cache.insert(done, result);
+            match (done, result) {
+                (JobKey::Biomes(k), result) if k.source == source => {
+                    let data = result.and_then(|out| match out {
+                        Output::Biomes(data) => Ok(data),
+                        Output::Markers(_) => Err("not a biome tile".to_string()),
+                    });
+                    self.cache.insert(k, Entry::new(data));
+                }
+                (JobKey::Markers(k), result) if k.source == source && k.selection == selection => {
+                    let starts = result.and_then(|out| match out {
+                        Output::Markers(starts) => Ok(starts),
+                        Output::Biomes(_) => Err("not markers".to_string()),
+                    });
+                    self.markers.insert(k, starts);
+                }
+                _ => {}
             }
         }
         self.cache.next_frame();
-        let jobs = tiles
+        self.markers.next_frame();
+        let job = |key| Job {
+            key,
+            session: session.clone(),
+            structures: self.selection.queries.clone(),
+        };
+        // Biomes first, then markers, each nearest the centre first.
+        let mut jobs: Vec<Job> = tiles
             .iter()
             .map(|&t| key(t))
             .filter(|k| !self.cache.contains(k))
-            .map(|key| Job {
-                key,
-                session: session.clone(),
-            })
+            .map(|k| job(JobKey::Biomes(k)))
             .collect();
+        if !self.selection.queries.is_empty() {
+            jobs.extend(
+                tiles
+                    .iter()
+                    .map(|&t| marker_key(t))
+                    .filter(|k| !self.markers.contains(k))
+                    .map(|k| job(JobKey::Markers(k))),
+            );
+        }
         self.pool.want(jobs);
 
         let style = self.style();
@@ -545,11 +684,45 @@ impl App {
         if made >= TEXTURES_PER_FRAME {
             ui.ctx().request_repaint();
         }
+
+        // Markers over every tile, so none is hidden under a neighbouring tile.
+        let mut shown_markers: Vec<(Pos2, Picked<'_>)> = Vec::new();
+        let mut starts: Vec<StructureStart> = Vec::new();
+        if !self.selection.queries.is_empty() {
+            for &tile in &tiles {
+                if let Some(Ok(found)) = self.markers.get(&marker_key(tile)) {
+                    starts.extend(found.iter().cloned());
+                }
+            }
+        }
+        self.too_many_markers = starts.len() > MAX_MARKERS;
+        if !self.too_many_markers {
+            for start in &starts {
+                let at =
+                    markers::pixel_centre(&view, centre, [start.position[0], start.position[2]]);
+                if rect.expand(8.0).contains(at) {
+                    markers::structure(&painter, at, start);
+                    shown_markers.push((at, Picked::Structure(start)));
+                }
+            }
+        }
+        if self.settings.spawn {
+            let at = markers::pixel_centre(&view, centre, spawn.map_block());
+            markers::spawn(&painter, at);
+            shown_markers.push((at, Picked::Spawn(&spawn)));
+        }
+        if let Some(pointer) = response.hover_pos()
+            && !response.dragged()
+            && let Some(picked) = markers::pick(pointer, shown_markers)
+        {
+            response
+                .clone()
+                .on_hover_ui_at_pointer(|ui| describe(ui, &picked));
+        }
         self.cursor = response
             .hover_pos()
             .map(|hover| view.block_at(offset(hover)).map(|b| b.floor() as i32));
     }
-
     /// A tile's texture in `style`, making it if there's budget left this frame.
     fn texture(
         &mut self,
@@ -612,8 +785,46 @@ impl App {
                 if self.pool.busy() {
                     ui.spinner();
                 }
+                if self.too_many_markers {
+                    ui.label("Too many structures to show here; zoom in.");
+                }
             });
         });
+    }
+}
+
+/// A marker's tooltip.
+fn describe(ui: &mut egui::Ui, picked: &Picked<'_>) {
+    match picked {
+        Picked::Structure(start) => {
+            let [x, _, z] = start.position;
+            ui.strong(start.structures.join(" or "));
+            ui.label(format!(
+                "{x}, {z} (chunk {}, {})",
+                start.chunk[0], start.chunk[1]
+            ));
+            ui.weak(&start.set);
+            if !start.certain {
+                ui.label(
+                    "Candidate: whether it generates depends on terrain or a tied biome, which \
+                     spyglass doesn't compute yet.",
+                );
+            }
+        }
+        Picked::Spawn(origin) => {
+            ui.strong("World spawn");
+            let [cx, cz] = origin.chunk;
+            ui.label(format!(
+                "The game's spawn search starts in chunk {cx}, {cz}; the spawn is in the 11 × 11 \
+                 chunks around it, decided by terrain."
+            ));
+            if let Some([x, _, z]) = origin.position {
+                ui.label(format!("Best climate at {x}, {z}."));
+            }
+            if origin.platform_dependent {
+                ui.label("This answer can differ between platforms the game runs on.");
+            }
+        }
     }
 }
 
@@ -624,6 +835,51 @@ fn full_uv() -> Rect {
 fn color_image(image: &Image) -> egui::ColorImage {
     let [w, h] = image.size();
     egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], image.rgba())
+}
+
+/// A filtered checklist of ids, with the chosen ones in `chosen`. Returns whether it changed.
+fn pick_list(
+    ui: &mut egui::Ui,
+    salt: &str,
+    ids: &[&str],
+    chosen: &mut Vec<String>,
+    filter: &mut String,
+) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        ui.add(
+            egui::TextEdit::singleline(filter)
+                .hint_text("filter")
+                .desired_width(140.0),
+        );
+        if ui
+            .add_enabled(!chosen.is_empty(), egui::Button::new("Clear"))
+            .clicked()
+        {
+            chosen.clear();
+            changed = true;
+        }
+    });
+    let needle = filter.to_lowercase();
+    egui::ScrollArea::vertical()
+        .id_salt(salt)
+        .max_height(220.0)
+        .show(ui, |ui| {
+            for id in ids.iter().filter(|id| id.to_lowercase().contains(&needle)) {
+                let mut on = chosen.iter().any(|c| c == id);
+                let name = id.strip_prefix("minecraft:").unwrap_or(id);
+                if ui.checkbox(&mut on, name).changed() {
+                    if on {
+                        chosen.push((*id).to_string());
+                        chosen.sort();
+                    } else {
+                        chosen.retain(|c| c != id);
+                    }
+                    changed = true;
+                }
+            }
+        });
+    changed
 }
 
 /// `x z` or `x y z`, in blocks, separated by spaces or commas.

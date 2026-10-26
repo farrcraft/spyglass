@@ -3544,6 +3544,7 @@ dependencies = [
  "eframe",
  "rfd",
  "serde",
+ "serde_json",
  "spyglass",
  "spyglass-oracle",
 ]

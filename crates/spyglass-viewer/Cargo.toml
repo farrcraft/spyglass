@@ -17,4 +17,5 @@ serde.workspace = true
 spyglass.workspace = true
 
 [dev-dependencies]
+serde_json.workspace = true
 spyglass-oracle.workspace = true

@@ -4,6 +4,7 @@
 use eframe::egui;
 
 mod app;
+mod markers;
 mod tiles;
 mod view;
 
@@ -13,6 +14,8 @@ fn main() -> eframe::Result {
             .with_title("spyglass")
             .with_inner_size([1280.0, 800.0])
             .with_min_inner_size([640.0, 400.0]),
+        // The map is exact colours; dithering would nudge them by one here and there.
+        dithering: false,
         ..Default::default()
     };
     eframe::run_native(

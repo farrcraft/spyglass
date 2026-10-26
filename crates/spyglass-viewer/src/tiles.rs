@@ -1,25 +1,40 @@
-//! Map tiles: rendered on worker threads, cached on the UI thread.
+//! Map tiles: computed on worker threads, cached on the UI thread.
 //!
-//! Workers compute the slow part, a tile's biome map, plus its slime chunks. The UI thread turns
-//! those into a texture with the current style (ties, highlight, slime) through the library's
-//! `BiomeMap::colorize` and `Image::draw_features`, so restyling never samples biomes again.
+//! Workers do the slow parts: a tile's biome map and slime chunks, and separately the structure
+//! starts on a tile for the structures chosen. The UI thread turns biome maps into textures with
+//! the current style (ties, highlight, slime) through the library's `BiomeMap::colorize` and
+//! `Image::draw_features`, so restyling never samples biomes again, and draws structure markers
+//! itself.
 
 use std::collections::{HashMap, HashSet};
+use std::hash::Hash;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread;
 
 use eframe::egui;
-use spyglass::{BiomeMap, MAX_SLIME_SCALE, MapFeatures, Session};
+use spyglass::{
+    BiomeMap, DEFAULT_MAP_Y, Layers, MAX_SLIME_SCALE, MapFeatures, Session, StructureQuery,
+    StructureStart,
+};
 
-use crate::view::Tile;
+use crate::view::{TILE, Tile};
 
-/// What a tile shows: the world and seed, the height, and its place.
+/// A tile's biomes: the world and seed, the height, and its place.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TileKey {
     /// The app's number for the world and seed shown; each new session gets a new one.
     pub source: u64,
     pub y: i32,
+    pub tile: Tile,
+}
+
+/// A tile's structure markers: the world and seed, the structures chosen, and its place.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct MarkerKey {
+    pub source: u64,
+    /// The app's number for the structures chosen.
+    pub selection: u64,
     pub tile: Tile,
 }
 
@@ -30,19 +45,34 @@ pub struct TileData {
     pub slime_chunks: Vec<[i32; 2]>,
 }
 
-/// A tile to compute.
-pub struct Job {
-    pub key: TileKey,
-    pub session: Arc<Session<'static>>,
+/// What a job computes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum JobKey {
+    Biomes(TileKey),
+    Markers(MarkerKey),
 }
 
-type Done = (TileKey, Result<TileData, String>);
+/// Something to compute.
+pub struct Job {
+    pub key: JobKey,
+    pub session: Arc<Session<'static>>,
+    /// For markers: the structures chosen.
+    pub structures: Arc<[StructureQuery]>,
+}
+
+pub enum Output {
+    Biomes(TileData),
+    /// The structure starts whose marker centre is on the tile, in drawing order.
+    Markers(Vec<StructureStart>),
+}
+
+type Done = (JobKey, Result<Output, String>);
 
 #[derive(Default)]
 struct Queue {
     /// Waiting, most wanted first.
     waiting: Vec<Job>,
-    running: HashSet<TileKey>,
+    running: HashSet<JobKey>,
 }
 
 /// Worker threads computing tiles, most wanted first. Jobs no longer wanted are dropped before
@@ -53,7 +83,7 @@ pub struct Pool {
 }
 
 impl Pool {
-    /// A pool of one thread per core but one, calling `wake` when a tile is done.
+    /// A pool of one thread per core but one, calling `wake` when a job is done.
     pub fn new(wake: impl Fn() + Send + Sync + 'static) -> Pool {
         let threads =
             thread::available_parallelism().map_or(2, |n| n.get().saturating_sub(1).max(1));
@@ -88,20 +118,20 @@ impl Pool {
         wake.notify_all();
     }
 
-    /// Whether a tile is being computed or waiting.
+    /// Whether anything is being computed or waiting.
     pub fn busy(&self) -> bool {
         let queue = self.queue.0.lock().unwrap_or_else(PoisonError::into_inner);
         !queue.waiting.is_empty() || !queue.running.is_empty()
     }
 
-    /// The tiles waiting, most wanted first.
+    /// The jobs waiting, most wanted first.
     #[cfg(test)]
-    fn waiting(&self) -> Vec<TileKey> {
+    fn waiting(&self) -> Vec<JobKey> {
         let queue = self.queue.0.lock().unwrap_or_else(PoisonError::into_inner);
         queue.waiting.iter().map(|j| j.key).collect()
     }
 
-    /// Tiles finished since the last call.
+    /// Jobs finished since the last call.
     pub fn finished(&self) -> Vec<Done> {
         self.done.try_iter().collect()
     }
@@ -131,30 +161,53 @@ fn work(queue: &(Mutex<Queue>, Condvar), send: &Sender<Done>, wake: &(dyn Fn() +
     }
 }
 
-fn compute(job: &Job) -> Result<TileData, String> {
-    let area = job
-        .key
-        .tile
-        .area(job.key.y)
+fn compute(job: &Job) -> Result<Output, String> {
+    let (tile, y) = match job.key {
+        JobKey::Biomes(key) => (key.tile, key.y),
+        JobKey::Markers(key) => (key.tile, DEFAULT_MAP_Y),
+    };
+    let area = tile
+        .area(y)
         .ok_or("the tile is outside block coordinates")?;
-    let biomes = job.session.biome_map(&area).map_err(|e| e.to_string())?;
-    let slime_chunks = if area.scale <= MAX_SLIME_SCALE {
-        let layers = spyglass::Layers {
-            biomes: false,
-            slime_chunks: true,
-            ..spyglass::Layers::default()
-        };
+    let features = |layers: Layers| {
         job.session
             .map_features(&area, &layers)
-            .map_err(|e| e.to_string())?
-            .slime_chunks
-    } else {
-        Vec::new()
+            .map_err(|e| e.to_string())
     };
-    Ok(TileData {
-        biomes,
-        slime_chunks,
-    })
+    match job.key {
+        JobKey::Biomes(_) => {
+            let biomes = job.session.biome_map(&area).map_err(|e| e.to_string())?;
+            let slime_chunks = if area.scale <= MAX_SLIME_SCALE {
+                features(Layers {
+                    biomes: false,
+                    slime_chunks: true,
+                    ..Layers::default()
+                })?
+                .slime_chunks
+            } else {
+                Vec::new()
+            };
+            Ok(Output::Biomes(TileData {
+                biomes,
+                slime_chunks,
+            }))
+        }
+        JobKey::Markers(_) => {
+            let mut starts = features(Layers {
+                biomes: false,
+                structures: job.structures.to_vec(),
+                ..Layers::default()
+            })?
+            .structures;
+            // Each marker belongs to the tile its centre is on, so it's drawn once.
+            let inside = 0..i64::from(TILE);
+            starts.retain(|s| {
+                let [x, z] = area.pixel([s.position[0], s.position[2]]);
+                inside.contains(&x) && inside.contains(&z)
+            });
+            Ok(Output::Markers(starts))
+        }
+    }
 }
 
 /// How tiles are coloured.
@@ -166,22 +219,30 @@ pub struct Style {
     pub slime_chunks: bool,
 }
 
-/// A cached tile and its texture in some style.
+/// A computed tile and its texture in some style.
 pub struct Entry {
     pub data: Result<TileData, String>,
     pub texture: Option<(Style, egui::TextureHandle)>,
-    last_used: u64,
 }
 
-/// Computed tiles, least recently used dropped first.
-pub struct Cache {
-    entries: HashMap<TileKey, Entry>,
+impl Entry {
+    pub fn new(data: Result<TileData, String>) -> Self {
+        Entry {
+            data,
+            texture: None,
+        }
+    }
+}
+
+/// Values by key, least recently used dropped first.
+pub struct Cache<K, V> {
+    entries: HashMap<K, (V, u64)>,
     capacity: usize,
     frame: u64,
 }
 
-impl Cache {
-    pub fn new(capacity: usize) -> Cache {
+impl<K: Copy + Eq + Hash, V> Cache<K, V> {
+    pub fn new(capacity: usize) -> Self {
         Cache {
             entries: HashMap::new(),
             capacity,
@@ -189,30 +250,19 @@ impl Cache {
         }
     }
 
-    /// Starts a frame: tiles used from now on count as recent.
+    /// Starts a frame: values used from now on count as recent.
     pub fn next_frame(&mut self) {
         self.frame += 1;
     }
 
-    pub fn contains(&self, key: &TileKey) -> bool {
+    pub fn contains(&self, key: &K) -> bool {
         self.entries.contains_key(key)
     }
 
-    pub fn insert(&mut self, key: TileKey, data: Result<TileData, String>) {
-        self.entries.insert(
-            key,
-            Entry {
-                data,
-                texture: None,
-                last_used: self.frame,
-            },
-        );
+    pub fn insert(&mut self, key: K, value: V) {
+        self.entries.insert(key, (value, self.frame));
         if self.entries.len() > self.capacity {
-            let mut ages: Vec<(u64, TileKey)> = self
-                .entries
-                .iter()
-                .map(|(k, e)| (e.last_used, *k))
-                .collect();
+            let mut ages: Vec<(u64, K)> = self.entries.iter().map(|(k, (_, f))| (*f, *k)).collect();
             ages.sort_by_key(|(age, _)| *age);
             let excess = self.entries.len() - self.capacity;
             for (_, key) in ages.into_iter().take(excess) {
@@ -221,15 +271,15 @@ impl Cache {
         }
     }
 
-    /// A tile, marked as used this frame.
-    pub fn get(&mut self, key: &TileKey) -> Option<&mut Entry> {
+    /// A value, marked as used this frame.
+    pub fn get(&mut self, key: &K) -> Option<&mut V> {
         let frame = self.frame;
-        let entry = self.entries.get_mut(key)?;
-        entry.last_used = frame;
-        Some(entry)
+        let (value, used) = self.entries.get_mut(key)?;
+        *used = frame;
+        Some(value)
     }
 
-    /// Drops every tile.
+    /// Drops everything.
     pub fn clear(&mut self) {
         self.entries.clear();
     }
@@ -245,6 +295,9 @@ pub fn slime_features(data: &TileData) -> MapFeatures {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+    use spyglass_oracle::fixtures::{self, resource};
+
     use super::*;
 
     fn key(x: i32) -> TileKey {
@@ -255,25 +308,62 @@ mod tests {
         }
     }
 
+    /// The fixture world with one structure set of towers in plains.
     fn session() -> Arc<Session<'static>> {
-        let fixture = spyglass_oracle::fixtures::overworld(&[], true);
+        let fixture = fixtures::overworld(
+            &[
+                resource(
+                    "worldgen/structure_set",
+                    "towers",
+                    json!({"placement": {"type": "minecraft:random_spread", "salt": 1,
+                            "spacing": 4, "separation": 1},
+                        "structures": [{"structure": "minecraft:tower", "weight": 1}]}),
+                ),
+                resource(
+                    "worldgen/structure",
+                    "tower",
+                    json!({"type": "minecraft:stronghold", "biomes": "minecraft:plains"}),
+                ),
+            ],
+            true,
+        );
         let world: &'static spyglass::World =
             Box::leak(Box::new(spyglass::World::open(fixture.path()).unwrap()));
         Arc::new(world.session(9).unwrap())
+    }
+
+    fn job(session: &Arc<Session<'static>>, key: JobKey) -> Job {
+        let structures: Arc<[StructureQuery]> = Arc::from(vec![
+            session.world().structure_query("minecraft:tower").unwrap(),
+        ]);
+        Job {
+            key,
+            session: session.clone(),
+            structures,
+        }
+    }
+
+    fn run(pool: &Pool, woken: &Receiver<()>, count: usize) -> Vec<Done> {
+        let mut done = Vec::new();
+        while done.len() < count {
+            woken.recv().unwrap();
+            done.extend(pool.finished());
+        }
+        done
     }
 
     #[test]
     fn jobs_no_longer_wanted_are_dropped() {
         let session = session();
         let pool = Pool::with_threads(0, || ());
-        let job = |x| Job {
-            key: key(x),
-            session: session.clone(),
-        };
-        pool.want(vec![job(0), job(1)]);
-        assert_eq!(pool.waiting(), [key(0), key(1)]);
-        pool.want(vec![job(2)]);
-        assert_eq!(pool.waiting(), [key(2)]);
+        let biomes = |x| job(&session, JobKey::Biomes(key(x)));
+        pool.want(vec![biomes(0), biomes(1)]);
+        assert_eq!(
+            pool.waiting(),
+            [JobKey::Biomes(key(0)), JobKey::Biomes(key(1))]
+        );
+        pool.want(vec![biomes(2)]);
+        assert_eq!(pool.waiting(), [JobKey::Biomes(key(2))]);
         assert!(pool.busy());
     }
 
@@ -286,19 +376,13 @@ mod tests {
         });
         pool.want(
             (0..3)
-                .map(|x| Job {
-                    key: key(x),
-                    session: session.clone(),
-                })
+                .map(|x| job(&session, JobKey::Biomes(key(x))))
                 .collect(),
         );
-        let mut done = Vec::new();
-        while done.len() < 3 {
-            woken.recv().unwrap();
-            done.extend(pool.finished());
-        }
-        for (key, result) in done {
-            let data = result.unwrap();
+        for (key, result) in run(&pool, &woken, 3) {
+            let (JobKey::Biomes(key), Ok(Output::Biomes(data))) = (key, result) else {
+                panic!("a biome tile");
+            };
             let area = key.tile.area(key.y).unwrap();
             assert_eq!(data.biomes, session.biome_map(&area).unwrap());
             assert_eq!(
@@ -310,16 +394,59 @@ mod tests {
     }
 
     #[test]
-    fn the_least_recently_used_tile_goes_first() {
+    fn each_marker_is_on_one_tile() {
+        let session = session();
+        let (wake, woken) = channel();
+        let pool = Pool::with_threads(2, move || {
+            let _ = wake.send(());
+        });
+        // A 3 × 2 block of tiles west of x = 0, where the plains are.
+        let tiles: Vec<Tile> = (-3..0)
+            .flat_map(|x| (0..2).map(move |z| Tile { scale: 2, x, z }))
+            .collect();
+        let marker = |tile| MarkerKey {
+            source: 1,
+            selection: 1,
+            tile,
+        };
+        pool.want(
+            tiles
+                .iter()
+                .map(|&t| job(&session, JobKey::Markers(marker(t))))
+                .collect(),
+        );
+        let mut found: Vec<StructureStart> = run(&pool, &woken, tiles.len())
+            .into_iter()
+            .flat_map(|(_, result)| match result {
+                Ok(Output::Markers(starts)) => starts,
+                _ => panic!("markers"),
+            })
+            .collect();
+        // Together, exactly the starts in the blocks the tiles cover.
+        let query = session.world().structure_query("minecraft:tower").unwrap();
+        let mut expected = session
+            .structures_in(&query, [-200, -10], [10, 200])
+            .unwrap();
+        expected
+            .retain(|s| (-1536..0).contains(&s.position[0]) && (0..1024).contains(&s.position[2]));
+        let order = |s: &StructureStart| (s.chunk[1], s.chunk[0]);
+        found.sort_by_key(order);
+        expected.sort_by_key(order);
+        assert!(!expected.is_empty());
+        assert_eq!(found, expected);
+    }
+
+    #[test]
+    fn the_least_recently_used_value_goes_first() {
         let mut cache = Cache::new(2);
-        cache.insert(key(0), Err(String::new()));
+        cache.insert(0, ());
         cache.next_frame();
-        cache.insert(key(1), Err(String::new()));
+        cache.insert(1, ());
         cache.next_frame();
-        assert!(cache.get(&key(0)).is_some());
+        assert!(cache.get(&0).is_some());
         cache.next_frame();
-        cache.insert(key(2), Err(String::new()));
-        assert!(cache.contains(&key(0)) && cache.contains(&key(2)));
-        assert!(!cache.contains(&key(1)));
+        cache.insert(2, ());
+        assert!(cache.contains(&0) && cache.contains(&2));
+        assert!(!cache.contains(&1));
     }
 }

@@ -126,11 +126,11 @@ Specs and ADRs that govern this: [ADR 0014](../adr/0014-public-api-world-and-ses
 
 ### Phase 4: layers
 
-- [ ] Structure layer: a checklist of the world's structures (and tags), markers from `map_features` per tile, certain and candidate styles, a tooltip with set, structures and position; markers thinned when zoomed far out.
-- [ ] Slime chunk layer, shown only at scales where chunks are visible.
-- [ ] Spawn marker, with "platform dependent" shown when it applies.
-- [ ] Biome highlight: pick biomes, dim the rest by recolouring cached tiles; tied-cell layer.
-- [ ] Check that the on-screen markers sit exactly where `render` draws them at the same view.
+- [x] Structure layer: a checklist of the world's structures (and tags), markers from `map_features` per tile, certain and candidate styles, a tooltip with set, structures and position; markers thinned when zoomed far out.
+- [x] Slime chunk layer, shown only at scales where chunks are visible.
+- [x] Spawn marker, with "platform dependent" shown when it applies.
+- [x] Biome highlight: pick biomes, dim the rest by recolouring cached tiles; tied-cell layer.
+- [x] Check that the on-screen markers sit exactly where `render` draws them at the same view.
 
 ### Phase 5: locate and world saves
 
@@ -165,6 +165,8 @@ Specs and ADRs that govern this: [ADR 0014](../adr/0014-public-api-world-and-ses
 
 ## Notes
 
+- 2026-10-25: Phase 4 done. A screenshot of the viewer (seed 0, scale 4, villages, outposts and strongholds, slime chunks, spawn) was compared pixel by pixel with `spyglass render` of the same 1013 × 775 area: every pixel inside the map is identical, markers included. Two fixes got it there. The map's centre is snapped to a whole pixel so texels and marker edges land on screen pixels. eframe's dithering is off, because it nudged about 4 % of the map's colours by one. Markers are computed per tile on the workers (`map_features`, kept for the tile their centre is on) and drawn by egui with the library's shapes; past 2,000 on screen they're hidden with a note to zoom in. Hovering a marker shows its structures, position, set and whether it's a candidate.
+- 2026-10-25: The structure checklist lists structure ids (`World::structures`), not tags: the API has no list of tags. `spyglass render --structures` takes tags too.
 - 2026-10-25: Phase 3 done. Run on Windows: seed 0 renders, drag, wheel zoom and the cursor readout work, and the no-bundle screen shows the extract command. A view compared by eye with `spyglass render` of the same blocks matches. Some neighbouring biomes have close colours (`deep_cold_ocean` in `deep_ocean`, `frozen_river` across `snowy_plains`) and look like translucent overlays; worth a palette pass.
 - 2026-10-25: Worlds aren't owned by a host thread with scoped workers. The viewer keeps each bundle's `World` for the whole run (`Box::leak`, one per bundle directory), so `Session<'static>` can be shared by `Arc` with the workers and used on the UI thread for the cursor's biome. A run opens a handful of bundles at most. No API change was needed.
 - 2026-10-25: The library gained `Image::background`, `Image::draw_features` and `SpawnOrigin::map_block`, and `Session::render` is now those steps. The viewer caches biome maps and recolours them (ties, highlight, slime chunks) without sampling again. `BiomeMap` stores 2 bytes per cell plus a tie table (was 24), so a tile's map is 128 KB.

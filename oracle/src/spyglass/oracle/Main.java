@@ -31,6 +31,9 @@ import net.minecraft.world.level.levelgen.WorldOptions;
  * spawn &lt;out dir&gt; &lt;seed&gt;...
  *     One spawn golden file per seed (&lt;seed&gt;.json): the overworld spawn origin, the climate
  *     search's phases and its fitness at fixed positions.
+ * heights &lt;out dir&gt; [--threads N] &lt;seed&gt;...
+ *     One height golden file per seed (&lt;seed&gt;.json): the generator's worldgen heightmaps at
+ *     every column of fixed block regions, and its block columns at a sample of positions.
  * </pre>
  */
 public final class Main {
@@ -59,6 +62,8 @@ public final class Main {
                         List.of(args).subList(2, args.length));
                 case "spawn" -> Spawn.run(game, Path.of(args[1]), "minecraft:overworld",
                         List.of(args).subList(2, args.length));
+                case "heights" -> Heights.run(game, Path.of(args[1]), "minecraft:overworld",
+                        positional(args), intOption(args, "--threads", Runtime.getRuntime().availableProcessors()));
                 default -> {
                     usage();
                     yield 2;
@@ -117,6 +122,19 @@ public final class Main {
         return 0;
     }
 
+    /** Arguments after the first two that aren't options or their values. */
+    private static List<String> positional(String[] args) {
+        var out = new ArrayList<String>();
+        for (int i = 2; i < args.length; i++) {
+            if (args[i].startsWith("--")) {
+                i++;
+            } else {
+                out.add(args[i]);
+            }
+        }
+        return out;
+    }
+
     private static String option(String[] args, String name, String fallback) {
         for (int i = 2; i + 1 < args.length; i++) {
             if (args[i].equals(name)) {
@@ -132,7 +150,8 @@ public final class Main {
 
     private static void usage() {
         System.err.println("usage: biomes <jobs file> [--threads N] | check-save <world dir> [--dimension ID]"
-                + " | probe <out dir> <seed>... | structures <out dir> <seed>... | spawn <out dir> <seed>...");
+                + " | probe <out dir> <seed>... | structures <out dir> <seed>... | spawn <out dir> <seed>..."
+                + " | heights <out dir> [--threads N] <seed>...");
         System.exit(2);
     }
 }

@@ -6,4 +6,4 @@ Code must not reference plans. Anything durable a plan produces belongs in a spe
 
 ## Active
 
-None. Milestone [06](../roadmap/completed/06-seed-search.md) is complete; milestone [07](../roadmap/07-terrain-and-validity.md) needs a plan next.
+- [m07-terrain-and-validity](m07-terrain-and-validity.md) (in progress): heights, structure validity, jigsaw bounds and confirmed mode, for milestone [07](../roadmap/07-terrain-and-validity.md).

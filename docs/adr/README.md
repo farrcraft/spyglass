@@ -27,3 +27,4 @@ Start from [template.md](template.md). Files are named `NNNN-kebab-case-title.md
 | [0019](0019-gui-stack-and-msrv-1-95.md)                       | The viewer's GUI stack, and MSRV 1.95                                 | Accepted |
 | [0020](0020-search-query-language.md)                         | A line-oriented query language for seed search                        | Accepted |
 | [0021](0021-search-engine.md)                                 | The seed search engine: staged checks on rayon, deterministic ranking | Accepted |
+| [0022](0022-terrain-crate-and-volume-evaluation.md)           | Terrain in its own crate, with the game's volume evaluation           | Accepted |

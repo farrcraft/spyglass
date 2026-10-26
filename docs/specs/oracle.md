@@ -1,6 +1,6 @@
 # Differential oracle
 
-Status: stable. Biome grids, structure placement and the spawn origin are specified; heightmaps and full structure bounds come later.
+Status: stable. Biome grids, structure placement and bounds, the spawn origin and the generator's heights are specified.
 
 Correctness is tested against the real game, not assumed.
 
@@ -11,9 +11,8 @@ A standalone Java harness in `oracle/`, compiled against the user's own server j
 - biome grids (below);
 - structure placement: placement chunks, what the game tries in each, ring positions and slime chunks ([below](#structure-golden-files));
 - the spawn origin and the climate search behind it ([below](#spawn-golden-files));
-- `/locate` answers, from the real dedicated server ([below](#locate-answers));
-- full structure bounds (later);
-- heightmaps (later).
+- the generator's heights and block columns ([below](#height-golden-files));
+- `/locate` answers, from the real dedicated server ([below](#locate-answers)).
 
 CI runs the Rust crates against these for a fixed set of seeds per supported version. Golden files are generated locally into `/oracle-out` (gitignored), since they are derived from the game. No game-derived values are committed, not even small test sets ([ADR 0008](../adr/0008-game-derived-test-values-stay-local.md)).
 
@@ -21,16 +20,17 @@ CI runs the Rust crates against these for a fixed set of seeds per supported ver
 
 `cargo xtask oracle` builds and runs the harness. Every subcommand takes `--game-version` (default `latest`), `--cache-dir` and `--java`.
 
-| Command                                                         | Does                                                                                                            |
-| --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `build`                                                         | Fetch and verify the server jar, unpack its libraries, compile the harness.                                     |
-| `biomes <seed> [--dimension] [--x] [--z] [--size] --out <file>` | Write one golden biome file. Block coordinates; x, z and size must be multiples of 16.                          |
-| `check-save <world> [--dimension]`                              | Compare the harness with the biomes stored in a real save. Fails on any unexplained cell.                       |
-| `probe`                                                         | Write the [probe files](#probe-files) into `oracle-out/<version>/probe/`.                                       |
-| `structures`                                                    | Write the [structure golden files](#structure-golden-files) for the golden seeds.                               |
-| `spawn`                                                         | Write the [spawn golden files](#spawn-golden-files) for the golden seeds.                                       |
-| `locate`                                                        | Ask a real dedicated server `/locate` questions ([below](#locate-answers)). Not part of `golden`.               |
-| `golden`                                                        | Regenerate the whole golden set below, probe, structure and spawn files included, into `oracle-out/<version>/`. |
+| Command                                                         | Does                                                                                                                    |
+| --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `build`                                                         | Fetch and verify the server jar, unpack its libraries, compile the harness.                                             |
+| `biomes <seed> [--dimension] [--x] [--z] [--size] --out <file>` | Write one golden biome file. Block coordinates; x, z and size must be multiples of 16.                                  |
+| `check-save <world> [--dimension]`                              | Compare the harness with the biomes stored in a real save. Fails on any unexplained cell.                               |
+| `probe`                                                         | Write the [probe files](#probe-files) into `oracle-out/<version>/probe/`.                                               |
+| `structures`                                                    | Write the [structure golden files](#structure-golden-files) for the golden seeds.                                       |
+| `spawn`                                                         | Write the [spawn golden files](#spawn-golden-files) for the golden seeds.                                               |
+| `heights [--threads N]`                                         | Write the [height golden files](#height-golden-files) for the golden seeds.                                             |
+| `locate`                                                        | Ask a real dedicated server `/locate` questions ([below](#locate-answers)). Not part of `golden`.                       |
+| `golden`                                                        | Regenerate the whole golden set below, probe, structure, spawn and height files included, into `oracle-out/<version>/`. |
 
 `build` runs automatically before the others, and does nothing when nothing changed:
 
@@ -141,7 +141,7 @@ One UTF-8 JSON file per seed: `oracle-out/<version>/structures/overworld/<seed>.
 
 ```json
 {
-  "format": 1,
+  "format": 2,
   "harness": 1,
   "version": "26.3",
   "data_version": 5023,
@@ -161,7 +161,9 @@ One UTF-8 JSON file per seed: `oracle-out/<version>/structures/overworld/<seed>.
               "stub": [87, 70, 152],
               "biome": "minecraft:plains",
               "valid_biome": true,
-              "start": true
+              "start": true,
+              "bounds": [40, 51, 120, 141, 104, 199],
+              "pieces": [[70, 63, 140, 85, 75, 155]]
             }
           ]
         }
@@ -179,6 +181,7 @@ One UTF-8 JSON file per seed: `oracle-out/<version>/structures/overworld/<seed>.
   - `stub` is the check position `findGenerationPoint` returned. It's absent when there was none, e.g. a failed climate-only condition.
   - `biome` is the biome there, and `valid_biome` is `isValidBiome`.
   - `start` is whether `generate` made a valid start.
+  - `bounds` and `pieces`, only on a valid start, as `[minX, minY, minZ, maxX, maxY, maxZ]` (inclusive): `StructureStart.getBoundingBox` (the pieces' union, grown by 12 on every side for a structure with terrain adaptation), and each piece's box in the start's order. Both are taken straight after `generate`, before placement moves any piece. Format 1 files had neither.
 - `slime` gives each region's slime chunks.
 
 ### Rust-side structure comparison
@@ -218,6 +221,46 @@ One UTF-8 JSON file per seed: `oracle-out/<version>/spawn/overworld/<seed>.json`
 - `samples` is `getSpawnPositionAndFitness` at fixed positions: negatives, quart boundaries and the world border.
 
 The final spawn block isn't written: it needs a live level (`PlayerSpawnFinder`), which the harness doesn't build. [spawn.md](spawn.md) has the algorithm, and `spyglass-biome/tests/spawn.rs` compares the files (`cargo test --release -p spyglass-biome --test spawn -- --ignored`).
+
+## Height golden files
+
+Structures ask the generator about terrain before any chunk exists ([terrain.md](terrain.md)). These files record its answers. One UTF-8 JSON file per seed: `oracle-out/<version>/heights/overworld/<seed>.json`, named like the structure files.
+
+```json
+{
+  "format": 1,
+  "harness": 1,
+  "version": "26.3",
+  "data_version": 5023,
+  "seed": 0,
+  "dimension": "minecraft:overworld",
+  "min_y": -64,
+  "height": 384,
+  "regions": [
+    {
+      "name": "origin",
+      "min": [-128, -128],
+      "size": 256,
+      "WORLD_SURFACE_WG": [71, 71, 72],
+      "OCEAN_FLOOR_WG": [71, 71, 72]
+    }
+  ],
+  "columns": [
+    {
+      "pos": [-128, -128],
+      "blocks": [
+        ["minecraft:stone", 70],
+        ["minecraft:air", 11]
+      ]
+    }
+  ]
+}
+```
+
+- `regions` are square block regions: `origin` (−128 to 127), and 64 × 64 at `far-pos`, `far-neg`, `border-pos` and `border-neg`, as for biomes. For each heightmap, keyed by its serialization key, every column's `ChunkGenerator.getBaseHeight(x, z, heightmap, level, randomState)`, z outer and x inner.
+- `columns` are `getBaseColumn(x, z, level, randomState)` at 64 positions on a grid over the origin region and two corners of each other region. Each is a list of runs of one block, from `min_y` up, covering the full `height`.
+
+The level is the dimension type's height, as for structures. `cargo xtask oracle heights` takes about 90 seconds for the golden set on 16 cores: each `getBaseHeight` costs the game about half a millisecond.
 
 ## Locate answers
 

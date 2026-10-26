@@ -8,7 +8,7 @@ The game decides where a structure starts in three steps:
 2. **The biome check**: whether the structure's biome check passes at its check position. Most check positions depend on terrain.
 3. **Validity**: the structure's pieces, and conditions on terrain.
 
-This spec covers the first two, and says exactly what spyglass can decide without terrain. The rest is deferred to milestone 07 ([roadmap](../roadmap/README.md)). Classes are in `net.minecraft.world.level.levelgen.structure` unless stated otherwise.
+This spec covers the first two, and says exactly what spyglass can decide without terrain. [With terrain](#with-terrain), [jigsaw assembly](#jigsaw-assembly) and [bounds](#bounds) are drafts, for terrain from [terrain.md](terrain.md), not implemented yet. Classes are in `net.minecraft.world.level.levelgen.structure` unless stated otherwise.
 
 ## Loading
 
@@ -93,18 +93,20 @@ spyglass runs the same loop with a three-way answer for each try ([below](#what-
 - **Terrain-column test** (`couldValidBiomeExistInTerrainColumn(x, z)`): some quart from block `minY − 1` to `maxY` at `(x, z)` is in the set. The chunk-centre pre-check (`couldValidBiomeExistOnTopOfChunkCenter`) is this test at `(minX + 8, minZ + 8)`.
 - **Structure-column test** (`couldStructureExistInColumn(x, z, minY, maxY)`): the same over the level's own height.
 
-| Type                                            | Check position                                | y from                                                           | Climate-only conditions first                                                                                                                    | Other rejections (milestone 07)                   |
-| ----------------------------------------------- | --------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------- |
-| stronghold                                      | `(minX, 0, minZ)`                             | constant                                                         | none                                                                                                                                             | none (its pieces are retried until valid)         |
-| fortress                                        | `(minX, 64, minZ)`                            | constant                                                         | none                                                                                                                                             | none                                              |
-| buried treasure, ocean ruin, shipwreck          | chunk centre                                  | `OCEAN_FLOOR_WG`; beached shipwrecks `WORLD_SURFACE_WG`          | chunk-centre pre-check                                                                                                                           | none                                              |
-| desert pyramid, jungle temple, swamp hut, igloo | chunk centre                                  | `WORLD_SURFACE_WG`                                               | chunk-centre pre-check                                                                                                                           | pyramid and temple: lowest corner below sea level |
-| ocean monument                                  | chunk centre                                  | `OCEAN_FLOOR_WG`                                                 | every biome in `getBiomesWithin(minX + 9, seaLevel, minZ + 9, 29)` is in `#required_ocean_monument_surrounding`; then the chunk-centre pre-check | none                                              |
-| woodland mansion, end city                      | `(minX + 7, lowest corner, minZ + 7)`         | `WORLD_SURFACE_WG` over a 5 × 5 box rotated by a random rotation | terrain-column test at `(minX + 7, minZ + 7)`                                                                                                    | lowest corner below 60                            |
-| jigsaw                                          | the start piece's bounding-box centre         | the start height, plus the heightmap if projected                | projected only: structure-column test at the centre                                                                                              | dimension padding (exact, below); pieces          |
-| mineshaft                                       | `(minX + 8, 50 + dy, minZ)`                   | `dy` from the piece layout; mesa: terrain                        | none                                                                                                                                             | none                                              |
-| ruined portal                                   | the template's bounding-box centre            | `findSuitableY` over noise columns                               | none                                                                                                                                             | none                                              |
-| nether fossil                                   | `(minX + nextInt(16), y, minZ + nextInt(16))` | a height provider, then a downward block scan                    | none                                                                                                                                             | y ≤ sea level                                     |
+Heights are the generator's ([terrain.md](terrain.md#queries)). "First occupied" is `getFirstOccupiedHeight`, one below the heightmap's `getBaseHeight`.
+
+| Type                                            | Check position                                | y from                                                                                   | Climate-only conditions first                                                                                                                    | Other rejections (with terrain)                                    |
+| ----------------------------------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------ |
+| stronghold                                      | `(minX, 0, minZ)`                             | constant                                                                                 | none                                                                                                                                             | none (its pieces are retried until valid)                          |
+| fortress                                        | `(minX, 64, minZ)`                            | constant                                                                                 | none                                                                                                                                             | none                                                               |
+| buried treasure, ocean ruin, shipwreck          | chunk centre                                  | first occupied, `OCEAN_FLOOR_WG`; beached shipwrecks `WORLD_SURFACE_WG`                  | chunk-centre pre-check                                                                                                                           | none                                                               |
+| desert pyramid, jungle temple, swamp hut, igloo | chunk centre                                  | first occupied, `WORLD_SURFACE_WG`                                                       | chunk-centre pre-check                                                                                                                           | pyramid and temple: [lowest corner](#with-terrain) below sea level |
+| ocean monument                                  | chunk centre                                  | first occupied, `OCEAN_FLOOR_WG`                                                         | every biome in `getBiomesWithin(minX + 9, seaLevel, minZ + 9, 29)` is in `#required_ocean_monument_surrounding`; then the chunk-centre pre-check | none                                                               |
+| woodland mansion, end city                      | `(minX + 7, lowest corner, minZ + 7)`         | the lowest first occupied `WORLD_SURFACE_WG` of a 5 × 5 box rotated by a random rotation | terrain-column test at `(minX + 7, minZ + 7)`                                                                                                    | lowest corner below 60                                             |
+| jigsaw                                          | the start piece's bounding-box centre         | the start height, plus the heightmap's first free height if projected                    | projected only: structure-column test at the centre                                                                                              | dimension padding (exact, below); `size` 0                         |
+| mineshaft                                       | `(minX + 8, 50 + dy, minZ)`                   | `dy` from the piece layout; mesa: terrain                                                | none                                                                                                                                             | none                                                               |
+| ruined portal                                   | `(minX, y, minZ)`                             | `findSuitableY`, from the template's centre and four block columns                       | none                                                                                                                                             | none                                                               |
+| nether fossil                                   | `(minX + nextInt(16), y, minZ + nextInt(16))` | a height provider, then a downward block scan                                            | none                                                                                                                                             | y ≤ sea level                                                      |
 
 `getBiomesWithin(x, y, z, r)` is every quart from `(p − r) >> 2` to `(p + r) >> 2` on each axis.
 
@@ -159,6 +161,62 @@ For each try, `Starts::check` answers:
 A lookup counts as in a set if every candidate of the cell is, and out if none is. Mixed cells make the answer `Candidate`.
 
 `Passes` covers the biome check only. Validity that depends on pieces or terrain can still reject a start, as the table lists. Of the 175 starts the golden set calls certain, the game made all 175.
+
+## With terrain
+
+Draft. Each type's check with the generator's heights ([terrain.md](terrain.md#queries)), in the order of its terrain queries and context-random draws (`R`). After the biome check, a start is valid if it has pieces (`StructureStart.isValid`); no type checks anything else. Corners are `getCornerHeights(x, dx, z, dz)`: first occupied `WORLD_SURFACE_WG` at `(x, z)`, `(x, z + dz)`, `(x + dx, z)`, `(x + dx, z + dz)`, one block outside a `dx`-wide footprint.
+
+- **Surface and ocean types** (`onTopOfChunkCenter`): the chunk-centre pre-check, then the check at `(minX + 8, first occupied, minZ + 8)` with the type's heightmap. No draws before the check.
+- **Desert pyramid, jungle temple** (`SinglePieceStructure`): first the pre-check, then the lowest of the corners at `(minX, minZ)` with `(dx, dz)` = (21, 21) for the pyramid and (12, 15) for the temple. Below the sea level, no start. Then as the surface types.
+- **Woodland mansion:** the terrain-column test; then the rotation, `Rotation.values()[R.nextInt(4)]`; then the corners from `(minX + 7, minZ + 7)` with `(dx, dz)` = (5, 5) for none, (−5, 5) clockwise 90, (−5, −5) 180, (5, −5) counterclockwise 90. The lowest is the check's y; below 60, no start.
+- **Ruined portal:**
+  1. The setup: with several, `f = R.nextFloat()`, subtracting each `weight / total` (`f32`, list order) until `f < 0`. The air pocket draws only if its probability is strictly between 0 and 1 (none in 26.3).
+  2. The template: `R.nextFloat() < 0.05` picks `giant_portal_1..3` with `R.nextInt(3)`, else `portal_1..10` with `R.nextInt(10)`. Then the rotation (`R.nextInt(4)`), and the mirror (`R.nextFloat() < 0.5`: none, else front-back).
+  3. The box at `(minX, 0, minZ)` with pivot `(size.x / 2, 0, size.z / 2)`; its centre `min + (max − min + 1) / 2`; `Y0` = the first occupied height there (`OCEAN_FLOOR_WG` for `on_ocean_floor`, else `WORLD_SURFACE_WG`).
+  4. `y` by placement: `on_land_surface`, `on_ocean_floor`: `Y0`; `partly_buried`: `Y0 − ySpan + R.nextInt(7) + 2`; `in_mountain`: between 70 and `Y0 − ySpan`; `underground`: between `minY + 15` and `Y0 − ySpan`; `in_nether` its own ranges. "Between `a` and `b`" is `R.nextInt(b − a + 1) + a` if `a < b`, else `b` with no draw.
+  5. `findSuitableY`: the block columns at the box's four corners (min x min z, max x min z, min x max z, max x max z); from `y` down to just above `minY + 15`, the first height where at least three of them hold a block the heightmap counts.
+- **Mineshaft:** the pieces first (`R.nextDouble()` discarded, then the layout). Normal: moved below the sea level with `R`, as now. Mesa: `h` = `getBaseHeight` (not first occupied) of `WORLD_SURFACE_WG` at the layout's centre; the target is the sea level if `h ≤ seaLevel`, else `R.nextInt(h − seaLevel + 1) + seaLevel`, and `dy` = target − the centre's y.
+- **Shipwreck:** no terrain beyond the check: the game's later height fix applies only to templates over 32 blocks, and 26.3 has none.
+- **Projected jigsaw:** `y = start height + first free height` at the centre, then [as before](#jigsaw-starts).
+
+So with terrain every Overworld type's check is at a known position. The only answers that stay open are tied biome cells and platform-dependent ring positions.
+
+## Jigsaw assembly
+
+Draft. `JigsawPlacement.addPieces`, after the start piece ([above](#jigsaw-starts)), continuing to draw from `R`.
+
+**The start.** The start piece is moved so its box's minimum y is the check's y − 1, projected or not. Dimension padding is checked only when the field is present in the JSON: an explicit `0` still checks against the bare world limits. With `size` 0 no piece is added, so there's no start.
+
+**Free space.** `max_distance_from_center` (an int `n` for both, or `{horizontal, vertical}`) gives a box around the start's centre: x and z from `c − h` to `c + h` inclusive, y from `max(y − v, minY + padding bottom)` to `min(y + v, maxY − padding top)`. The free space is that box minus the start piece's box, as a set of blocks. A piece fits if every block of its box is free; placing it removes its blocks. Each piece remembers the free space it was placed in, shared with its siblings, except that a parent jigsaw whose target is inside its own piece's box uses the piece's own box as free space (made once per piece, shared by its children).
+
+**The queue.** Pieces wait in a queue ordered by their parent jigsaw's `placement_priority`, highest first, first in first out among equals. The start piece goes first at depth 0.
+
+**One piece's children.** The piece's jigsaw blocks, shuffled and sorted as for the start. For each parent jigsaw `J`, in that order:
+
+1. Its pool, after [aliases](#pool-aliases), and the pool's fallback. If either is missing, or empty and not `minecraft:empty`, skip `J`.
+2. Candidates: the pool's weight-expanded elements shuffled (`Util.shuffle` of a copy), unless the piece is at the maximum depth, then the fallback's, shuffled. Both shuffles draw first.
+3. For each candidate: an empty element stops `J`. Else for each rotation in a shuffled copy of the four (3 draws): the candidate's jigsaw blocks at the origin with that rotation, shuffled and sorted (draws); for each that can attach, place it and test it, below. The first that fits is added, queued at depth + 1 if that's at most `size`, and `J` is done.
+
+**Attaching.** Child jigsaw `C` attaches to `J` if `C` faces opposite `J`, their tops match unless `J`'s joint is `rollable`, and `C`'s name is `J`'s target (a feature element's jigsaw has no name and matches any). Defaults: names, targets and pools `minecraft:empty`, priorities 0, joint `aligned` for horizontal fronts and `rollable` for vertical ones. Orientation rotates with the piece.
+
+**Placing.** The child is positioned so `C` is at `J`'s position plus `J`'s front. Its y:
+
+- both pieces `rigid`: `C` lands against `J`: the box moves so `C` is at the parent's minimum y + (`J.y − parent min y`) + the front's y step;
+- otherwise: the box's minimum y becomes `FFH − C.y`, where `FFH` is the first free `WORLD_SURFACE_WG` height at `J`'s own x and z, computed once per parent jigsaw.
+
+With `use_expansion_hack` and a box at most 16 high, the box first grows upward to make room for the tallest element any of its inward-facing jigsaws could attach.
+
+**Elements.** A single (or legacy single) element is its template's box and jigsaw blocks; a list element is the box around its elements' boxes, with the first element's jigsaws; a feature element is one block, with one jigsaw facing down, no draws; the empty element has neither.
+
+### Pool aliases
+
+`pool_aliases` (in 26.3 only the trial chambers') resolve once per start, with their own random: `LegacyRandomSource(seed).forkPositional().at(minX, sampled start y, minZ)`. Bindings in list order: `direct` maps an alias to a pool; `random` picks one target by weight (`nextInt(total)`, then subtract in list order); `random_group` picks a group the same way and resolves its bindings in order with the same random. Every pool lookup, the start pool's included, goes through the result.
+
+## Bounds
+
+Draft. A start's box is the union of its pieces' boxes, grown by 12 on every side if the structure's `terrain_adaptation` isn't `none` (`Structure.adjustBoundingBox`). In 26.3's Overworld that's strongholds and every jigsaw. Boxes are as generated, before placement moves any piece.
+
+spyglass gives bounds for jigsaw structures and, where they come for free, for single-piece ones (`makeBoundingBox`: the pyramid's 21 × 15 × 21 at y 64, the temple's 12 × 10 × 15, the swamp hut's 7 × 7 × 9, rotated by the piece's random direction; the buried treasure's one block at `(minX + 9, 90, minZ + 9)`; the monument's 58 × 23 × 58 from `(minX − 29, 39, minZ − 29)`). Mansions, strongholds, mineshafts and ocean-ruin clusters aren't covered.
 
 ## Slime chunks
 

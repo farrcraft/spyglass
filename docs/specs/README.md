@@ -12,6 +12,7 @@ A spec is **Stable** when the behavior it describes is implemented and checked: 
 | [rng.md](rng.md)                                 | The game's random sources.                                        | Stable |
 | [noise.md](noise.md)                             | Perlin, octave and normal noise.                                  | Stable |
 | [density-functions.md](density-functions.md)     | Density-function graphs, for the Overworld's climate.             | Stable |
+| [terrain.md](terrain.md)                         | Heights and block columns before chunks exist; the aquifer.       | Draft  |
 | [biome-lookup.md](biome-lookup.md)               | Overworld biomes at quart resolution.                             | Stable |
 | [structure-placement.md](structure-placement.md) | Overworld structure placement and biome checks.                   | Stable |
 | [spawn.md](spawn.md)                             | The world spawn's origin.                                         | Stable |

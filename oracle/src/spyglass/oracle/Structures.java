@@ -47,7 +47,8 @@ import net.minecraft.world.level.storage.LevelStorageSource;
  * <p>The choice among a set's structures copies {@code ChunkGenerator.createStructures}. Each try
  * records {@code Structure.findGenerationPoint}'s stub (the position the biome check samples),
  * the biome there through the context's resolver, {@code GenerationContext.isValidBiome}, and
- * whether {@code Structure.generate} produced a valid start, which decides the game's choice.
+ * whether {@code Structure.generate} produced a valid start, which decides the game's choice, with
+ * the start's bounding box and its pieces' boxes.
  */
 final class Structures {
     /** A chunk region, inclusive. */
@@ -109,7 +110,7 @@ final class Structures {
                 net.minecraft.resources.Identifier.parse(dimension));
 
         var root = new JsonObject();
-        root.addProperty("format", 1);
+        root.addProperty("format", 2);
         root.addProperty("harness", Main.HARNESS_VERSION);
         root.addProperty("version", game.version);
         root.addProperty("data_version", game.dataVersion);
@@ -253,7 +254,24 @@ final class Structures {
         var start = structure.generate(holder, level, game.access, generator, generator.getBiomeSource(), sampler,
                 random, templates, seed, chunk, 0, height, valid);
         t.addProperty("start", start.isValid());
+        if (start.isValid()) {
+            // Before any piece is placed, which moves some pieces' boxes.
+            t.add("bounds", box(start.getBoundingBox()));
+            var pieces = new JsonArray();
+            for (var piece : start.getPieces()) {
+                pieces.add(box(piece.getBoundingBox()));
+            }
+            t.add("pieces", pieces);
+        }
         return t;
+    }
+
+    private static JsonArray box(net.minecraft.world.level.levelgen.structure.BoundingBox box) {
+        var arr = new JsonArray();
+        for (int v : new int[] {box.minX(), box.minY(), box.minZ(), box.maxX(), box.maxY(), box.maxZ()}) {
+            arr.add(v);
+        }
+        return arr;
     }
 
     private static JsonArray pair(int a, int b) {

@@ -1,8 +1,8 @@
 # 07. Terrain, structure validity, jigsaw
 
-- Status: Planned
+- Status: In progress
 - Depends on: [03](completed/03-structure-placement.md)
-- Plans: none yet
+- Plans: [m07-terrain-and-validity](../plans/m07-terrain-and-validity.md)
 
 ## Goal
 
@@ -11,7 +11,7 @@ Know whether structures actually generate, and how big they are.
 ## Scope
 
 - `spyglass-density`: full noise router evaluation.
-- `spyglass-terrain`: heightmaps and surface rules.
+- `spyglass-terrain`: the generator's heightmaps and block columns (density and aquifer). Surface rules (in 26.3, the material rule) are out of scope: no height query uses them, and they belong with features and the final spawn block in a later milestone.
 - `spyglass-structure`: terrain-dependent validity checks and optional jigsaw assembly for exact bounds.
 - Locate queries and search constraints gain a "confirmed" mode that applies these checks.
 - Oracle extended to dump heightmaps and structure bounds.

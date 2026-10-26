@@ -56,6 +56,15 @@ pub enum OracleCmd {
     /// Write spawn golden files (the spawn origin and the climate search behind it) for the
     /// golden seeds into `oracle-out/<version>/spawn/`.
     Spawn(Common),
+    /// Write height golden files (the generator's worldgen heightmaps and block columns) for the
+    /// golden seeds into `oracle-out/<version>/heights/`.
+    Heights {
+        #[command(flatten)]
+        common: Common,
+        /// Parallel seeds. Defaults to the number of CPUs.
+        #[arg(long)]
+        threads: Option<usize>,
+    },
     /// Ask a real dedicated server `/locate` questions for a fixed case list, and write the
     /// answers into `oracle-out/<version>/locate/`. Takes several minutes; not part of `golden`.
     Locate {
@@ -171,16 +180,21 @@ pub fn run(cmd: OracleCmd) -> Result<()> {
             let harness = build(&common)?;
             harness.spawn()
         }
+        OracleCmd::Heights { common, threads } => {
+            let harness = build(&common)?;
+            harness.heights(threads)
+        }
         OracleCmd::Golden { common, threads } => golden(&common, threads),
     }
 }
 
-/// Every golden file: probes, structures, spawn, and the biome grids.
+/// Every golden file: probes, structures, spawn, heights, and the biome grids.
 fn golden(common: &Common, threads: Option<usize>) -> Result<()> {
     let harness = build(common)?;
     harness.probe()?;
     harness.structures()?;
     harness.spawn()?;
+    harness.heights(threads)?;
     let dir = repo_root().join("oracle-out").join(&harness.version);
     // Leave nothing from an earlier seed or region set for tests to pick up.
     let biomes = dir.join("biomes");
@@ -301,6 +315,23 @@ impl Harness {
             fs::remove_dir_all(&dir)?;
         }
         let mut args: Vec<OsString> = vec!["spawn".into(), dir.join("overworld").into()];
+        args.extend(GOLDEN_SEEDS.iter().map(OsString::from));
+        self.run(&args)
+    }
+
+    /// Writes `oracle-out/<version>/heights/overworld/`, replacing what was there.
+    fn heights(&self, threads: Option<usize>) -> Result<()> {
+        let dir = repo_root()
+            .join("oracle-out")
+            .join(&self.version)
+            .join("heights");
+        if dir.exists() {
+            fs::remove_dir_all(&dir)?;
+        }
+        let mut args: Vec<OsString> = vec!["heights".into(), dir.join("overworld").into()];
+        if let Some(threads) = threads {
+            args.extend(["--threads".into(), threads.to_string().into()]);
+        }
         args.extend(GOLDEN_SEEDS.iter().map(OsString::from));
         self.run(&args)
     }

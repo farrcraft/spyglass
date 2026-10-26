@@ -2,9 +2,11 @@
 //! `Image::draw_features` (`docs/specs/render.md#layers`): one tile pixel is one point, and a
 //! marker's centre is the pixel `floor(block / scale)` on the world-aligned grid.
 
+use eframe::egui::Stroke;
 use eframe::egui::{Color32, Painter, Pos2, Rect, Vec2};
 use spyglass::{SpawnOrigin, StructureStart, structure_colour};
 
+use crate::locate::Hit;
 use crate::view::View;
 
 /// How close, in points, the pointer must be to a marker's centre to pick it.
@@ -59,10 +61,22 @@ pub fn spawn(painter: &Painter, centre: Pos2) {
     square(painter, centre, [0.0, -4.0], [0.0, 4.0], Color32::WHITE);
 }
 
+/// A locate hit: a ring, yellow if the game certainly stops there.
+pub fn hit(painter: &Painter, centre: Pos2, certain: bool) {
+    let colour = if certain {
+        Color32::from_rgb(0xff, 0xd0, 0x40)
+    } else {
+        Color32::WHITE
+    };
+    painter.circle_stroke(centre, 8.0, Stroke::new(4.0, Color32::BLACK));
+    painter.circle_stroke(centre, 8.0, Stroke::new(2.0, colour));
+}
+
 /// Something on the map the pointer can point at.
 pub enum Picked<'a> {
     Structure(&'a StructureStart),
     Spawn(&'a SpawnOrigin),
+    Hit(&'a Hit),
 }
 
 /// The marker nearest `pointer` within reach, from markers at screen positions.

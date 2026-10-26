@@ -4,6 +4,7 @@
 use eframe::egui;
 
 mod app;
+mod locate;
 mod markers;
 mod tiles;
 mod view;

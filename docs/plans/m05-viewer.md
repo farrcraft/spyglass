@@ -134,8 +134,8 @@ Specs and ADRs that govern this: [ADR 0014](../adr/0014-public-api-world-and-ses
 
 ### Phase 5: locate and world saves
 
-- [ ] Context menu on the map: nearest structure (type picker) and nearest biome from the clicked point; results in the side panel, on the map, clickable.
-- [ ] World saves: launcher list, open folder, inspection off the UI thread, warnings shown, start on player or spawn, `generate_structures` handled.
+- [x] Context menu on the map: nearest structure (type picker) and nearest biome from the clicked point; results in the side panel, on the map, clickable.
+- [x] World saves: launcher list, open folder, inspection off the UI thread, warnings shown, start on player or spawn, `generate_structures` handled.
 
 ### Phase 6: export, platforms and close-out
 
@@ -165,6 +165,7 @@ Specs and ADRs that govern this: [ADR 0014](../adr/0014-public-api-world-and-ses
 
 ## Notes
 
+- 2026-10-25: Phase 5 done. Right-click on the map opens a menu: nearest structure or biome from that block (`/locate` at the view's height, run in the background), centre here, copy coordinates. Hits are listed in the side panel (click to go there) and ringed on the map, yellow where the game certainly stops. Checked on seed 0: nearest mushroom fields from -328 64 324 is -1128 64 -508, 1154 blocks, the same as `spyglass locate biome`. Saves: the launchers' saves, most recently played first, with a filter, or any folder; inspected with `Scan::Chunks` off the UI thread; blocked saves show why; otherwise the save's bundle and seed open centred on its player (or spawn) with its warnings listed. A Modrinth 26.3 save opened with its two mod warnings. With `generate_structures` off, structure markers aren't drawn.
 - 2026-10-25: Phase 4 done. A screenshot of the viewer (seed 0, scale 4, villages, outposts and strongholds, slime chunks, spawn) was compared pixel by pixel with `spyglass render` of the same 1013 × 775 area: every pixel inside the map is identical, markers included. Two fixes got it there. The map's centre is snapped to a whole pixel so texels and marker edges land on screen pixels. eframe's dithering is off, because it nudged about 4 % of the map's colours by one. Markers are computed per tile on the workers (`map_features`, kept for the tile their centre is on) and drawn by egui with the library's shapes; past 2,000 on screen they're hidden with a note to zoom in. Hovering a marker shows its structures, position, set and whether it's a candidate.
 - 2026-10-25: The structure checklist lists structure ids (`World::structures`), not tags: the API has no list of tags. `spyglass render --structures` takes tags too.
 - 2026-10-25: Phase 3 done. Run on Windows: seed 0 renders, drag, wheel zoom and the cursor readout work, and the no-bundle screen shows the extract command. A view compared by eye with `spyglass render` of the same blocks matches. Some neighbouring biomes have close colours (`deep_cold_ocean` in `deep_ocean`, `frozen_river` across `snowy_plains`) and look like translucent overlays; worth a palette pass.

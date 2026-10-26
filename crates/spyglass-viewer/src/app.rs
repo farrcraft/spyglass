@@ -9,9 +9,11 @@ use std::thread;
 use eframe::egui::{self, Color32, Key, Pos2, Rect, Sense, TextureOptions, Vec2};
 use serde::{Deserialize, Serialize};
 use spyglass::{
-    BiomeQuery, BundleInfo, Image, Session, SpawnOrigin, StructureQuery, StructureStart, World,
+    BiomeQuery, BundleInfo, Image, LauncherSave, SaveReport, Scan, Session, SpawnOrigin,
+    StructureQuery, StructureStart, World,
 };
 
+use crate::locate::{self, Found, Target};
 use crate::markers::{self, Picked};
 use crate::tiles::{
     Cache, Entry, Job, JobKey, MarkerKey, Output, Pool, Style, TileKey, slime_features,
@@ -147,6 +149,17 @@ pub struct App {
     biome_filter: String,
     /// Whether the last frame had more markers than it could show.
     too_many_markers: bool,
+    /// The block the map's context menu was opened on.
+    menu_block: Option<[i32; 2]>,
+    locating: Option<Pending<Result<Found, String>>>,
+    found: Option<Result<Found, String>>,
+    /// Saves in the launchers' folders, listed when first wanted.
+    saves: Option<Vec<LauncherSave>>,
+    inspecting: Option<Pending<Result<SaveReport, String>>>,
+    /// The save on the map, if it came from one.
+    save: Option<SaveReport>,
+    save_error: Option<String>,
+    save_filter: String,
     goto: String,
     goto_error: bool,
     /// Scrolling not yet turned into a zoom step.
@@ -182,6 +195,14 @@ impl App {
             structure_filter: String::new(),
             biome_filter: String::new(),
             too_many_markers: false,
+            menu_block: None,
+            locating: None,
+            found: None,
+            saves: None,
+            inspecting: None,
+            save: None,
+            save_error: None,
+            save_filter: String::new(),
             goto: String::new(),
             goto_error: false,
             scrolled: 0.0,
@@ -248,6 +269,86 @@ impl App {
         }
     }
 
+    /// Picks up finished locates and save inspections.
+    fn poll_tasks(&mut self, ctx: &egui::Context) {
+        if let Some(result) = self.locating.as_ref().and_then(Pending::poll) {
+            self.locating = None;
+            self.found = Some(result.unwrap_or_else(|()| Err("the search failed".to_string())));
+        }
+        if let Some(result) = self.inspecting.as_ref().and_then(Pending::poll) {
+            self.inspecting = None;
+            match result.unwrap_or_else(|()| Err("reading the save failed".to_string())) {
+                Ok(report) => self.show_save(ctx, report),
+                Err(e) => self.save_error = Some(e),
+            }
+        }
+    }
+
+    /// Reads a save in the background, then shows it.
+    fn open_save(&mut self, ctx: &egui::Context, dir: PathBuf) {
+        let bundles = self.settings.bundles.clone();
+        self.save_error = None;
+        self.inspecting = Some(Pending::spawn(ctx, move || {
+            spyglass::inspect_save(&dir, &bundles, Scan::Chunks).map_err(|e| e.to_string())
+        }));
+    }
+
+    /// Shows an inspected save: its world and seed, centred on its player or else its spawn.
+    fn show_save(&mut self, ctx: &egui::Context, report: SaveReport) {
+        let bundle = match (&report.bundle, report.answerable()) {
+            (Some(bundle), true) => bundle.clone(),
+            _ => {
+                let reasons: Vec<String> = report
+                    .warnings
+                    .iter()
+                    .filter(|w| w.blocks_answers())
+                    .map(ToString::to_string)
+                    .collect();
+                self.save_error = Some(format!(
+                    "spyglass can't show {}: {}",
+                    report.save.name,
+                    reasons.join("; ")
+                ));
+                return;
+            }
+        };
+        let save = &report.save;
+        let overworld = |l: &&spyglass::SaveLocation| l.dimension == "minecraft:overworld";
+        if let Some(place) = save
+            .player
+            .as_ref()
+            .filter(overworld)
+            .or(save.spawn.as_ref().filter(overworld))
+        {
+            let [x, _, z] = place.block();
+            self.settings.view.centre = [f64::from(x) + 0.5, f64::from(z) + 0.5];
+        }
+        self.settings.seed = save.seed.to_string();
+        self.save = Some(report);
+        self.found = None;
+        self.open(ctx, &bundle);
+        // If that world is already loaded, the load finishes at once and applies the seed.
+    }
+
+    /// Starts a locate from `from`.
+    fn locate(&mut self, ctx: &egui::Context, target: Target, from: [i32; 3]) {
+        let Some(shown) = &self.shown else {
+            return;
+        };
+        let session = shown.session.clone();
+        self.found = None;
+        self.locating = Some(Pending::spawn(ctx, move || {
+            locate::run(&session, target, from)
+        }));
+    }
+
+    /// Whether structures generate in what's shown.
+    fn structures_generate(&self) -> bool {
+        self.save
+            .as_ref()
+            .is_none_or(|r| r.save.generate_structures)
+    }
+
     /// Shows the seed in the text box, if it parses.
     fn apply_seed(&mut self) {
         let Some(world) = self.world else {
@@ -312,6 +413,64 @@ impl App {
         egui::CollapsingHeader::new("Layers")
             .default_open(true)
             .show(ui, |ui| self.layers_section(ui));
+        if self.locating.is_some() || self.found.is_some() {
+            egui::CollapsingHeader::new("Locate")
+                .default_open(true)
+                .show(ui, |ui| self.locate_section(ui));
+        }
+    }
+
+    /// The last locate's answer: click a hit to go there.
+    fn locate_section(&mut self, ui: &mut egui::Ui) {
+        if self.locating.is_some() {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Searching…");
+            });
+            return;
+        }
+        let mut go = None;
+        let mut close = false;
+        match &self.found {
+            Some(Ok(found)) => {
+                let [x, y, z] = found.from;
+                ui.strong(found.target.name());
+                ui.weak(format!("from {x} {y} {z}"));
+                for hit in &found.hits {
+                    let y = hit.y.map_or("~".to_string(), |y| y.to_string());
+                    let label = format!(
+                        "{} {y} {}  {} blocks  {}",
+                        hit.x,
+                        hit.z,
+                        hit.blocks_away,
+                        if hit.certain { "certain" } else { "candidate" }
+                    );
+                    if ui
+                        .selectable_label(false, label)
+                        .on_hover_text(&hit.what)
+                        .clicked()
+                    {
+                        go = Some([hit.x, hit.z]);
+                    }
+                }
+                if let Some(note) = &found.note {
+                    ui.weak(note);
+                }
+            }
+            Some(Err(e)) => {
+                ui.colored_label(ui.visuals().error_fg_color, e);
+            }
+            None => {}
+        }
+        if ui.small_button("Clear").clicked() {
+            close = true;
+        }
+        if let Some([x, z]) = go {
+            self.settings.view.centre = [f64::from(x) + 0.5, f64::from(z) + 0.5];
+        }
+        if close {
+            self.found = None;
+        }
     }
 
     fn world_section(&mut self, ui: &mut egui::Ui) {
@@ -334,6 +493,7 @@ impl App {
                 }
             });
         if let Some(bundle) = chosen {
+            self.save = None;
             self.open(ui.ctx(), &bundle);
         }
         if self.loading.is_some() {
@@ -352,6 +512,7 @@ impl App {
             if edit.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter))
                 || ui.button("Show").clicked()
             {
+                self.save = None;
                 self.apply_seed();
             }
         });
@@ -360,6 +521,7 @@ impl App {
         } else if let Some(shown) = &self.shown {
             ui.weak(format!("seed {}", shown.session.seed()));
         }
+        self.save_section(ui);
         let dir = self.bundles_dir().display().to_string();
         ui.add(
             egui::Label::new(egui::RichText::new(format!("Bundles in {dir}")).weak()).truncate(),
@@ -373,6 +535,86 @@ impl App {
                 self.scan(ui.ctx());
             }
         });
+    }
+
+    /// Opening a world save, and what spyglass makes of the one shown.
+    fn save_section(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(4.0);
+        let saves = self.saves.get_or_insert_with(listed_saves);
+        let filter = &mut self.save_filter;
+        let mut chosen = None;
+        let title = self
+            .save
+            .as_ref()
+            .map_or("Open a save…".to_string(), |r| r.save.name.clone());
+        egui::ComboBox::from_id_salt("saves")
+            .selected_text(title)
+            .width(200.0)
+            .show_ui(ui, |ui| {
+                if saves.is_empty() {
+                    ui.weak("No saves in the launchers' folders.");
+                    return;
+                }
+                ui.add(
+                    egui::TextEdit::singleline(filter)
+                        .hint_text("filter")
+                        .desired_width(180.0),
+                )
+                .request_focus();
+                let needle = filter.to_lowercase();
+                for save in saves.iter() {
+                    let name = save
+                        .dir
+                        .file_name()
+                        .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+                    if !name.to_lowercase().contains(&needle) {
+                        continue;
+                    }
+                    if ui
+                        .selectable_label(false, name)
+                        .on_hover_text(format!("{}\n{}", save.launcher, save.dir.display()))
+                        .clicked()
+                    {
+                        chosen = Some(save.dir.clone());
+                    }
+                }
+            });
+        ui.horizontal(|ui| {
+            if ui.button("Open save folder…").clicked()
+                && let Some(dir) = rfd::FileDialog::new().pick_folder()
+            {
+                chosen = Some(dir);
+            }
+            if ui
+                .small_button("⟳")
+                .on_hover_text("List the launchers' saves again")
+                .clicked()
+            {
+                self.saves = None;
+            }
+        });
+        if let Some(dir) = chosen {
+            self.open_save(ui.ctx(), dir);
+        }
+        if self.inspecting.is_some() {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Reading the save…");
+            });
+        }
+        if let Some(e) = &self.save_error {
+            ui.colored_label(ui.visuals().error_fg_color, e);
+        }
+        if let Some(report) = &self.save {
+            ui.weak(format!(
+                "{} · Minecraft {}",
+                report.save.name,
+                report.save.version_name.as_deref().unwrap_or("?")
+            ));
+            for warning in &report.warnings {
+                ui.colored_label(ui.visuals().warn_fg_color, warning.to_string());
+            }
+        }
     }
 
     fn choose_bundles(&mut self, ctx: &egui::Context) {
@@ -444,7 +686,11 @@ impl App {
         let Some(world) = self.world else {
             return;
         };
-        let structures: Vec<&str> = world.structures().collect();
+        if !self.structures_generate() {
+            ui.weak("Structures don't generate in this save.");
+        }
+        let mut structures: Vec<&str> = world.structures().collect();
+        structures.sort_unstable();
         let header = match self.settings.structures.len() {
             0 => "Structures".to_string(),
             n => format!("Structures ({n})"),
@@ -465,7 +711,8 @@ impl App {
         if changed {
             self.select();
         }
-        let biomes: Vec<&str> = world.biomes().iter().map(String::as_str).collect();
+        let mut biomes: Vec<&str> = world.biomes().iter().map(String::as_str).collect();
+        biomes.sort_unstable();
         let header = match self.settings.highlight.len() {
             0 => "Highlight biomes".to_string(),
             n => format!("Highlight biomes ({n})"),
@@ -636,7 +883,8 @@ impl App {
             .filter(|k| !self.cache.contains(k))
             .map(|k| job(JobKey::Biomes(k)))
             .collect();
-        if !self.selection.queries.is_empty() {
+        let marking = !self.selection.queries.is_empty() && self.structures_generate();
+        if marking {
             jobs.extend(
                 tiles
                     .iter()
@@ -688,7 +936,7 @@ impl App {
         // Markers over every tile, so none is hidden under a neighbouring tile.
         let mut shown_markers: Vec<(Pos2, Picked<'_>)> = Vec::new();
         let mut starts: Vec<StructureStart> = Vec::new();
-        if !self.selection.queries.is_empty() {
+        if marking {
             for &tile in &tiles {
                 if let Some(Ok(found)) = self.markers.get(&marker_key(tile)) {
                     starts.extend(found.iter().cloned());
@@ -711,6 +959,13 @@ impl App {
             markers::spawn(&painter, at);
             shown_markers.push((at, Picked::Spawn(&spawn)));
         }
+        if let Some(Ok(found)) = &self.found {
+            for hit in &found.hits {
+                let at = markers::pixel_centre(&view, centre, [hit.x, hit.z]);
+                markers::hit(&painter, at, hit.certain);
+                shown_markers.push((at, Picked::Hit(hit)));
+            }
+        }
         if let Some(pointer) = response.hover_pos()
             && !response.dragged()
             && let Some(picked) = markers::pick(pointer, shown_markers)
@@ -722,6 +977,68 @@ impl App {
         self.cursor = response
             .hover_pos()
             .map(|hover| view.block_at(offset(hover)).map(|b| b.floor() as i32));
+
+        if response.secondary_clicked()
+            && let Some(p) = response.interact_pointer_pos()
+        {
+            self.menu_block = Some(view.block_at(offset(p)).map(|b| b.floor() as i32));
+        }
+        let Some([bx, bz]) = self.menu_block else {
+            return;
+        };
+        let mut action = None;
+        response.context_menu(|ui| {
+            ui.weak(format!("{bx}, {bz}"));
+            ui.menu_button("Nearest structure", |ui| {
+                egui::ScrollArea::vertical()
+                    .max_height(320.0)
+                    .show(ui, |ui| {
+                        let mut ids: Vec<&str> = world.structures().collect();
+                        ids.sort_unstable();
+                        for id in ids {
+                            if ui
+                                .button(id.strip_prefix("minecraft:").unwrap_or(id))
+                                .clicked()
+                            {
+                                action = Some(Action::Locate(Target::Structure(id.to_string())));
+                                ui.close();
+                            }
+                        }
+                    });
+            });
+            ui.menu_button("Nearest biome", |ui| {
+                egui::ScrollArea::vertical()
+                    .max_height(320.0)
+                    .show(ui, |ui| {
+                        let mut ids: Vec<&String> = world.biomes().iter().collect();
+                        ids.sort_unstable();
+                        for id in ids {
+                            if ui
+                                .button(id.strip_prefix("minecraft:").unwrap_or(id))
+                                .clicked()
+                            {
+                                action = Some(Action::Locate(Target::Biome(id.clone())));
+                                ui.close();
+                            }
+                        }
+                    });
+            });
+            if ui.button("Centre here").clicked() {
+                action = Some(Action::Centre);
+                ui.close();
+            }
+            if ui.button("Copy coordinates").clicked() {
+                ui.ctx().copy_text(format!("{bx} {bz}"));
+                ui.close();
+            }
+        });
+        match action {
+            Some(Action::Locate(target)) => self.locate(ui.ctx(), target, [bx, view.y, bz]),
+            Some(Action::Centre) => {
+                self.settings.view.centre = [f64::from(bx) + 0.5, f64::from(bz) + 0.5];
+            }
+            None => {}
+        }
     }
     /// A tile's texture in `style`, making it if there's budget left this frame.
     fn texture(
@@ -793,6 +1110,27 @@ impl App {
     }
 }
 
+/// The launchers' saves, most recently played first.
+fn listed_saves() -> Vec<LauncherSave> {
+    let played = |s: &LauncherSave| {
+        std::fs::metadata(s.dir.join("level.dat"))
+            .and_then(|m| m.modified())
+            .ok()
+    };
+    let mut saves: Vec<(Option<std::time::SystemTime>, LauncherSave)> = spyglass::launcher_saves()
+        .into_iter()
+        .map(|s| (played(&s), s))
+        .collect();
+    saves.sort_by_key(|(played, _)| std::cmp::Reverse(*played));
+    saves.into_iter().map(|(_, s)| s).collect()
+}
+
+/// What the map's context menu asked for.
+enum Action {
+    Locate(Target),
+    Centre,
+}
+
 /// A marker's tooltip.
 fn describe(ui: &mut egui::Ui, picked: &Picked<'_>) {
     match picked {
@@ -823,6 +1161,17 @@ fn describe(ui: &mut egui::Ui, picked: &Picked<'_>) {
             }
             if origin.platform_dependent {
                 ui.label("This answer can differ between platforms the game runs on.");
+            }
+        }
+        Picked::Hit(hit) => {
+            ui.strong(&hit.what);
+            let y = hit.y.map_or("~".to_string(), |y| y.to_string());
+            ui.label(format!(
+                "{} {y} {}, {} blocks away",
+                hit.x, hit.z, hit.blocks_away
+            ));
+            if !hit.certain {
+                ui.label("Candidate: the game's answer is the first of these it confirms.");
             }
         }
     }
@@ -900,6 +1249,7 @@ fn parse_goto(text: &str) -> Option<(i32, Option<i32>, i32)> {
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.poll_loading();
+        self.poll_tasks(ui.ctx());
         egui::Panel::left("side")
             .resizable(true)
             .default_size(260.0)

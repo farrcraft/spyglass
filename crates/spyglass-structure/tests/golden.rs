@@ -14,7 +14,9 @@ use serde_json::Value;
 use spyglass_biome::BiomeSource;
 use spyglass_data::bundle::Bundle;
 use spyglass_rng::worldgen;
-use spyglass_structure::{Check, JigsawCheck, Starts, StructureSets, is_slime_chunk};
+use spyglass_structure::{
+    Assembly, BoundingBox, Check, JigsawCheck, JigsawPools, Starts, StructureSets, is_slime_chunk,
+};
 use spyglass_terrain::{Terrain, TerrainSettings};
 
 fn root() -> PathBuf {
@@ -341,15 +343,30 @@ struct TerrainReport {
     /// left open.
     decided: usize,
     open: usize,
+    /// Jigsaw starts whose pieces and bounds equal the game's, and their pieces.
+    layouts: usize,
+    pieces: usize,
+}
+
+/// A golden `[minX, minY, minZ, maxX, maxY, maxZ]` box.
+fn bounding_box(v: &Value) -> BoundingBox {
+    let b = ints(v);
+    let b: Vec<i32> = b.iter().map(|&n| n as i32).collect();
+    BoundingBox {
+        min: [b[0], b[1], b[2]],
+        max: [b[3], b[4], b[5]],
+    }
 }
 
 /// One file against [`Starts::with_terrain`]: every stub spyglass computes must be the game's,
-/// and every outcome it decides must be the game's.
+/// every outcome it decides must be the game's, and every jigsaw start's pieces and bounds must
+/// be the game's.
 fn with_terrain(
     path: &std::path::Path,
     sets: &StructureSets,
     source: &BiomeSource,
     settings: &TerrainSettings,
+    pools: &JigsawPools,
 ) -> TerrainReport {
     let golden: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
     let seed = golden["seed"].as_i64().unwrap();
@@ -357,7 +374,7 @@ fn with_terrain(
     let biomes = source.with_seed(seed).unwrap();
     let placements = sets.with_seed(seed, &biomes);
     let terrain = Terrain::new(settings, seed).unwrap();
-    let starts = Starts::with_terrain(&placements, &biomes, &terrain);
+    let starts = Starts::with_terrain(&placements, &biomes, &terrain).with_pools(pools);
     let mut report = TerrainReport::default();
     for s in golden["sets"].as_array().unwrap() {
         let set_id = s["set"].as_str().unwrap();
@@ -393,6 +410,36 @@ fn with_terrain(
                         "{name}: {set_id} {at:?}: {id}: the game has no stub, ours {p:?}"
                     )),
                     (None, None) => {}
+                }
+                // Jigsaw starts: every piece's box, in order, and the bounds.
+                if let (Some(bounds), Some(Assembly::Built(ours))) =
+                    (t.get("bounds"), starts.assemble(structure, at))
+                {
+                    let game: Vec<BoundingBox> = t["pieces"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(bounding_box)
+                        .collect();
+                    if ours.pieces == game && ours.bounds == bounding_box(bounds) {
+                        report.layouts += 1;
+                        report.pieces += game.len();
+                    } else {
+                        let first = ours.pieces.iter().zip(&game).position(|(a, b)| a != b);
+                        report.failures.push(format!(
+                            "{name}: {set_id} {at:?}: {id}: {} pieces, game {}; first difference at {first:?}; bounds {:?}, game {:?}",
+                            ours.pieces.len(),
+                            game.len(),
+                            ours.bounds,
+                            bounding_box(bounds)
+                        ));
+                    }
+                } else if t.get("bounds").is_some() && sets.structures()[structure].jigsaw.is_some()
+                {
+                    report.failures.push(format!(
+                        "{name}: {set_id} {at:?}: {id}: the game started it, ours {:?}",
+                        starts.assemble(structure, at)
+                    ));
                 }
             }
             // The outcome: what the game started, if anything, against what we decided.
@@ -438,25 +485,29 @@ fn structures_with_terrain_match_the_oracle() {
     let sets = StructureSets::overworld(&bundle, &source).unwrap();
     let settings =
         TerrainSettings::load(&bundle, source.noise_settings(), "minecraft:overworld").unwrap();
+    let pools = JigsawPools::load(&bundle, &sets).unwrap_or_else(|e| panic!("{e}"));
     let reports: Vec<TerrainReport> = files
         .par_iter()
-        .map(|p| with_terrain(p, &sets, &source, &settings))
+        .map(|p| with_terrain(p, &sets, &source, &settings, &pools))
         .collect();
     let mut unknown: BTreeMap<String, usize> = BTreeMap::new();
     let (mut stubs, mut tie_stubs, mut decided, mut open) = (0, 0, 0, 0);
+    let (mut layouts, mut pieces) = (0, 0);
     let mut failures = Vec::new();
     for r in reports {
         stubs += r.stubs;
         tie_stubs += r.tie_stubs;
         decided += r.decided;
         open += r.open;
+        layouts += r.layouts;
+        pieces += r.pieces;
         for (k, n) in r.unknown {
             *unknown.entry(k).or_default() += n;
         }
         failures.extend(r.failures);
     }
     println!(
-        "{} files: {stubs} stubs equal to the game's, {tie_stubs} behind a tie the game failed, unknown by type {unknown:?}; {decided} outcomes decided and equal to the game's, {open} left open",
+        "{} files: {stubs} stubs equal to the game's, {tie_stubs} behind a tie the game failed, unknown by type {unknown:?}; {decided} outcomes decided and equal to the game's, {open} left open; {layouts} jigsaw layouts equal to the game's ({pieces} pieces)",
         files.len()
     );
     assert!(

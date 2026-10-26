@@ -139,9 +139,9 @@ Specs and ADRs that govern this: [density-functions.md](../specs/density-functio
 
 ### Phase 6: jigsaw assembly
 
-- [ ] `addPieces`: queue, pools and fallbacks, depth and distance limits, jigsaw matching, rigid and terrain-matching projection, free space; pool aliases.
-- [ ] Unit tests on hand-written pools and templates (attachment, collision, depth, aliases).
-- [ ] Golden test: every jigsaw start's bounds and piece count equal the game's. Exit criterion 2.
+- [x] `addPieces`: queue, pools and fallbacks, depth and distance limits, jigsaw matching, rigid and terrain-matching projection, free space; pool aliases. `Jigsaw::assemble`, with the pools from `JigsawPools::load`, loaded apart from the structure sets (see Notes), and `Starts::with_pools(..).assemble`.
+- [x] Unit tests on hand-written pools and templates (attachment, collision, depth, aliases).
+- [x] Golden test: every jigsaw start's bounds and piece count equal the game's. Exit criterion 2. Stricter than planned: every piece's box, in order, too.
 
 ### Phase 7: confirmed mode in the library
 
@@ -173,7 +173,7 @@ Specs and ADRs that govern this: [density-functions.md](../specs/density-functio
 
 - [x] `docs/specs/terrain.md` (new)
 - [x] `docs/specs/density-functions.md`: every type, the cell path
-- [ ] `docs/specs/structure-placement.md`: terrain conditions, jigsaw assembly and bounds
+- [x] `docs/specs/structure-placement.md`: terrain conditions, jigsaw assembly and bounds
 - [ ] `docs/specs/locate.md`, `docs/specs/search.md`: confirmed mode
 - [x] `docs/specs/oracle.md`: probe additions, height files, structure format 2
 - [ ] `docs/specs/cli-json.md`, `docs/specs/render.md`
@@ -192,6 +192,13 @@ Agreed on 2026-10-25, as recommended:
 
 ## Notes
 
+- 2026-10-26: Phase 6 done. Exit criterion 2 is met: with terrain, all 301 jigsaw starts in the structure golden files (villages, outposts, abandoned camps, trail ruins, ancient cities, and 165 trial chambers with their pool aliases) assemble to the game's pieces, 47,534 boxes equal in order, and to the game's bounds. Mutations that make the queue last-in-first-out or drop the expansion hack fail 246 and 52 of them. From the bytecode and the data:
+  - 26.3 templates write block-state properties as `properties` (with `id` for the name), so the jigsaw orientation is read from there.
+  - A template missing from the bundle is empty, as `StructureTemplateManager.getOrCreate` makes it: 26.3's ancient city pool `walls/no_corners` names `intact_horizontal_wall_stairs_5`, which doesn't exist. Loading no longer fails on it.
+  - Candidates are the pool's shuffled elements (unless at the maximum depth) followed by the fallback's, not one or the other, as the spec's draft had it. The fallback isn't aliased.
+  - An explicit `dimension_padding` of 0 is checked, since decoding never yields `DimensionPadding.ZERO`; spyglass treated it as absent, now fixed. No 26.3 structure has one.
+  - `JigsawPools` is loaded separately from `StructureSets` because it reads most of the bundle's 1,511 templates: 1.2 s (release), against 0.27 s for the sets. Phase 7 binds it lazily in `Session`, like terrain.
+  - First timings (release, terrain bound, columns not cached): a plains village of 167 pieces 218 ms, nearly all in surface heights for terrain-matching pieces (one per parent jigsaw); a trial chamber of 267 pieces 8 ms; an ancient city of 107 pieces 1 ms. Bounds aren't in a speed target, but the village figure is for phase 8, with the per-seed column cache.
 - 2026-10-26: Phase 5 done. `Starts::with_terrain` checks surface and ocean types, pyramids and temples (lowest corner below sea level rejects), monuments, mansions (rotation, lowest corner below 60 rejects), projected jigsaws (first free height, then padding) and ruined portals (setup, template, rotation and mirror from the context random, then `findSuitableY` over four block columns) at their real positions. Against the structure golden files: 1,640 stubs equal to the game's (mineshafts' 787 unknown); 5,986 of 6,056 placement chunks decided, every one as the game decided, 70 left open (mixed-column mineshafts and ties). Without terrain, mineshafts whose whole column is in their biomes now pass, so 870 starts are certain (175 before), all made by the game. From the bytecode: `findSuitableY` tests the placement's own heightmap, returns `minY + 15` when no height has three solid corners, and the Nether portal is tried in the Overworld's set (its y ranges are ported; its biome check fails). One stub sits behind a tied climate condition the game failed, so the test allows stubs behind ties.
 - 2026-10-26: Phase 4 done. Exit criterion 1 is met: every height in the ten golden files (both heightmaps, 81,920 columns each) and every block of their sampled columns matches, 2,041,000 values, through both the chunk-wise path and, for every 13th column, a column's own. `OCEAN_FLOOR_WG` needs `#minecraft:blocks_motion_in_heightmap`, so bundles now include `data/minecraft/tags/block/` (297 files); older bundles must be extracted again. First measurement (release, one thread, `cargo xtask bench`):
   - Binding a seed's terrain: 321 µs, mostly creating its noises. One column in a bound session: 243 µs in the bench (one column, repeated), 430 µs on average over 300 varied columns, of which the density volume is 262 µs, the aquifer's surface-level prefill 141 µs and the scan the rest. One column in a new session: 552 µs in the bench. The game: about 500 µs.

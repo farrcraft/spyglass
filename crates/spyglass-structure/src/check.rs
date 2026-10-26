@@ -7,6 +7,7 @@ use spyglass_biome::{Biomes, Lookup};
 use spyglass_rng::{RandomSource, worldgen};
 use spyglass_terrain::{Heightmap, Terrain};
 
+use crate::assembly::{Assembly, JigsawPools};
 use crate::biomes::BiomeSet;
 use crate::jigsaw::JigsawCheck;
 use crate::load::{Structure, StructureType};
@@ -52,6 +53,7 @@ pub struct Starts<'a> {
     placements: &'a Placements<'a>,
     biomes: &'a Biomes<'a>,
     terrain: Option<&'a Terrain>,
+    pools: Option<&'a JigsawPools>,
 }
 
 /// What a check found before its biome test: the conditions' verdict so far, and the test's
@@ -84,6 +86,7 @@ impl<'a> Starts<'a> {
             placements,
             biomes,
             terrain: None,
+            pools: None,
         }
     }
 
@@ -98,7 +101,37 @@ impl<'a> Starts<'a> {
             placements,
             biomes,
             terrain: Some(terrain),
+            pools: None,
         }
+    }
+
+    /// The same starts, able to [`assemble`](Self::assemble) jigsaw structures with `pools`,
+    /// loaded for the same structure sets.
+    pub fn with_pools(self, pools: &'a JigsawPools) -> Self {
+        Starts {
+            pools: Some(pools),
+            ..self
+        }
+    }
+
+    /// A jigsaw structure's pieces and bounds if it starts in `chunk`
+    /// (`JigsawPlacement.addPieces`), whether or not its biome check passes. Pieces that
+    /// follow the terrain need it: without, the answer is [`Assembly::NeedsTerrain`]. `None` if
+    /// the structure isn't a jigsaw or there are no pools.
+    pub fn assemble(&self, structure: usize, chunk: [i32; 2]) -> Option<Assembly> {
+        let sets = self.placements.sets();
+        let jigsaw = sets.structures()[structure].jigsaw.as_ref()?;
+        let terrain = self.terrain;
+        let mut first_free = |x: i32, z: i32, heightmap: Heightmap| {
+            terrain.map(|t| t.first_free_height(x, z, heightmap))
+        };
+        Some(jigsaw.assemble(
+            self.placements.seed(),
+            chunk,
+            sets.heights(),
+            self.pools?,
+            &mut first_free,
+        ))
     }
 
     /// The placements.
@@ -323,6 +356,10 @@ impl<'a> Starts<'a> {
                     .jigsaw
                     .as_ref()
                     .expect("jigsaw structures load their settings");
+                // With size 0 the start has no pieces, so it isn't valid.
+                if jigsaw.size == 0 {
+                    return Found::REJECTED;
+                }
                 let mut random =
                     worldgen::large_feature(self.placements.seed(), chunk[0], chunk[1]);
                 match jigsaw.check_position(chunk, heights, &mut random) {

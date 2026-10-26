@@ -1,13 +1,13 @@
-//! Jigsaw structures up to their start piece (`JigsawStructure.findGenerationPoint`,
-//! `JigsawPlacement.addPieces`): where the start piece goes and where its biome check samples.
-//! The rest of the jigsaw assembly happens after the check. See
+//! Jigsaw structures' settings, pools, templates and start piece (`JigsawStructure`,
+//! `JigsawPlacement.addPieces` up to the start): where the start piece goes and where its biome
+//! check samples. The rest of the assembly is in `assembly.rs`. See
 //! `docs/specs/structure-placement.md`.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use serde_json::{Map, Value};
-use spyglass_data::bundle::Bundle;
+use spyglass_data::bundle::{Bundle, BundleError};
 use spyglass_data::codec;
 use spyglass_data::nbt::{self, Tag};
 use spyglass_rng::{LegacyRandomSource, RandomSource};
@@ -15,6 +15,9 @@ use spyglass_rng::{LegacyRandomSource, RandomSource};
 use spyglass_data::codec::{At, LoadError, LoadErrorKind, LoadResult, full_id};
 
 const TEMPLATE_POOL: &str = "worldgen/template_pool";
+
+/// `Pools.EMPTY`: the pool a jigsaw block names by default.
+pub(crate) const EMPTY_POOL: &str = "minecraft:empty";
 
 /// `Rotation`, in declaration order, which `Rotation.getRandom` indexes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,14 +33,17 @@ pub enum Rotation {
 }
 
 impl Rotation {
+    /// `Rotation.values()`.
+    pub(crate) const ALL: [Rotation; 4] = [
+        Rotation::None,
+        Rotation::Clockwise90,
+        Rotation::Clockwise180,
+        Rotation::Counterclockwise90,
+    ];
+
     /// `Rotation.getRandom`: `values()[nextInt(4)]`.
     pub fn random(random: &mut LegacyRandomSource) -> Self {
-        [
-            Rotation::None,
-            Rotation::Clockwise90,
-            Rotation::Clockwise180,
-            Rotation::Counterclockwise90,
-        ][random.next_int_bounded(4) as usize]
+        Self::ALL[random.next_int_bounded(4) as usize]
     }
 
     /// `StructureTemplate.transform(pos, Mirror.NONE, rotation, pivot)` with pivot `(0, 0, 0)`.
@@ -48,6 +54,74 @@ impl Rotation {
             Rotation::Clockwise90 => [z.wrapping_neg(), y, x],
             Rotation::Clockwise180 => [x.wrapping_neg(), y, z.wrapping_neg()],
         }
+    }
+
+    /// `Rotation.rotate(Direction)`: horizontal directions turn, up and down stay.
+    fn rotate(self, d: Direction) -> Direction {
+        use Direction::{East, North, South, West};
+        if !d.is_horizontal() {
+            return d;
+        }
+        match (self, d) {
+            (Rotation::None, d) => d,
+            (Rotation::Clockwise180, d) => d.opposite(),
+            (Rotation::Clockwise90, North) | (Rotation::Counterclockwise90, South) => East,
+            (Rotation::Clockwise90, East) | (Rotation::Counterclockwise90, West) => South,
+            (Rotation::Clockwise90, South) | (Rotation::Counterclockwise90, North) => West,
+            (Rotation::Clockwise90 | Rotation::Counterclockwise90, _) => North,
+        }
+    }
+}
+
+/// `Direction`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Direction {
+    Down,
+    Up,
+    North,
+    South,
+    West,
+    East,
+}
+
+impl Direction {
+    fn named(name: &str) -> Option<Self> {
+        Some(match name {
+            "down" => Direction::Down,
+            "up" => Direction::Up,
+            "north" => Direction::North,
+            "south" => Direction::South,
+            "west" => Direction::West,
+            "east" => Direction::East,
+            _ => return None,
+        })
+    }
+
+    /// The unit step towards this direction.
+    pub(crate) fn step(self) -> [i32; 3] {
+        match self {
+            Direction::Down => [0, -1, 0],
+            Direction::Up => [0, 1, 0],
+            Direction::North => [0, 0, -1],
+            Direction::South => [0, 0, 1],
+            Direction::West => [-1, 0, 0],
+            Direction::East => [1, 0, 0],
+        }
+    }
+
+    pub(crate) fn opposite(self) -> Self {
+        match self {
+            Direction::Down => Direction::Up,
+            Direction::Up => Direction::Down,
+            Direction::North => Direction::South,
+            Direction::South => Direction::North,
+            Direction::West => Direction::East,
+            Direction::East => Direction::West,
+        }
+    }
+
+    fn is_horizontal(self) -> bool {
+        !matches!(self, Direction::Down | Direction::Up)
     }
 }
 
@@ -68,7 +142,8 @@ impl BoundingBox {
         }
     }
 
-    fn moved(self, by: [i32; 3]) -> Self {
+    /// `moved(dx, dy, dz)`.
+    pub(crate) fn moved(self, by: [i32; 3]) -> Self {
         let add = |p: [i32; 3]| [0, 1, 2].map(|i| p[i].wrapping_add(by[i]));
         BoundingBox {
             min: add(self.min),
@@ -76,24 +151,111 @@ impl BoundingBox {
         }
     }
 
-    fn encapsulate(self, other: BoundingBox) -> Self {
+    /// The box around both (`encapsulate`).
+    pub(crate) fn encapsulate(self, other: BoundingBox) -> Self {
         BoundingBox {
             min: [0, 1, 2].map(|i| self.min[i].min(other.min[i])),
             max: [0, 1, 2].map(|i| self.max[i].max(other.max[i])),
         }
     }
+
+    /// `inflatedBy(n)`: grown by `n` on every side.
+    pub(crate) fn inflated(self, n: i32) -> Self {
+        BoundingBox {
+            min: self.min.map(|v| v.wrapping_sub(n)),
+            max: self.max.map(|v| v.wrapping_add(n)),
+        }
+    }
+
+    /// `isInside(pos)`.
+    pub(crate) fn contains(&self, p: [i32; 3]) -> bool {
+        (0..3).all(|i| self.min[i] <= p[i] && p[i] <= self.max[i])
+    }
+
+    /// Whether every block of `other` is in this box.
+    pub(crate) fn contains_box(&self, other: &BoundingBox) -> bool {
+        (0..3).all(|i| self.min[i] <= other.min[i] && other.max[i] <= self.max[i])
+    }
+
+    /// Whether the boxes share a block.
+    pub(crate) fn intersects(&self, other: &BoundingBox) -> bool {
+        (0..3).all(|i| self.min[i] <= other.max[i] && other.min[i] <= self.max[i])
+    }
+
+    /// `getYSpan`.
+    pub(crate) fn y_span(&self) -> i32 {
+        self.max[1].wrapping_sub(self.min[1]).wrapping_add(1)
+    }
 }
 
-/// A jigsaw block in a template (`StructureTemplate.JigsawBlockInfo`): the fields the start
-/// needs.
+/// `JigsawBlockEntity.JointType`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Joint {
+    Rollable,
+    Aligned,
+}
+
+/// A jigsaw block's block-entity fields (`StructureTemplate.JigsawBlockInfo`), which don't
+/// change with the piece's position or rotation.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct JigsawBlock {
-    /// Position in the template.
-    pub pos: [i32; 3],
-    /// `name`, default `minecraft:empty`.
-    pub name: String,
+pub(crate) struct JigsawData {
+    /// `name`, default `minecraft:empty`; none for a feature element's jigsaw, which any target
+    /// matches.
+    pub(crate) name: Option<String>,
+    /// `pool`, default `minecraft:empty`.
+    pub(crate) pool: String,
+    /// `target`, default `minecraft:empty`.
+    pub(crate) target: String,
+    /// `joint`, default aligned for a horizontal front and rollable for a vertical one.
+    pub(crate) joint: Joint,
+    /// `placement_priority`, default 0.
+    pub(crate) placement_priority: i32,
     /// `selection_priority`, default 0.
-    pub selection_priority: i32,
+    pub(crate) selection_priority: i32,
+}
+
+/// `FeaturePoolElement.getShuffledJigsawBlocks`'s one jigsaw: facing down, top south, rollable,
+/// no name, the empty pool and target.
+static FEATURE_JIGSAW: LazyLock<JigsawData> = LazyLock::new(|| JigsawData {
+    name: None,
+    pool: EMPTY_POOL.to_string(),
+    target: "minecraft:empty".to_string(),
+    joint: Joint::Rollable,
+    placement_priority: 0,
+    selection_priority: 0,
+});
+
+/// A jigsaw block in a template: its position and orientation (`JigsawBlock.ORIENTATION`, front
+/// and top) in the template, and its fields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TemplateJigsaw {
+    pos: [i32; 3],
+    front: Direction,
+    top: Direction,
+    data: JigsawData,
+}
+
+/// A jigsaw block placed with its piece: moved and rotated.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PlacedJigsaw<'a> {
+    pub(crate) pos: [i32; 3],
+    pub(crate) front: Direction,
+    pub(crate) top: Direction,
+    pub(crate) data: &'a JigsawData,
+}
+
+impl PlacedJigsaw<'_> {
+    /// `JigsawBlock.canAttach(self, child)`: the child faces this one, their tops match unless
+    /// this one's joint is rollable, and the child's name is this one's target.
+    pub(crate) fn can_attach(&self, child: &PlacedJigsaw<'_>) -> bool {
+        self.front == child.front.opposite()
+            && (self.data.joint == Joint::Rollable || self.top == child.top)
+            && child
+                .data
+                .name
+                .as_ref()
+                .is_none_or(|name| *name == self.data.target)
+    }
 }
 
 /// A structure template (`StructureTemplate`), reduced to its size and jigsaw blocks.
@@ -102,13 +264,13 @@ pub struct Template {
     /// `size`.
     pub size: [i32; 3],
     /// Each palette's jigsaw blocks, in the template's block order: sorted by y, then x, then z.
-    pub palettes: Vec<Vec<JigsawBlock>>,
+    palettes: Vec<Vec<TemplateJigsaw>>,
 }
 
 impl Template {
     /// `StructureTemplate.load`, keeping the size and the jigsaw blocks of each palette
-    /// (`palettes`, or the single `palette`). Palette entries name their block by `id`
-    /// (`NbtUtils.readBlockState`). The game data-fixes a template saved by an older version
+    /// (`palettes`, or the single `palette`). Palette entries name their block by `id` and
+    /// hold its state in `properties` (`NbtUtils.readBlockState`). The game data-fixes a template saved by an older version
     /// before loading it; spyglass doesn't, so `DataVersion` must be `data_version`.
     pub fn from_nbt(root: &Tag, id: &str, data_version: u32) -> LoadResult<Self> {
         let at = At::root(id);
@@ -140,28 +302,28 @@ impl Template {
                 let mut jigsaws = Vec::new();
                 for (i, block) in blocks.iter().enumerate() {
                     let state = block.get("state").and_then(Tag::as_int).unwrap_or(0);
-                    let name = usize::try_from(state)
-                        .ok()
-                        .and_then(|s| palette.get(s))
-                        .and_then(|p| p.get("id"))
-                        .and_then(Tag::as_str);
+                    let entry = usize::try_from(state).ok().and_then(|s| palette.get(s));
+                    let name = entry.and_then(|p| p.get("id")).and_then(Tag::as_str);
                     if name.map(full_id).as_deref() != Some("minecraft:jigsaw") {
                         continue;
                     }
                     let blocks_at = at.child("blocks");
                     let at = blocks_at.child(&format!("[{i}]"));
                     let pos = int3(block.get("pos"), &at.child("pos"))?;
-                    let entity = block.get("nbt");
-                    jigsaws.push(JigsawBlock {
+                    // The orientation property, `<front>_<top>`, in the entry's `properties`;
+                    // the default state is north_up.
+                    let (front, top) = entry
+                        .and_then(|p| p.get("properties"))
+                        .and_then(|p| p.get("orientation"))
+                        .and_then(Tag::as_str)
+                        .and_then(|o| o.split_once('_'))
+                        .and_then(|(f, t)| Some((Direction::named(f)?, Direction::named(t)?)))
+                        .unwrap_or((Direction::North, Direction::Up));
+                    jigsaws.push(TemplateJigsaw {
                         pos,
-                        name: entity
-                            .and_then(|n| n.get("name"))
-                            .and_then(Tag::as_str)
-                            .map_or_else(|| "minecraft:empty".to_string(), full_id),
-                        selection_priority: entity
-                            .and_then(|n| n.get("selection_priority"))
-                            .and_then(Tag::as_int)
-                            .unwrap_or(0),
+                        front,
+                        top,
+                        data: jigsaw_data(block.get("nbt"), front),
                     });
                 }
                 jigsaws.sort_by_key(|j| (j.pos[1], j.pos[0], j.pos[2]));
@@ -181,7 +343,7 @@ impl Template {
     /// `StructureTemplate.getJigsaws(pos, rotation)`: one palette's jigsaw blocks, rotated and
     /// moved to `pos`. With several palettes, one is picked by a random seeded from `pos`
     /// (`StructurePlaceSettings.getRandomPalette`), not from the structure's random.
-    fn jigsaws(&self, pos: [i32; 3], rotation: Rotation) -> Vec<JigsawBlock> {
+    fn jigsaws(&self, pos: [i32; 3], rotation: Rotation) -> Vec<PlacedJigsaw<'_>> {
         if self.palettes.is_empty() {
             return Vec::new();
         }
@@ -193,12 +355,51 @@ impl Template {
             .iter()
             .map(|j| {
                 let r = rotation.transform(j.pos);
-                JigsawBlock {
+                PlacedJigsaw {
                     pos: [0, 1, 2].map(|i| r[i].wrapping_add(pos[i])),
-                    ..j.clone()
+                    front: rotation.rotate(j.front),
+                    top: rotation.rotate(j.top),
+                    data: &j.data,
                 }
             })
             .collect()
+    }
+
+    /// Every pool any of the template's jigsaw blocks names.
+    fn pools(&self) -> impl Iterator<Item = &str> {
+        self.palettes.iter().flatten().map(|j| j.data.pool.as_str())
+    }
+}
+
+/// `JigsawBlockInfo.parse`: the block entity's fields, with their defaults. Names, pools and
+/// targets are identifiers; the joint defaults by the front's axis
+/// (`StructureTemplate.getDefaultJointType`).
+fn jigsaw_data(entity: Option<&Tag>, front: Direction) -> JigsawData {
+    let string = |key: &str| {
+        entity
+            .and_then(|n| n.get(key))
+            .and_then(Tag::as_str)
+            .map_or_else(|| "minecraft:empty".to_string(), full_id)
+    };
+    let int = |key: &str| {
+        entity
+            .and_then(|n| n.get(key))
+            .and_then(Tag::as_int)
+            .unwrap_or(0)
+    };
+    let joint = match entity.and_then(|n| n.get("joint")).and_then(Tag::as_str) {
+        Some("rollable") => Joint::Rollable,
+        Some("aligned") => Joint::Aligned,
+        _ if front.is_horizontal() => Joint::Aligned,
+        _ => Joint::Rollable,
+    };
+    JigsawData {
+        name: Some(string("name")),
+        pool: string("pool"),
+        target: string("target"),
+        joint,
+        placement_priority: int("placement_priority"),
+        selection_priority: int("selection_priority"),
     }
 }
 
@@ -216,61 +417,94 @@ fn int3(tag: Option<&Tag>, at: &At<'_>) -> LoadResult<[i32; 3]> {
     Ok(out)
 }
 
-/// A pool element (`StructurePoolElement`), as far as the start piece needs it.
+/// `StructureTemplatePool.Projection`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Projection {
+    /// `rigid`: placed against its parent piece.
+    Rigid,
+    /// `terrain_matching`: placed on the surface.
+    TerrainMatching,
+}
+
+/// A pool element (`StructurePoolElement`).
 #[derive(Debug, Clone)]
 pub enum PoolElement {
     /// `single_pool_element` or `legacy_single_pool_element`: one template.
-    Single(Arc<Template>),
+    Single(Arc<Template>, Projection),
     /// `list_pool_element`: several elements placed together.
-    List(Vec<PoolElement>),
+    List(Vec<PoolElement>, Projection),
     /// `feature_pool_element`: a placed feature, with a 1 × 1 × 1 box.
-    Feature,
+    Feature(Projection),
     /// `empty_pool_element`.
     Empty,
 }
 
 impl PoolElement {
-    /// `StructurePoolElement.getBoundingBox(manager, pos, rotation)`.
-    fn bounding_box(&self, pos: [i32; 3], rotation: Rotation) -> Option<BoundingBox> {
+    /// `getProjection`. The empty element is never placed, so its projection doesn't matter.
+    pub(crate) fn projection(&self) -> Projection {
         match self {
-            PoolElement::Single(template) => Some(template.bounding_box(pos, rotation)),
+            PoolElement::Single(_, p) | PoolElement::List(_, p) | PoolElement::Feature(p) => *p,
+            PoolElement::Empty => Projection::Rigid,
+        }
+    }
+
+    /// `StructurePoolElement.getBoundingBox(manager, pos, rotation)`.
+    pub(crate) fn bounding_box(&self, pos: [i32; 3], rotation: Rotation) -> Option<BoundingBox> {
+        match self {
+            PoolElement::Single(template, _) => Some(template.bounding_box(pos, rotation)),
             // ListPoolElement: the box around every non-empty element's box.
-            PoolElement::List(elements) => elements
+            PoolElement::List(elements, _) => elements
                 .iter()
                 .filter_map(|e| e.bounding_box(pos, rotation))
                 .reduce(BoundingBox::encapsulate),
-            PoolElement::Feature => Some(BoundingBox { min: pos, max: pos }),
+            PoolElement::Feature(_) => Some(BoundingBox { min: pos, max: pos }),
             PoolElement::Empty => None,
         }
     }
 
     /// `StructurePoolElement.getShuffledJigsawBlocks(manager, pos, rotation, random)`: shuffled
     /// with `Util.shuffle`, then stably sorted by selection priority, highest first. A list
-    /// element uses its first element's. `None` where spyglass doesn't support the element.
-    fn shuffled_jigsaws(
+    /// element uses its first element's; a feature element has one jigsaw, without drawing.
+    pub(crate) fn shuffled_jigsaws(
         &self,
         pos: [i32; 3],
         rotation: Rotation,
         random: &mut LegacyRandomSource,
-    ) -> Option<Vec<JigsawBlock>> {
+    ) -> Vec<PlacedJigsaw<'_>> {
         match self {
-            PoolElement::Single(template) => {
+            PoolElement::Single(template, _) => {
                 let mut jigsaws = template.jigsaws(pos, rotation);
                 shuffle(&mut jigsaws, random);
-                jigsaws.sort_by_key(|j| std::cmp::Reverse(j.selection_priority));
-                Some(jigsaws)
+                jigsaws.sort_by_key(|j| std::cmp::Reverse(j.data.selection_priority));
+                jigsaws
             }
-            PoolElement::List(elements) => {
-                elements.first()?.shuffled_jigsaws(pos, rotation, random)
-            }
-            PoolElement::Feature | PoolElement::Empty => None,
+            PoolElement::List(elements, _) => elements
+                .first()
+                .map(|e| e.shuffled_jigsaws(pos, rotation, random))
+                .unwrap_or_default(),
+            PoolElement::Feature(_) => vec![PlacedJigsaw {
+                pos,
+                front: Direction::Down,
+                top: Direction::South,
+                data: &FEATURE_JIGSAW,
+            }],
+            PoolElement::Empty => Vec::new(),
+        }
+    }
+
+    /// Every template the element places.
+    fn templates(&self) -> Vec<&Template> {
+        match self {
+            PoolElement::Single(t, _) => vec![t],
+            PoolElement::List(elements, _) => elements.iter().flat_map(|e| e.templates()).collect(),
+            PoolElement::Feature(_) | PoolElement::Empty => Vec::new(),
         }
     }
 }
 
 /// `Util.shuffle(list, random)`: Fisher-Yates from the end, `nextInt(i)` for each `i` from the
 /// length down to 2.
-fn shuffle<T>(list: &mut [T], random: &mut LegacyRandomSource) {
+pub(crate) fn shuffle<T>(list: &mut [T], random: &mut LegacyRandomSource) {
     for i in (2..=list.len()).rev() {
         let j = random.next_int_bounded(i as i32) as usize;
         list.swap(i - 1, j);
@@ -283,6 +517,10 @@ fn shuffle<T>(list: &mut [T], random: &mut LegacyRandomSource) {
 pub struct Pool {
     /// The weight-expanded list `getRandomTemplate` indexes.
     pub templates: Vec<PoolElement>,
+    /// `fallback`, a pool id.
+    pub(crate) fallback: String,
+    /// `getMaxSize`: the tallest non-empty element, unrotated (`getYSpan`); 0 if none.
+    pub(crate) max_size: i32,
 }
 
 impl Pool {
@@ -365,26 +603,56 @@ pub struct GenerationHeights {
 }
 
 impl GenerationHeights {
-    fn level_max_y(&self) -> i32 {
+    pub(crate) fn level_max_y(&self) -> i32 {
         self.level_min_y
             .wrapping_add(self.level_height)
             .wrapping_sub(1)
     }
 }
 
-/// A jigsaw structure's start settings (`JigsawStructure`).
+/// A pool alias binding (`PoolAliasBinding`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AliasBinding {
+    /// `direct`: `alias` is `target`.
+    Direct { alias: String, target: String },
+    /// `random`: `alias` is one of `targets`, by weight.
+    Random {
+        alias: String,
+        targets: Vec<(String, i32)>,
+    },
+    /// `random_group`: one group of bindings, by weight, each resolved in order.
+    RandomGroup {
+        groups: Vec<(Vec<AliasBinding>, i32)>,
+    },
+}
+
+/// A jigsaw structure's settings (`JigsawStructure`).
 #[derive(Debug, Clone)]
 pub struct Jigsaw {
+    /// `start_pool`'s id.
+    pub start_pool_id: String,
     /// `start_pool`, loaded.
     pub start_pool: Arc<Pool>,
     /// `start_jigsaw_name`.
     pub start_jigsaw_name: Option<String>,
+    /// `size`: the maximum depth of the piece tree, 0 to 20.
+    pub size: i32,
     /// `start_height`.
     pub start_height: HeightProvider,
+    /// `use_expansion_hack`.
+    pub use_expansion_hack: bool,
     /// `project_start_to_heightmap`: the heightmap's name, if projected.
     pub project_start_to_heightmap: Option<String>,
-    /// `dimension_padding`: (bottom, top); `None` for `DimensionPadding.ZERO`.
+    /// `max_distance_from_center`: (horizontal, vertical).
+    pub max_distance: (i32, i32),
+    /// `pool_aliases`.
+    pub(crate) pool_aliases: Vec<AliasBinding>,
+    /// `dimension_padding`: (bottom, top). `None` when absent: the default,
+    /// `DimensionPadding.ZERO`, which the game tests by identity and doesn't check. A value in
+    /// the JSON, zeros included, is checked.
     pub dimension_padding: Option<(i32, i32)>,
+    /// Whether the structure's `terrain_adaptation` isn't `none`, which grows its bounds.
+    pub adapts_terrain: bool,
 }
 
 /// Where a jigsaw start's biome check samples.
@@ -416,15 +684,39 @@ pub enum JigsawCheck {
     },
 }
 
+/// The start piece, before it's moved to its height.
+pub(crate) struct StartPiece<'a> {
+    /// `(minX, start height, minZ)`.
+    pub(crate) start: [i32; 3],
+    pub(crate) rotation: Rotation,
+    pub(crate) element: &'a PoolElement,
+    /// The start jigsaw's position relative to `start`, or zero.
+    pub(crate) offset: [i32; 3],
+    /// The piece's position, `start - offset`.
+    pub(crate) pos: [i32; 3],
+    /// The element's box at `pos`.
+    pub(crate) bbox: BoundingBox,
+}
+
+impl StartPiece<'_> {
+    /// The check's x and z: the box's centre, with Java's truncating division.
+    pub(crate) fn center(&self) -> [i32; 2] {
+        [
+            self.bbox.max[0].wrapping_add(self.bbox.min[0]) / 2,
+            self.bbox.max[2].wrapping_add(self.bbox.min[2]) / 2,
+        ]
+    }
+}
+
 impl Jigsaw {
-    /// `findGenerationPoint` up to the biome check, drawing from `random` (the structure's
-    /// `setLargeFeatureSeed` random) in the game's order.
-    pub fn check_position(
+    /// `findGenerationPoint` and `addPieces` up to the start piece, drawing from `random` (the
+    /// structure's `setLargeFeatureSeed` random) in the game's order. `None` for no start.
+    pub(crate) fn start_piece(
         &self,
         chunk: [i32; 2],
         heights: &GenerationHeights,
         random: &mut LegacyRandomSource,
-    ) -> JigsawCheck {
+    ) -> Option<StartPiece<'_>> {
         let start = [
             chunk[0].wrapping_shl(4),
             self.start_height.sample(random, heights),
@@ -433,42 +725,58 @@ impl Jigsaw {
         let rotation = Rotation::random(random);
         let element = self.start_pool.random_template(random);
         if matches!(element, PoolElement::Empty) {
-            return JigsawCheck::NoStart;
+            return None;
         }
         let offset = match &self.start_jigsaw_name {
             None => [0; 3],
             Some(name) => {
-                let jigsaws = element
-                    .shuffled_jigsaws(start, rotation, random)
-                    .unwrap_or_default();
-                match jigsaws.iter().find(|j| &j.name == name) {
-                    Some(j) => [0, 1, 2].map(|i| j.pos[i].wrapping_sub(start[i])),
-                    None => return JigsawCheck::NoStart,
-                }
+                let jigsaws = element.shuffled_jigsaws(start, rotation, random);
+                let j = jigsaws
+                    .iter()
+                    .find(|j| j.data.name.as_ref() == Some(name))?;
+                [0, 1, 2].map(|i| j.pos[i].wrapping_sub(start[i]))
             }
         };
-        let piece = [0, 1, 2].map(|i| start[i].wrapping_sub(offset[i]));
-        let Some(bbox) = element.bounding_box(piece, rotation) else {
+        let pos = [0, 1, 2].map(|i| start[i].wrapping_sub(offset[i]));
+        let bbox = element.bounding_box(pos, rotation)?;
+        Some(StartPiece {
+            start,
+            rotation,
+            element,
+            offset,
+            pos,
+            bbox,
+        })
+    }
+
+    /// `findGenerationPoint` up to the biome check, drawing from `random` (the structure's
+    /// `setLargeFeatureSeed` random) in the game's order.
+    pub fn check_position(
+        &self,
+        chunk: [i32; 2],
+        heights: &GenerationHeights,
+        random: &mut LegacyRandomSource,
+    ) -> JigsawCheck {
+        let Some(piece) = self.start_piece(chunk, heights, random) else {
             return JigsawCheck::NoStart;
         };
-        let x = bbox.max[0].wrapping_add(bbox.min[0]) / 2;
-        let z = bbox.max[2].wrapping_add(bbox.min[2]) / 2;
-        let box_y = [bbox.min[1], bbox.max[1]];
+        let [x, z] = piece.center();
+        let box_y = [piece.bbox.min[1], piece.bbox.max[1]];
         match &self.project_start_to_heightmap {
             Some(heightmap) => JigsawCheck::Projected {
                 x,
                 z,
-                start_y: start[1],
-                offset_y: offset[1],
+                start_y: piece.start[1],
+                offset_y: piece.offset[1],
                 box_y,
                 heightmap: heightmap.clone(),
             },
             None => {
-                let y = piece[1];
+                let y = piece.pos[1];
                 if !self.fits_padding(y, box_y, heights) {
                     return JigsawCheck::NoStart;
                 }
-                JigsawCheck::At([x, y.wrapping_add(offset[1]), z])
+                JigsawCheck::At([x, y.wrapping_add(piece.offset[1]), z])
             }
         }
     }
@@ -484,6 +792,30 @@ impl Jigsaw {
         let (min_y, max_y) = (box_y[0].wrapping_add(dy), box_y[1].wrapping_add(dy));
         min_y >= heights.level_min_y.wrapping_add(bottom)
             && max_y <= heights.level_max_y().wrapping_sub(top)
+    }
+
+    /// Every pool id the structure names directly: its start pool and its aliases' targets.
+    pub(crate) fn named_pools(&self) -> Vec<String> {
+        fn targets(b: &AliasBinding, out: &mut Vec<String>) {
+            match b {
+                AliasBinding::Direct { target, .. } => out.push(target.clone()),
+                AliasBinding::Random { targets, .. } => {
+                    out.extend(targets.iter().map(|(t, _)| t.clone()))
+                }
+                AliasBinding::RandomGroup { groups } => {
+                    for (group, _) in groups {
+                        for b in group {
+                            targets(b, out);
+                        }
+                    }
+                }
+            }
+        }
+        let mut out = vec![self.start_pool_id.clone()];
+        for b in &self.pool_aliases {
+            targets(b, &mut out);
+        }
+        out
     }
 }
 
@@ -518,28 +850,56 @@ impl<'a> JigsawLoader<'a> {
         }
     }
 
-    /// `JigsawStructure.CODEC`'s start fields.
+    /// `JigsawStructure.CODEC`'s fields, and whether the structure adapts terrain.
     pub(crate) fn jigsaw(&mut self, obj: &Map<String, Value>, at: &At<'_>) -> LoadResult<Jigsaw> {
         let pool_id = full_id(
             obj.get("start_pool")
                 .and_then(Value::as_str)
                 .ok_or_else(|| at.error(LoadErrorKind::Missing("start_pool")))?,
         );
-        // Pool aliases (PoolAliasBinding) rename pools by their `alias` fields; renaming the
-        // start pool isn't supported, since it would need PoolAliasLookup's own random.
-        if let Some(aliases) = obj.get("pool_aliases")
-            && alias_names(aliases).iter().any(|a| full_id(a) == pool_id)
-        {
-            return Err(at.child("pool_aliases").error(LoadErrorKind::Unsupported {
-                what: "pool alias of the start pool",
-                name: pool_id,
-            }));
-        }
+        // Pool aliases rename pools by their `alias` fields; renaming the start pool isn't
+        // supported, so the start pool is loaded with the structure.
+        let pool_aliases = match obj.get("pool_aliases") {
+            None => Vec::new(),
+            Some(aliases) => {
+                if alias_names(aliases).iter().any(|a| full_id(a) == pool_id) {
+                    return Err(at.child("pool_aliases").error(LoadErrorKind::Unsupported {
+                        what: "pool alias of the start pool",
+                        name: pool_id,
+                    }));
+                }
+                let at = at.child("pool_aliases");
+                aliases
+                    .as_array()
+                    .ok_or_else(|| at.error(LoadErrorKind::Shape("a list")))?
+                    .iter()
+                    .enumerate()
+                    .map(|(i, b)| alias_binding(b, &at.child(&format!("[{i}]"))))
+                    .collect::<LoadResult<_>>()?
+            }
+        };
         let start_height = height_provider(
             obj.get("start_height")
                 .ok_or_else(|| at.error(LoadErrorKind::Missing("start_height")))?,
             &at.child("start_height"),
         )?;
+        let size = obj
+            .get("size")
+            .ok_or_else(|| at.error(LoadErrorKind::Missing("size")))?;
+        let size = codec::int_of(size)
+            .filter(|s| (0..=20).contains(s))
+            .ok_or_else(|| {
+                at.child("size")
+                    .error(LoadErrorKind::Shape("an int in 0..=20"))
+            })?;
+        let use_expansion_hack = obj
+            .get("use_expansion_hack")
+            .ok_or_else(|| at.error(LoadErrorKind::Missing("use_expansion_hack")))?
+            .as_bool()
+            .ok_or_else(|| {
+                at.child("use_expansion_hack")
+                    .error(LoadErrorKind::Shape("a boolean"))
+            })?;
         let project_start_to_heightmap = match obj.get("project_start_to_heightmap") {
             None => None,
             Some(v) => Some(
@@ -551,7 +911,13 @@ impl<'a> JigsawLoader<'a> {
                     .to_string(),
             ),
         };
+        let max_distance = max_distance(
+            obj.get("max_distance_from_center")
+                .ok_or_else(|| at.error(LoadErrorKind::Missing("max_distance_from_center")))?,
+            &at.child("max_distance_from_center"),
+        )?;
         // DimensionPadding.CODEC: an int for both, or {bottom, top}, each defaulting to 0.
+        // Decoding makes a new padding, never DimensionPadding.ZERO.
         let dimension_padding = match obj.get("dimension_padding") {
             None => None,
             Some(v) => {
@@ -568,33 +934,57 @@ impl<'a> JigsawLoader<'a> {
                         (n, n)
                     }
                 };
-                (bottom != 0 || top != 0).then_some((bottom, top))
+                Some((bottom, top))
             }
         };
         let start_jigsaw_name = obj
             .get("start_jigsaw_name")
             .and_then(Value::as_str)
             .map(full_id);
+        // Structure.StructureSettings: terrain_adaptation defaults to none.
+        let adapts_terrain = obj
+            .get("terrain_adaptation")
+            .and_then(Value::as_str)
+            .is_some_and(|t| t != "none");
         Ok(Jigsaw {
             start_pool: self.pool(&pool_id)?,
+            start_pool_id: pool_id,
             start_jigsaw_name,
+            size,
             start_height,
+            use_expansion_hack,
             project_start_to_heightmap,
+            max_distance,
+            pool_aliases,
             dimension_padding,
+            adapts_terrain,
         })
     }
 
-    /// `StructureTemplatePool.DIRECT_CODEC`: `elements`, each `{weight, element}` with weight in
-    /// 1..=150.
-    fn pool(&mut self, id: &str) -> LoadResult<Arc<Pool>> {
+    /// A pool by id, loaded once.
+    pub(crate) fn pool(&mut self, id: &str) -> LoadResult<Arc<Pool>> {
+        self.optional_pool(id)?.ok_or_else(|| {
+            At::root(id).error(LoadErrorKind::Missing("template pool in the bundle"))
+        })
+    }
+
+    /// `StructureTemplatePool.DIRECT_CODEC`: `fallback`, and `elements`, each `{weight,
+    /// element}` with weight in 1..=150. `None` if the bundle has no such pool.
+    pub(crate) fn optional_pool(&mut self, id: &str) -> LoadResult<Option<Arc<Pool>>> {
         if let Some(pool) = self.pools.get(id) {
-            return Ok(pool.clone());
+            return Ok(Some(pool.clone()));
         }
-        let json = self
-            .bundle
-            .resource(TEMPLATE_POOL, id)
-            .map_err(|e| At::root(id).error(e.into()))?;
+        let json = match self.bundle.resource(TEMPLATE_POOL, id) {
+            Ok(json) => json,
+            Err(BundleError::NotFound(_)) => return Ok(None),
+            Err(e) => return Err(At::root(id).error(e.into())),
+        };
         let at = At::root(id);
+        let fallback = full_id(
+            json.get("fallback")
+                .and_then(Value::as_str)
+                .ok_or_else(|| at.error(LoadErrorKind::Missing("fallback")))?,
+        );
         let elements_at = at.child("elements");
         let elements = json
             .get("elements")
@@ -619,9 +1009,34 @@ impl<'a> JigsawLoader<'a> {
             )?;
             templates.extend(std::iter::repeat_n(element, weight as usize));
         }
-        let pool = Arc::new(Pool { templates });
+        let max_size = templates
+            .iter()
+            .filter_map(|e| e.bounding_box([0; 3], Rotation::None))
+            .map(|b| b.y_span())
+            .max()
+            .unwrap_or(0);
+        let pool = Arc::new(Pool {
+            templates,
+            fallback,
+            max_size,
+        });
         self.pools.insert(id.to_string(), pool.clone());
-        Ok(pool)
+        Ok(Some(pool))
+    }
+
+    /// The pools a loaded pool leads to: its fallback, and every pool its elements' jigsaw
+    /// blocks name.
+    pub(crate) fn pools_named_by(pool: &Pool) -> Vec<String> {
+        let mut out = vec![pool.fallback.clone()];
+        for element in &pool.templates {
+            for template in element.templates() {
+                out.extend(template.pools().map(str::to_string));
+            }
+            if matches!(element, PoolElement::Feature(_)) {
+                out.push(FEATURE_JIGSAW.pool.clone());
+            }
+        }
+        out
     }
 
     fn element(&mut self, json: &Value, at: &At<'_>) -> LoadResult<PoolElement> {
@@ -629,13 +1044,26 @@ impl<'a> JigsawLoader<'a> {
             .get("element_type")
             .and_then(Value::as_str)
             .ok_or_else(|| at.error(LoadErrorKind::Missing("element_type")))?;
-        Ok(match full_id(kind).as_str() {
+        let kind = full_id(kind);
+        if kind == "minecraft:empty_pool_element" {
+            return Ok(PoolElement::Empty);
+        }
+        let projection = match json.get("projection").and_then(Value::as_str) {
+            Some("rigid") => Projection::Rigid,
+            Some("terrain_matching") => Projection::TerrainMatching,
+            _ => {
+                return Err(at
+                    .child("projection")
+                    .error(LoadErrorKind::Shape("\"rigid\" or \"terrain_matching\"")));
+            }
+        };
+        Ok(match kind.as_str() {
             "minecraft:single_pool_element" | "minecraft:legacy_single_pool_element" => {
                 let location = json
                     .get("location")
                     .and_then(Value::as_str)
                     .ok_or_else(|| at.error(LoadErrorKind::Missing("location")))?;
-                PoolElement::Single(self.template(&full_id(location))?)
+                PoolElement::Single(self.template(&full_id(location))?, projection)
             }
             "minecraft:list_pool_element" => {
                 let list_at = at.child("elements");
@@ -647,33 +1075,40 @@ impl<'a> JigsawLoader<'a> {
                 for (i, item) in items.iter().enumerate() {
                     elements.push(self.element(item, &list_at.child(&format!("[{i}]")))?);
                 }
-                PoolElement::List(elements)
+                PoolElement::List(elements, projection)
             }
-            "minecraft:feature_pool_element" => PoolElement::Feature,
-            "minecraft:empty_pool_element" => PoolElement::Empty,
+            "minecraft:feature_pool_element" => PoolElement::Feature(projection),
             _ => {
                 return Err(at.child("element_type").error(LoadErrorKind::Unsupported {
                     what: "pool element type",
-                    name: kind.to_string(),
+                    name: kind,
                 }));
             }
         })
     }
 
-    /// A structure template by id, loaded once.
+    /// A structure template by id, loaded once. A template the bundle doesn't have is empty
+    /// (`StructureTemplateManager.getOrCreate`): size zero and no palettes, as the game makes
+    /// it. 26.3's own pools name one (`ancient_city/walls/intact_horizontal_wall_stairs_5`).
     pub(crate) fn template(&mut self, id: &str) -> LoadResult<Arc<Template>> {
         if let Some(t) = self.templates.get(id) {
             return Ok(t.clone());
         }
         let error = |kind: LoadErrorKind| LoadError::new(id, "", kind);
-        let bytes = self
-            .bundle
-            .structure_template(id)
-            .map_err(|e| error(e.into()))?;
-        let (_, root) = nbt::read_compressed(&bytes)
-            .map_err(|e| error(LoadErrorKind::Invalid(nbt_error(&e))))?;
-        let data_version = self.bundle.manifest().data_version;
-        let template = Arc::new(Template::from_nbt(&root, id, data_version)?);
+        let template = match self.bundle.structure_template(id) {
+            Ok(bytes) => {
+                let (_, root) = nbt::read_compressed(&bytes)
+                    .map_err(|e| error(LoadErrorKind::Invalid(nbt_error(&e))))?;
+                let data_version = self.bundle.manifest().data_version;
+                Template::from_nbt(&root, id, data_version)?
+            }
+            Err(BundleError::NotFound(_)) => Template {
+                size: [0; 3],
+                palettes: Vec::new(),
+            },
+            Err(e) => return Err(error(e.into())),
+        };
+        let template = Arc::new(template);
         self.templates.insert(id.to_string(), template.clone());
         Ok(template)
     }
@@ -683,6 +1118,105 @@ fn nbt_error(e: &nbt::NbtError) -> &'static str {
     match e {
         nbt::NbtError::Gzip(_) => "not gzip-compressed NBT",
         _ => "malformed NBT",
+    }
+}
+
+/// `JigsawStructure.MaxDistance.CODEC`: an int in 1..=128 for both, or `{horizontal, vertical}`.
+fn max_distance(json: &Value, at: &At<'_>) -> LoadResult<(i32, i32)> {
+    let shape = || {
+        at.error(LoadErrorKind::Shape(
+            "an int in 1..=128 or {horizontal, vertical}",
+        ))
+    };
+    match json {
+        Value::Object(obj) => {
+            let field = |name: &'static str| {
+                obj.get(name)
+                    .and_then(codec::int_of)
+                    .ok_or_else(|| at.error(LoadErrorKind::Missing(name)))
+            };
+            let horizontal = field("horizontal")?;
+            if !(1..=128).contains(&horizontal) {
+                return Err(shape());
+            }
+            Ok((horizontal, field("vertical")?))
+        }
+        _ => {
+            let n = codec::int_of(json)
+                .filter(|n| (1..=128).contains(n))
+                .ok_or_else(shape)?;
+            Ok((n, n))
+        }
+    }
+}
+
+/// `PoolAliasBinding.CODEC`, dispatched on `type`: `direct` `{alias, target}`, `random`
+/// `{alias, targets}` and `random_group` `{groups}`, the lists weighted (`{data, weight}`).
+fn alias_binding(json: &Value, at: &At<'_>) -> LoadResult<AliasBinding> {
+    let obj = json
+        .as_object()
+        .ok_or_else(|| at.error(LoadErrorKind::Shape("a pool alias binding")))?;
+    let string = |name: &'static str| {
+        obj.get(name)
+            .and_then(Value::as_str)
+            .map(full_id)
+            .ok_or_else(|| at.error(LoadErrorKind::Missing(name)))
+    };
+    let weighted = |name: &'static str| -> LoadResult<Vec<(&Value, i32)>> {
+        let at = at.child(name);
+        obj.get(name)
+            .and_then(Value::as_array)
+            .ok_or_else(|| at.error(LoadErrorKind::Shape("a weighted list")))?
+            .iter()
+            .map(|e| {
+                let data = e
+                    .get("data")
+                    .ok_or_else(|| at.error(LoadErrorKind::Missing("data")))?;
+                let weight = e
+                    .get("weight")
+                    .and_then(codec::int_of)
+                    .filter(|&w| w > 0)
+                    .ok_or_else(|| at.error(LoadErrorKind::Shape("a positive weight")))?;
+                Ok((data, weight))
+            })
+            .collect()
+    };
+    let kind = string("type")?;
+    match kind.as_str() {
+        "minecraft:direct" => Ok(AliasBinding::Direct {
+            alias: string("alias")?,
+            target: string("target")?,
+        }),
+        "minecraft:random" => Ok(AliasBinding::Random {
+            alias: string("alias")?,
+            targets: weighted("targets")?
+                .into_iter()
+                .map(|(d, w)| {
+                    d.as_str()
+                        .map(|t| (full_id(t), w))
+                        .ok_or_else(|| at.child("targets").error(LoadErrorKind::Shape("a pool id")))
+                })
+                .collect::<LoadResult<_>>()?,
+        }),
+        "minecraft:random_group" => Ok(AliasBinding::RandomGroup {
+            groups: weighted("groups")?
+                .into_iter()
+                .map(|(d, w)| {
+                    let at = at.child("groups");
+                    let bindings = d
+                        .as_array()
+                        .ok_or_else(|| at.error(LoadErrorKind::Shape("a list of bindings")))?
+                        .iter()
+                        .map(|b| alias_binding(b, &at))
+                        .collect::<LoadResult<_>>()?;
+                    Ok((bindings, w))
+                })
+                .collect::<LoadResult<_>>()?,
+        }),
+        _ => Err(at.child("type").error(LoadErrorKind::Unsupported {
+            what: "pool alias binding type",
+            name: kind,
+        })),
     }
 }
 
@@ -732,6 +1266,30 @@ fn anchor(json: &Value, at: &At<'_>) -> LoadResult<VerticalAnchor> {
 }
 
 #[cfg(test)]
+impl Template {
+    /// A hand-written template with one palette: jigsaw blocks as `(pos, front, top, data)`.
+    pub(crate) fn for_test(
+        size: [i32; 3],
+        jigsaws: Vec<([i32; 3], Direction, Direction, JigsawData)>,
+    ) -> Self {
+        let mut palette: Vec<TemplateJigsaw> = jigsaws
+            .into_iter()
+            .map(|(pos, front, top, data)| TemplateJigsaw {
+                pos,
+                front,
+                top,
+                data,
+            })
+            .collect();
+        palette.sort_by_key(|j| (j.pos[1], j.pos[0], j.pos[2]));
+        Template {
+            size,
+            palettes: vec![palette],
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -751,6 +1309,28 @@ mod tests {
             [2, 5, -1]
         );
         assert_eq!(Rotation::Clockwise180.transform([1, 5, 2]), [-1, 5, -2]);
+    }
+
+    #[test]
+    fn directions_rotate_as_positions_do() {
+        // A direction's step, rotated as a position, is the rotated direction's step.
+        let all = [
+            Direction::Down,
+            Direction::Up,
+            Direction::North,
+            Direction::South,
+            Direction::West,
+            Direction::East,
+        ];
+        for r in Rotation::ALL {
+            for d in all {
+                assert_eq!(r.transform(d.step()), r.rotate(d).step(), "{r:?} {d:?}");
+            }
+        }
+        assert_eq!(
+            Rotation::Clockwise90.rotate(Direction::North),
+            Direction::East
+        );
     }
 
     #[test]
@@ -802,5 +1382,54 @@ mod tests {
         assert_eq!(h.sample(&mut a, &heights), b.next_int_bounded(21) - 40);
         assert_eq!(VerticalAnchor::BelowTop(2).resolve(&heights), 317);
         assert_eq!(VerticalAnchor::AboveBottom(8).resolve(&heights), -56);
+    }
+
+    fn jigsaw(name: &str, target: &str, joint: Joint) -> JigsawData {
+        JigsawData {
+            name: Some(name.to_string()),
+            pool: EMPTY_POOL.to_string(),
+            target: target.to_string(),
+            joint,
+            placement_priority: 0,
+            selection_priority: 0,
+        }
+    }
+
+    #[test]
+    fn jigsaws_attach_face_to_face_by_target() {
+        use Direction::{Down, East, North, South, Up, West};
+        let at = |front, top, data| PlacedJigsaw {
+            pos: [0; 3],
+            front,
+            top,
+            data,
+        };
+        let aligned = jigsaw("a:p", "a:c", Joint::Aligned);
+        let rollable = jigsaw("a:p", "a:c", Joint::Rollable);
+        let child = jigsaw("a:c", "a:p", Joint::Aligned);
+        let parent = at(East, Up, &aligned);
+        assert!(parent.can_attach(&at(West, Up, &child)));
+        // Not facing each other.
+        assert!(!parent.can_attach(&at(East, Up, &child)));
+        // Tops differ: only a rollable joint allows it.
+        assert!(!parent.can_attach(&at(West, North, &child)));
+        assert!(at(East, Up, &rollable).can_attach(&at(West, North, &child)));
+        // The child's name must be the target.
+        let other = jigsaw("a:x", "a:p", Joint::Aligned);
+        assert!(!parent.can_attach(&at(West, Up, &other)));
+        // A feature's jigsaw has no name, so any target matches; its top is south.
+        let feature = at(Down, South, &FEATURE_JIGSAW);
+        assert!(!at(Up, Up, &aligned).can_attach(&feature));
+        assert!(at(Up, Up, &rollable).can_attach(&feature));
+    }
+
+    #[test]
+    fn default_joint_follows_the_front() {
+        assert_eq!(jigsaw_data(None, Direction::North).joint, Joint::Aligned);
+        assert_eq!(jigsaw_data(None, Direction::Up).joint, Joint::Rollable);
+        assert_eq!(
+            jigsaw_data(None, Direction::Up).pool,
+            "minecraft:empty".to_string()
+        );
     }
 }

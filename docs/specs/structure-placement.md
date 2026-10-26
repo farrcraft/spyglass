@@ -8,7 +8,7 @@ The game decides where a structure starts in three steps:
 2. **The biome check**: whether the structure's biome check passes at its check position. Most check positions depend on terrain.
 3. **Validity**: the structure's pieces, and conditions on terrain.
 
-This spec covers the first two, and says exactly what spyglass can decide without terrain. [With terrain](#with-terrain), [jigsaw assembly](#jigsaw-assembly) and [bounds](#bounds) are drafts, for terrain from [terrain.md](terrain.md), not implemented yet. Classes are in `net.minecraft.world.level.levelgen.structure` unless stated otherwise.
+This spec covers the first two, and says exactly what spyglass can decide without terrain and [with terrain](#with-terrain) from [terrain.md](terrain.md). Of validity, it covers [jigsaw assembly](#jigsaw-assembly) and the [bounds](#bounds) it gives. Classes are in `net.minecraft.world.level.levelgen.structure` unless stated otherwise.
 
 ## Loading
 
@@ -143,12 +143,13 @@ The rotation is `StructureTemplate.transform` with mirror none and pivot 0. Cloc
 **Templates** are `data/minecraft/structure/<path>.nbt`, gzip-compressed NBT ([ADR 0013](../adr/0013-structure-templates-and-nbt.md)). spyglass reads these fields:
 
 - `size`.
-- `palette`, or a list of them in `palettes`. Each entry names its block by `id`, as `NbtUtils.readBlockState` reads it.
+- `palette`, or a list of them in `palettes`. Each entry names its block by `id` and holds its state's properties in `properties`, as `NbtUtils.readBlockState` reads them.
 - `blocks`: `pos`, `state` (a palette index) and an optional `nbt` compound.
-- Jigsaw blocks are the `minecraft:jigsaw` entries. They carry `name` (default `minecraft:empty`) and `selection_priority` (default 0) in their `nbt`.
+- Jigsaw blocks are the `minecraft:jigsaw` entries (`JigsawBlockInfo.parse`). Their state's `orientation` is `<front>_<top>`, `north_up` if absent. Their `nbt` holds `name`, `pool` and `target` (identifiers, default `minecraft:empty`), `joint` (`rollable` or `aligned`; default `aligned` for a horizontal front, `rollable` for up or down), `placement_priority` and `selection_priority` (default 0).
 - Order: the game sorts each block list by y, then x, then z. Jigsaw blocks have block-entity data, so they're all in one list, and keep that order.
 - Palette choice: with several palettes, `StructurePlaceSettings.getRandomPalette` picks one with a random seeded from `Mth.getSeed(pos)`, not the context random.
 - Data version: the game data-fixes a template saved by an older version. spyglass doesn't, so a template's `DataVersion` must equal the bundle's data version. All of 26.3's do.
+- A missing template is empty (`StructureTemplateManager.getOrCreate`): size zero and no palettes, so its box is the corners `(0, 0, 0)` and `(−1, −1, −1)`, and it has no jigsaw blocks. 26.3's `ancient_city/walls/no_corners` pool names one, `intact_horizontal_wall_stairs_5`.
 
 ## What spyglass can decide
 
@@ -185,40 +186,40 @@ So with terrain every Overworld type's check is at a known position, but for min
 
 ## Jigsaw assembly
 
-Draft. `JigsawPlacement.addPieces`, after the start piece ([above](#jigsaw-starts)), continuing to draw from `R`.
+Implemented in `Jigsaw::assemble` (`spyglass-structure`), with the pools `JigsawPools` loads. `JigsawPlacement.addPieces` after the start piece ([above](#jigsaw-starts)), continuing to draw from `R`. Below, `y` is the check's y.
 
-**The start.** The start piece is moved so its box's minimum y is the check's y − 1, projected or not. Dimension padding is checked only when the field is present in the JSON: an explicit `0` still checks against the bare world limits. With `size` 0 no piece is added, so there's no start.
+**The start.** The start piece moves so its box's minimum y is `y − 1` (the ground level delta), projected or not. Dimension padding is checked only when the field is in the JSON: decoding never gives `DimensionPadding.ZERO`, which the game tests by identity, so an explicit `0` still checks against the bare world limits. With `size` 0 no piece is added, so there's no start.
 
-**Free space.** `max_distance_from_center` (an int `n` for both, or `{horizontal, vertical}`) gives a box around the start's centre: x and z from `c − h` to `c + h` inclusive, y from `max(y − v, minY + padding bottom)` to `min(y + v, maxY − padding top)`. The free space is that box minus the start piece's box, as a set of blocks. A piece fits if every block of its box is free; placing it removes its blocks. Each piece remembers the free space it was placed in, shared with its siblings, except that a parent jigsaw whose target is inside its own piece's box uses the piece's own box as free space (made once per piece, shared by its children).
+**Free space.** `max_distance_from_center` (an int `n` in 1..=128 for both, or `{horizontal, vertical}`) gives a box around the start's centre `(cx, cz)`: x from `cx − h` to `cx + h`, z likewise, and y from `max(y − v, minY + bottom)` to `min(y + v, maxY − top)`, all inclusive, with the padding's `bottom` and `top` (0 without padding). If the y range is reversed, its ends swap (`AABB` orders its corners). The free space is that box minus the start piece's box. The game keeps it as a voxel shape and tests a piece's box shrunk by a quarter block, so a piece fits exactly when every block of its box is free; placing it removes its box. Each piece keeps the free space it was placed in, shared with its siblings, except that a parent jigsaw whose target is inside its own piece's box uses that box as free space (made once per piece, shared by all its jigsaws that need it).
 
-**The queue.** Pieces wait in a queue ordered by their parent jigsaw's `placement_priority`, highest first, first in first out among equals. The start piece goes first at depth 0.
+**The queue.** Pieces wait in a queue (`SequencedPriorityIterator`) ordered by their parent jigsaw's `placement_priority`, highest first, first in first out among equals. The start piece's children are placed first, at depth 0; then each piece from the queue, until it's empty.
 
-**One piece's children.** The piece's jigsaw blocks, shuffled and sorted as for the start. For each parent jigsaw `J`, in that order:
+**One piece's children.** The piece's jigsaw blocks at its position and rotation, shuffled and sorted as for the start. For each parent jigsaw `J`, in that order:
 
-1. Its pool, after [aliases](#pool-aliases), and the pool's fallback. If either is missing, or empty and not `minecraft:empty`, skip `J`.
-2. Candidates: the pool's weight-expanded elements shuffled (`Util.shuffle` of a copy), unless the piece is at the maximum depth, then the fallback's, shuffled. Both shuffles draw first.
-3. For each candidate: an empty element stops `J`. Else for each rotation in a shuffled copy of the four (3 draws): the candidate's jigsaw blocks at the origin with that rotation, shuffled and sorted (draws); for each that can attach, place it and test it, below. The first that fits is added, queued at depth + 1 if that's at most `size`, and `J` is done.
+1. `J`'s pool, after [aliases](#pool-aliases), and that pool's `fallback` (not aliased). If either is missing, or empty and not `minecraft:empty`, skip `J`.
+2. Candidates: the pool's weight-expanded elements, shuffled (`Util.shuffle` of a copy), unless the piece is at depth `size`; then the fallback's, shuffled, appended. Each shuffle draws in full before any candidate is tried.
+3. For each candidate: an empty element ends `J`. Else for each rotation in a shuffled copy of the four (3 draws): the candidate's jigsaw blocks at the origin with that rotation, shuffled and sorted (draws), and its box at the origin; then each of those jigsaws `C` that attaches to `J`, placed and tested against the free space as below. The first that fits is added to the start's pieces, queued at depth + 1 if that's at most `size`, with `J`'s placement priority, and `J` is done.
 
-**Attaching.** Child jigsaw `C` attaches to `J` if `C` faces opposite `J`, their tops match unless `J`'s joint is `rollable`, and `C`'s name is `J`'s target (a feature element's jigsaw has no name and matches any). Defaults: names, targets and pools `minecraft:empty`, priorities 0, joint `aligned` for horizontal fronts and `rollable` for vertical ones. Orientation rotates with the piece.
+**Attaching.** `C` attaches to `J` (`JigsawBlock.canAttach`) if `C`'s front is opposite `J`'s, their tops are equal unless `J`'s joint is `rollable`, and `C`'s name is `J`'s target. A feature element's jigsaw has no name and matches any target. Orientation rotates with the piece: horizontal directions turn with the rotation, up and down stay.
 
-**Placing.** The child is positioned so `C` is at `J`'s position plus `J`'s front. Its y:
+**Placing.** `T` is `J`'s position plus `J`'s front step, and `C₀` is `C`'s position at the origin. The candidate goes at `T − C₀`, then moves in y so its box's minimum y is:
 
-- both pieces `rigid`: `C` lands against `J`: the box moves so `C` is at the parent's minimum y + (`J.y − parent min y`) + the front's y step;
-- otherwise: the box's minimum y becomes `FFH − C.y`, where `FFH` is the first free `WORLD_SURFACE_WG` height at `J`'s own x and z, computed once per parent jigsaw.
+- both pieces `rigid`: `parentMinY + (J.y − parentMinY) − C₀.y + front.y`, which puts `C` at `T`;
+- otherwise: `FFH − C₀.y`, where `FFH` is the first free `WORLD_SURFACE_WG` height at `J`'s x and z, asked at most once per parent jigsaw.
 
-With `use_expansion_hack` and a box at most 16 high, the box first grows upward to make room for the tallest element any of its inward-facing jigsaws could attach.
+Then, with `use_expansion_hack` and an origin box at most 16 high, the box's top is raised to `minY + max(e + 1, maxY − minY)`. `e` is the largest, over the candidate's jigsaws at the origin whose target is inside its origin box, of their pool's and its fallback's `getMaxSize` (the tallest non-empty element, unrotated; 0 for a missing pool), with aliases. The raised box is the one tested and kept.
 
-**Elements.** A single (or legacy single) element is its template's box and jigsaw blocks; a list element is the box around its elements' boxes, with the first element's jigsaws; a feature element is one block, with one jigsaw facing down, no draws; the empty element has neither.
+**Elements.** Every element but the empty one has a `projection`, `rigid` or `terrain_matching`; a list element's is its own. A single (or legacy single) element is its template's box and jigsaw blocks. A list element is the box around its elements' boxes, with its first element's jigsaw blocks. A feature element is one block, with one jigsaw at it: front down, top south, `rollable`, no name, pool and target `minecraft:empty`, no draws. The empty element has neither.
 
 ### Pool aliases
 
-`pool_aliases` (in 26.3 only the trial chambers') resolve once per start, with their own random: `LegacyRandomSource(seed).forkPositional().at(minX, sampled start y, minZ)`. Bindings in list order: `direct` maps an alias to a pool; `random` picks one target by weight (`nextInt(total)`, then subtract in list order); `random_group` picks a group the same way and resolves its bindings in order with the same random. Every pool lookup, the start pool's included, goes through the result.
+`pool_aliases` (in 26.3 only the trial chambers') resolve once per start, with their own random: `LegacyRandomSource(seed).forkPositional().at(minX, sampled start y, minZ)`. Bindings in list order: `direct` maps an alias to a pool; `random` picks one target by weight (`nextInt(total)`, then the entry that index falls in, in list order); `random_group` picks a group the same way and resolves its bindings in order with the same random. Every jigsaw block's pool goes through the result. The start pool would too, but spyglass doesn't support aliasing it (none of 26.3's structures does).
 
 ## Bounds
 
-Draft. A start's box is the union of its pieces' boxes, grown by 12 on every side if the structure's `terrain_adaptation` isn't `none` (`Structure.adjustBoundingBox`). In 26.3's Overworld that's strongholds and every jigsaw. Boxes are as generated, before placement moves any piece.
+A start's box (`StructureStart.getBoundingBox`) is the box around its pieces' boxes, grown by 12 on every side if the structure's `terrain_adaptation` isn't `none` (`Structure.adjustBoundingBox`). In 26.3's Overworld that's strongholds and every jigsaw. Boxes are as generated, before placement moves any piece. spyglass gives them for jigsaw structures (`Layout`).
 
-spyglass gives bounds for jigsaw structures and, where they come for free, for single-piece ones (`makeBoundingBox`: the pyramid's 21 × 15 × 21 at y 64, the temple's 12 × 10 × 15, the swamp hut's 7 × 7 × 9, rotated by the piece's random direction; the buried treasure's one block at `(minX + 9, 90, minZ + 9)`; the monument's 58 × 23 × 58 from `(minX − 29, 39, minZ − 29)`). Mansions, strongholds, mineshafts and ocean-ruin clusters aren't covered.
+Not covered: single-piece structures (whose boxes would come from `makeBoundingBox`: the pyramid's 21 × 15 × 21 at y 64, the temple's 12 × 10 × 15, the swamp hut's 7 × 7 × 9, rotated by the piece's random direction; the buried treasure's one block at `(minX + 9, 90, minZ + 9)`; the monument's 58 × 23 × 58 from `(minX − 29, 39, minZ − 29)`), mansions, strongholds, mineshafts and ocean-ruin clusters.
 
 ## Slime chunks
 
@@ -246,5 +247,6 @@ The biome check only ever removes starts, so a count of placement chunks is an u
   - Every jigsaw check position must equal the game's stub: exactly, or in x and z where projected.
   - Every start the game made must be among the selection's structures.
   - With terrain (`structures_with_terrain_match_the_oracle`): every stub spyglass computes must equal the game's exactly, and where the game has no stub spyglass must have none, unless a tied condition stands before it. Every outcome spyglass decides (a certain start, or none) must be the game's. For 26.3 that's 1,640 stubs, all equal, with mineshafts' 787 left unknown, and 5,986 outcomes decided of 6,056, all equal.
+  - With terrain and pools, in the same test: every jigsaw start the game made must assemble to the game's pieces, box for box in order, and to the game's bounds. For 26.3 that's 301 starts and 47,534 pieces, the trial chambers' aliases included.
 
   Run it with `cargo test --release -p spyglass-structure -- --ignored`. For 26.3 it compares 6,056 placement chunks, 2,427 check positions, 682 jigsaw positions and 1,280 ring positions. 304 rings are flagged, and the 61 that differ are all among them.

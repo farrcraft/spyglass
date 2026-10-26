@@ -7,6 +7,7 @@ mod app;
 mod export;
 mod locate;
 mod markers;
+mod search;
 mod tiles;
 mod view;
 

@@ -77,6 +77,8 @@ pub enum Picked<'a> {
     Structure(&'a StructureStart),
     Spawn(&'a SpawnOrigin),
     Hit(&'a Hit),
+    /// Something a search hit's constraint matched.
+    Match(&'a crate::search::Match),
 }
 
 /// The marker nearest `pointer` within reach, from markers at screen positions.

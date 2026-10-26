@@ -9,13 +9,14 @@ use std::thread;
 use eframe::egui::{self, Color32, Key, Pos2, Rect, Sense, TextureOptions, Vec2};
 use serde::{Deserialize, Serialize};
 use spyglass::{
-    BiomeQuery, BundleInfo, Image, LauncherSave, SaveReport, Scan, Session, SpawnOrigin,
-    StructureQuery, StructureStart, World,
+    BiomeQuery, BundleInfo, Evaluation, Image, LauncherSave, SaveReport, Scan, SearchOutcome,
+    SearchQuery, Session, SpawnOrigin, StructureQuery, StructureStart, World,
 };
 
 use crate::export::{Export, Source, visible_area};
 use crate::locate::{self, Found, Target};
 use crate::markers::{self, Picked};
+use crate::search::{self, Match, Running, SearchSettings};
 use crate::tiles::{
     Cache, Entry, Job, JobKey, MarkerKey, Output, Pool, Style, TileKey, slime_features,
 };
@@ -54,6 +55,7 @@ struct Settings {
     structures: Vec<String>,
     /// Biome ids to keep bright.
     highlight: Vec<String>,
+    search: SearchSettings,
 }
 
 impl Default for Settings {
@@ -68,6 +70,7 @@ impl Default for Settings {
             spawn: true,
             structures: Vec::new(),
             highlight: Vec::new(),
+            search: SearchSettings::default(),
         }
     }
 }
@@ -172,6 +175,22 @@ pub struct App {
     scrolled: f32,
     /// The block under the pointer, for the status bar.
     cursor: Option<[i32; 2]>,
+    /// The search query's text and what it parsed to, against the world shown.
+    search_parsed: Option<(String, Result<SearchQuery, String>)>,
+    /// The search running or last run.
+    search_run: Option<SearchRun>,
+    /// A live hit being evaluated before it opens.
+    opening: Option<Pending<Result<(i64, Evaluation), String>>>,
+    /// The seed of the hit last opened, and what its constraints matched.
+    opened: Option<(i64, Vec<Match>)>,
+    search_error: Option<String>,
+}
+
+/// A search and its query.
+struct SearchRun {
+    query: SearchQuery,
+    running: Option<Running>,
+    outcome: Option<Result<SearchOutcome, String>>,
 }
 
 impl App {
@@ -216,6 +235,11 @@ impl App {
             goto_error: false,
             scrolled: 0.0,
             cursor: None,
+            search_parsed: None,
+            search_run: None,
+            opening: None,
+            opened: None,
+            search_error: None,
         };
         app.scan(&cc.egui_ctx);
         app
@@ -271,6 +295,7 @@ impl App {
         match result {
             Ok(Ok(world)) => {
                 self.world = Some(world);
+                self.search_parsed = None;
                 self.apply_seed();
             }
             Ok(Err(e)) => self.load_error = Some(e),
@@ -291,6 +316,19 @@ impl App {
                     .unwrap_or_else(|()| Err("exporting failed".to_string()))
                     .map(|path| format!("Saved {}", path.display())),
             );
+        }
+        if let Some(run) = &mut self.search_run
+            && let Some(outcome) = run.running.as_ref().and_then(Running::poll)
+        {
+            run.running = None;
+            run.outcome = Some(outcome);
+        }
+        if let Some(result) = self.opening.as_ref().and_then(Pending::poll) {
+            self.opening = None;
+            match result.unwrap_or_else(|()| Err("evaluating the seed failed".to_string())) {
+                Ok((seed, evaluation)) => self.open_hit(seed, &evaluation),
+                Err(e) => self.search_error = Some(e),
+            }
         }
         if let Some(result) = self.inspecting.as_ref().and_then(Pending::poll) {
             self.inspecting = None;
@@ -430,6 +468,9 @@ impl App {
         egui::CollapsingHeader::new("Layers")
             .default_open(true)
             .show(ui, |ui| self.layers_section(ui));
+        egui::CollapsingHeader::new("Search")
+            .default_open(false)
+            .show(ui, |ui| self.search_section(ui));
         egui::CollapsingHeader::new("Export")
             .default_open(true)
             .show(ui, |ui| self.export_section(ui));
@@ -547,6 +588,211 @@ impl App {
                 .map_err(|e| format!("writing {}: {e}", path.display()))?;
             Ok(path)
         }));
+    }
+
+    /// The search query, its options, and the best seeds so far: click one to open it.
+    fn search_section(&mut self, ui: &mut egui::Ui) {
+        let Some(world) = self.world else {
+            ui.weak("Open a bundle to search.");
+            return;
+        };
+        let s = &mut self.settings.search;
+        ui.add(
+            egui::TextEdit::multiline(&mut s.query)
+                .code_editor()
+                .desired_rows(4)
+                .desired_width(f32::INFINITY)
+                .hint_text("require 2 minecraft:swamp_hut within 600 of spawn"),
+        );
+        if self
+            .search_parsed
+            .as_ref()
+            .is_none_or(|(text, _)| *text != s.query)
+        {
+            let parsed = world.search_query(&s.query).map_err(|e| e.to_string());
+            self.search_parsed = Some((s.query.clone(), parsed));
+        }
+        let parsed = self.search_parsed.as_ref().map(|(_, p)| p);
+        if let Some(Err(e)) = parsed {
+            ui.colored_label(ui.visuals().error_fg_color, e);
+        }
+        ui.horizontal(|ui| {
+            ui.label("Keep the best");
+            ui.add(egui::DragValue::new(&mut s.top).range(1..=1000));
+        });
+        ui.horizontal(|ui| {
+            ui.label("Stop after");
+            ui.add(
+                egui::TextEdit::singleline(&mut s.seeds)
+                    .hint_text("any number of")
+                    .desired_width(80.0),
+            );
+            ui.label("seeds or");
+            ui.add(egui::DragValue::new(&mut s.seconds).suffix(" s"))
+                .on_hover_text("0 for no time limit.");
+        });
+        ui.checkbox(&mut s.range, "Only seeds in a range")
+            .on_hover_text("Otherwise every 64-bit seed, with structure placement checked first.");
+        if s.range {
+            ui.horizontal(|ui| {
+                ui.add(egui::TextEdit::singleline(&mut s.first).desired_width(100.0));
+                ui.label("to");
+                ui.add(egui::TextEdit::singleline(&mut s.last).desired_width(100.0));
+            });
+        }
+        ui.horizontal(|ui| {
+            ui.label("Start at index");
+            ui.add(egui::DragValue::new(&mut s.from));
+        });
+        ui.checkbox(&mut s.certain, "Certain only").on_hover_text(
+            "Only seeds whose required constraints hold whatever terrain decides, ranked by the \
+             worst case. Most structures need terrain, so this finds few seeds for now.",
+        );
+
+        let options = s.options(search::threads());
+        let running = self
+            .search_run
+            .as_ref()
+            .is_some_and(|r| r.running.is_some());
+        let mut start = None;
+        if running {
+            if ui.button("Stop").clicked()
+                && let Some(running) = self.search_run.as_ref().and_then(|r| r.running.as_ref())
+            {
+                running.stop();
+            }
+        } else {
+            let ready = matches!(parsed, Some(Ok(_))) && options.is_ok();
+            if ui.add_enabled(ready, egui::Button::new("Search")).clicked()
+                && let (Some(Ok(query)), Ok(options)) = (parsed, &options)
+            {
+                start = Some((query.clone(), options.clone()));
+            }
+            if let Err(e) = &options {
+                ui.weak(e);
+            }
+        }
+
+        let mut open: Option<(i64, Option<Evaluation>)> = None;
+        let mut continue_from = None;
+        if let Some(run) = &self.search_run {
+            let live = run.running.as_ref().and_then(Running::progress);
+            let finished = run.outcome.as_ref().and_then(|o| o.as_ref().ok());
+            if let Some(Err(e)) = &run.outcome {
+                ui.colored_label(ui.visuals().error_fg_color, e);
+            }
+            let progress = finished.map(|o| &o.progress).or(live.as_ref());
+            if let Some(p) = progress {
+                ui.horizontal(|ui| {
+                    if running {
+                        ui.spinner();
+                    }
+                    let rate = p.evaluated as f64 / p.elapsed.as_secs_f64().max(0.001);
+                    ui.label(format!(
+                        "{} seeds, {rate:.0} a second, {} reported",
+                        p.evaluated, p.reported
+                    ));
+                });
+            } else if running {
+                ui.spinner();
+            }
+            let opened = self.opened.as_ref().map(|(seed, _)| *seed);
+            match finished {
+                Some(outcome) => {
+                    for hit in &outcome.hits {
+                        let label = format!("{}  score {}", hit.seed, hit.score);
+                        if ui
+                            .selectable_label(opened == Some(hit.seed), label)
+                            .clicked()
+                        {
+                            open = Some((hit.seed, Some(hit.evaluation.clone())));
+                        }
+                    }
+                    if let Some(next) = outcome.progress.next
+                        && ui
+                            .small_button(format!("Continue from index {next}"))
+                            .clicked()
+                    {
+                        continue_from = Some((run.query.clone(), next));
+                    }
+                }
+                None => {
+                    for hit in live.iter().flat_map(|p| &p.top) {
+                        let label = format!("{}  score {}", hit.seed, hit.score);
+                        if ui
+                            .selectable_label(opened == Some(hit.seed), label)
+                            .clicked()
+                        {
+                            open = Some((hit.seed, None));
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(e) = &self.search_error {
+            ui.colored_label(ui.visuals().error_fg_color, e);
+        }
+
+        if let Some((query, next)) = continue_from {
+            self.settings.search.from = next;
+            if let Ok(options) = self.settings.search.options(search::threads()) {
+                start = Some((query, options));
+            }
+        }
+        if let Some((query, options)) = start {
+            let ctx = ui.ctx().clone();
+            self.search_error = None;
+            self.search_run = Some(SearchRun {
+                running: Some(Running::start(world, query.clone(), options, move || {
+                    ctx.request_repaint();
+                })),
+                query,
+                outcome: None,
+            });
+        }
+        if let Some((seed, evaluation)) = open {
+            self.search_error = None;
+            match evaluation {
+                Some(evaluation) => self.open_hit(seed, &evaluation),
+                None => {
+                    let query = self.search_run.as_ref().map(|r| r.query.clone());
+                    if let Some(query) = query {
+                        self.opening = Some(Pending::spawn(ui.ctx(), move || {
+                            world
+                                .session(seed)
+                                .and_then(|s| s.evaluate(&query))
+                                .map(|e| (seed, e))
+                                .map_err(|e| e.to_string())
+                        }));
+                    }
+                }
+            }
+        }
+    }
+
+    /// Shows a search hit: its seed, centred on the query's first place, with the structures it
+    /// matched marked and everything its constraints matched ringed.
+    fn open_hit(&mut self, seed: i64, evaluation: &Evaluation) {
+        let Some(run) = &self.search_run else {
+            return;
+        };
+        let matches = search::matches(&run.query, evaluation);
+        let query = run.query.clone();
+        self.save = None;
+        self.settings.seed = seed.to_string();
+        self.apply_seed();
+        let Some(shown) = &self.shown else {
+            return;
+        };
+        let [x, z] = search::focus(query.query(), shown.spawn.map_block());
+        self.settings.view.centre = [f64::from(x) + 0.5, f64::from(z) + 0.5];
+        for id in search::structures(evaluation) {
+            if !self.settings.structures.contains(&id) {
+                self.settings.structures.push(id);
+            }
+        }
+        self.select();
+        self.opened = Some((seed, matches));
     }
 
     /// The last locate's answer: click a hit to go there.
@@ -1099,6 +1345,15 @@ impl App {
                 shown_markers.push((at, Picked::Hit(hit)));
             }
         }
+        if let Some((seed, matches)) = &self.opened
+            && *seed == session.seed()
+        {
+            for m in matches {
+                let at = markers::pixel_centre(&view, centre, m.at);
+                markers::hit(&painter, at, m.certain);
+                shown_markers.push((at, Picked::Match(m)));
+            }
+        }
         if let Some(pointer) = response.hover_pos()
             && !response.dragged()
             && let Some(picked) = markers::pick(pointer, shown_markers)
@@ -1305,6 +1560,14 @@ fn describe(ui: &mut egui::Ui, picked: &Picked<'_>) {
             ));
             if !hit.certain {
                 ui.label("Candidate: the game's answer is the first of these it confirms.");
+            }
+        }
+        Picked::Match(m) => {
+            ui.strong(&m.what);
+            ui.label(format!("{}, {}", m.at[0], m.at[1]));
+            ui.weak(&m.constraint);
+            if !m.certain {
+                ui.label("Possible: it depends on terrain, a tied biome or the platform.");
             }
         }
     }

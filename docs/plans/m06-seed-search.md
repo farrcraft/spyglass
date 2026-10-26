@@ -161,9 +161,9 @@ Specs and ADRs that govern this: [ADR 0014](../adr/0014-public-api-world-and-ses
 
 ### Phase 7: the viewer
 
-- [ ] Search panel: editor with live errors, options, Run and Stop, progress, live top list.
-- [ ] Opening a hit: seed, centre, layers, matched features ringed; markers checked against `Session::evaluate`.
-- [ ] Settings persistence for the query and options; unit tests for the non-drawing parts (option building, hit-to-view mapping).
+- [x] Search panel: editor with live errors, options, Run and Stop, progress, live top list.
+- [x] Opening a hit: seed, centre, layers, matched features ringed; markers checked against `Session::evaluate`. The rings are `evaluate`'s features by construction, tested headless; the panel hasn't been driven by hand yet (see Notes).
+- [x] Settings persistence for the query and options; unit tests for the non-drawing parts (option building, hit-to-view mapping).
 
 ### Phase 8: speed, benchmarks and close-out
 
@@ -204,6 +204,7 @@ Agreed on 2026-10-25, as recommended:
 
 ## Notes
 
+- 2026-10-25: Phase 7 done, except driving it by hand. The viewer has a Search section: the query in a code editor, re-resolved when it changes, with errors under it; how many to keep, a seed count or time limit, a seed range, the start index and certain mode; Search and Stop; progress and the top list live; Continue from `next` when a search ends. Clicking a hit opens its seed centred on the query's first place, switches on the structures it matched, and rings every feature its constraints matched, with the constraint in the tooltip. A live hit is evaluated in the background first. Searches use every core but one. The viewer was built and started on Windows, but not clicked through: that's for the manual check in Verification.
 - 2026-10-25: Phase 6 done. A first real search, `require 2 minecraft:swamp_hut within 400 of 0,0`, over the first 4,194,304 seeds of `All` (64 values of the lower 48 bits): 146 s on all cores, the prefilter skipped 18 of the 64 (1,179,648 seeds), 3,014,656 were checked and 10,626 reported. The top hit's two huts agree with `spyglass locate structure`. Checking is about 20,000 seeds a second across the machine, nearly all of it binding sessions and the huts' biome checks: phase 8's subject. The run also showed `reported` counting only seeds that reached the top list's threshold; `check` now says `Failed`, `Below` or `Scored`, so the count is every reported seed and doesn't depend on timing.
 - 2026-10-25: Phases 4 and 5 done. `SeedPlacements` answers placement from the lower 48 bits, and `Placements` now asks it first; the structure golden tests and `/locate` checks still pass, and on 26.3 it decides every random-spread set exactly (every exclusion zone there is against a random-spread set). Over 200 fixture seeds and 6 queries the prefilter never rejected a seed `evaluate` reports, and `check` equalled `evaluate` at six thresholds in both modes; the same holds for 40 seeds and 5 queries on 26.3 (an ignored test). The runner works in rounds of 1,024-index batches, 4 per thread, merged in rank order; the threshold it passes to `check` is the current Nth score, ties included, so pruning can't change the list. Indices are counted in `u128` inside the runner so `All`'s 2⁶⁴ seeds have an end. `largest_group` moved to `spyglass-search`, which the prefilter needs too, with a brute-force test over every subset of 12 points.
 - 2026-10-25: Phases 2 and 3 done. `Session::evaluate` takes 9.2 ms in a new session on 26.3 for four constraints (two swamp-hut counts, villages, cherry grove presence within 500), most of it the cherry grove's 3,000 biome samples. Places are now limited to 65,536 blocks on a side (radius 32,767): without it a count like `slime within 30000000 of spawn` would enumerate 10¹³ chunks. The real bundle caught the spec's example using `minecraft:village`, which is only a tag (`#minecraft:village`). The fixture world with structures moved from the public API's tests into `spyglass_oracle::fixtures::structured_overworld`, for the search tests to share. Evaluations keep both cases' scores, so `certain` is an option of the search, not of evaluating a seed.

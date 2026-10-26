@@ -3426,6 +3426,7 @@ dependencies = [
  "spyglass-biome",
  "spyglass-data",
  "spyglass-oracle",
+ "spyglass-search",
  "spyglass-structure",
  "spyglass-world",
  "tempfile",
@@ -3524,6 +3525,13 @@ version = "0.0.0"
 dependencies = [
  "md-5",
  "spyglass-oracle",
+]
+
+[[package]]
+name = "spyglass-search"
+version = "0.0.0"
+dependencies = [
+ "thiserror 2.0.21",
 ]
 
 [[package]]

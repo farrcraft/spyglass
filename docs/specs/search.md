@@ -45,10 +45,11 @@ A missing count means 1. Structure anchors (`within R of STRUCTURE place`) are a
 
 ### Limits
 
-- Coordinates, radii and distances: magnitude at most 30,000,000 (the world border).
+- Coordinates and cluster distances: magnitude at most 30,000,000 (the world border).
+- Places: a box at most 65,536 blocks on a side, a radius at most 32,767 (so a disc's bounding box fits the same limit), including the radius around a structure anchor. Every count a query asks for is then over a bounded area.
 - Counts: 1 to 10,000. Cluster sizes: 2 to 64. Weights: 1 to 1,000. Percentages: 1 to 100. `step`: 1 to 4,096.
 - `y`: within the dimension's build height (−64 to 319 in the 26.3 Overworld).
-- A biome constraint may sample at most 1,048,576 points.
+- A biome constraint's grid, counted over its place's bounding box, has at most 1,048,576 points.
 - A query has at least one constraint.
 
 Anything else is an error naming the line and column.
@@ -68,7 +69,7 @@ prefer 3 #minecraft:village within 400 of spawn weight 2
 prefer biome minecraft:cherry_grove within 500 of spawn
 prefer biome minecraft:jungle covers 25% within 1000 of 0,0 step 32
 prefer 6 slime within 64 of spawn
-prefer minecraft:village within 300 of minecraft:ancient_city within 3000 of spawn
+prefer #minecraft:village within 300 of minecraft:ancient_city within 3000 of spawn
 prefer spawn within 200 of 0,0
 prefer biome minecraft:plains within 0 of spawn
 ```

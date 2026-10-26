@@ -95,6 +95,16 @@ fn main() -> spyglass::Result<()> {
         let session = world.session(*seeds.next().unwrap()).unwrap();
         black_box(session.spawn_origin());
     });
+    let huts = world.search_query(
+        "require 2 minecraft:swamp_hut within 600 of spawn
+         require cluster 2 minecraft:swamp_hut within 200 of each other within 600 of spawn
+         prefer 3 #minecraft:village within 400 of spawn
+         prefer biome minecraft:cherry_grove within 500 of spawn",
+    )?;
+    report("evaluate swamp huts near spawn, new session", 5, || {
+        let session = world.session(*seeds.next().unwrap()).unwrap();
+        black_box(session.evaluate(&huts).unwrap());
+    });
     Ok(())
 }
 

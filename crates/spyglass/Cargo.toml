@@ -13,6 +13,7 @@ workspace = true
 [dependencies]
 spyglass-biome.workspace = true
 spyglass-data.workspace = true
+spyglass-search.workspace = true
 spyglass-structure.workspace = true
 spyglass-world.workspace = true
 png.workspace = true

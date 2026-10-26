@@ -2,67 +2,12 @@
 //! desert east of it, and structure sets chosen to exercise each kind of locate answer. No game
 //! data (ADR 0008), so these always run.
 
-use serde_json::{Value, json};
 use spyglass::{Error, World};
-use spyglass_oracle::fixtures::{self, TestBundle, resource};
-
-/// A random-spread set of one structure.
-fn set(name: &str, spacing: i32, separation: i32, structure: &str) -> (String, Value) {
-    resource(
-        "worldgen/structure_set",
-        name,
-        json!({"placement": {"type": "minecraft:random_spread", "salt": 12345,
-                "spacing": spacing, "separation": separation},
-            "structures": [{"structure": structure, "weight": 1}]}),
-    )
-}
-
-fn structure(name: &str, kind: &str, biomes: &str) -> (String, Value) {
-    resource(
-        "worldgen/structure",
-        name,
-        json!({"type": kind, "biomes": biomes}),
-    )
-}
-
-/// Towers check their biome at a point, so they're certain in plains; huts need terrain, so
-/// they're only ever candidates; rings are concentric; monuments check an area.
-fn bundle() -> TestBundle {
-    fixtures::overworld(
-        &[
-            set("towers", 8, 2, "minecraft:tower"),
-            structure("tower", "minecraft:stronghold", "minecraft:plains"),
-            set("huts", 8, 2, "minecraft:hut"),
-            structure("hut", "minecraft:swamp_hut", "minecraft:plains"),
-            set("monuments", 8, 2, "minecraft:monument"),
-            structure("monument", "minecraft:ocean_monument", "minecraft:plains"),
-            resource(
-                "worldgen/structure_set",
-                "rings",
-                json!({"placement": {"type": "minecraft:concentric_rings", "salt": 0,
-                        "distance": 4, "spread": 3, "count": 6,
-                        "preferred_biomes": "minecraft:plains"},
-                    "structures": [{"structure": "minecraft:keep", "weight": 1}]}),
-            ),
-            structure("keep", "minecraft:stronghold", "minecraft:plains"),
-            resource(
-                "tags/worldgen/structure",
-                "everything",
-                json!({"values": ["minecraft:tower", "#minecraft:towers_too"]}),
-            ),
-            resource(
-                "tags/worldgen/structure",
-                "towers_too",
-                json!({"values": ["minecraft:tower", "minecraft:hut"]}),
-            ),
-        ],
-        false,
-    )
-}
+use spyglass_oracle::fixtures;
 
 #[test]
 fn biomes_follow_the_temperature_gradient() {
-    let fixture = bundle();
+    let fixture = fixtures::structured_overworld(false);
     let world = World::open(fixture.path()).unwrap();
     let session = world.session(42).unwrap();
     assert_eq!(session.biome_at([-500, 64, 0]).biome, "minecraft:plains");
@@ -72,7 +17,7 @@ fn biomes_follow_the_temperature_gradient() {
 
 #[test]
 fn a_certain_structure_ends_the_search() {
-    let fixture = bundle();
+    let fixture = fixtures::structured_overworld(false);
     let world = World::open(fixture.path()).unwrap();
     let towers = world.structure_query("minecraft:tower").unwrap();
     for seed in [0, 1, 42] {
@@ -99,7 +44,7 @@ fn a_certain_structure_ends_the_search() {
 
 #[test]
 fn candidates_stop_at_the_limit() {
-    let fixture = bundle();
+    let fixture = fixtures::structured_overworld(false);
     let world = World::open(fixture.path()).unwrap();
     let huts = world.structure_query("minecraft:hut").unwrap();
     let session = world.session(7).unwrap();
@@ -117,7 +62,7 @@ fn candidates_stop_at_the_limit() {
 
 #[test]
 fn tags_expand_in_order() {
-    let fixture = bundle();
+    let fixture = fixtures::structured_overworld(false);
     let world = World::open(fixture.path()).unwrap();
     let all = world.structure_query("#minecraft:everything").unwrap();
     assert_eq!(all.argument(), "#minecraft:everything");
@@ -137,7 +82,7 @@ fn tags_expand_in_order() {
 
 #[test]
 fn rings_find_a_certain_keep() {
-    let fixture = bundle();
+    let fixture = fixtures::structured_overworld(false);
     let world = World::open(fixture.path()).unwrap();
     let keeps = world.structure_query("minecraft:keep").unwrap();
     let session = world.session(99).unwrap();
@@ -156,7 +101,7 @@ fn rings_find_a_certain_keep() {
 
 #[test]
 fn biome_locates_cross_the_gradient() {
-    let fixture = bundle();
+    let fixture = fixtures::structured_overworld(false);
     let world = World::open(fixture.path()).unwrap();
     let session = world.session(5).unwrap();
     let desert = world.biome_query("desert").unwrap();
@@ -175,7 +120,10 @@ fn biome_locates_cross_the_gradient() {
 
 #[test]
 fn queries_belong_to_their_world() {
-    let (a, b) = (bundle(), bundle());
+    let (a, b) = (
+        fixtures::structured_overworld(false),
+        fixtures::structured_overworld(false),
+    );
     let (wa, wb) = (
         World::open(a.path()).unwrap(),
         World::open(b.path()).unwrap(),
@@ -203,7 +151,7 @@ fn queries_belong_to_their_world() {
 #[test]
 fn coordinates_at_the_edge_of_the_world_wrap() {
     // Near i32's limits every coordinate sum wraps, as in the game; nothing panics.
-    let fixture = bundle();
+    let fixture = fixtures::structured_overworld(false);
     let world = World::open(fixture.path()).unwrap();
     let session = world.session(11).unwrap();
     let far = 134_217_727;
@@ -223,7 +171,7 @@ fn coordinates_at_the_edge_of_the_world_wrap() {
 
 #[test]
 fn slime_chunks_near_come_nearest_first() {
-    let fixture = bundle();
+    let fixture = fixtures::structured_overworld(false);
     let world = World::open(fixture.path()).unwrap();
     let session = world.session(12345).unwrap();
     let near = session.slime_chunks_near([3, -4], 20);
@@ -239,7 +187,7 @@ fn slime_chunks_near_come_nearest_first() {
 
 #[test]
 fn spawn_and_bundles() {
-    let fixture = bundle();
+    let fixture = fixtures::structured_overworld(false);
     let world = World::open(fixture.path()).unwrap();
     let origin = world.session(1).unwrap().spawn_origin();
     assert!(origin.position.is_some());

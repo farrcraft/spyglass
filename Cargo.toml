@@ -39,6 +39,7 @@ spyglass-extract = { path = "crates/spyglass-extract" }
 spyglass-noise = { path = "crates/spyglass-noise" }
 spyglass-oracle = { path = "crates/spyglass-oracle" }
 spyglass-rng = { path = "crates/spyglass-rng" }
+spyglass-search = { path = "crates/spyglass-search" }
 spyglass-structure = { path = "crates/spyglass-structure" }
 spyglass-world = { path = "crates/spyglass-world" }
 

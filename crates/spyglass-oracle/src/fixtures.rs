@@ -3,7 +3,8 @@
 //! [`overworld`] is a whole dimension the public API can open: the Default preset, a parameter
 //! list of plains and desert, and a noise router whose temperature is a gradient along x, so the
 //! biome is plains west of x = 0 and desert east of it, the same for every seed. The gradient is
-//! never exactly 0 at a block, so no cell is tied between the two.
+//! never exactly 0 at a block, so no cell is tied between the two. [`structured_overworld`] adds
+//! structure sets.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -135,4 +136,68 @@ pub fn overworld(extra: &[(String, Value)], tie: bool) -> TestBundle {
     }
     files.extend(extra.iter().cloned());
     TestBundle::new(&files)
+}
+
+/// A random-spread structure set of one structure, with salt 12345.
+pub fn random_spread_set(
+    name: &str,
+    spacing: i32,
+    separation: i32,
+    structure: &str,
+) -> (String, Value) {
+    resource(
+        "worldgen/structure_set",
+        name,
+        json!({"placement": {"type": "minecraft:random_spread", "salt": 12345,
+                "spacing": spacing, "separation": separation},
+            "structures": [{"structure": structure, "weight": 1}]}),
+    )
+}
+
+/// A structure of type `kind` (e.g. `minecraft:swamp_hut`) whose biome check is `biomes`.
+pub fn structure(name: &str, kind: &str, biomes: &str) -> (String, Value) {
+    resource(
+        "worldgen/structure",
+        name,
+        json!({"type": kind, "biomes": biomes}),
+    )
+}
+
+/// [`overworld`] with structures chosen to exercise each kind of answer: towers check their
+/// biome at a point, so they're certain in plains; huts need terrain, so they're only ever
+/// candidates; monuments check an area; keeps are on concentric rings. Each random-spread set
+/// has spacing 8 and separation 2. Tags: `#minecraft:everything` (towers, and
+/// `#minecraft:towers_too`) and `#minecraft:towers_too` (towers and huts). With `tie`, plains
+/// cells are tied with forest, as in [`overworld`].
+pub fn structured_overworld(tie: bool) -> TestBundle {
+    overworld(
+        &[
+            random_spread_set("towers", 8, 2, "minecraft:tower"),
+            structure("tower", "minecraft:stronghold", "minecraft:plains"),
+            random_spread_set("huts", 8, 2, "minecraft:hut"),
+            structure("hut", "minecraft:swamp_hut", "minecraft:plains"),
+            random_spread_set("monuments", 8, 2, "minecraft:monument"),
+            structure("monument", "minecraft:ocean_monument", "minecraft:plains"),
+            resource(
+                "worldgen/structure_set",
+                "rings",
+                json!({"placement": {"type": "minecraft:concentric_rings", "salt": 0,
+                        "distance": 4, "spread": 3, "count": 6,
+                        "preferred_biomes": "minecraft:plains"},
+                    "structures": [{"structure": "minecraft:keep", "weight": 1}]}),
+            ),
+            structure("keep", "minecraft:stronghold", "minecraft:plains"),
+            resource(
+                "tags/worldgen/structure",
+                "everything",
+                json!({"values": ["minecraft:tower", "#minecraft:towers_too"]}),
+            ),
+            resource(
+                "tags/worldgen/structure",
+                "towers_too",
+                json!({"values": ["minecraft:tower", "minecraft:hut"]}),
+            ),
+        ],
+        tie,
+    )
 }

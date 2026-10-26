@@ -76,7 +76,7 @@ prefer 3 #minecraft:village within 400 of spawn weight 2
 prefer biome minecraft:cherry_grove within 500 of spawn
 prefer biome minecraft:jungle covers 25% within 1000 of 0,0 step 32
 prefer 6 slime within 64 of spawn
-prefer minecraft:village within 300 of minecraft:ancient_city within 3000 of spawn
+prefer #minecraft:village within 300 of minecraft:ancient_city within 3000 of spawn
 prefer spawn within 200 of 0,0
 ```
 
@@ -130,15 +130,15 @@ Specs and ADRs that govern this: [ADR 0014](../adr/0014-public-api-world-and-ses
 
 ### Phase 2: the language
 
-- [ ] Create `spyglass-search` (`[lints] workspace = true`; architecture table updated).
-- [ ] Syntax tree, parser with line and column errors, canonical printer.
-- [ ] Tests: every spec example parses; print-then-parse round trips; malformed input gives errors, never panics (including a run over generated junk).
-- [ ] `World::search_query`: resolve structure ids and tags (as `structure_query`), biome ids (as `biome_query`); unknown ids are errors with positions.
+- [x] Create `spyglass-search` (`[lints] workspace = true`; architecture table updated).
+- [x] Syntax tree, parser with line and column errors, canonical printer.
+- [x] Tests: every spec example parses; print-then-parse round trips; malformed input gives errors, never panics (including 20,000 mutated example lines).
+- [x] `World::search_query`: resolve structure ids and tags (as `structure_query`), biome ids (as `biome_query`); unknown ids are errors with positions.
 
 ### Phase 3: the plain implementation
 
-- [ ] `Session::evaluate` from the session's own queries, with `Evaluation`, `Verdict` and per-constraint results (outcome, value, satisfaction, matched features).
-- [ ] Tests on `spyglass-oracle` fixture bundles: hand-checked answers for each constraint type, including candidates, ties and a platform-dependent spawn; `certain` mode.
+- [x] `Session::evaluate` from the session's own queries, with `Evaluation`, `Outcome` and per-constraint results (outcome, value, satisfaction, matched features).
+- [x] Tests on `spyglass-oracle` fixture bundles: hand-checked answers for each constraint type, including candidates, ties and a platform-dependent spawn; `certain` mode. The platform-dependent spawn is a unit test of the outcome rule: no fixture or known seed has one.
 
 ### Phase 4: the fast path
 
@@ -204,6 +204,7 @@ Agreed on 2026-10-25, as recommended:
 
 ## Notes
 
+- 2026-10-25: Phases 2 and 3 done. `Session::evaluate` takes 9.2 ms in a new session on 26.3 for four constraints (two swamp-hut counts, villages, cherry grove presence within 500), most of it the cherry grove's 3,000 biome samples. Places are now limited to 65,536 blocks on a side (radius 32,767): without it a count like `slime within 30000000 of spawn` would enumerate 10¹³ chunks. The real bundle caught the spec's example using `minecraft:village`, which is only a tag (`#minecraft:village`). The fixture world with structures moved from the public API's tests into `spyglass_oracle::fixtures::structured_overworld`, for the search tests to share. Evaluations keep both cases' scores, so `certain` is an option of the search, not of evaluating a seed.
 - 2026-10-25: Phase 1 done. Writing the grammar settled three things the draft left open. The weight goes at the end of the line (`weight N`), since `prefer 3 …` would otherwise be ambiguous between a weight and a count. A cluster is N starts every two at most D apart, which stays in integers, unlike a common centre. Each constraint is evaluated in a best and a worst case, which gives the three outcomes and the two scoring modes. The engine's layering changed too: per-seed evaluation lives in `spyglass` (`Session::evaluate`, plain, and `Session::check`, fast, over shared per-constraint functions), and `spyglass-search` holds the language, the placement prefilter and the runner, so constraint semantics aren't written twice (ADR 0021).
 - 2026-10-25: Started, with the open questions decided as recommended.
 - 2026-10-25: Drafted from milestone 06, the code at 67bcbc6 and bench figures from m03-spawn, m05-cleanup and m05-viewer.

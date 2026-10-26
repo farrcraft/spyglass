@@ -24,6 +24,7 @@
 
 mod render;
 mod save;
+mod search;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -41,7 +42,16 @@ pub use save::{
     LauncherSave, PackConcern, SaveInfo, SaveInspector, SaveLocation, SaveReport, SaveWarning,
     Scan, find_save, inspect_save, launcher_saves,
 };
+pub use search::{ConstraintResult, Evaluation, Feature, Outcome, SearchQuery};
 pub use spyglass_structure::LOCATE_RADIUS;
+
+/// A search query's syntax tree, from [`SearchQuery::query`] (`docs/specs/search.md`).
+pub mod query {
+    pub use spyglass_search::{
+        Anchor, Constraint, Count, DEFAULT_STEP, DEFAULT_Y, Importance, Kind, MAX_COORDINATE,
+        MAX_PLACE_SIDE, MAX_SAMPLES, Place, Query, Region, Sampling,
+    };
+}
 
 /// `/locate biome`'s search radius in blocks (`LocateCommand`).
 pub const LOCATE_BIOME_RADIUS: i32 = 6400;
@@ -110,6 +120,20 @@ pub enum Error {
     /// A query was resolved against a different [`World`] than the session's.
     #[error("{0:?} was resolved against another world; resolve it with this session's world")]
     OtherWorld(String),
+    /// A search query that doesn't parse, or names something this world doesn't have.
+    #[error(
+        "line {line}{}: {message}",
+        .column.map_or(String::new(), |c| format!(", column {c}"))
+    )]
+    InvalidQuery {
+        /// The line, from 1.
+        line: usize,
+        /// The column, from 1, where the text doesn't parse; `None` when it parses but
+        /// doesn't resolve.
+        column: Option<usize>,
+        /// What's wrong.
+        message: String,
+    },
     /// A map area or layers that can't be drawn: the message says why.
     #[error("{0}")]
     InvalidMap(String),
@@ -380,6 +404,7 @@ const _: () = {
     shareable::<Session<'static>>();
     shareable::<StructureQuery>();
     shareable::<BiomeQuery>();
+    shareable::<SearchQuery>();
     shareable::<Error>();
 };
 

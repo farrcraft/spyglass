@@ -134,6 +134,11 @@ const TESTS: &[(&str, &str, &[Input])] = &[
         "the_real_world_renders_the_same_in_tiles",
         &[Input::Bundle],
     ),
+    (
+        "spyglass",
+        "the_real_world_resolves_and_counts_like_structures_in",
+        &[Input::Bundle],
+    ),
     ("spyglass-cli", "structures", &[Input::Bundle]),
     ("spyglass-cli", "biomes", &[Input::Bundle]),
     ("spyglass-cli", "slime_and_spawn", &[Input::Bundle]),

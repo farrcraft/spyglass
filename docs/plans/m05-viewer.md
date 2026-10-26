@@ -139,12 +139,12 @@ Specs and ADRs that govern this: [ADR 0014](../adr/0014-public-api-world-and-ses
 
 ### Phase 6: export, platforms and close-out
 
-- [ ] "Export image" (PNG via `rfd`) and "Copy command".
-- [ ] Test: the viewer's export request and copied command, parsed by the CLI's argument parser, give the same `MapArea` and `Layers`.
+- [x] "Export image" (PNG via `rfd`) and "Copy command".
+- [x] Test: the viewer's export request and copied command, parsed by the CLI's argument parser, give the same `MapArea` and `Layers`. Done as a chain, since the viewer can't link the CLI's binary-only parser: viewer tests check that the export is the area on screen and that the command states that area (`--centre`, `--size`, `--scale`, `--y`) and the layers; CLI tests check that those arguments give `centred_on` of them and the library's bytes. Run end to end below.
 - [ ] Windows: run manually through the checklist below.
 - [ ] Linux: `cargo xtask linux-check --full` builds the viewer; run it on a Linux desktop (or under Xvfb with a software Vulkan driver) through the checklist.
 - [ ] macOS: best effort, not required to complete the plan. Nothing platform-specific is written for it beyond what eframe and `rfd` handle; if a Mac is to hand, run the checklist and note the result.
-- [ ] Update architecture.md (viewer no longer a placeholder, render in `spyglass`), the README, and getting-started (running the viewer, `spyglass render`).
+- [x] Update architecture.md (viewer no longer a placeholder, render in `spyglass`), the README, and getting-started (running the viewer, `spyglass render`).
 - [ ] `cargo xtask check` and `cargo xtask oracle-test`; move this plan and the milestone to `completed/`.
 
 ## Verification
@@ -161,10 +161,11 @@ Specs and ADRs that govern this: [ADR 0014](../adr/0014-public-api-world-and-ses
 - [x] ADR: map rendering in the public API ([0017](../adr/0017-map-rendering-in-the-public-api.md))
 - [x] ADR: biome palette ([0018](../adr/0018-biome-palette.md))
 - [x] ADR: GUI stack ([0019](../adr/0019-gui-stack-and-msrv-1-95.md))
-- [ ] `docs/architecture.md`, `README.md`, `docs/getting-started.md`
+- [x] `docs/architecture.md`, `README.md`, `docs/getting-started.md`
 
 ## Notes
 
+- 2026-10-25: Export done and checked end to end on Windows. In the running viewer (seed 0, scale 4, seven structures, two highlighted biomes, spawn), **Copy command** gave `spyglass render --seed 0 --game-version 26.3 --centre 0,0 --size 1012x775 --scale 4 --y 64 --structures … --highlight … --spawn -o map.png`. Its PNG equals the screenshot's map on all 784,300 pixels, and **Export image…** wrote a file byte-identical to it (69,485 bytes). The map's centre is now `left + floor(width / 2)`, as in `centred_on`. Rounding the middle had put it one pixel off for odd widths.
 - 2026-10-25: Phase 5 done. Right-click on the map opens a menu: nearest structure or biome from that block (`/locate` at the view's height, run in the background), centre here, copy coordinates. Hits are listed in the side panel (click to go there) and ringed on the map, yellow where the game certainly stops. Checked on seed 0: nearest mushroom fields from -328 64 324 is -1128 64 -508, 1154 blocks, the same as `spyglass locate biome`. Saves: the launchers' saves, most recently played first, with a filter, or any folder; inspected with `Scan::Chunks` off the UI thread; blocked saves show why; otherwise the save's bundle and seed open centred on its player (or spawn) with its warnings listed. A Modrinth 26.3 save opened with its two mod warnings. With `generate_structures` off, structure markers aren't drawn.
 - 2026-10-25: Phase 4 done. A screenshot of the viewer (seed 0, scale 4, villages, outposts and strongholds, slime chunks, spawn) was compared pixel by pixel with `spyglass render` of the same 1013 × 775 area: every pixel inside the map is identical, markers included. Two fixes got it there. The map's centre is snapped to a whole pixel so texels and marker edges land on screen pixels. eframe's dithering is off, because it nudged about 4 % of the map's colours by one. Markers are computed per tile on the workers (`map_features`, kept for the tile their centre is on) and drawn by egui with the library's shapes; past 2,000 on screen they're hidden with a note to zoom in. Hovering a marker shows its structures, position, set and whether it's a candidate.
 - 2026-10-25: The structure checklist lists structure ids (`World::structures`), not tags: the API has no list of tags. `spyglass render --structures` takes tags too.

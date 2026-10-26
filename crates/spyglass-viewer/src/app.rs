@@ -13,6 +13,7 @@ use spyglass::{
     StructureQuery, StructureStart, World,
 };
 
+use crate::export::{Export, Source, visible_area};
 use crate::locate::{self, Found, Target};
 use crate::markers::{self, Picked};
 use crate::tiles::{
@@ -160,6 +161,11 @@ pub struct App {
     save: Option<SaveReport>,
     save_error: Option<String>,
     save_filter: String,
+    /// The map's size in pixels, for exports.
+    map_size: [u32; 2],
+    exporting: Option<Pending<Result<PathBuf, String>>>,
+    /// The last export's outcome, or a copied command.
+    export_note: Option<Result<String, String>>,
     goto: String,
     goto_error: bool,
     /// Scrolling not yet turned into a zoom step.
@@ -203,6 +209,9 @@ impl App {
             save: None,
             save_error: None,
             save_filter: String::new(),
+            map_size: [0, 0],
+            exporting: None,
+            export_note: None,
             goto: String::new(),
             goto_error: false,
             scrolled: 0.0,
@@ -274,6 +283,14 @@ impl App {
         if let Some(result) = self.locating.as_ref().and_then(Pending::poll) {
             self.locating = None;
             self.found = Some(result.unwrap_or_else(|()| Err("the search failed".to_string())));
+        }
+        if let Some(result) = self.exporting.as_ref().and_then(Pending::poll) {
+            self.exporting = None;
+            self.export_note = Some(
+                result
+                    .unwrap_or_else(|()| Err("exporting failed".to_string()))
+                    .map(|path| format!("Saved {}", path.display())),
+            );
         }
         if let Some(result) = self.inspecting.as_ref().and_then(Pending::poll) {
             self.inspecting = None;
@@ -413,11 +430,123 @@ impl App {
         egui::CollapsingHeader::new("Layers")
             .default_open(true)
             .show(ui, |ui| self.layers_section(ui));
+        egui::CollapsingHeader::new("Export")
+            .default_open(true)
+            .show(ui, |ui| self.export_section(ui));
         if self.locating.is_some() || self.found.is_some() {
             egui::CollapsingHeader::new("Locate")
                 .default_open(true)
                 .show(ui, |ui| self.locate_section(ui));
         }
+    }
+
+    /// What exporting the view now would draw.
+    fn export(&self) -> Option<Export> {
+        let (world, shown) = (self.world?, self.shown.as_ref()?);
+        let source = match &self.save {
+            Some(report) => Source::Save(report.save.dir.clone()),
+            None => Source::Seed {
+                seed: shown.session.seed(),
+                version: world.version().to_string(),
+            },
+        };
+        Some(Export {
+            area: visible_area(&self.settings.view, self.map_size)?,
+            source,
+            bundles: (self.settings.bundles != Settings::default().bundles)
+                .then(|| self.bundles_dir()),
+            structures: if self.structures_generate() {
+                self.settings.structures.clone()
+            } else {
+                Vec::new()
+            },
+            highlight: self.settings.highlight.clone(),
+            ties: self.settings.ties,
+            slime_chunks: self.settings.slime_chunks,
+            spawn: self.settings.spawn,
+        })
+    }
+
+    /// Saving the view as an image, or as the command that draws it.
+    fn export_section(&mut self, ui: &mut egui::Ui) {
+        let export = self.export();
+        ui.horizontal(|ui| {
+            let ready = export.is_some() && self.exporting.is_none();
+            if ui
+                .add_enabled(ready, egui::Button::new("Export image…"))
+                .clicked()
+                && let Some(export) = &export
+                && let Some(path) = rfd::FileDialog::new()
+                    .add_filter("PNG image", &["png"])
+                    .set_file_name("map.png")
+                    .save_file()
+            {
+                self.start_export(ui.ctx(), export.clone(), path);
+            }
+            if ui
+                .add_enabled(export.is_some(), egui::Button::new("Copy command"))
+                .on_hover_text("The spyglass render command that draws this view")
+                .clicked()
+                && let Some(export) = &export
+            {
+                let command = export.command("map.png");
+                ui.ctx().copy_text(command.clone());
+                self.export_note = Some(Ok(format!("Copied: {command}")));
+            }
+        });
+        if self.exporting.is_some() {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Drawing…");
+            });
+        }
+        match &self.export_note {
+            Some(Ok(note)) => {
+                ui.weak(note);
+            }
+            Some(Err(e)) => {
+                ui.colored_label(ui.visuals().error_fg_color, e);
+            }
+            None => {}
+        }
+    }
+
+    /// Draws `export` with the library and writes it to `path`, in the background.
+    fn start_export(&mut self, ctx: &egui::Context, export: Export, path: PathBuf) {
+        let (Some(shown), Some(world)) = (&self.shown, self.world) else {
+            return;
+        };
+        let session = shown.session.clone();
+        self.export_note = None;
+        self.exporting = Some(Pending::spawn(ctx, move || {
+            let layers = spyglass::Layers {
+                biomes: true,
+                ties: export.ties,
+                highlight: export
+                    .highlight
+                    .iter()
+                    .map(|b| world.biome_query(b))
+                    .collect::<spyglass::Result<_>>()
+                    .map_err(|e| e.to_string())?,
+                structures: export
+                    .structures
+                    .iter()
+                    .map(|s| world.structure_query(s))
+                    .collect::<spyglass::Result<_>>()
+                    .map_err(|e| e.to_string())?,
+                slime_chunks: export.slime_chunks && export.area.scale <= spyglass::MAX_SLIME_SCALE,
+                spawn: export.spawn,
+            };
+            let image = session
+                .render(&export.area, &layers)
+                .map_err(|e| e.to_string())?;
+            let file = std::fs::File::create(&path)
+                .map_err(|e| format!("creating {}: {e}", path.display()))?;
+            image
+                .write_png(std::io::BufWriter::new(file))
+                .map_err(|e| format!("writing {}: {e}", path.display()))?;
+            Ok(path)
+        }));
     }
 
     /// The last locate's answer: click a hit to go there.
@@ -785,12 +914,16 @@ impl App {
 
     fn map(&mut self, ui: &mut egui::Ui) {
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
-        // On a whole physical pixel, so tile texels and marker edges land on screen pixels.
+        // The view's centre block's corner is pixel size / 2 from the top left, as in
+        // `MapArea::centred_on`, and on a whole physical pixel, so texels and marker edges land
+        // on screen pixels and an export covers the same blocks.
         let ppp = ui.ctx().pixels_per_point();
+        let snap = |v: f32| (v * ppp).round() / ppp;
         let centre = Pos2::new(
-            (rect.center().x * ppp).round() / ppp,
-            (rect.center().y * ppp).round() / ppp,
+            snap(rect.left()) + (rect.width() / 2.0).floor(),
+            snap(rect.top()) + (rect.height() / 2.0).floor(),
         );
+        self.map_size = [rect.width() as u32, rect.height() as u32];
         let offset = |p: Pos2| [p.x - centre.x, p.y - centre.y];
         let view = &mut self.settings.view;
         if response.dragged() {

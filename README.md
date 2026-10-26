@@ -4,7 +4,7 @@
 
 A local-only seed explorer for Minecraft: Java Edition. Describe what you want in a world, and spyglass searches for the seeds that fit best, shows them on a map, and finds where things are in worlds you already play. Output aims to match the game exactly on current versions.
 
-> Status: early. For game version 26.3, the `spyglass` command answers `/locate`-style questions (structures, biomes, slime chunks, spawn) for any seed or a world save in the Overworld, with `--json` for scripts. The map viewer, seed search, terrain and the Nether and End are still to come ([roadmap](docs/roadmap/README.md)).
+> Status: early. For game version 26.3, the `spyglass` command answers `/locate`-style questions (structures, biomes, slime chunks, spawn) for any seed or a world save in the Overworld, with `--json` for scripts, and draws maps of them. The viewer shows the same maps, pannable and zoomable, with layers you choose. Seed search, terrain and the Nether and End are still to come ([roadmap](docs/roadmap/README.md)).
 
 Not affiliated with or endorsed by Mojang or Microsoft.
 
@@ -47,9 +47,11 @@ With a version bundle extracted, ask a seed where things are, as the game's `/lo
 cargo run -p spyglass-extract -- 26.3
 cargo run --release -p spyglass-cli -- locate structure '#minecraft:village' --seed 12345
 cargo run --release -p spyglass-cli -- locate structure '#minecraft:village' --world "My World" --from player
+cargo run --release -p spyglass-cli -- render --seed 12345 --structures '#minecraft:village' --spawn -o map.png
+cargo run --release -p spyglass-viewer
 ```
 
-See [docs/getting-started.md](docs/getting-started.md) for the full walkthrough, including installing Rust by hand, and the [`spyglass` command](docs/getting-started.md#9-the-spyglass-command).
+See [docs/getting-started.md](docs/getting-started.md) for the full walkthrough, including installing Rust by hand, the [`spyglass` command](docs/getting-started.md#9-the-spyglass-command) and [the viewer](docs/getting-started.md#10-the-viewer).
 
 ## Crates
 
@@ -66,7 +68,7 @@ See [docs/getting-started.md](docs/getting-started.md) for the full walkthrough,
 | `spyglass-world`     | Reads your world saves.                             |
 | `spyglass`           | The public API that every front end uses.           |
 | `spyglass-cli`       | The `spyglass` command, with `--json` for scripts.  |
-| `spyglass-viewer`    | Native map app (a placeholder for now).             |
+| `spyglass-viewer`    | Native map app: layers, locate, saves, export.      |
 
 Planned: `spyglass-terrain` (heightmaps and surface rules) and `spyglass-search` (parallel, ranked seed search).
 

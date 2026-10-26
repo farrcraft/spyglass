@@ -61,7 +61,7 @@ pre-commit install           # or: prek install
 
 ### Linux viewer dependencies
 
-`spyglass-viewer` will use `egui` + `wgpu`, which need windowing and graphics libraries on Linux. On Debian/Ubuntu:
+`spyglass-viewer` uses `egui` + `wgpu` ([ADR 0019](adr/0019-gui-stack-and-msrv-1-95.md)), which need windowing and graphics libraries on Linux. On Debian/Ubuntu:
 
 ```sh
 sudo apt install libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libvulkan-dev
@@ -257,9 +257,50 @@ cargo run --release -p spyglass-cli -- locate structure '#minecraft:village' --w
 
 `world info` says whether spyglass can answer for a world, and what makes its answers inexact: no bundle for the world's version, a preset other than Default, data packs or mods that may change generation, and chunks an older version generated ([specs/world-saves.md](specs/world-saves.md)). It reads every region file to count those chunks, which takes a few seconds for a large world; `--quick` skips that. spyglass never writes to a save.
 
+### Maps
+
+`spyglass render` draws a map as a PNG: biomes, and the layers you ask for ([specs/render.md](specs/render.md)). It's the same image the viewer exports for the same view.
+
+```sh
+cargo run --release -p spyglass-cli -- render --seed 12345 -o map.png
+cargo run --release -p spyglass-cli -- render --seed 12345 --centre 1000,-2000 --size 1920x1080 --scale 16 \
+    --structures '#minecraft:village,minecraft:stronghold' --slime --spawn -o map.png
+cargo run --release -p spyglass-cli -- render --world "My World" --highlight minecraft:cherry_grove -o map.png
+```
+
+| Option                            | Default            | What it does                                                                          |
+| --------------------------------- | ------------------ | ------------------------------------------------------------------------------------- |
+| `-o <file>`                       | required           | The PNG to write.                                                                     |
+| `--centre <x,z>` or `--min <x,z>` | 0,0, or the player | The block at the image's centre, or at its top-left corner.                           |
+| `--size <WxH>`                    | `1024x1024`        | Pixels.                                                                               |
+| `--scale <n>`                     | `4`                | Blocks per pixel: 1, 2, 4 and so on up to 256.                                        |
+| `--y <y>`                         | `64`               | The height biomes are drawn at. The map is a slice at this height, not the surface.   |
+| `--structures <ids>`              | none               | Structure ids or `#tags` to mark, separated by commas. Hollow markers are candidates. |
+| `--highlight <ids>`               | none               | Biomes to keep bright; the rest are dimmed.                                           |
+| `--slime`, `--spawn`, `--ties`    | off                | Slime chunks (scales up to 16), the spawn's origin, tied biome cells.                 |
+| `--no-biomes`                     | off                | A plain background under the other layers.                                            |
+
+The seed, world and bundle options are as for `locate`. With `--json` it prints the area and everything it drew.
+
 ### Reading the answers
 
 Answers are listed in the game's search order, which isn't always nearest first. Until terrain is ported, most surface structures (villages, temples, monuments) can't be confirmed without it, so they're shown as **candidates**: the game's answer is the first of them it generates, and in testing that's usually the first one listed. Strongholds, ancient cities and trial chambers don't depend on terrain and are usually **certain**.
+
+## 10. The viewer
+
+```sh
+cargo run --release -p spyglass-viewer
+```
+
+The viewer opens the newest bundle in `bundles/` (choose another folder from the side panel) and shows seed 0. Without a bundle it says how to extract one.
+
+- **Move around:** drag to pan, scroll to zoom around the pointer, or use the arrow keys and `+`/`-`. **Go to** takes `x z` or `x y z`. The status bar shows the block, chunk and biome under the pointer.
+- **Seed or save:** type a seed and press **Show**, or open a save from the launchers' list or any folder. A save opens on its player, with anything that makes its answers inexact listed.
+- **Layers:** tied biome cells, slime chunks, the world spawn, structures to mark (hover a marker for what it is), and biomes to highlight. **Height** sets the y biomes are drawn at.
+- **Locate:** right-click the map for the nearest structure or biome from there, as `/locate` would. Hits are listed in the side panel (click one to go there) and ringed on the map.
+- **Export:** **Export image…** saves the view as a PNG, and **Copy command** copies the `spyglass render` command that draws the same image.
+
+Rendering runs in the background on all but one core, so the map stays responsive while tiles fill in. Settings are kept between runs.
 
 ## Next steps
 

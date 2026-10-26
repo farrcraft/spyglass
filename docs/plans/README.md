@@ -6,4 +6,4 @@ Code must not reference plans. Anything durable a plan produces belongs in a spe
 
 ## Active
 
-None. Milestone [05](../roadmap/completed/05-viewer-mvp.md) is complete; milestone [06](../roadmap/06-seed-search.md) needs a plan next.
+- [m06-seed-search](m06-seed-search.md): milestone [06. Seed search](../roadmap/06-seed-search.md).

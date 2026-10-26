@@ -1,8 +1,8 @@
 # 06. Seed search
 
-- Status: Planned
+- Status: In progress
 - Depends on: [03](completed/03-structure-placement.md)
-- Plans: none yet
+- Plans: [m06-seed-search](../plans/m06-seed-search.md)
 
 ## Goal
 

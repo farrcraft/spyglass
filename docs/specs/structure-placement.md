@@ -164,6 +164,18 @@ A lookup counts as in a set if every candidate of the cell is, and out if none i
 
 `Slime.checkSlimeSpawnRules`: chunk `(x, z)` is a slime chunk when `WorldgenRandom.seedSlimeChunk(x, z, seed, 987234911)` then `nextInt(10) == 0` ([rng.md](rng.md#worldgen-seeding-worldgenrandom)).
 
+## The lower 48 bits
+
+Seed search ([search.md](search.md)) skips whole groups of seeds using results that depend only on the seed's lower 48 bits. These do:
+
+- random-spread placement, every frequency reducer, the weighted structure pick, exclusion zones against random-spread sets, and slime chunks.
+
+Each of them seeds a legacy random ([rng.md](rng.md#legacy-legacyrandomsource)), whose `setSeed` keeps only the lower 48 bits of its argument, and builds that argument from the world seed with additions, multiplications and XORs, which never carry from high bits into low ones. `setLargeFeatureSeed`'s `a` and `b` are drawn from a legacy random seeded with the world seed itself, so they too depend only on its lower 48 bits. So two seeds that agree in their lower 48 bits get the same placement chunks, frequency results, picks and slime chunks.
+
+These don't, and need the whole seed: concentric rings (their positions move towards preferred biomes), exclusion zones against a concentric-ring set, and every biome check, because the climate noise is seeded through Xoroshiro from all 64 bits.
+
+The biome check only ever removes starts, so a count of placement chunks is an upper bound on the count of starts for every seed with the same lower 48 bits.
+
 ## Testing
 
 - **Unit tests** cover codec defaults, ranges and errors on hand-written bundles; placement and the frequency reducers on hand-computed draws; `Math.round` and the trig flag; rotation, template boxes, the shuffle and height providers.

@@ -192,6 +192,17 @@ Sources:
 
 ## Notes
 
+- 2026-10-27: **Prototype: a batched noise kernel doesn't pay.** 26.3's per-octave volume loop (`PerlinNoise::add_to_volume`), rewritten to compute 8 y positions' fractions first and then their smoothsteps and `lerp3`s in a fixed-width loop the compiler can vectorize, with the same operations in the same order. Bit-identical over 106,112 values (four scales, three volume shapes, 16 noises). Against the current loop:
+
+  | Shape                         | Lowest frequency (1/1024) | Mid (1/64) | High (1/4, 1) |
+  | ----------------------------- | ------------------------- | ---------- | ------------- |
+  | Block column, 1 × 384 × 1     | 1.33×                     | 1.18×      | 0.70 to 0.74× |
+  | Cell corners, 1 × 49 × 1      | 1.24×                     | 0.69×      | 0.74×         |
+  | A chunk's corners, 5 × 49 × 5 | 1.24×                     | 0.71×      | 0.75×         |
+
+  Sharing the 8 corner gradients when all lanes are in one y cell is what makes the lowest frequency faster; copying them per lane otherwise costs more than the vector lerps save. Built for this CPU (`-C target-cpu=native`, AVX2 on a Ryzen 7 5800X) it's no better, and worse at high frequencies. The current loop already costs about 7 ns per value, mostly in per-value `f64` work (wrap, floor, conversions) and table lookups, which don't vectorize. So SIMD noise isn't the 2× the plan counted on. The prototype is kept outside the tree.
+  - **What this changes.** The 150 µs target has to come mostly from structure, not SIMD: fewer point evaluations for the aquifer's surface levels (up to 29% of an isolated column), no interpreter copies and allocations (10 to 20%), and computing y-independent work once for many positions. Noise kernels can still win where corners are shared (the lowest-frequency octaves, about 1.3×), as a later refinement. The ADR should choose no SIMD dependency for now.
+
 - 2026-10-27: **Where 26.2's time goes** (coarse spans in its `NoiseChunk`).
 
   | Scenario                     | Total         | Biggest cost                                                                          |

@@ -4,6 +4,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use spyglass_data::anchor::AnchorHeights;
 use spyglass_data::codec::{LoadError, LoadErrorKind, full_id};
 use spyglass_density::{
     Binder, ClimateRouter, ClimateSampler, Df, Loader, NOISE_SETTINGS, Resources, Sampler, v1_21,
@@ -26,6 +27,8 @@ enum Targets {
     Functions {
         points: Vec<Vec<(Df, Parameter)>>,
         noises: HashMap<String, NormalNoiseParameters>,
+        /// What vertical anchors resolve against, as for [`ClimateRouter`].
+        anchors: Option<AnchorHeights>,
     },
     /// 26.2's (the 1.21 family, ADR 0026): each a `Climate.ParameterPoint`, measured against
     /// the dimension's climate sampler.
@@ -85,6 +88,7 @@ impl SpawnTargets {
             return Ok(SpawnTargets(Targets::Functions {
                 points: Vec::new(),
                 noises: HashMap::new(),
+                anchors: None,
             }));
         }
         let mut loader = Loader::new(resources);
@@ -117,7 +121,24 @@ impl SpawnTargets {
         Ok(SpawnTargets(Targets::Functions {
             points,
             noises: loader.noises().clone(),
+            anchors: AnchorHeights::of_noise_settings(&json, &id)?,
         }))
+    }
+
+    /// The targets as a level of `level`'s heights binds them: see
+    /// [`ClimateRouter::within_level`].
+    pub fn within_level(mut self, level: AnchorHeights) -> Self {
+        match &mut self.0 {
+            Targets::Functions {
+                anchors: Some(anchors),
+                ..
+            } => *anchors = AnchorHeights::within_level(*anchors, level),
+            Targets::Functions { anchors: None, .. } => {}
+            Targets::Points { router, .. } => {
+                **router = (**router).clone().within_level(level);
+            }
+        }
+        self
     }
 
     /// Whether there are no targets, so the search doesn't run.
@@ -131,8 +152,15 @@ impl SpawnTargets {
     /// The search for `seed`.
     pub fn with_seed(&self, seed: i64) -> Result<SpawnSearch, LoadError> {
         match &self.0 {
-            Targets::Functions { points, noises } => {
+            Targets::Functions {
+                points,
+                noises,
+                anchors,
+            } => {
                 let mut binder = Binder::new(noises, seed);
+                if let Some(anchors) = anchors {
+                    binder = binder.with_anchors(*anchors);
+                }
                 let points = points
                     .iter()
                     .map(|point| {

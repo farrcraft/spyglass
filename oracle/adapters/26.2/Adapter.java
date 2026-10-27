@@ -146,7 +146,10 @@ final class Adapter implements GameApi {
     private Adapter() {}
 
     @Override
-    public Game load() {
+    public Game load(List<java.nio.file.Path> packs) {
+        if (!packs.isEmpty()) {
+            throw new IllegalArgumentException("the 26.2 adapter doesn't load test packs");
+        }
         SharedConstants.tryDetectVersion();
         Bootstrap.bootStrap();
 
@@ -167,11 +170,12 @@ final class Adapter implements GameApi {
         tags.forEach(net.minecraft.core.Registry.PendingTags::apply);
 
         // What CreateWorldScreen and the dedicated server give a world with the Default preset.
-        return new Game(access, resources, WorldPresets.createNormalWorldDimensions(access));
+        return new Game(access, resources, WorldPresets.createNormalWorldDimensions(access), packs);
     }
 
     @Override
-    public RandomState randomState(Game game, NoiseBasedChunkGenerator generator, long seed) {
+    public RandomState randomState(Game game, NoiseBasedChunkGenerator generator, LevelHeightAccessor level,
+            long seed) {
         // As ChunkMap creates it for the ServerChunkCache.
         NoiseGeneratorSettings settings = generator.generatorSettings().value();
         RandomState random = RandomState.create(settings, game.access.lookupOrThrow(Registries.NOISE), seed);

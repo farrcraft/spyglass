@@ -1,6 +1,9 @@
 //! The loaded, seed-independent form of a density-function graph.
 
+use std::collections::HashMap;
 use std::sync::Arc;
+
+use spyglass_data::anchor::VerticalAnchor;
 
 /// A shared node. Named functions referenced from several places are one node, as after the
 /// game's `INLINE_REFERENCE` rewrite.
@@ -136,6 +139,10 @@ pub enum DensityFunction {
         y: UpscaleAxis,
         /// `z`.
         z: UpscaleAxis,
+        /// Whether a stepped volume's planned offset need only be a multiple of the step (switch
+        /// `upscale_offset_by_step`, 26.4-snapshot-6 on); else of the cell size, falling back
+        /// otherwise (26.4-snapshot-5).
+        offset_by_step: bool,
     },
     /// `find_top_surface`: `FindTopSurfaceFunction`.
     FindTopSurface {
@@ -171,6 +178,123 @@ pub enum DensityFunction {
     },
     /// `end_outer_islands`: the End's; loads, but can't be bound yet.
     EndOuterIslands,
+    /// `domain_warp`: `DomainWarpFunction` (26.4-snapshot-6 on): the input at the position
+    /// moved by the three offsets, each truncated to an int. At least one offset isn't the
+    /// constant 0.
+    DomainWarp {
+        /// `input`.
+        input: Df,
+        /// `offset_x`, default the constant 0.
+        offset_x: Df,
+        /// `offset_y`, default the constant 0.
+        offset_y: Df,
+        /// `offset_z`, default the constant 0.
+        offset_z: Df,
+    },
+}
+
+/// `DensityFunction.axesFrom(X)`: the bit for x in [`domain_axes`].
+pub(crate) const AXIS_X: u8 = 1;
+/// The bit for y.
+pub(crate) const AXIS_Y: u8 = 2;
+/// The bit for z.
+pub(crate) const AXIS_Z: u8 = 4;
+
+/// `DensityFunction.domainAxes()`: the axes `function`'s value can depend on, as bits
+/// ([`AXIS_X`], [`AXIS_Y`], [`AXIS_Z`]). Each type's rule is the game's, which isn't always the
+/// tightest: a noise without shifts keeps y unless `y_scale` is 0, and `upscale` reports only its
+/// input's axes. `memo` holds what's computed, by function identity, since functions share
+/// subtrees.
+pub(crate) fn domain_axes(function: &Df, memo: &mut HashMap<*const DensityFunction, u8>) -> u8 {
+    let key = Arc::as_ptr(function);
+    if let Some(&axes) = memo.get(&key) {
+        return axes;
+    }
+    let mut of = |f: &Df| domain_axes(f, memo);
+    let axes = match &**function {
+        DensityFunction::Constant(_) => 0,
+        DensityFunction::Noise {
+            xz_scale,
+            y_scale,
+            shift_x,
+            shift_y,
+            shift_z,
+            ..
+        } => {
+            let mut axes = AXIS_X | AXIS_Y | AXIS_Z;
+            if *y_scale == 0.0 {
+                axes &= !AXIS_Y;
+            }
+            if *xz_scale == 0.0 {
+                axes &= !(AXIS_X | AXIS_Z);
+            }
+            axes | of(shift_x) | of(shift_y) | of(shift_z)
+        }
+        DensityFunction::ShiftA { .. }
+        | DensityFunction::ShiftB { .. }
+        | DensityFunction::EndOuterIslands
+        | DensityFunction::BlendAlpha
+        | DensityFunction::BlendOffset => AXIS_X | AXIS_Z,
+        DensityFunction::Shift { .. }
+        | DensityFunction::OldBlendedNoise(_)
+        | DensityFunction::DistanceToPoint { .. }
+        | DensityFunction::Beardifier => AXIS_X | AXIS_Y | AXIS_Z,
+        DensityFunction::Binary(_, a, b)
+        | DensityFunction::Pow {
+            base: a,
+            exponent: b,
+        } => of(a) | of(b),
+        DensityFunction::Round {
+            input, multiple, ..
+        } => of(input) | of(multiple),
+        DensityFunction::Unary(_, input)
+        | DensityFunction::Clamp { input, .. }
+        | DensityFunction::Cache(input)
+        | DensityFunction::BlendDensity(input)
+        | DensityFunction::Interpolated { input, .. }
+        | DensityFunction::Upscale { input, .. } => of(input),
+        DensityFunction::Lerp {
+            alpha,
+            first,
+            second,
+        } => of(alpha) | of(first) | of(second),
+        DensityFunction::RangeChoice {
+            input,
+            when_in_range,
+            when_out_of_range,
+            ..
+        } => of(input) | of(when_in_range) | of(when_out_of_range),
+        DensityFunction::IntervalSelect {
+            input, functions, ..
+        } => functions.iter().fold(of(input), |axes, f| axes | of(f)),
+        DensityFunction::Slice { axis, input, .. } => of(input) & !axis.bit(),
+        DensityFunction::FindTopSurface {
+            density,
+            upper_bound,
+            ..
+        } => (of(density) | of(upper_bound)) & !AXIS_Y,
+        DensityFunction::Gradient(g) => g.axis.bit(),
+        DensityFunction::Spline(spline) => spline_axes(spline, &mut of),
+        DensityFunction::DomainWarp {
+            input,
+            offset_x,
+            offset_y,
+            offset_z,
+        } => of(input) | of(offset_x) | of(offset_y) | of(offset_z),
+    };
+    memo.insert(key, axes);
+    axes
+}
+
+/// `CubicSpline.forEachCoordinate`: the axes of every coordinate, nested splines included.
+fn spline_axes(spline: &Spline, of: &mut impl FnMut(&Df) -> u8) -> u8 {
+    match spline {
+        Spline::Constant(_) => 0,
+        Spline::Multipoint(points) => points
+            .values()
+            .iter()
+            .fold(of(points.coordinate()), |axes, v| axes | spline_axes(v, of)),
+    }
 }
 
 impl DensityFunction {
@@ -259,6 +383,15 @@ pub enum Axis {
 }
 
 impl Axis {
+    /// `DensityFunction.axesFrom(axis)`: the axis's bit in [`domain_axes`].
+    pub(crate) fn bit(self) -> u8 {
+        match self {
+            Axis::X => AXIS_X,
+            Axis::Y => AXIS_Y,
+            Axis::Z => AXIS_Z,
+        }
+    }
+
     /// `Axis.choose(int, int, int)`.
     pub fn choose(self, x: i32, y: i32, z: i32) -> i32 {
         match self {
@@ -289,13 +422,24 @@ pub struct Gradient {
     /// `tiling`.
     pub tiling: Tiling,
     /// `from_coordinate`.
-    pub from_coordinate: i32,
-    /// `to_coordinate`; never equal to `from_coordinate`.
-    pub to_coordinate: i32,
+    pub from_coordinate: GradientCoordinate,
+    /// `to_coordinate`; never equal to `from_coordinate` as written, but the two may resolve to
+    /// the same y.
+    pub to_coordinate: GradientCoordinate,
     /// `from_value`.
     pub from_value: f32,
     /// `to_value`.
     pub to_value: f32,
+}
+
+/// `GradientFunction.Coordinate`: where a gradient starts or ends along its axis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GradientCoordinate {
+    /// `Absolute`: an int, as every version writes it.
+    Absolute(i32),
+    /// `YAnchor` (26.4-snapshot-6 on): a vertical anchor, resolved against the level's heights
+    /// when the gradient is bound. Only on the y axis.
+    Anchor(VerticalAnchor),
 }
 
 /// `BlendedNoise`'s parameters.

@@ -10,6 +10,7 @@ use crate::function::Df;
 use crate::load::{Loader, Resources};
 use crate::sampler::{Binder, Sampler};
 use crate::v1_21;
+use spyglass_data::anchor::AnchorHeights;
 use spyglass_data::codec::{LoadError, LoadErrorKind, full_id};
 
 /// The registry path of noise settings.
@@ -38,6 +39,9 @@ enum Family {
         noises: HashMap<String, NormalNoiseParameters>,
         /// `legacy_random_source`.
         legacy: bool,
+        /// What vertical anchors resolve against: `noise.min_y` and `noise.height`, narrowed by
+        /// the level if [`within_level`](ClimateRouter::within_level) was called.
+        anchors: Option<AnchorHeights>,
     },
     V1_21(Box<v1_21::NoiseRouter>),
 }
@@ -69,6 +73,7 @@ impl ClimateRouter {
                 )
             })?,
         };
+        let anchors = AnchorHeights::of_noise_settings(&json, &id)?;
         let router = json
             .get("noise_router")
             .ok_or_else(|| error("", LoadErrorKind::Missing("noise_router")))?;
@@ -84,7 +89,23 @@ impl ClimateRouter {
             functions: [t?, h?, c?, e?, d?, w?],
             noises: loader.noises().clone(),
             legacy,
+            anchors,
         }))
+    }
+
+    /// The router as a level of `level`'s heights binds it (`RandomState.createForGenerator`):
+    /// anchors resolve within both the level and the noise settings
+    /// ([`AnchorHeights::within_level`]). Without it, they resolve against the noise settings'
+    /// heights alone.
+    pub fn within_level(mut self, level: AnchorHeights) -> Self {
+        if let Family::V26_3 {
+            anchors: Some(anchors),
+            ..
+        } = &mut self.0
+        {
+            *anchors = AnchorHeights::within_level(*anchors, level);
+        }
+        self
     }
 
     /// The six climate functions, in [`CLIMATE_ENTRIES`] order, if they're 26.3's family.
@@ -126,8 +147,12 @@ impl ClimateRouter {
                 functions,
                 noises,
                 legacy,
+                anchors,
             } => {
                 let mut binder = Binder::with_legacy_random(noises, seed, *legacy);
+                if let Some(anchors) = anchors {
+                    binder = binder.with_anchors(*anchors);
+                }
                 let [t, h, c, e, d, w] = functions.each_ref().map(|f| binder.bind(f));
                 Ok(ClimateSampler(Sampler6::V26_3([t?, h?, c?, e?, d?, w?])))
             }

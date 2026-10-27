@@ -7,13 +7,19 @@ use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
 
 use serde_json::{Map, Value};
+use spyglass_data::anchor::AnchorHeights;
+pub use spyglass_data::anchor::VerticalAnchor;
 use spyglass_data::bundle::{Bundle, BundleError};
 use spyglass_data::codec;
 use spyglass_data::nbt::{self, Tag};
 use spyglass_data::versions::Behavior;
+use spyglass_density::Loader;
+use spyglass_noise::NormalNoiseParameters;
 use spyglass_rng::{LegacyRandomSource, RandomSource};
 
 use spyglass_data::codec::{At, LoadError, LoadErrorKind, LoadResult, full_id};
+
+use crate::corner::CornerConstraint;
 
 const TEMPLATE_POOL: &str = "worldgen/template_pool";
 
@@ -450,14 +456,34 @@ pub enum PoolElement {
     Feature(Projection, bool),
     /// `empty_pool_element`.
     Empty,
+    /// Any of the others with a `corner_constraint` (26.4-snapshot-6 on), which a piece of it
+    /// must pass to be placed.
+    Constrained(Box<PoolElement>, Arc<CornerConstraint>),
 }
 
 impl PoolElement {
+    /// The element without its corner constraint.
+    pub(crate) fn unconstrained(&self) -> &PoolElement {
+        match self {
+            PoolElement::Constrained(element, _) => element,
+            other => other,
+        }
+    }
+
+    /// `getCornerConstraint`.
+    pub(crate) fn corner_constraint(&self) -> Option<&CornerConstraint> {
+        match self {
+            PoolElement::Constrained(_, corner) => Some(corner),
+            _ => None,
+        }
+    }
+
     /// `getProjection`. The empty element is never placed, so its projection doesn't matter.
     pub(crate) fn projection(&self) -> Projection {
         match self {
             PoolElement::Single(_, p) | PoolElement::List(_, p) | PoolElement::Feature(p, _) => *p,
             PoolElement::Empty => Projection::Rigid,
+            PoolElement::Constrained(element, _) => element.projection(),
         }
     }
 
@@ -472,6 +498,7 @@ impl PoolElement {
                 .reduce(BoundingBox::encapsulate),
             PoolElement::Feature(..) => Some(BoundingBox { min: pos, max: pos }),
             PoolElement::Empty => None,
+            PoolElement::Constrained(element, _) => element.bounding_box(pos, rotation),
         }
     }
 
@@ -506,6 +533,7 @@ impl PoolElement {
                 },
             }],
             PoolElement::Empty => Vec::new(),
+            PoolElement::Constrained(element, _) => element.shuffled_jigsaws(pos, rotation, random),
         }
     }
 
@@ -515,6 +543,7 @@ impl PoolElement {
             PoolElement::Single(t, _) => vec![t],
             PoolElement::List(elements, _) => elements.iter().flat_map(|e| e.templates()).collect(),
             PoolElement::Feature(..) | PoolElement::Empty => Vec::new(),
+            PoolElement::Constrained(element, _) => element.templates(),
         }
     }
 }
@@ -550,32 +579,6 @@ impl Pool {
     }
 }
 
-/// A vertical anchor (`VerticalAnchor`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VerticalAnchor {
-    /// `absolute`.
-    Absolute(i32),
-    /// `above_bottom`: offset from the generation context's minimum y.
-    AboveBottom(i32),
-    /// `below_top`: offset down from its top.
-    BelowTop(i32),
-}
-
-impl VerticalAnchor {
-    /// `resolveY(context)`.
-    fn resolve(self, heights: &GenerationHeights) -> i32 {
-        match self {
-            VerticalAnchor::Absolute(y) => y,
-            VerticalAnchor::AboveBottom(o) => heights.min_y.wrapping_add(o),
-            VerticalAnchor::BelowTop(o) => heights
-                .height
-                .wrapping_sub(1)
-                .wrapping_add(heights.min_y)
-                .wrapping_sub(o),
-        }
-    }
-}
-
 /// A height provider (`HeightProvider`), the kinds jigsaw starts and nether fossils use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HeightProvider {
@@ -593,10 +596,11 @@ impl HeightProvider {
         random: &mut LegacyRandomSource,
         heights: &GenerationHeights,
     ) -> i32 {
+        let anchors = heights.anchors();
         match self {
-            HeightProvider::Constant(a) => a.resolve(heights),
+            HeightProvider::Constant(a) => a.resolve(anchors),
             HeightProvider::Uniform(lo, hi) => {
-                let (lo, hi) = (lo.resolve(heights), hi.resolve(heights));
+                let (lo, hi) = (lo.resolve(anchors), hi.resolve(anchors));
                 if lo > hi {
                     lo
                 } else {
@@ -624,6 +628,14 @@ pub struct GenerationHeights {
 }
 
 impl GenerationHeights {
+    /// What anchors resolve against: the generation context's heights.
+    pub fn anchors(&self) -> AnchorHeights {
+        AnchorHeights {
+            min_y: self.min_y,
+            height: self.height,
+        }
+    }
+
     pub(crate) fn level_max_y(&self) -> i32 {
         self.level_min_y
             .wrapping_add(self.level_height)
@@ -858,6 +870,8 @@ fn alias_names(json: &Value) -> Vec<&str> {
 /// Loads template pools and templates, each once.
 pub(crate) struct JigsawLoader<'a> {
     bundle: &'a Bundle,
+    /// Loads corner constraints' density functions.
+    density: Loader<'a, Bundle>,
     /// The `feature_jigsaw_named_bottom` switch for the bundle's version.
     feature_jigsaw_named_bottom: bool,
     pools: HashMap<String, Arc<Pool>>,
@@ -868,6 +882,7 @@ impl<'a> JigsawLoader<'a> {
     pub(crate) fn new(bundle: &'a Bundle) -> Self {
         JigsawLoader {
             bundle,
+            density: Loader::new(bundle),
             feature_jigsaw_named_bottom: Behavior::of(bundle.manifest().data_version)
                 .feature_jigsaw_named_bottom,
             pools: HashMap::new(),
@@ -1057,7 +1072,7 @@ impl<'a> JigsawLoader<'a> {
             for template in element.templates() {
                 out.extend(template.pools().map(str::to_string));
             }
-            if matches!(element, PoolElement::Feature(..)) {
+            if matches!(element.unconstrained(), PoolElement::Feature(..)) {
                 out.push(FEATURE_JIGSAW.pool.clone());
             }
         }
@@ -1082,7 +1097,7 @@ impl<'a> JigsawLoader<'a> {
                     .error(LoadErrorKind::Shape("\"rigid\" or \"terrain_matching\"")));
             }
         };
-        Ok(match kind.as_str() {
+        let element = match kind.as_str() {
             "minecraft:single_pool_element" | "minecraft:legacy_single_pool_element" => {
                 let location = json
                     .get("location")
@@ -1111,7 +1126,24 @@ impl<'a> JigsawLoader<'a> {
                     name: kind,
                 }));
             }
+        };
+        // StructurePoolElement.cornerConstraintCodec, on every type but the empty element.
+        Ok(match json.get("corner_constraint") {
+            None => element,
+            Some(corner) => {
+                let corner = CornerConstraint::parse(
+                    corner,
+                    &at.child("corner_constraint"),
+                    &mut self.density,
+                )?;
+                PoolElement::Constrained(Box::new(element), Arc::new(corner))
+            }
         })
+    }
+
+    /// The noises the corner constraints' functions use, by full id.
+    pub(crate) fn noises(&self) -> &HashMap<String, NormalNoiseParameters> {
+        self.density.noises()
     }
 
     /// A structure template by id, loaded once. A template the bundle doesn't have is empty
@@ -1255,12 +1287,12 @@ pub(crate) fn height_provider(json: &Value, at: &At<'_>) -> LoadResult<HeightPro
         .as_object()
         .ok_or_else(|| at.error(LoadErrorKind::Shape("a height provider")))?;
     let Some(kind) = obj.get("type").and_then(Value::as_str) else {
-        return Ok(HeightProvider::Constant(anchor(json, at)?));
+        return Ok(HeightProvider::Constant(VerticalAnchor::parse(json, at)?));
     };
     let field = |name: &'static str| {
         obj.get(name)
             .ok_or_else(|| at.error(LoadErrorKind::Missing(name)))
-            .and_then(|v| anchor(v, &at.child(name)))
+            .and_then(|v| VerticalAnchor::parse(v, &at.child(name)))
     };
     match full_id(kind).as_str() {
         "minecraft:constant" => Ok(HeightProvider::Constant(field("value")?)),
@@ -1272,23 +1304,6 @@ pub(crate) fn height_provider(json: &Value, at: &At<'_>) -> LoadResult<HeightPro
             what: "height provider type",
             name: kind.to_string(),
         })),
-    }
-}
-
-/// `VerticalAnchor.CODEC`: exactly one of `absolute`, `above_bottom` or `below_top`.
-fn anchor(json: &Value, at: &At<'_>) -> LoadResult<VerticalAnchor> {
-    let obj = json
-        .as_object()
-        .filter(|o| o.len() == 1)
-        .ok_or_else(|| at.error(LoadErrorKind::Shape("a vertical anchor")))?;
-    let (key, value) = obj.iter().next().expect("one entry");
-    let n = codec::int_of(value)
-        .ok_or_else(|| at.child(key).error(LoadErrorKind::Shape("an integer")))?;
-    match key.as_str() {
-        "absolute" => Ok(VerticalAnchor::Absolute(n)),
-        "above_bottom" => Ok(VerticalAnchor::AboveBottom(n)),
-        "below_top" => Ok(VerticalAnchor::BelowTop(n)),
-        _ => Err(at.error(LoadErrorKind::Shape("a vertical anchor"))),
     }
 }
 
@@ -1407,8 +1422,11 @@ mod tests {
         let mut a = LegacyRandomSource::new(3);
         let mut b = LegacyRandomSource::new(3);
         assert_eq!(h.sample(&mut a, &heights), b.next_int_bounded(21) - 40);
-        assert_eq!(VerticalAnchor::BelowTop(2).resolve(&heights), 317);
-        assert_eq!(VerticalAnchor::AboveBottom(8).resolve(&heights), -56);
+        assert_eq!(VerticalAnchor::BelowTop(2).resolve(heights.anchors()), 317);
+        assert_eq!(
+            VerticalAnchor::AboveBottom(8).resolve(heights.anchors()),
+            -56
+        );
     }
 
     fn jigsaw(name: &str, target: &str, joint: Joint) -> JigsawData {

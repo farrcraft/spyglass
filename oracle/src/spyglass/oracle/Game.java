@@ -1,5 +1,8 @@
 package spyglass.oracle;
 
+import java.nio.file.Path;
+import java.util.List;
+
 import net.minecraft.SharedConstants;
 import net.minecraft.core.RegistryAccess;
 import net.minecraft.core.registries.Registries;
@@ -11,28 +14,37 @@ import net.minecraft.world.level.levelgen.WorldDimensions;
 
 /**
  * The registries and dimensions a new world gets, built the way the dedicated server builds them,
- * with only the vanilla data pack.
+ * with the vanilla data pack and any test packs.
  */
 final class Game {
     final RegistryAccess.Frozen access;
-    /** The vanilla data pack, for structure templates. */
+    /** The data packs, for structure templates. */
     final MultiPackResourceManager resources;
     final WorldDimensions dimensions;
     final String version;
     final int dataVersion;
 
-    Game(RegistryAccess.Frozen access, MultiPackResourceManager resources, WorldDimensions dimensions) {
+    /**
+     * {@code packs} are the test packs loaded over the vanilla one, which the version's name
+     * records: {@code <version>+<folder name>} for each.
+     */
+    Game(RegistryAccess.Frozen access, MultiPackResourceManager resources, WorldDimensions dimensions,
+            List<Path> packs) {
         this.access = access;
         this.resources = resources;
         this.dimensions = dimensions;
         var current = SharedConstants.getCurrentVersion();
-        this.version = current.id();
+        var version = new StringBuilder(current.id());
+        for (Path pack : packs) {
+            version.append('+').append(pack.getFileName());
+        }
+        this.version = version.toString();
         this.dataVersion = current.dataVersion().version();
     }
 
-    /** The registries and dimensions, loaded as this version's server loads them. */
-    static Game load() {
-        return GameApi.get().load();
+    /** The registries and dimensions, loaded as this version's server loads them, with {@code packs}. */
+    static Game load(List<Path> packs) {
+        return GameApi.get().load(packs);
     }
 
     /** A dimension by id, e.g. {@code minecraft:overworld}. */

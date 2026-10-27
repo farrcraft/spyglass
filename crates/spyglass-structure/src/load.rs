@@ -9,7 +9,10 @@ use spyglass_data::codec::{
     self, At, LoadErrorKind, LoadResult, field, full_id, id, int_field, int_in, object,
 };
 
+use spyglass_noise::NormalNoiseParameters;
+
 use crate::biomes::{BiomeSet, Tags};
+use crate::corner::CornerSamplers;
 use crate::jigsaw::{GenerationHeights, HeightProvider, Jigsaw, JigsawLoader, height_provider};
 use crate::placement::{
     ConcentricRings, ExclusionZone, FrequencyReduction, Placement, PlacementKind, RandomSpread,
@@ -133,6 +136,10 @@ pub struct StructureSets {
     structures: Vec<Structure>,
     heights: GenerationHeights,
     sea_level: i32,
+    /// The noise settings' `legacy_random_source`.
+    legacy_random_source: bool,
+    /// The noises the start pools' corner constraints use.
+    corner_noises: HashMap<String, NormalNoiseParameters>,
     monument_surroundings: BiomeSet,
 }
 
@@ -161,7 +168,8 @@ impl StructureSets {
         dimension: &str,
         biomes: &BiomeNames,
     ) -> LoadResult<Self> {
-        let (heights, sea_level) = dimension_heights(bundle, preset, dimension)?;
+        let (heights, sea_level, legacy_random_source) =
+            dimension_heights(bundle, preset, dimension)?;
         let ids = bundle.registry_ids(STRUCTURE_SET);
         let index: HashMap<String, usize> = ids
             .iter()
@@ -188,13 +196,32 @@ impl StructureSets {
         let monument_surroundings = loader
             .tags
             .optional_tag("minecraft:required_ocean_monument_surrounding")?;
-        Ok(StructureSets {
+        let sets = StructureSets {
             sets,
+            corner_noises: loader.jigsaw.noises().clone(),
             structures: loader.structures,
             heights,
             sea_level,
+            legacy_random_source,
             monument_surroundings,
-        })
+        };
+        // Bind the start pools' corner constraints once, so that checks can't fail to: binding
+        // depends on the dimension, not the seed.
+        let mut samplers = sets.corner_samplers(0);
+        for s in &sets.structures {
+            let Some(jigsaw) = &s.jigsaw else { continue };
+            for element in &jigsaw.start_pool.templates {
+                for f in element
+                    .corner_constraint()
+                    .into_iter()
+                    .flat_map(|c| c.functions())
+                {
+                    samplers.bind(f)?;
+                }
+            }
+        }
+        drop(samplers);
+        Ok(sets)
     }
 
     /// Every set, sorted by id.
@@ -223,6 +250,23 @@ impl StructureSets {
         self.sea_level
     }
 
+    /// The noise settings' `legacy_random_source`: how the dimension's `RandomState` makes
+    /// noises.
+    pub fn legacy_random_source(&self) -> bool {
+        self.legacy_random_source
+    }
+
+    /// The start pools' corner constraints' functions, bound for `seed` as the dimension's
+    /// `RandomState` binds.
+    pub(crate) fn corner_samplers(&self, seed: i64) -> CornerSamplers<'_> {
+        CornerSamplers::new(
+            &self.corner_noises,
+            seed,
+            self.legacy_random_source,
+            self.heights.anchors(),
+        )
+    }
+
     /// `#minecraft:required_ocean_monument_surrounding`, which ocean monuments check.
     pub fn monument_surroundings(&self) -> &BiomeSet {
         &self.monument_surroundings
@@ -235,13 +279,14 @@ impl StructureSets {
     }
 }
 
-/// A dimension's heights and sea level: the dimension type's `min_y` and `height`, and its noise
-/// settings' `noise.min_y`, `noise.height` and `sea_level`, as named by the world preset.
+/// A dimension's heights, sea level and random source: the dimension type's `min_y` and
+/// `height`, and its noise settings' `noise.min_y`, `noise.height`, `sea_level` and
+/// `legacy_random_source` (false if absent), as named by the world preset.
 fn dimension_heights(
     bundle: &Bundle,
     preset: &str,
     dimension: &str,
-) -> LoadResult<(GenerationHeights, i32)> {
+) -> LoadResult<(GenerationHeights, i32, bool)> {
     let read = |registry: &str, id: &str| {
         bundle
             .resource(registry, id)
@@ -285,6 +330,14 @@ fn dimension_heights(
     let gen_min_y = int(&settings, &["noise", "min_y"], &settings_id)?;
     let gen_height = int(&settings, &["noise", "height"], &settings_id)?;
     let sea_level = int(&settings, &["sea_level"], &settings_id)?;
+    let legacy_random_source = match settings.get("legacy_random_source") {
+        None => false,
+        Some(v) => v.as_bool().ok_or_else(|| {
+            At::root(&settings_id)
+                .child("legacy_random_source")
+                .error(LoadErrorKind::Shape("true or false"))
+        })?,
+    };
     Ok((
         GenerationHeights {
             min_y: level_min_y.max(gen_min_y),
@@ -293,6 +346,7 @@ fn dimension_heights(
             level_height,
         },
         sea_level,
+        legacy_random_source,
     ))
 }
 

@@ -6,6 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+use spyglass_data::anchor::AnchorHeights;
 use spyglass_data::bundle::Bundle;
 use spyglass_data::codec::LoadErrorKind;
 use spyglass_density::v1_21::{self, NoiseChunk, RandomState, RouterEntry};
@@ -110,7 +111,14 @@ fn every_density_value_matches_the_game() {
                 .or_insert_with(|| {
                     let f = dim.function(&mut loader, id);
                     let legacy = dim.router.legacy_random();
-                    match Binder::with_legacy_random(loader.noises(), seed, legacy).bind(&f) {
+                    // The harness's RandomState.createForTesting: anchors from the noise
+                    // settings' own heights.
+                    let anchors = AnchorHeights::of_noise_settings(&dim.settings, dim.id)
+                        .unwrap()
+                        .expect("noise settings have heights");
+                    let mut binder = Binder::with_legacy_random(loader.noises(), seed, legacy)
+                        .with_anchors(anchors);
+                    match binder.bind(&f) {
                         Ok(s) => Some(s),
                         Err(e) if matches!(*e.kind, LoadErrorKind::Unsupported { .. }) => {
                             unsupported.insert(format!("{id}: {e}"));

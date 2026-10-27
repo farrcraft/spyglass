@@ -9,7 +9,7 @@ use spyglass_terrain::{Block, Heightmap, Terrain};
 
 use crate::assembly::{Assembly, JigsawPools};
 use crate::biomes::BiomeSet;
-use crate::jigsaw::JigsawCheck;
+use crate::jigsaw::{Jigsaw, JigsawCheck};
 use crate::load::{Structure, StructureType};
 use crate::placement::Placements;
 
@@ -368,6 +368,9 @@ impl<'a> Starts<'a> {
                     worldgen::large_feature(self.placements.seed(), chunk[0], chunk[1]);
                 match jigsaw.check_position(chunk, heights, &mut random) {
                     JigsawCheck::NoStart => Found::REJECTED,
+                    JigsawCheck::At(_) if !self.start_corners_pass(jigsaw, chunk, None) => {
+                        Found::REJECTED
+                    }
                     JigsawCheck::At(pos) => fixed(pos),
                     JigsawCheck::Projected {
                         x,
@@ -386,7 +389,9 @@ impl<'a> Starts<'a> {
                             return Found::pending(before);
                         };
                         let y = start_y.wrapping_add(t.first_free_height(x, z, heightmap));
-                        if !jigsaw.fits_padding(y, box_y, heights) {
+                        if !jigsaw.fits_padding(y, box_y, heights)
+                            || !self.start_corners_pass(jigsaw, chunk, Some(y))
+                        {
                             return Found::REJECTED;
                         }
                         Found {
@@ -476,6 +481,28 @@ impl<'a> Starts<'a> {
     /// `couldStructureExistInColumn(x, z, minY, maxY)`: whether some quart from `min_y` to
     /// `max_y` at `(x, z)` has a biome in the set. `Passes` if one certainly does, `Rejected` if
     /// none can, `Candidate` if it hangs on a tie.
+    /// Whether the start piece in `chunk` passes its element's corner constraint, if it has one,
+    /// moved to `y`: the projected height, or with `None` its own start height
+    /// (`JigsawPlacement.addPieces`). Only constrained starts draw again from the random.
+    fn start_corners_pass(&self, jigsaw: &Jigsaw, chunk: [i32; 2], y: Option<i32>) -> bool {
+        let seed = self.placements.seed();
+        let sets = self.placements.sets();
+        let mut random = worldgen::large_feature(seed, chunk[0], chunk[1]);
+        let Some(start) = jigsaw.start_piece(chunk, sets.heights(), &mut random) else {
+            return true;
+        };
+        let Some(corner) = start.element.corner_constraint() else {
+            return true;
+        };
+        let y = y.unwrap_or(start.pos[1]);
+        // The piece moves so its box's minimum y plus the ground level delta (1) is at y.
+        let dy = y.wrapping_sub(start.bbox.min[1].wrapping_add(1));
+        corner.test(
+            &start.bbox.moved([0, dy, 0]),
+            &mut sets.corner_samplers(seed),
+        )
+    }
+
     fn column(&self, set: &BiomeSet, x: i32, z: i32, min_y: i32, max_y: i32) -> Check {
         let (qx, qz) = (x >> 2, z >> 2);
         let mut result = Check::Rejected;

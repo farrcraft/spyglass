@@ -11,6 +11,8 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.stream.JsonWriter;
 
+import net.minecraft.world.level.LevelHeightAccessor;
+import net.minecraft.world.level.dimension.LevelStem;
 import net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator;
 import net.minecraft.world.level.levelgen.RandomState;
 import net.minecraft.world.level.levelgen.WorldOptions;
@@ -44,11 +46,13 @@ final class Spawn {
     }
 
     private static JsonObject seed(Game game, String dimension, long seed) throws ReflectiveOperationException {
-        if (!(game.stem(dimension).generator() instanceof NoiseBasedChunkGenerator generator)) {
+        LevelStem stem = game.stem(dimension);
+        if (!(stem.generator() instanceof NoiseBasedChunkGenerator generator)) {
             throw new IllegalArgumentException(dimension + " doesn't use a noise-based generator");
         }
         var api = GameApi.get();
-        RandomState random = api.randomState(game, generator, seed);
+        RandomState random = api.randomState(game, generator,
+                LevelHeightAccessor.create(stem.type().value().minY(), stem.type().value().height()), seed);
 
         var root = new JsonObject();
         root.addProperty("format", 1);

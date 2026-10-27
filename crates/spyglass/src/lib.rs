@@ -36,6 +36,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use spyglass_biome::{BiomeId, BiomeSource, Biomes, SearchVolume, SpawnSearch, SpawnTargets};
+use spyglass_data::anchor::AnchorHeights;
 use spyglass_data::bundle::{Bundle, BundleError};
 use spyglass_data::codec::{LoadError, full_id};
 use spyglass_structure::{Assembly, JigsawPools, Placements, Starts, StructureSets};
@@ -342,8 +343,12 @@ impl World {
         let dimension_type = dimension_type(&bundle, id)?;
         let source = BiomeSource::load(&bundle, PRESET, id)?;
         let sets = StructureSets::load(&bundle, PRESET, id, &source)?;
-        let spawn = SpawnTargets::load(&bundle, source.noise_settings())?;
         let terrain = TerrainSettings::load(&bundle, source.noise_settings(), &dimension_type)?;
+        let spawn =
+            SpawnTargets::load(&bundle, source.noise_settings())?.within_level(AnchorHeights {
+                min_y: terrain.level_min_y,
+                height: terrain.level_height,
+            });
         // Binding fails the same way for every seed, so a world that opens binds for all.
         Terrain::new(&terrain, 0)?;
         let DimensionType {

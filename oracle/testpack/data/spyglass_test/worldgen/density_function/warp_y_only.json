@@ -1,0 +1,38 @@
+{
+  "type": "minecraft:domain_warp",
+  "input": {
+    "type": "minecraft:upscale",
+    "input": {
+      "type": "minecraft:gradient",
+      "axis": "y",
+      "from_coordinate": -64,
+      "from_value": -1.0,
+      "to_coordinate": 320,
+      "to_value": 1.0
+    },
+    "x": {
+      "mode": "interpolate_linear",
+      "cell_size": 1
+    },
+    "y": {
+      "mode": "interpolate_linear",
+      "cell_size": 8
+    },
+    "z": {
+      "mode": "interpolate_linear",
+      "cell_size": 1
+    }
+  },
+  "offset_y": {
+    "type": "minecraft:mul",
+    "left": {
+      "type": "minecraft:gradient",
+      "axis": "y",
+      "from_coordinate": -64,
+      "from_value": -1.0,
+      "to_coordinate": 320,
+      "to_value": 1.0
+    },
+    "right": 40
+  }
+}

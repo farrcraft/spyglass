@@ -1,0 +1,45 @@
+{
+  "fallback": "minecraft:empty",
+  "elements": [
+    {
+      "weight": 1,
+      "element": {
+        "element_type": "minecraft:legacy_single_pool_element",
+        "location": "minecraft:village/plains/town_centers/plains_fountain_01",
+        "processors": {
+          "processors": []
+        },
+        "projection": "rigid",
+        "corner_constraint": [
+          {
+            "density_function": "spyglass_test:corner_density",
+            "acceptable_density": [0.0, 0.12],
+            "padding": 2,
+            "corners": "bottom",
+            "required_corners": [3, 4]
+          }
+        ]
+      }
+    },
+    {
+      "weight": 1,
+      "element": {
+        "element_type": "minecraft:legacy_single_pool_element",
+        "location": "minecraft:village/plains/town_centers/plains_meeting_point_1",
+        "processors": {
+          "processors": []
+        },
+        "projection": "rigid",
+        "corner_constraint": [
+          {
+            "density_function": "spyglass_test:corner_density",
+            "acceptable_density": [0.0, 0.12],
+            "padding": 2,
+            "corners": "bottom",
+            "required_corners": [3, 4]
+          }
+        ]
+      }
+    }
+  ]
+}

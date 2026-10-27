@@ -93,9 +93,9 @@ final class Heights {
             throw new IllegalArgumentException(dimension + " doesn't use a noise-based generator");
         }
         var api = GameApi.get();
-        RandomState random = api.randomState(game, generator, seed);
         var type = stem.type().value();
         LevelHeightAccessor height = LevelHeightAccessor.create(type.minY(), type.height());
+        RandomState random = api.randomState(game, generator, height, seed);
 
         var root = new JsonObject();
         root.addProperty("format", 1);

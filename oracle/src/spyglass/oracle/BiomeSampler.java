@@ -8,6 +8,7 @@ import java.util.Map;
 
 import net.minecraft.core.Holder;
 import net.minecraft.core.QuartPos;
+import net.minecraft.world.level.LevelHeightAccessor;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.BiomeSource;
 import net.minecraft.world.level.biome.Climate;
@@ -59,7 +60,8 @@ final class BiomeSampler {
         // ChunkAccess.getMinY / getHeight come from the dimension type.
         this.quartMinY = QuartPos.fromBlock(stem.type().value().minY());
         this.quartHeight = QuartPos.fromBlock(stem.type().value().height());
-        this.random = GameApi.get().randomState(game, generator, seed);
+        this.random = GameApi.get().randomState(game, generator,
+                LevelHeightAccessor.create(stem.type().value().minY(), stem.type().value().height()), seed);
         this.source = generator.getBiomeSource();
         if (source instanceof MultiNoiseBiomeSource m) {
             this.multiNoise = m;

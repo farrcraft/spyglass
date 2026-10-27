@@ -22,8 +22,8 @@ pub mod v1_21;
 mod volume;
 
 pub use function::{
-    Axis, Binary, BlendedNoise, DensityFunction, Df, DistanceMetric, Gradient, Points, Round,
-    Spline, Tiling, Unary, UpscaleAxis, UpscaleMode,
+    Axis, Binary, BlendedNoise, DensityFunction, Df, DistanceMetric, Gradient, GradientCoordinate,
+    Points, Round, Spline, Tiling, Unary, UpscaleAxis, UpscaleMode,
 };
 pub use interval::{Interval, IntervalError};
 pub use load::{Loader, Resources};

@@ -1,0 +1,13 @@
+{
+  "type": "minecraft:gradient",
+  "axis": "y",
+  "tiling": "mirrored_repeat",
+  "from_coordinate": {
+    "above_bottom": 0
+  },
+  "from_value": 0.0,
+  "to_coordinate": {
+    "above_bottom": 24
+  },
+  "to_value": 1.0
+}

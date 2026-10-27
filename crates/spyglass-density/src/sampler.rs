@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use spyglass_data::anchor::AnchorHeights;
 use spyglass_data::codec::{LoadError, LoadErrorKind};
 use spyglass_noise::mth::{self, exp2i};
 use spyglass_noise::{
@@ -28,8 +29,8 @@ use spyglass_rng::{
 };
 
 use crate::function::{
-    Axis, Binary, BlendedNoise, DensityFunction, Df, DistanceMetric, Round, Spline, Tiling, Unary,
-    UpscaleAxis, UpscaleMode,
+    AXIS_Y, Axis, Binary, BlendedNoise, DensityFunction, Df, DistanceMetric, GradientCoordinate,
+    Round, Spline, Tiling, Unary, UpscaleAxis, UpscaleMode, domain_axes,
 };
 use crate::interval::{Interval, IntervalError};
 use crate::java;
@@ -196,6 +197,24 @@ pub(crate) enum Node {
     },
     /// `EndIslandFunction.Sampler`.
     EndIslands(Arc<SimplexNoise>),
+    /// `DomainWarpFunction`'s samplers, with the function's domain axes (see
+    /// [`domain_axes`]), which decide the volume it sees.
+    DomainWarp {
+        input: Sampler,
+        offsets: Warp,
+        axes: u8,
+    },
+}
+
+/// How a `domain_warp` moves its input's positions.
+#[derive(Debug)]
+pub(crate) enum Warp {
+    /// `ConstOffsetSampler`: every offset a constant, truncated once.
+    Const([i32; 3]),
+    /// `FlatXzSampler`: the input doesn't depend on y, so it's sampled at y 0, moved in x and z.
+    FlatXz { x: Sampler, z: Sampler },
+    /// `Sampler`: moved along all three axes.
+    General { x: Sampler, y: Sampler, z: Sampler },
 }
 
 /// `UpscaleFunction.Sampler`'s parts: the input, the axes, and the upscaler for the axes' own
@@ -205,6 +224,8 @@ pub(crate) struct BoundUpscale {
     pub(crate) input: Sampler,
     pub(crate) axes: [UpscaleAxis; 3],
     pub(crate) upscaler: Upscaler,
+    /// Switch `upscale_offset_by_step`.
+    pub(crate) offset_by_step: bool,
 }
 
 #[derive(Debug)]
@@ -253,6 +274,8 @@ pub struct Binder<'n> {
     ranges: HashMap<*const DensityFunction, (Df, Interval)>,
     id: u64,
     slots: u32,
+    /// What vertical anchors resolve against, if known.
+    anchors: Option<AnchorHeights>,
 }
 
 impl<'n> Binder<'n> {
@@ -284,6 +307,32 @@ impl<'n> Binder<'n> {
             ranges: HashMap::new(),
             id: BINDERS.fetch_add(1, Ordering::Relaxed),
             slots: 0,
+            anchors: None,
+        }
+    }
+
+    /// Resolves vertical anchors against `heights` (`RandomState.verticalAnchors()`): the
+    /// level's, narrowed by the noise settings ([`AnchorHeights::within_level`]), or the noise
+    /// settings' alone. Without them, a function with an anchor doesn't bind.
+    pub fn with_anchors(mut self, heights: AnchorHeights) -> Self {
+        self.anchors = Some(heights);
+        self
+    }
+
+    /// `Coordinate.resolve(context)`.
+    fn resolve(&self, coordinate: GradientCoordinate) -> Result<i32, LoadError> {
+        match coordinate {
+            GradientCoordinate::Absolute(c) => Ok(c),
+            GradientCoordinate::Anchor(anchor) => {
+                let heights = self.anchors.ok_or_else(|| {
+                    LoadError::new(
+                        "",
+                        "",
+                        LoadErrorKind::Invalid("a vertical anchor needs the level's heights"),
+                    )
+                })?;
+                Ok(anchor.resolve(heights))
+            }
         }
     }
 
@@ -496,21 +545,27 @@ impl<'n> Binder<'n> {
             },
             DensityFunction::OldBlendedNoise(noise) => return self.compile_blended(noise),
             DensityFunction::Gradient(g) => {
-                // compileSampler: the factor is computed once, from the wrapped int difference.
-                let range = g.to_coordinate.wrapping_sub(g.from_coordinate);
+                // compileSampler: both ends resolved, the end moved up one if they meet, and the
+                // factor computed once, from the wrapped int difference.
+                let from = self.resolve(g.from_coordinate)?;
+                let mut to = self.resolve(g.to_coordinate)?;
+                if from == to {
+                    to = from.wrapping_add(1);
+                }
+                let range = to.wrapping_sub(from);
                 let factor = (g.to_value - g.from_value) / range as f32;
                 match g.tiling {
                     Tiling::ClampToEdge => Node::Gradient {
                         axis: g.axis,
-                        from: g.from_coordinate,
-                        min: g.from_coordinate.min(g.to_coordinate),
-                        max: g.from_coordinate.max(g.to_coordinate),
+                        from,
+                        min: from.min(to),
+                        max: from.max(to),
                         from_value: g.from_value,
                         factor,
                     },
                     Tiling::Repeat | Tiling::MirroredRepeat => Node::GradientRepeat {
                         axis: g.axis,
-                        from: g.from_coordinate,
+                        from,
                         range,
                         from_value: g.from_value,
                         factor,
@@ -537,7 +592,13 @@ impl<'n> Binder<'n> {
             },
             // UpscaleFunction.compileSampler: all three axes nearest is NearestNeighborSampler,
             // anything else the general sampler, with an upscaler for the axes as given.
-            DensityFunction::Upscale { input, x, y, z } => {
+            DensityFunction::Upscale {
+                input,
+                x,
+                y,
+                z,
+                offset_by_step,
+            } => {
                 let input = self.bind(input)?;
                 let axes = [*x, *y, *z];
                 if axes.iter().all(|a| a.mode == UpscaleMode::NearestNeighbor) {
@@ -551,7 +612,38 @@ impl<'n> Binder<'n> {
                         input,
                         axes,
                         upscaler,
+                        offset_by_step: *offset_by_step,
                     }))
+                }
+            }
+            // DomainWarpFunction.compileSampler: three constant offsets are truncated once;
+            // else an input without y is sampled flat; else the general sampler.
+            DensityFunction::DomainWarp {
+                input,
+                offset_x,
+                offset_y,
+                offset_z,
+            } => {
+                let axes = domain_axes(function, &mut HashMap::new());
+                let flat = domain_axes(input, &mut HashMap::new()) & AXIS_Y == 0;
+                let bound = self.bind(input)?;
+                let offsets = match [offset_x, offset_y, offset_z].map(|o| o.as_constant()) {
+                    // f2i: truncation, saturating, NaN to 0.
+                    [Some(x), Some(y), Some(z)] => Warp::Const([x as i32, y as i32, z as i32]),
+                    _ if flat => Warp::FlatXz {
+                        x: self.bind(offset_x)?,
+                        z: self.bind(offset_z)?,
+                    },
+                    _ => Warp::General {
+                        x: self.bind(offset_x)?,
+                        y: self.bind(offset_y)?,
+                        z: self.bind(offset_z)?,
+                    },
+                };
+                Node::DomainWarp {
+                    input: bound,
+                    offsets,
+                    axes,
                 }
             }
             DensityFunction::DistanceToPoint { point, metric } => Node::DistanceToPoint {
@@ -1221,6 +1313,35 @@ impl Node {
             Node::DistanceToPoint { point, metric } => distance(*metric, *point, [x, y, z]),
             // EndIslandFunction.Sampler.sampleValue: (getHeightValue(x / 8, z / 8) - 8) / 128.
             Node::EndIslands(noise) => (end_island_height(noise, x / 8, z / 8) - 8.0) / 128.0,
+            // Each offset at the position, truncated (f2i), then the input where they point.
+            Node::DomainWarp { input, offsets, .. } => match offsets {
+                Warp::Const([ox, oy, oz]) => input.eval_at(
+                    memo,
+                    x.wrapping_add(*ox),
+                    y.wrapping_add(*oy),
+                    z.wrapping_add(*oz),
+                ),
+                Warp::FlatXz { x: sx, z: sz } => {
+                    let ox = sx.eval(memo, pos) as i32;
+                    let oz = sz.eval(memo, pos) as i32;
+                    input.eval_at(memo, x.wrapping_add(ox), 0, z.wrapping_add(oz))
+                }
+                Warp::General {
+                    x: sx,
+                    y: sy,
+                    z: sz,
+                } => {
+                    let ox = sx.eval(memo, pos) as i32;
+                    let oy = sy.eval(memo, pos) as i32;
+                    let oz = sz.eval(memo, pos) as i32;
+                    input.eval_at(
+                        memo,
+                        x.wrapping_add(ox),
+                        y.wrapping_add(oy),
+                        z.wrapping_add(oz),
+                    )
+                }
+            },
             // ClampedSampler.compute: fromValue + (clamp(c, min, max) - from) * factor.
             Node::Gradient {
                 axis,
@@ -1325,6 +1446,9 @@ impl Node {
             Node::DistanceToPoint { .. } => true,
             Node::EndIslands(_) => false,
             Node::Spline(spline) => spline.depends_on_y(),
+            // The game's own axes, so that it's flattened along y exactly when the game slices
+            // it there: what it computes over a volume depends on the volume's size.
+            Node::DomainWarp { axes, .. } => axes & AXIS_Y != 0,
         }
     }
 }

@@ -129,6 +129,16 @@ impl<'a> At<'a> {
         }
     }
 
+    /// The resource.
+    pub fn resource(&self) -> &'a str {
+        self.resource
+    }
+
+    /// The path in the resource.
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
     /// An error here.
     pub fn error(&self, kind: LoadErrorKind) -> LoadError {
         LoadError::new(self.resource, self.path.clone(), kind)

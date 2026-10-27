@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 
 use serde_json::Value;
+use spyglass_data::anchor::AnchorHeights;
 use spyglass_data::codec::{At, LoadError, LoadErrorKind, field, full_id, int, object};
 use spyglass_density::{Binder, Df, Loader, NOISE_SETTINGS, Resources, Sampler, v1_21};
 use spyglass_noise::NormalNoiseParameters;
@@ -248,6 +249,21 @@ impl TerrainSettings {
         })
     }
 
+    /// What vertical anchors resolve against in this dimension (`VerticalAnchor.Context.from`):
+    /// within both the noise settings' heights and the level's.
+    pub fn anchors(&self) -> AnchorHeights {
+        AnchorHeights::within_level(
+            AnchorHeights {
+                min_y: self.min_y,
+                height: self.height,
+            },
+            AnchorHeights {
+                min_y: self.level_min_y,
+                height: self.level_height,
+            },
+        )
+    }
+
     /// `final_density`, unbound; `None` for 26.2's settings, whose functions are another
     /// family's ([`router_v1_21`](Self::router_v1_21)).
     pub fn final_density(&self) -> Option<&Df> {
@@ -293,7 +309,8 @@ impl TerrainSettings {
                 },
             ));
         };
-        let mut binder = Binder::with_legacy_random(noises, seed, *legacy);
+        let mut binder =
+            Binder::with_legacy_random(noises, seed, *legacy).with_anchors(self.anchors());
         let final_density = binder.bind(final_density)?;
         let aquifer = match aquifers {
             None => None,

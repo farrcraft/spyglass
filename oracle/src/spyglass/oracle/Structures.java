@@ -80,12 +80,12 @@ final class Structures {
         if (!(stem.generator() instanceof NoiseBasedChunkGenerator generator)) {
             throw new IllegalArgumentException(dimension + " doesn't use a noise-based generator");
         }
-        RandomState random = GameApi.get().randomState(game, generator, seed);
+        var type = stem.type().value();
+        LevelHeightAccessor height = LevelHeightAccessor.create(type.minY(), type.height());
+        RandomState random = GameApi.get().randomState(game, generator, height, seed);
         ChunkGeneratorStructureState state =
                 generator.createState(game.access.lookupOrThrow(Registries.STRUCTURE_SET), random, seed);
         state.ensureStructuresGenerated();
-        var type = stem.type().value();
-        LevelHeightAccessor height = LevelHeightAccessor.create(type.minY(), type.height());
         ResourceKey<net.minecraft.world.level.Level> level = ResourceKey.create(Registries.DIMENSION,
                 net.minecraft.resources.Identifier.parse(dimension));
 

@@ -1,0 +1,173 @@
+{
+  "fallback": "minecraft:village/plains/terminators",
+  "elements": [
+    {
+      "weight": 2,
+      "element": {
+        "element_type": "minecraft:legacy_single_pool_element",
+        "location": "minecraft:village/plains/streets/corner_01",
+        "processors": {
+          "processors": []
+        },
+        "projection": "terrain_matching",
+        "corner_constraint": [
+          {
+            "density_function": "spyglass_test:corner_density",
+            "acceptable_density": {
+              "min_inclusive": -0.04,
+              "max_inclusive": 0.2
+            },
+            "required_corners": [5, 8]
+          },
+          {
+            "density_function": "spyglass_test:corner_density",
+            "acceptable_density": [-1.0, 0.3],
+            "padding": 1,
+            "corners": "top",
+            "required_corners": [1, 4]
+          }
+        ]
+      }
+    },
+    {
+      "weight": 2,
+      "element": {
+        "element_type": "minecraft:legacy_single_pool_element",
+        "location": "minecraft:village/plains/streets/straight_01",
+        "processors": {
+          "processors": []
+        },
+        "projection": "terrain_matching",
+        "corner_constraint": [
+          {
+            "density_function": "spyglass_test:corner_density",
+            "acceptable_density": {
+              "min_inclusive": -0.04,
+              "max_inclusive": 0.2
+            },
+            "required_corners": [5, 8]
+          },
+          {
+            "density_function": "spyglass_test:corner_density",
+            "acceptable_density": [-1.0, 0.3],
+            "padding": 1,
+            "corners": "top",
+            "required_corners": [1, 4]
+          }
+        ]
+      }
+    },
+    {
+      "weight": 2,
+      "element": {
+        "element_type": "minecraft:legacy_single_pool_element",
+        "location": "minecraft:village/plains/streets/straight_03",
+        "processors": {
+          "processors": []
+        },
+        "projection": "terrain_matching",
+        "corner_constraint": [
+          {
+            "density_function": "spyglass_test:corner_density",
+            "acceptable_density": {
+              "min_inclusive": -0.04,
+              "max_inclusive": 0.2
+            },
+            "required_corners": [5, 8]
+          },
+          {
+            "density_function": "spyglass_test:corner_density",
+            "acceptable_density": [-1.0, 0.3],
+            "padding": 1,
+            "corners": "top",
+            "required_corners": [1, 4]
+          }
+        ]
+      }
+    },
+    {
+      "weight": 2,
+      "element": {
+        "element_type": "minecraft:legacy_single_pool_element",
+        "location": "minecraft:village/plains/streets/straight_04",
+        "processors": {
+          "processors": []
+        },
+        "projection": "terrain_matching",
+        "corner_constraint": [
+          {
+            "density_function": "spyglass_test:corner_density",
+            "acceptable_density": {
+              "min_inclusive": -0.04,
+              "max_inclusive": 0.2
+            },
+            "required_corners": [5, 8]
+          },
+          {
+            "density_function": "spyglass_test:corner_density",
+            "acceptable_density": [-1.0, 0.3],
+            "padding": 1,
+            "corners": "top",
+            "required_corners": [1, 4]
+          }
+        ]
+      }
+    },
+    {
+      "weight": 2,
+      "element": {
+        "element_type": "minecraft:legacy_single_pool_element",
+        "location": "minecraft:village/plains/streets/crossroad_01",
+        "processors": {
+          "processors": []
+        },
+        "projection": "terrain_matching",
+        "corner_constraint": [
+          {
+            "density_function": "spyglass_test:corner_density",
+            "acceptable_density": {
+              "min_inclusive": -0.04,
+              "max_inclusive": 0.2
+            },
+            "required_corners": [5, 8]
+          },
+          {
+            "density_function": "spyglass_test:corner_density",
+            "acceptable_density": [-1.0, 0.3],
+            "padding": 1,
+            "corners": "top",
+            "required_corners": [1, 4]
+          }
+        ]
+      }
+    },
+    {
+      "weight": 2,
+      "element": {
+        "element_type": "minecraft:legacy_single_pool_element",
+        "location": "minecraft:village/plains/streets/turn_01",
+        "processors": {
+          "processors": []
+        },
+        "projection": "terrain_matching",
+        "corner_constraint": [
+          {
+            "density_function": "spyglass_test:corner_density",
+            "acceptable_density": {
+              "min_inclusive": -0.04,
+              "max_inclusive": 0.2
+            },
+            "required_corners": [5, 8]
+          },
+          {
+            "density_function": "spyglass_test:corner_density",
+            "acceptable_density": [-1.0, 0.3],
+            "padding": 1,
+            "corners": "top",
+            "required_corners": [1, 4]
+          }
+        ]
+      }
+    }
+  ]
+}

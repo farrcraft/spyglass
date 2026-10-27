@@ -3598,6 +3598,8 @@ dependencies = [
  "serde_json",
  "spyglass-biome",
  "spyglass-data",
+ "spyglass-density",
+ "spyglass-noise",
  "spyglass-oracle",
  "spyglass-rng",
  "spyglass-terrain",

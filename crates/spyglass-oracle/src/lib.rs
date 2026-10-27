@@ -315,9 +315,20 @@ pub fn version() -> String {
         })
 }
 
-/// `bundles/<version>` at the repo root, for [`version`].
+/// `bundles/<version>` at the repo root, for [`version`], or for a version with a test pack
+/// (`<version>+testpack`), the merged bundle `cargo xtask oracle test-pack` writes in
+/// `target/oracle/bundles/`.
 pub fn bundle_dir() -> PathBuf {
-    repo_root().join("bundles").join(version())
+    let version = version();
+    let extracted = repo_root().join("bundles").join(&version);
+    if extracted.is_dir() {
+        return extracted;
+    }
+    repo_root()
+        .join("target")
+        .join("oracle")
+        .join("bundles")
+        .join(version)
 }
 
 /// `oracle-out/<version>` at the repo root, for [`version`]: the oracle's outputs to compare with.

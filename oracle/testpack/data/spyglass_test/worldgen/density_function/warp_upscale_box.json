@@ -1,0 +1,54 @@
+{
+  "type": "minecraft:domain_warp",
+  "input": {
+    "type": "minecraft:upscale",
+    "input": {
+      "type": "minecraft:noise",
+      "noise": "minecraft:noodle",
+      "xz_scale": 1.0,
+      "y_scale": 1.0
+    },
+    "x": {
+      "mode": "interpolate_linear",
+      "cell_size": 4
+    },
+    "y": {
+      "mode": "interpolate_linear",
+      "cell_size": 8
+    },
+    "z": {
+      "mode": "interpolate_linear",
+      "cell_size": 4
+    }
+  },
+  "offset_x": {
+    "type": "minecraft:mul",
+    "left": {
+      "type": "minecraft:noise",
+      "noise": "minecraft:jagged",
+      "xz_scale": 1.0,
+      "y_scale": 1.0
+    },
+    "right": 3
+  },
+  "offset_y": {
+    "type": "minecraft:mul",
+    "left": {
+      "type": "minecraft:noise",
+      "noise": "minecraft:gravel",
+      "xz_scale": 1.0,
+      "y_scale": 1.0
+    },
+    "right": 3
+  },
+  "offset_z": {
+    "type": "minecraft:mul",
+    "left": {
+      "type": "minecraft:noise",
+      "noise": "minecraft:ice",
+      "xz_scale": 1.0,
+      "y_scale": 1.0
+    },
+    "right": 3
+  }
+}

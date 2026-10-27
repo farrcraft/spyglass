@@ -76,6 +76,11 @@ pub enum OracleCmd {
         #[arg(long)]
         world: Vec<PathBuf>,
     },
+    /// Load the test data pack in `oracle/testpack/` over the vanilla one and write probe and
+    /// structure files into `oracle-out/<version>+testpack/`, with the bundle merged with the
+    /// pack in `target/oracle/bundles/<version>+testpack/` for the comparisons. Checks the forms
+    /// the vanilla data doesn't use (docs/specs/oracle.md).
+    TestPack(Common),
     /// Regenerate the whole golden set (docs/specs/oracle.md), probe files included, into
     /// `oracle-out/<version>/`.
     Golden {
@@ -194,8 +199,93 @@ pub fn run(cmd: OracleCmd) -> Result<()> {
             let harness = build(&common)?;
             harness.heights(threads)
         }
+        OracleCmd::TestPack(common) => test_pack(&common),
         OracleCmd::Golden { common, threads } => golden(&common, threads),
     }
+}
+
+/// The test pack's probes and structures, under the version name `<version>+testpack`, and the
+/// bundle merged with the pack that spyglass's comparisons read.
+fn test_pack(common: &Common) -> Result<()> {
+    let mut harness = build(common)?;
+    let pack = repo_root().join("oracle").join(TEST_PACK);
+    let variant = format!("{}+{TEST_PACK}", harness.version);
+    let bundle = merge_bundle(&harness.version, &pack, &variant)?;
+    harness.version = variant;
+    harness.packs = vec![pack];
+    harness.probe()?;
+    harness.structures()?;
+    println!(
+        "test pack files in {}, bundle in {}",
+        repo_root()
+            .join("oracle-out")
+            .join(&harness.version)
+            .display(),
+        bundle.display()
+    );
+    Ok(())
+}
+
+/// The test data pack's folder in `oracle/`, and the suffix of its version name.
+const TEST_PACK: &str = "testpack";
+
+/// `bundles/<version>` with `pack`'s `data/` files added, as `target/oracle/bundles/<variant>/`,
+/// its manifest naming `variant` and listing the added files. Rebuilt every time.
+fn merge_bundle(version: &str, pack: &Path, variant: &str) -> Result<PathBuf> {
+    let source = repo_root().join("bundles").join(version);
+    let manifest_path = source.join("bundle.json");
+    let mut manifest: serde_json::Value = serde_json::from_slice(
+        &fs::read(&manifest_path)
+            .with_context(|| format!("no bundle for {version}; extract it first"))?,
+    )?;
+    let out = repo_root()
+        .join("target")
+        .join("oracle")
+        .join("bundles")
+        .join(variant);
+    if out.exists() {
+        fs::remove_dir_all(&out)?;
+    }
+    let files = manifest["files"]
+        .as_object_mut()
+        .context("bundle.json has no files")?;
+    for path in files.keys() {
+        let to = out.join(path);
+        fs::create_dir_all(to.parent().expect("a file in the bundle"))?;
+        fs::copy(source.join(path), &to)?;
+    }
+    let mut added = Vec::new();
+    collect_files(&pack.join("data"), &mut added)?;
+    for file in added {
+        let rel = file
+            .strip_prefix(pack)?
+            .to_str()
+            .context("a non-UTF-8 pack path")?
+            .replace('\\', "/");
+        let to = out.join(&rel);
+        fs::create_dir_all(to.parent().expect("a file in the pack"))?;
+        fs::copy(&file, &to)?;
+        let hash = spyglass_data::bundle::sha1_hex(fs::File::open(&file)?)?;
+        files.insert(rel, hash.into());
+    }
+    manifest["version"] = variant.into();
+    fs::write(
+        out.join("bundle.json"),
+        serde_json::to_vec_pretty(&manifest)?,
+    )?;
+    Ok(out)
+}
+
+fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let path = entry?.path();
+        if path.is_dir() {
+            collect_files(&path, out)?;
+        } else {
+            out.push(path);
+        }
+    }
+    Ok(())
 }
 
 /// Every golden file: probes, structures, spawn, heights, and the biome grids.
@@ -256,6 +346,8 @@ pub(crate) struct Harness {
     pub(crate) classpath: OsString,
     /// `target/oracle/<version>/`.
     pub(crate) work: PathBuf,
+    /// Data pack folders loaded over the vanilla pack.
+    pub(crate) packs: Vec<PathBuf>,
 }
 
 impl Harness {
@@ -276,6 +368,11 @@ impl Harness {
             .arg("-cp")
             .arg(&self.classpath)
             .arg("spyglass.oracle.Main")
+            .args(
+                self.packs
+                    .iter()
+                    .flat_map(|p| [OsString::from("--pack"), p.into()]),
+            )
             .args(args)
             // The game writes logs/ into the working directory.
             .current_dir(&run_dir)
@@ -425,6 +522,7 @@ fn build(common: &Common) -> Result<Harness> {
         major,
         classpath,
         work,
+        packs: Vec::new(),
     })
 }
 

@@ -3,6 +3,7 @@ package spyglass.oracle;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -22,7 +23,12 @@ import net.minecraft.resources.RegistryDataLoader;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.Bootstrap;
 import net.minecraft.server.RegistryLayer;
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.packs.PackLocationInfo;
+import net.minecraft.server.packs.PackResources;
 import net.minecraft.server.packs.PackType;
+import net.minecraft.server.packs.PathPackResources;
+import net.minecraft.server.packs.repository.PackSource;
 import net.minecraft.server.packs.repository.ServerPacksSource;
 import net.minecraft.server.packs.resources.MultiPackResourceManager;
 import net.minecraft.tags.TagLoader;
@@ -85,15 +91,22 @@ final class Adapter implements GameApi {
     private Adapter() {}
 
     @Override
-    public Game load() {
+    public Game load(List<Path> packs) {
         SharedConstants.tryDetectVersion();
         Bootstrap.bootStrap();
 
         // WorldLoader.load: static registries first, then tags from the data packs, then the
         // worldgen registries from the data packs into the WORLD layer.
         LayeredRegistryAccess<RegistryLayer> layers = RegistryLayer.createRegistryAccess();
-        var resources = new MultiPackResourceManager(PackType.SERVER_DATA,
-                List.of(ServerPacksSource.createVanillaPackSource().fullResources()));
+        var all = new ArrayList<PackResources>();
+        all.add(ServerPacksSource.createVanillaPackSource().fullResources());
+        for (Path pack : packs) {
+            String name = pack.getFileName().toString();
+            all.add(new PathPackResources(
+                    new PackLocationInfo("file/" + name, Component.literal(name), PackSource.DEFAULT, Optional.empty()),
+                    pack));
+        }
+        var resources = new MultiPackResourceManager(PackType.SERVER_DATA, all);
         var tags = TagLoader.loadTagsForExistingRegistries(resources, layers.getLayer(RegistryLayer.STATIC));
         List<HolderLookup.RegistryLookup<?>> lookups =
                 TagLoader.buildUpdatedLookups(layers.getAccessForLoading(RegistryLayer.WORLD), tags);
@@ -105,14 +118,13 @@ final class Adapter implements GameApi {
         tags.forEach(net.minecraft.core.Registry.PendingTags::apply);
 
         // What CreateWorldScreen and the dedicated server give a world with the Default preset.
-        return new Game(access, resources, WorldPresets.createNormalWorldDimensions(access));
+        return new Game(access, resources, WorldPresets.createNormalWorldDimensions(access), packs);
     }
 
     @Override
-    public RandomState randomState(Game game, NoiseBasedChunkGenerator generator, long seed) {
-        // As ServerChunkCache and ChunkMap create it.
-        return RandomState.create(game.access.lookupOrThrow(Registries.NOISE), seed,
-                generator.generatorSettings().value());
+    public RandomState randomState(Game game, NoiseBasedChunkGenerator generator, LevelHeightAccessor level,
+            long seed) {
+        return RandomStates.forGenerator(game.access.lookupOrThrow(Registries.NOISE), seed, generator, level);
     }
 
     @Override

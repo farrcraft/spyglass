@@ -1,6 +1,6 @@
 # Structure placement
 
-Status: stable. Covers the Default world preset's three dimensions, implemented in `spyglass-structure` for 26.3 and checked against the oracle's [structure golden files](oracle.md#structure-golden-files). 26.4-snapshot-5 is implemented and checked against the oracle; 26.2's differences are drafted in _Versions_ notes from the bytecode and not yet checked.
+Status: stable. Covers the Default world preset's three dimensions, implemented in `spyglass-structure` for 26.3 and checked against the oracle's [structure golden files](oracle.md#structure-golden-files). 26.2 and the 26.4 snapshots are implemented and checked against the oracle; 26.4-snapshot-6's [corner constraints](#corner-constraints), which the vanilla data doesn't use, by the [test pack](oracle.md#the-test-pack).
 
 The game decides where a structure starts in three steps:
 
@@ -154,6 +154,7 @@ Pieces are built after the check (`GenerationStub` builds them lazily), so their
    - **Not projected:** the check's y is `P.y`.
    - **Projected:** the structure-column test at the centre comes first. Then y is `P.y + getFirstFreeHeight(centre, heightmap) + offset.y`, which needs terrain.
 7. With `dimension_padding` (an int for both, or `{bottom, top}`), the piece moves so its box's minimum y is at `y − 1`, the ground level delta. There's no start if the box then reaches below `minY + bottom` or above `maxY − top`.
+8. From 26.4-snapshot-6, if the start element has a [corner constraint](#corner-constraints), there's no start (no stub) unless the moved box passes it. No draws.
 
 _Versions:_ 26.2 has no structure-column test in step 6 ([above](#the-biome-check)). In 26.4-snapshot-5, anchors resolve against `VerticalAnchor.Context.from(generator, level)` instead of `WorldGenerationContext`, with the same minimum, height and sea level. It adds the anchor `relative_to_sea_level` (`seaLevel + offset`), which no structure uses.
 
@@ -270,6 +271,22 @@ Then, with `use_expansion_hack` and an origin box at most 16 high, the box's top
 
 **Elements.** Every element but the empty one has a `projection`, `rigid` or `terrain_matching`; a list element's is its own. A single (or legacy single) element is its template's box and jigsaw blocks. A list element is the box around its elements' boxes, with its first element's jigsaw blocks. A feature element is one block, with one jigsaw at it: front down, top south, `rollable`, no name, pool and target `minecraft:empty`, no draws. The empty element has neither.
 
+### Corner constraints
+
+_Versions:_ 26.4-snapshot-6 on (`CornerConstraint`). Unused in vanilla.
+
+Every element type but the empty one takes an optional `corner_constraint`: a list of 1 to 10 density predicates (`CornerConstraint.DensityPredicate`), all of which must hold. Each has:
+
+- `density_function`: a reference or an inline function;
+- `acceptable_density`: an inclusive range of doubles, written as one number, `[min, max]` or `{"min_inclusive", "max_inclusive"}`, `min` not above `max` by `Double.compareTo`;
+- `padding`: 0 to 8, default 0;
+- `corners`: `top`, `bottom` or `all` (the default);
+- `required_corners`: an inclusive range of ints in 1 to 8, in the same three forms; at most 4 for `top` or `bottom`.
+
+A predicate tests a box grown by `padding` on every side (`inflatedBy`). Its corners, in order: x max before min, inside y (top, then bottom, for `all`), inside z max before min. At each, the function's point value (`RandomState.getSampler`, uncached) is widened to `double` and counted if it's in the range by `Double.compareTo` (`−0.0` is below `+0.0`, NaN above everything). The predicate fails as soon as the count passes the maximum, or the count plus the corners left can't reach the minimum.
+
+The start is tested after its move and the padding check (step 8 [above](#jigsaw-starts)). A child is tested after it fits the free space **and has been taken from it**: a child the constraint rejects still blocks the space, and the placer goes on to the next of the candidate's jigsaws, as after a collision. Only the outermost element's constraint counts; a list element's members' are ignored. The functions bind with the dimension's random source and [anchors](density-functions.md#gradient-anchors), per seed; spyglass binds each once per dimension at load (`JigsawPools`, and `StructureSets` for start pools) so a check can't fail to.
+
 ### Pool aliases
 
 `pool_aliases` (in 26.3 only the trial chambers') resolve once per start, with their own random: `LegacyRandomSource(seed).forkPositional().at(minX, sampled start y, minZ)`. Bindings in list order: `direct` maps an alias to a pool; `random` picks one target by weight (`nextInt(total)`, then the entry that index falls in, in list order); `random_group` picks a group the same way and resolves its bindings in order with the same random. Every jigsaw block's pool goes through the result. The start pool would too, but spyglass doesn't support aliasing it (none of 26.3's structures does).
@@ -330,6 +347,7 @@ The biome check only ever removes starts, so a count of placement chunks is an u
   - Every start the game made must be among the selection's structures.
   - With terrain (`structures_with_terrain_match_the_oracle`): every stub spyglass computes must equal the game's exactly, and where the game has no stub spyglass must have none, unless a tied condition stands before it. Every outcome spyglass decides (a certain start, or none) must be the game's. For 26.3 that's 1,640 stubs, all equal, with mineshafts' 787 left unknown, and 5,986 outcomes decided of 6,056, all equal.
   - With terrain and pools, in the same test: every jigsaw start the game made must assemble to the game's pieces, box for box in order, and to the game's bounds. For 26.3 that's 301 starts and 47,534 pieces, the trial chambers' aliases included.
+  - For 26.4-snapshot-6's corner constraints, the [test pack](oracle.md#the-test-pack) adds a plains village on a frequent spread whose town centres (bottom corners) and streets (all corners, and top corners with padding) are constrained, its streets reached through a pool alias. Over the ten seeds the game rejects 4,164 starts by their constraint and makes 1,544, which assemble to the game's pieces, rejected streets included.
 
   Run it with `cargo test --release -p spyglass-structure -- --ignored`. For 26.3 it compares 6,056 placement chunks, 2,427 check positions, 682 jigsaw positions and 1,280 ring positions in the Overworld. 304 rings are flagged, and the 61 that differ are all among them.
 

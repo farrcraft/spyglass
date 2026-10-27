@@ -20,10 +20,10 @@ use std::sync::Arc;
 
 use spyglass_noise::{Volume, mth};
 
-use crate::function::{Axis, UpscaleAxis, UpscaleMode};
+use crate::function::{AXIS_X, AXIS_Z, Axis, UpscaleAxis, UpscaleMode};
 use crate::java;
 use crate::sampler::{
-    BoundSpline, BoundUpscale, MEMO, Memo, NO_SLOT, Node, Pos, Sampler, clamp, find_surface,
+    BoundSpline, BoundUpscale, MEMO, Memo, NO_SLOT, Node, Pos, Sampler, Warp, clamp, find_surface,
     java_pow, round_to_integer, round_to_multiple, unary,
 };
 
@@ -308,6 +308,11 @@ impl Node {
                 });
                 spread_y(&surfaces, volume, out);
             }
+            Node::DomainWarp {
+                input,
+                offsets,
+                axes,
+            } => domain_warp(f, volume, out, input, offsets, *axes),
             // GradientFunction's, DistanceToPointFunction's and EndIslandFunction's samplers
             // compute each position's value as the point path does.
             Node::Gradient { .. }
@@ -419,6 +424,99 @@ fn slice(
         p[a] = 0;
         out[i] = values[flat.index(p[0], p[1], p[2])];
     });
+}
+
+/// `DomainWarpFunction`'s samplers over a volume, as the game samples them after
+/// `SLICE_UNIFORM_AXES`: flattened onto 0 along each axis the function doesn't depend on (y is
+/// already, by [`Sampler::fill`]), then copied back along it. What follows depends on the
+/// volume's size, so the flattening has to match the game's.
+fn domain_warp(
+    f: &mut Fill,
+    volume: &Volume,
+    out: &mut [f32],
+    input: &Sampler,
+    offsets: &Warp,
+    axes: u8,
+) {
+    let mut flat = *volume;
+    for (a, bit) in [(0, AXIS_X), (2, AXIS_Z)] {
+        if axes & bit == 0 {
+            flat.size[a] = 1;
+            flat.min[a] = 0;
+        }
+    }
+    if flat == *volume {
+        warp(f, volume, out, input, offsets);
+        return;
+    }
+    let mut values = vec![0.0; flat.len()];
+    warp(f, &flat, &mut values, input, offsets);
+    for_each_index(volume, |i, [ix, iy, iz]| {
+        let at = |a: usize, n: i32| if flat.size[a] == 1 { 0 } else { n };
+        out[i] = values[flat.index(at(0, ix), iy, at(2, iz))];
+    });
+}
+
+/// `ConstOffsetSampler`, `FlatXzSampler` and `Sampler.sampleVolume`. The constant case is the
+/// input over the moved volume. Otherwise every position's moved block is computed (offsets
+/// sampled over the volume, truncated), and the input is sampled either at each one on the point
+/// path or, when the box they span is at most 16 times the volume, over that box on the volume
+/// path (`shouldSampleNaively`).
+fn warp(f: &mut Fill, volume: &Volume, out: &mut [f32], input: &Sampler, offsets: &Warp) {
+    let (ox, oy, oz) = match offsets {
+        Warp::Const(o) => {
+            let moved = Volume {
+                min: std::array::from_fn(|a| volume.min[a].wrapping_add(o[a])),
+                ..*volume
+            };
+            input.fill(f, &moved, out);
+            return;
+        }
+        Warp::FlatXz { x, z } => (x.values(f, volume), None, z.values(f, volume)),
+        Warp::General { x, y, z } => (
+            x.values(f, volume),
+            Some(y.values(f, volume)),
+            z.values(f, volume),
+        ),
+    };
+    let mut blocks = Vec::with_capacity(volume.len());
+    let (mut min, mut max) = ([i32::MAX; 3], [i32::MIN; 3]);
+    for_each(volume, |i, x, y, z| {
+        let b = [
+            x.wrapping_add(ox[i] as i32),
+            match &oy {
+                Some(oy) => y.wrapping_add(oy[i] as i32),
+                None => 0,
+            },
+            z.wrapping_add(oz[i] as i32),
+        ];
+        for a in 0..3 {
+            min[a] = min[a].min(b[a]);
+            max[a] = max[a].max(b[a]);
+        }
+        blocks.push(b);
+    });
+    // shouldSampleNaively: the box's volume in exact long arithmetic. On overflow the game
+    // returns false and then fails to make the box; spyglass samples naively instead.
+    let span = |a: usize| i64::from(max[a]) - i64::from(min[a]) + 1;
+    let naive = match span(0)
+        .checked_mul(span(1))
+        .and_then(|v| v.checked_mul(span(2)))
+    {
+        Some(v) => v > i64::from(i32::MAX) || v > volume.len() as i64 * 16,
+        None => true,
+    };
+    if naive {
+        for (v, [x, y, z]) in out.iter_mut().zip(&blocks) {
+            *v = input.eval_at(f.point, *x, *y, *z);
+        }
+        return;
+    }
+    let shape = Volume::blocks(std::array::from_fn(|a| span(a) as i32), min);
+    let values = input.values(f, &shape);
+    for (v, b) in out.iter_mut().zip(&blocks) {
+        *v = values[shape.index(b[0] - min[0], b[1] - min[1], b[2] - min[2])];
+    }
 }
 
 /// Visits every position of `volume` in index order, with its position counted along each axis.
@@ -573,7 +671,13 @@ fn fill_cell(
 /// (`sampleAndUpscaleFallback`).
 fn upscale(f: &mut Fill, volume: &Volume, out: &mut [f32], u: &BoundUpscale) {
     let plans: [Option<AxisPlan>; 3] = std::array::from_fn(|a| {
-        AxisPlan::new(u.axes[a], volume.min[a], volume.size[a], volume.step[a])
+        AxisPlan::new(
+            u.axes[a],
+            volume.min[a],
+            volume.size[a],
+            volume.step[a],
+            u.offset_by_step,
+        )
     });
     if let [Some(x), Some(y), Some(z)] = plans {
         sample_and_upscale(f, volume, out, u, [x, y, z]);
@@ -588,8 +692,14 @@ fn upscale(f: &mut Fill, volume: &Volume, out: &mut [f32], u: &BoundUpscale) {
         volume.min,
     );
     let plans = std::array::from_fn(|a| {
-        AxisPlan::new(u.axes[a], blocks.min[a], blocks.size[a], 1)
-            .expect("an axis with step 1 always has a plan")
+        AxisPlan::new(
+            u.axes[a],
+            blocks.min[a],
+            blocks.size[a],
+            1,
+            u.offset_by_step,
+        )
+        .expect("an axis with step 1 always has a plan")
     });
     let mut all = vec![0.0; blocks.len()];
     sample_and_upscale(f, &blocks, &mut all, u, plans);
@@ -684,7 +794,14 @@ struct AxisPlan {
 impl AxisPlan {
     /// `UpscaleFunction.Axis.planUpsample(min, size, step)`, or `None` where the game plans
     /// nothing and falls back. `Mth.isMultipleOf` is Java's `%`, so a negative multiple counts.
-    fn new(axis: UpscaleAxis, min: i32, size: i32, step: i32) -> Option<AxisPlan> {
+    /// `offset_by_step` is switch `upscale_offset_by_step`.
+    fn new(
+        axis: UpscaleAxis,
+        min: i32,
+        size: i32,
+        step: i32,
+        offset_by_step: bool,
+    ) -> Option<AxisPlan> {
         let (mode, cell) = (axis.mode, axis.cell_size);
         let step = if size == 1 { cell } else { step };
         let multiple = |a: i32, b: i32| a.wrapping_rem(b) == 0;
@@ -715,9 +832,9 @@ impl AxisPlan {
         let (min_output, cell_steps) = if step == 1 || size == 1 {
             (offset, cell)
         } else {
-            // The game tests the offset against the cell size, not the step, so a stepped
-            // volume whose minimum isn't on a corner falls back.
-            if !multiple(offset, cell) {
+            // 26.4-snapshot-5 tests the offset against the cell size, not the step, so a
+            // stepped volume whose minimum isn't on a corner falls back.
+            if !multiple(offset, if offset_by_step { step } else { cell }) {
                 return None;
             }
             (offset / step, cell / step)
@@ -1031,7 +1148,7 @@ mod tests {
     use super::*;
 
     fn plan(mode: UpscaleMode, cell_size: i32, min: i32, size: i32, step: i32) -> Option<AxisPlan> {
-        AxisPlan::new(UpscaleAxis { mode, cell_size }, min, size, step)
+        AxisPlan::new(UpscaleAxis { mode, cell_size }, min, size, step, false)
     }
 
     /// `(sample_count, sample_min, output_count, min_output, cell)`.
@@ -1074,6 +1191,15 @@ mod tests {
         assert!(plan(InterpolateLinear, 4, 1, 3, 2).is_none());
         // The minimum is tested against the cell even when the step would fit it.
         assert!(plan(InterpolateLinear, 4, 2, 3, 2).is_none());
+        // Switch upscale_offset_by_step: against the step. Blocks 2, 4, 6 in cells of 4: cells
+        // 0..=1, corners 0, 4, 8, the first cell starting one step early, each cell two steps.
+        let axis = UpscaleAxis {
+            mode: InterpolateLinear,
+            cell_size: 4,
+        };
+        let p = AxisPlan::new(axis, 2, 3, 2, true).unwrap();
+        assert_eq!(shape(p), (3, 0, 2, -1, 2));
+        assert!(AxisPlan::new(axis, 1, 3, 2, true).is_none());
     }
 
     #[test]

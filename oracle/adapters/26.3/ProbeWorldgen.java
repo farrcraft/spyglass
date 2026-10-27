@@ -37,6 +37,9 @@ import net.minecraft.world.level.levelgen.synth.PerlinNoise;
  * positions and their format are the core's ({@link Probe}); this class only asks the game.
  */
 final class ProbeWorldgen {
+    /** The test pack's functions (oracle/testpack), probed more widely than the vanilla ones. */
+    private static final String TEST_PACK_NAMESPACE = "spyglass_test:";
+
     /** The noises the overworld's climate density functions use. */
     private static final List<ResourceKey<NormalNoise>> CLIMATE_NOISES = List.of(Noises.TEMPERATURE,
             Noises.VEGETATION, Noises.CONTINENTALNESS, Noises.EROSION, Noises.RIDGE, Noises.SHIFT);
@@ -70,8 +73,8 @@ final class ProbeWorldgen {
             cases.add(kase("perlin_parity").seed(seed).text(parity.toString()).json);
             samples(cases, kase("perlin").seed(seed), perlin);
 
-            // The climate noises as a world creates them (RandomState.create, Noises.instantiate).
-            var state = RandomState.create(noises, seed, generator.generatorSettings().value());
+            // The climate noises as RandomState creates them (Noises.instantiate).
+            var state = RandomStates.forSettings(noises, seed, generator.generatorSettings().value());
             // RandomState's own factory: the overworld uses Xoroshiro (legacy_random_source false).
             PositionalRandomFactory factory = new XoroshiroRandomSource(seed).forkPositional();
             for (var key : CLIMATE_NOISES) {
@@ -111,7 +114,7 @@ final class ProbeWorldgen {
         for (String seedArg : seedArgs) {
             long seed = WorldOptions.parseSeed(seedArg)
                     .orElseThrow(() -> new IllegalArgumentException("empty seed"));
-            var state = RandomState.create(noises, seed, generator.generatorSettings().value());
+            var state = RandomStates.forSettings(noises, seed, generator.generatorSettings().value());
 
             // Every named function on its own, in id order, as RandomState evaluates a single block.
             var named = functions.listElements()
@@ -157,6 +160,24 @@ final class ProbeWorldgen {
                             cv.json.addProperty("height", height);
                             cases.add(cv.floats(values).json);
                         }
+                    }
+                }
+                // The test pack's functions over whole chunks too: their volume paths depend on
+                // the volume's shape (a domain_warp's box), which a column doesn't reach.
+                for (var holder : named) {
+                    String id = holder.key().identifier().toString();
+                    if (!id.startsWith(TEST_PACK_NAMESPACE)) {
+                        continue;
+                    }
+                    for (int[] chunk : CHUNKS) {
+                        var context = SamplerContext.builder().enableCaches().useBufferArena(columnPool).build();
+                        var volume = new DensityVolume(16, height, 16, chunk[0] * 16, minY, chunk[1] * 16);
+                        var buffer = DensityBuffer.createUnpooled(volume.size());
+                        state.samplersWithContext(context).get(holder.value()).sampleVolume(buffer, volume);
+                        var c = kase("density_chunk").seed(seed).name(id);
+                        c.json.add("pos", ints(new int[] {chunk[0] * 16, minY, chunk[1] * 16}));
+                        c.json.addProperty("height", height);
+                        cases.add(c.longs(digest(buffer, volume.size())).json);
                     }
                 }
                 var finalDensity = functions.getOrThrow(
@@ -305,7 +326,7 @@ final class ProbeWorldgen {
         for (String seedArg : seedArgs) {
             long seed = WorldOptions.parseSeed(seedArg)
                     .orElseThrow(() -> new IllegalArgumentException("empty seed"));
-            var state = RandomState.create(noises, seed, settings);
+            var state = RandomStates.forSettings(noises, seed, settings);
             for (var e : all.entrySet()) {
                 for (int[] b : BLOCKS) {
                     var c = kase("density").seed(seed).name(e.getKey());
@@ -422,7 +443,7 @@ final class ProbeWorldgen {
         for (String seedArg : seedArgs) {
             long seed = WorldOptions.parseSeed(seedArg)
                     .orElseThrow(() -> new IllegalArgumentException("empty seed"));
-            var state = RandomState.create(noises, seed, settings);
+            var state = RandomStates.forSettings(noises, seed, settings);
             for (int[] col : COLUMNS) {
                 var volume = new DensityVolume(1, height, 1, col[0], minY, col[1]);
                 for (int d = -1; d < AQUIFER_DENSITIES.length; d++) {

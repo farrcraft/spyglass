@@ -9,6 +9,7 @@
 mod assembly;
 mod biomes;
 mod check;
+mod corner;
 mod jigsaw;
 mod load;
 mod locate;

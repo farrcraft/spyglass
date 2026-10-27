@@ -68,8 +68,10 @@ pub(crate) fn of(binder: &mut Binder<'_>, function: &Df) -> Result<Interval, Loa
         DensityFunction::Clamp {
             input, min, max, ..
         } => Interval::clamp(binder.range(input)?, *min, *max)?,
+        // DomainWarpFunction.range: the input's.
+        DensityFunction::DomainWarp { input, .. } => binder.range(input)?,
         // UpscaleFunction.range: each axis's modifyRange, z, then x, then y.
-        DensityFunction::Upscale { input, x, y, z } => {
+        DensityFunction::Upscale { input, x, y, z, .. } => {
             let mut r = binder.range(input)?;
             for axis in [z, x, y] {
                 r = upscale_range(r, axis)?;
@@ -243,7 +245,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::function::{Axis, Gradient, Points, Tiling};
+    use crate::function::{Axis, Gradient, GradientCoordinate, Points, Tiling};
 
     fn i(min: f32, max: f32) -> Interval {
         Interval::of(min, max).unwrap()
@@ -255,9 +257,9 @@ mod tests {
         let coordinate = Arc::new(DensityFunction::Gradient(Gradient {
             axis: Axis::X,
             tiling: Tiling::ClampToEdge,
-            from_coordinate: 0,
+            from_coordinate: GradientCoordinate::Absolute(0),
             from_value: x0,
-            to_coordinate: 1,
+            to_coordinate: GradientCoordinate::Absolute(1),
             to_value: x1,
         }));
         let points = Points::new(
@@ -296,9 +298,9 @@ mod tests {
         let x = Arc::new(DensityFunction::Gradient(Gradient {
             axis: Axis::X,
             tiling: Tiling::ClampToEdge,
-            from_coordinate: 0,
+            from_coordinate: GradientCoordinate::Absolute(0),
             from_value: 0.0,
-            to_coordinate: 1,
+            to_coordinate: GradientCoordinate::Absolute(1),
             to_value: 1.0,
         }));
         let upscale = |mode_x, cell_x| {
@@ -307,6 +309,7 @@ mod tests {
                 x: axis(mode_x, cell_x),
                 y: axis(UpscaleMode::NearestNeighbor, 1),
                 z: axis(UpscaleMode::NearestNeighbor, 1),
+                offset_by_step: false,
             })
         };
         // Linear weights at t = 0 and ½ are exact: the input's range.

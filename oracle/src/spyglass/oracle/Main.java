@@ -35,6 +35,9 @@ import net.minecraft.world.level.levelgen.WorldOptions;
  *     One height golden file per seed (&lt;seed&gt;.json): the generator's worldgen heightmaps at
  *     every column of fixed block regions, and its block columns at a sample of positions.
  * </pre>
+ *
+ * Any command may be preceded by {@code --pack <dir>} (repeatable): a data pack folder loaded
+ * over the vanilla one. The outputs then name the version {@code <version>+<folder name>}.
  */
 public final class Main {
     /** Bump when output for the same game version changes. Recorded in golden-file headers. */
@@ -43,11 +46,16 @@ public final class Main {
     private Main() {}
 
     public static void main(String[] args) throws Exception {
+        var packs = new ArrayList<Path>();
+        while (args.length >= 2 && args[0].equals("--pack")) {
+            packs.add(Path.of(args[1]).toAbsolutePath());
+            args = java.util.Arrays.copyOfRange(args, 2, args.length);
+        }
         if (args.length < 2) {
             usage();
         }
         long t0 = System.nanoTime();
-        Game game = Game.load();
+        Game game = Game.load(packs);
         System.out.printf("spyglass oracle %s: Minecraft %s (data version %d), loaded in %.1f s%n", HARNESS_VERSION,
                 game.version, game.dataVersion, (System.nanoTime() - t0) / 1e9);
         int status;

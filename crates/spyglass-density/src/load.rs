@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde_json::{Map, Value};
+use spyglass_data::anchor::VerticalAnchor;
 use spyglass_data::bundle::{Bundle, BundleError};
 use spyglass_data::codec::{
     At, LoadErrorKind, LoadResult, double, field, float, full_id, int, int_field, out_of_range,
@@ -13,8 +14,8 @@ use spyglass_data::versions::Behavior;
 use spyglass_noise::{NormalNoiseParameters, Normalization, Parameters, v1_21};
 
 use crate::function::{
-    Axis, Binary, BlendedNoise, DensityFunction, Df, DistanceMetric, Gradient, Points, Round,
-    Spline, Tiling, Unary, UpscaleAxis, UpscaleMode,
+    Axis, Binary, BlendedNoise, DensityFunction, Df, DistanceMetric, Gradient, GradientCoordinate,
+    Points, Round, Spline, Tiling, Unary, UpscaleAxis, UpscaleMode,
 };
 
 /// Registry paths, as the game's data packs lay them out.
@@ -250,6 +251,38 @@ impl<'r, R: Resources + ?Sized> Loader<'r, R> {
                 when_out_of_range: arg(self, "when_out_of_range")?,
             },
             "minecraft:interval_select" => self.parse_interval_select(obj, at)?,
+            // DomainWarpFunction (26.4-snapshot-6 on): {"input", "offset_x", "offset_y",
+            // "offset_z"}, each offset optional with DensityFunctions.zero() as the default, and
+            // not all three zero (a reference is a holder, never equal to zero).
+            "minecraft:domain_warp" => {
+                let input = arg(self, "input")?;
+                let mut zero = 0;
+                let mut offset = |this: &mut Self, name: &'static str| -> LoadResult<Df> {
+                    let Some(value) = obj.get(name) else {
+                        zero += 1;
+                        return Ok(Arc::new(DensityFunction::Constant(0.0)));
+                    };
+                    let f = this.parse_function(value, &at.child(name))?;
+                    if !value.is_string() && f.is_zero() {
+                        zero += 1;
+                    }
+                    Ok(f)
+                };
+                let offset_x = offset(self, "offset_x")?;
+                let offset_y = offset(self, "offset_y")?;
+                let offset_z = offset(self, "offset_z")?;
+                if zero == 3 {
+                    return Err(at.error(LoadErrorKind::Invalid(
+                        "at least one of offset_x, offset_y, or offset_z must be specified",
+                    )));
+                }
+                DensityFunction::DomainWarp {
+                    input,
+                    offset_x,
+                    offset_y,
+                    offset_z,
+                }
+            }
             // SliceFunction: {"axis", "coordinate", "input"}.
             "minecraft:slice" => DensityFunction::Slice {
                 axis: parse_axis(obj, at)?,
@@ -268,6 +301,7 @@ impl<'r, R: Resources + ?Sized> Loader<'r, R> {
                 x: parse_upscale_axis(field(obj, "x", at)?, &at.child("x"))?,
                 y: parse_upscale_axis(field(obj, "y", at)?, &at.child("y"))?,
                 z: parse_upscale_axis(field(obj, "z", at)?, &at.child("z"))?,
+                offset_by_step: self.behavior.upscale_offset_by_step,
             },
             // FindTopSurfaceFunction: lower_bound within twice DimensionType's y range.
             "minecraft:find_top_surface" => DensityFunction::FindTopSurface {
@@ -571,11 +605,8 @@ fn parse_gradient(obj: &Map<String, Value>, at: &At<'_>) -> LoadResult<Gradient>
     let gradient = Gradient {
         axis,
         tiling,
-        from_coordinate: int(
-            field(obj, "from_coordinate", at)?,
-            &at.child("from_coordinate"),
-        )?,
-        to_coordinate: int(field(obj, "to_coordinate", at)?, &at.child("to_coordinate"))?,
+        from_coordinate: parse_gradient_coordinate(obj, "from_coordinate", at)?,
+        to_coordinate: parse_gradient_coordinate(obj, "to_coordinate", at)?,
         from_value: noise_value(field(obj, "from_value", at)?, &at.child("from_value"))?,
         to_value: noise_value(field(obj, "to_value", at)?, &at.child("to_value"))?,
     };
@@ -584,7 +615,31 @@ fn parse_gradient(obj: &Map<String, Value>, at: &At<'_>) -> LoadResult<Gradient>
             "from_coordinate cannot be equal to to_coordinate",
         )));
     }
+    let absolute = |c| matches!(c, GradientCoordinate::Absolute(_));
+    if gradient.axis != Axis::Y
+        && !(absolute(gradient.from_coordinate) && absolute(gradient.to_coordinate))
+    {
+        return Err(at.error(LoadErrorKind::Invalid(
+            "vertical anchor coordinates need the y axis",
+        )));
+    }
     Ok(gradient)
+}
+
+/// `GradientFunction.Coordinate.CODEC`: an int (`Absolute`), else a vertical anchor (`YAnchor`).
+fn parse_gradient_coordinate(
+    obj: &Map<String, Value>,
+    name: &'static str,
+    at: &At<'_>,
+) -> LoadResult<GradientCoordinate> {
+    let json = field(obj, name, at)?;
+    let at = at.child(name);
+    if json.is_object() {
+        return Ok(GradientCoordinate::Anchor(VerticalAnchor::parse(
+            json, &at,
+        )?));
+    }
+    Ok(GradientCoordinate::Absolute(int(json, &at)?))
 }
 
 /// A noise, in either form (ADR 0026): 26.2's `{"firstOctave", "amplitudes"}` when it has

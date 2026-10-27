@@ -35,3 +35,4 @@ Start from [template.md](template.md). Files are named `NNNN-kebab-case-title.md
 | [0027](0027-oracle-harness-across-versions.md)                | The oracle harness across versions                                    | Accepted                                                             |
 | [0028](0028-supported-versions-and-ci.md)                     | Supported versions, snapshots and CI                                  | Accepted                                                             |
 | [0029](0029-oracle-adapters-extend-a-base.md)                 | Oracle adapters can extend a base adapter                             | Accepted                                                             |
+| [0030](0030-a-test-pack-for-forms-vanilla-doesnt-use.md)      | A test pack for forms the vanilla data doesn't use                    | Accepted                                                             |

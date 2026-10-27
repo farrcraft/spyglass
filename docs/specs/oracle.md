@@ -30,6 +30,7 @@ CI runs the Rust crates against these for a fixed set of seeds per supported ver
 | `spawn`                                                         | Write the [spawn golden files](#spawn-golden-files) for the golden seeds and dimensions.                                |
 | `heights [--threads N]`                                         | Write the [height golden files](#height-golden-files) for the golden seeds and dimensions.                              |
 | `locate`                                                        | Ask a real dedicated server `/locate` questions ([below](#locate-answers)). Not part of `golden`.                       |
+| `test-pack`                                                     | Write probe and structure files with the [test pack](#the-test-pack) loaded, into `oracle-out/<version>+testpack/`.     |
 | `golden`                                                        | Regenerate the whole golden set below, probe, structure, spawn and height files included, into `oracle-out/<version>/`. |
 
 `build` runs automatically before the others, and does nothing when nothing changed:
@@ -52,7 +53,7 @@ The Rust tests that compare spyglass with these files are `#[ignore]`d, since th
 
 As the 26.3 adapter (`oracle/adapters/26.3/`) does it; other versions' adapters follow their own game's code paths to the same outputs, and their differences are noted here as they're added.
 
-- **Game state.** `SharedConstants.tryDetectVersion`, `Bootstrap.bootStrap`, then the `WorldLoader` sequence with only the vanilla pack: static registries, tags, then the worldgen registries into the `WORLD` layer. The static registries' tags (blocks, items) are then bound, as `ReloadableServerResources.updateStaticRegistryTags` does, because structure pieces read them. Dimensions come from `WorldPresets.createNormalWorldDimensions`, which is what a new Default world gets. A seed becomes a `RandomState` through `RandomState.create`, as `ChunkMap` does. Text seeds are converted by `WorldOptions.parseSeed`, as the world-creation screen does.
+- **Game state.** `SharedConstants.tryDetectVersion`, `Bootstrap.bootStrap`, then the `WorldLoader` sequence with the vanilla pack (and any `--pack` folders after it, as [the test pack](#the-test-pack) uses): static registries, tags, then the worldgen registries into the `WORLD` layer. The static registries' tags (blocks, items) are then bound, as `ReloadableServerResources.updateStaticRegistryTags` does, because structure pieces read them. Dimensions come from `WorldPresets.createNormalWorldDimensions`, which is what a new Default world gets. A seed becomes a `RandomState` as `ChunkMap` makes it: `RandomState.create`, or from 26.4-snapshot-6 `createForGenerator` with the dimension type's height, whose [anchors](density-functions.md#gradient-anchors) depend on it (the 26.3 adapter's `RandomStates.java`, which the snapshot-6 adapter replaces). The probe's single functions use `createForTesting`, from the noise settings alone. Text seeds are converted by `WorldOptions.parseSeed`, as the world-creation screen does.
 - **Biomes.** Per chunk, as `ChunkGenerator.doCreateBiomes` does: a cached `SamplerContext` on a pooled buffer arena, `createClimateSampler`, then `BiomeSource.createResolverForChunk` over the full height of the dimension type.
 - **Structures.** For each seed:
   - `ChunkGenerator.createState` builds the placements, and `ensureStructuresGenerated` computes the rings.
@@ -394,6 +395,19 @@ Then the same for the Nether and the End, each case with a `dimension` (cases wi
 - `noise_chunk_density_chunk` (`i64`): final density over each of the four chunks as `doFill` walks the chunk's `NoiseChunk` (cells x, then z, then y from the top; blocks y from the top, then x, then z), hashed in index order: y fastest, then x, then z. `pos` is the chunk's lowest block, `height` the walked height.
 
 **`terrain.json`** (26.2) has `noise_chunk_aquifer_column`: the overworld's aquifer as `iterateNoiseColumn` asks it, on a fresh walk like `noise_chunk_density_column`'s for each case. It's `computeSubstance(noiseChunk, density)` at every block from the top down, with the positioned `NoiseChunk` itself as the context, as the generator's material rule calls it. `method` `final_density` passes `getInterpolatedDensity`; `fixed` passes one `density` (−1, −0.02 or 0). The `text` value is one letter per block, bottom up, as for `aquifer_column`.
+
+## The test pack
+
+Some forms the game accepts aren't in its vanilla data: 26.4-snapshot-6's [`domain_warp`](density-functions.md#domain_warp), [gradient anchors](density-functions.md#gradient-anchors) and [corner constraints](structure-placement.md#corner-constraints). spyglass supports them because data packs written for a supported version must load ([ADR 0026](../adr/0026-how-game-versions-coexist.md)), and the oracle checks them with a data pack of its own ([ADR 0030](../adr/0030-a-test-pack-for-forms-vanilla-doesnt-use.md)): `oracle/testpack/`, committed, since it's spyglass's JSON. It names only vanilla noises, density functions and templates by id, so no game data is in it ([ADR 0008](../adr/0008-game-derived-test-values-stay-local.md)). Its namespace is `spyglass_test`.
+
+`cargo xtask oracle test-pack --game-version <id>` (26.4-snapshot-6 on):
+
+1. builds `target/oracle/bundles/<id>+testpack/`: `bundles/<id>/` with the pack's `data/` files added, its `bundle.json` naming the version `<id>+testpack` and listing them;
+2. runs the harness's `probe` and `structures` with `--pack oracle/testpack`, which load the pack over the vanilla one and name the version `<id>+testpack` in their files, into `oracle-out/<id>+testpack/`.
+
+The probe samples every named function, the pack's included, as it does the vanilla ones, and the pack's also over whole chunks (`density_chunk`), since a warp's volume path depends on the volume's shape. The structure files cover the pack's structure set as any other.
+
+`oracle-test` then treats `<id>+testpack` as a version: it finds bundles in `target/oracle/bundles/` as well as `bundles/`, and `spyglass_oracle::bundle_dir` falls back to it. The comparisons whose inputs exist run unchanged; the CLI's, which look a version up in `bundles/`, need an extracted bundle and are skipped. For 26.4-snapshot-6 that's 22 tests, all passing.
 
 ## Independent check: real world saves
 

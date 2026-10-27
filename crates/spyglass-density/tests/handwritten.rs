@@ -1394,6 +1394,31 @@ fn clamp_positive_zero_switch() {
 }
 
 #[test]
+fn upscale_offset_by_step_switch() {
+    let mut on = Behavior::default();
+    on.upscale_offset_by_step = true;
+    let off = Behavior::default();
+    // Linear in x over cells of 6, from 0 at x 0 to 7 at x 6 and beyond.
+    let f = json!({"type": "upscale",
+        "input": {"type": "gradient", "axis": "x", "from_coordinate": 0, "from_value": 0,
+            "to_coordinate": 6, "to_value": 7},
+        "x": {"mode": "interpolate_linear", "cell_size": 6},
+        "y": {"mode": "nearest_neighbor", "cell_size": 1},
+        "z": {"mode": "nearest_neighbor", "cell_size": 1}});
+    // x 3, 6, 9: three blocks apart, starting half a cell (one step) into cell 0.
+    let volume = Volume::new([3, 1, 1], [3, 0, 0], [3, 1, 1]);
+    let values = |b| bind_with(f.clone(), b).sample_volume(&volume);
+    let b = 7.0_f32;
+    // Off: the offset −3 isn't a multiple of the cell, so every block is upscaled and every third
+    // picked: x 3 is 3 blocks into a cell of 6.
+    assert_eq!(values(off), vec![(b * (1.0 / 6.0)) * 3.0, b, b]);
+    // On: planned in steps, two to a cell, so x 3 is one step into a cell of 2. 1/6 isn't exact
+    // in f32, so the two differ: 3.5000002 and 3.5.
+    assert_eq!(values(on), vec![b * 0.5, b, b]);
+    assert_ne!(values(on)[0], values(off)[0]);
+}
+
+#[test]
 fn spline_nan_is_nan_switch() {
     let mut on = Behavior::default();
     on.spline_nan_is_nan = true;

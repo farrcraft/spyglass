@@ -1,0 +1,10 @@
+{
+  "type": "minecraft:gradient",
+  "axis": "y",
+  "from_coordinate": 5,
+  "from_value": 0.0,
+  "to_coordinate": {
+    "absolute": 5
+  },
+  "to_value": 1.0
+}

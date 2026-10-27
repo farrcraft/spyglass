@@ -34,11 +34,17 @@ interface GameApi {
         return Adapter.INSTANCE;
     }
 
-    /** {@code WorldLoader.load}'s registries, and the Default preset's dimensions. */
-    Game load();
+    /**
+     * {@code WorldLoader.load}'s registries, and the Default preset's dimensions, from the vanilla
+     * data pack and then each of {@code packs}, data pack folders.
+     */
+    Game load(List<java.nio.file.Path> packs);
 
-    /** The generator's random state for {@code seed}, as {@code ServerChunkCache} creates it. */
-    RandomState randomState(Game game, NoiseBasedChunkGenerator generator, long seed);
+    /**
+     * The generator's random state for {@code seed}, as {@code ChunkMap} creates it for a level of
+     * {@code level}'s height.
+     */
+    RandomState randomState(Game game, NoiseBasedChunkGenerator generator, LevelHeightAccessor level, long seed);
 
     /**
      * A chunk's quart biomes as the game resolves them for chunk generation, and, for a

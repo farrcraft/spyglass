@@ -5,11 +5,14 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 use std::sync::Arc;
 
+use spyglass_data::anchor::AnchorHeights;
 use spyglass_data::bundle::Bundle;
 use spyglass_data::codec::LoadResult;
+use spyglass_noise::NormalNoiseParameters;
 use spyglass_rng::{LegacyRandomSource, PositionalRandomFactory, RandomSource, worldgen};
 use spyglass_terrain::Heightmap;
 
+use crate::corner::CornerSamplers;
 use crate::jigsaw::{
     AliasBinding, BoundingBox, EMPTY_POOL, GenerationHeights, Jigsaw, JigsawLoader, Pool,
     PoolElement, Projection, Rotation, shuffle,
@@ -22,6 +25,11 @@ use crate::load::StructureSets;
 #[derive(Debug, Clone)]
 pub struct JigsawPools {
     pools: HashMap<String, Arc<Pool>>,
+    /// The noises corner constraints' functions use.
+    noises: HashMap<String, NormalNoiseParameters>,
+    /// How the dimension's `RandomState` binds them.
+    legacy_random_source: bool,
+    anchors: AnchorHeights,
 }
 
 impl JigsawPools {
@@ -46,7 +54,33 @@ impl JigsawPools {
                 pools.insert(id, pool);
             }
         }
-        Ok(JigsawPools { pools })
+        let jigsaw_pools = JigsawPools {
+            pools,
+            noises: loader.noises().clone(),
+            legacy_random_source: sets.legacy_random_source(),
+            anchors: sets.heights().anchors(),
+        };
+        // Binding depends on the dimension, not the seed: bind every corner constraint's
+        // functions once, so assembly can't fail to.
+        let mut samplers = jigsaw_pools.corner_samplers(0);
+        for pool in jigsaw_pools.pools.values() {
+            for element in &pool.templates {
+                for function in element
+                    .corner_constraint()
+                    .into_iter()
+                    .flat_map(|c| c.functions())
+                {
+                    samplers.bind(function)?;
+                }
+            }
+        }
+        drop(samplers);
+        Ok(jigsaw_pools)
+    }
+
+    /// Corner constraints' functions, bound for `seed` as the dimension's `RandomState` binds.
+    fn corner_samplers(&self, seed: i64) -> CornerSamplers<'_> {
+        CornerSamplers::new(&self.noises, seed, self.legacy_random_source, self.anchors)
     }
 
     fn get(&self, id: &str) -> Option<&Pool> {
@@ -68,7 +102,8 @@ pub struct Layout {
 /// What assembly found.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Assembly {
-    /// No start: no start piece, a start outside the padding, or `size` 0.
+    /// No start: no start piece, a start outside the padding or failing its corner constraint,
+    /// or `size` 0.
     NoStart,
     /// The start's pieces.
     Built(Layout),
@@ -186,6 +221,8 @@ struct Placer<'a, 'h> {
     queue: Queue,
     /// `ChunkGenerator.getFirstFreeHeight(x, z, WORLD_SURFACE_WG)`, or `None` without terrain.
     first_free: &'h mut dyn FnMut(i32, i32, Heightmap) -> Option<i32>,
+    /// For pieces with a corner constraint.
+    corners: CornerSamplers<'a>,
 }
 
 /// Assembly stopped for want of a height.
@@ -325,6 +362,13 @@ impl<'a> Placer<'a, '_> {
                             continue;
                         }
                         self.free[free].taken.push(moved);
+                        // The corner test comes after the space is taken, so a piece it rejects
+                        // still blocks the others.
+                        if let Some(corner) = candidate.corner_constraint()
+                            && !corner.test(&moved, &mut self.corners)
+                        {
+                            continue;
+                        }
                         self.pieces.push(Piece {
                             element: candidate,
                             pos: place,
@@ -387,6 +431,12 @@ impl Jigsaw {
         if !self.fits_padding(y, [start.bbox.min[1], start.bbox.max[1]], heights) {
             return Assembly::NoStart;
         }
+        let mut corners = pools.corner_samplers(seed);
+        if let Some(corner) = start.element.corner_constraint()
+            && !corner.test(&bbox, &mut corners)
+        {
+            return Assembly::NoStart;
+        }
         if self.size <= 0 {
             return Assembly::NoStart;
         }
@@ -429,6 +479,7 @@ impl Jigsaw {
             }],
             queue: Queue::default(),
             first_free,
+            corners,
         };
         let mut next = Some(Waiting {
             piece: 0,
@@ -513,6 +564,9 @@ mod tests {
                 ),
                 (EMPTY_POOL.to_string(), pool(Vec::new())),
             ]),
+            noises: HashMap::new(),
+            legacy_random_source: false,
+            anchors: HEIGHTS.anchors(),
         };
         let jigsaw = Jigsaw {
             start_pool_id: "t:start".to_string(),

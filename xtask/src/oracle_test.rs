@@ -16,6 +16,9 @@ const VERSION_VAR: &str = "SPYGLASS_ORACLE_VERSION";
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Input {
     Bundle,
+    /// A bundle extracted into `bundles/`, which the front ends find by version; not a merged
+    /// test pack's.
+    Extracted,
     Probe,
     Biomes,
     Structures,
@@ -28,12 +31,17 @@ impl Input {
     /// Whether `version` has it.
     fn exists(self, root: &Path, version: &str) -> bool {
         let sub = match self {
-            Input::Bundle => {
+            Input::Extracted => {
                 return root
                     .join("bundles")
                     .join(version)
                     .join("bundle.json")
                     .is_file();
+            }
+            Input::Bundle => {
+                return BUNDLE_DIRS
+                    .iter()
+                    .any(|d| root.join(d).join(version).join("bundle.json").is_file());
             }
             Input::Probe => "probe",
             Input::Biomes => "biomes",
@@ -48,7 +56,7 @@ impl Input {
     /// The command that makes it.
     fn how(self) -> &'static str {
         match self {
-            Input::Bundle => "cargo run -p spyglass-extract",
+            Input::Bundle | Input::Extracted => "cargo run -p spyglass-extract",
             Input::Probe => "cargo xtask oracle probe",
             Input::Biomes => "cargo xtask oracle golden",
             Input::Structures => "cargo xtask oracle structures",
@@ -194,18 +202,26 @@ const TESTS: &[(&str, &str, &[Input])] = &[
     ),
     ("spyglass", "each_dimension_opens", &[Input::Bundle]),
     ("spyglass", "a_game_spans_the_dimensions", &[Input::Bundle]),
-    ("spyglass-cli", "structures", &[Input::Bundle]),
-    ("spyglass-cli", "jigsaw_bounds", &[Input::Bundle]),
-    ("spyglass-cli", "biomes", &[Input::Bundle]),
-    ("spyglass-cli", "slime_and_spawn", &[Input::Bundle]),
-    ("spyglass-cli", "a_default_world", &[Input::Bundle]),
-    ("spyglass-cli", "a_player_in_the_nether", &[Input::Bundle]),
+    ("spyglass-cli", "structures", &[Input::Extracted]),
+    ("spyglass-cli", "jigsaw_bounds", &[Input::Extracted]),
+    ("spyglass-cli", "biomes", &[Input::Extracted]),
+    ("spyglass-cli", "slime_and_spawn", &[Input::Extracted]),
+    ("spyglass-cli", "a_default_world", &[Input::Extracted]),
+    (
+        "spyglass-cli",
+        "a_player_in_the_nether",
+        &[Input::Extracted],
+    ),
     (
         "spyglass-cli",
         "worlds_spyglass_cant_predict",
-        &[Input::Bundle],
+        &[Input::Extracted],
     ),
-    ("spyglass-cli", "a_preset_world_is_named", &[Input::Bundle]),
+    (
+        "spyglass-cli",
+        "a_preset_world_is_named",
+        &[Input::Extracted],
+    ),
 ];
 
 /// Tests whose expected values are one version's, with that version: they run only for it.
@@ -258,10 +274,16 @@ pub fn run(version: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-/// The game versions with a bundle in `bundles/`, oldest data version first.
+/// Where bundles are: extracted ones, and those `cargo xtask oracle test-pack` merges with the
+/// test pack (`spyglass_oracle::bundle_dir`).
+const BUNDLE_DIRS: [&str; 2] = ["bundles", "target/oracle/bundles"];
+
+/// The game versions with a bundle, oldest data version first; a test pack's after its
+/// version's.
 fn bundled_versions(root: &Path) -> Vec<String> {
-    let mut found: Vec<(u32, String)> = std::fs::read_dir(root.join("bundles"))
-        .into_iter()
+    let mut found: Vec<(u32, String)> = BUNDLE_DIRS
+        .iter()
+        .filter_map(|d| std::fs::read_dir(root.join(d)).ok())
         .flatten()
         .flatten()
         .filter_map(|e| spyglass_data::bundle::read_manifest(&e.path()).ok())

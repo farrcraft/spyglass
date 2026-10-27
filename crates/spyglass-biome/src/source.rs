@@ -5,8 +5,9 @@
 use std::collections::BTreeMap;
 
 use serde_json::Value;
+use spyglass_data::anchor::AnchorHeights;
 use spyglass_data::bundle::Bundle;
-use spyglass_data::codec::{LoadError, LoadErrorKind, full_id};
+use spyglass_data::codec::{At, LoadError, LoadErrorKind, full_id};
 use spyglass_density::{ClimateRouter, ClimateSampler, Resources};
 use spyglass_rng::RandomSource;
 
@@ -14,6 +15,7 @@ use crate::parameters::{BiomeId, BiomeNames, ParameterList, TargetPoint};
 use crate::search::{Lookup, SearchTree};
 
 const WORLD_PRESET: &str = "worldgen/world_preset";
+const DIMENSION_TYPE: &str = "dimension_type";
 const PARAMETER_LIST: &str = "worldgen/multi_noise_biome_source_parameter_list";
 
 /// The most tied cells [`Biomes::find_biome_horizontal`] replays every combination of; beyond
@@ -99,12 +101,27 @@ impl BiomeSource {
             return Err(unsupported("type", generator_type));
         }
         let settings = id("settings")?;
+        // Anchors resolve within the level as well as the noise settings.
+        let type_at = format!("dimensions.{dimension}.type");
+        let dimension_type = json
+            .get("dimensions")
+            .and_then(|d| d.get(dimension))
+            .and_then(|d| d.get("type"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| error(preset, &type_at, LoadErrorKind::Shape("an id")))?;
+        let level = bundle
+            .resource(DIMENSION_TYPE, dimension_type)
+            .map_err(|e| error(dimension_type, "", e.into()))?;
+        let level = AnchorHeights::of_dimension_type(&level, &At::root(dimension_type))?;
+        let router = || -> Result<ClimateRouter, LoadError> {
+            Ok(ClimateRouter::load(bundle, settings)?.within_level(level))
+        };
         let source_type = id("biome_source.type")?;
         match full_id(source_type).as_str() {
             "minecraft:multi_noise" => {}
             "minecraft:the_end" => {
                 return Ok(BiomeSource {
-                    router: ClimateRouter::load(bundle, settings)?,
+                    router: router()?,
                     kind: Kind::TheEnd,
                     names: BiomeNames::new(END_BIOMES.map(str::to_string).to_vec()),
                     noise_settings: full_id(settings),
@@ -135,7 +152,7 @@ impl BiomeSource {
         }
 
         Ok(BiomeSource {
-            router: ClimateRouter::load(bundle, settings)?,
+            router: router()?,
             names: parameters.biome_names().clone(),
             kind: Kind::MultiNoise {
                 tree: SearchTree::new(&parameters),

@@ -111,6 +111,11 @@ switches! {
     /// `Mth.clamp` gave `-0.0`.
     clamp_positive_zero, "density-functions.md#types", [5125..];
 
+    /// `upscale` plans a stepped volume whose offset from its first cell is a multiple of the
+    /// step, where 26.4-snapshot-5 required a multiple of the cell size and otherwise fell back to
+    /// upscaling every block.
+    upscale_offset_by_step, "density-functions.md#upscale", [5126..];
+
     /// A feature pool element's jigsaw is named `minecraft:bottom`, and attaches only to a parent
     /// jigsaw targeting that name exactly. Later versions leave the name empty, matching any target.
     feature_jigsaw_named_bottom, "structure-placement.md#jigsaw-assembly", [0..5023];

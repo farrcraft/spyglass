@@ -20,11 +20,11 @@ use std::sync::Arc;
 
 use spyglass_noise::{Volume, mth};
 
-use crate::function::Axis;
+use crate::function::{Axis, UpscaleAxis, UpscaleMode};
 use crate::java;
 use crate::sampler::{
-    BoundSpline, MEMO, Memo, NO_SLOT, Node, Pos, Sampler, clamp, find_surface, java_pow,
-    round_to_integer, round_to_multiple, unary,
+    BoundSpline, BoundUpscale, MEMO, Memo, NO_SLOT, Node, Pos, Sampler, clamp, find_surface,
+    java_pow, round_to_integer, round_to_multiple, unary,
 };
 
 /// One volume evaluation's state: the point memo, for samplers that evaluate their inputs at
@@ -200,6 +200,9 @@ impl Node {
                 map(f, volume, out, input, |v| round_to_integer(v, *kind));
             }
             Node::Clamp(input, min, max) => map(f, volume, out, input, |v| clamp(v, *min, *max)),
+            Node::MathClamp(input, min, max) => {
+                map(f, volume, out, input, |v| java::clamp(v, *min, *max));
+            }
             Node::Pow(base, exponent) => binary(f, volume, out, base, exponent, |b, e| {
                 java_pow(f64::from(b), f64::from(e))
             }),
@@ -282,6 +285,8 @@ impl Node {
                 [*cell_xz, *cell_y],
                 [*inv_xz, *inv_y],
             ),
+            Node::Upscale(u) => upscale(f, volume, out, u),
+            Node::UpscaleNearest { input, cell } => upscale_nearest(f, volume, out, input, *cell),
             // FindTopSurfaceFunction.Sampler, which the game only samples one y deep (it's
             // inside a slice): the upper bound over the volume, then findSurfaceFrom per column.
             Node::FindTopSurface {
@@ -560,5 +565,544 @@ fn fill_cell(
                 value += step;
             }
         }
+    }
+}
+
+/// `UpscaleFunction.Sampler.sampleVolume`: each axis planned (`planUpsample`); if any can't be,
+/// the block-step box the volume spans is upscaled and every `step`th value picked
+/// (`sampleAndUpscaleFallback`).
+fn upscale(f: &mut Fill, volume: &Volume, out: &mut [f32], u: &BoundUpscale) {
+    let plans: [Option<AxisPlan>; 3] = std::array::from_fn(|a| {
+        AxisPlan::new(u.axes[a], volume.min[a], volume.size[a], volume.step[a])
+    });
+    if let [Some(x), Some(y), Some(z)] = plans {
+        sample_and_upscale(f, volume, out, u, [x, y, z]);
+        return;
+    }
+    let blocks = Volume::blocks(
+        std::array::from_fn(|a| {
+            (volume.size[a] - 1)
+                .wrapping_mul(volume.step[a])
+                .wrapping_add(1)
+        }),
+        volume.min,
+    );
+    let plans = std::array::from_fn(|a| {
+        AxisPlan::new(u.axes[a], blocks.min[a], blocks.size[a], 1)
+            .expect("an axis with step 1 always has a plan")
+    });
+    let mut all = vec![0.0; blocks.len()];
+    sample_and_upscale(f, &blocks, &mut all, u, plans);
+    for_each_index(volume, |i, [ix, iy, iz]| {
+        out[i] = all[blocks.index(
+            ix * volume.step[0],
+            iy * volume.step[1],
+            iz * volume.step[2],
+        )];
+    });
+}
+
+/// `UpscaleFunction.Sampler.sampleAndUpscale`: the input's own volume if every axis is exactly
+/// aligned; else the input over the corner volume the plans give, upscaled by the upscaler for
+/// the plans' modes and cell sizes (`Upscaler.upscale`).
+fn sample_and_upscale(
+    f: &mut Fill,
+    volume: &Volume,
+    out: &mut [f32],
+    u: &BoundUpscale,
+    plans: [AxisPlan; 3],
+) {
+    if plans.iter().all(|p| p.exactly_aligned) {
+        u.input.fill(f, volume, out);
+        return;
+    }
+    let corners = Volume::new(
+        plans.map(|p| p.sample_count),
+        plans.map(|p| p.sample_min),
+        plans.map(|p| p.sample_step),
+    );
+    let samples = u.input.values(f, &corners);
+    let (modes, cells) = (plans.map(|p| p.mode), plans.map(|p| p.cell));
+    if modes == u.upscaler.modes && cells == u.upscaler.cells {
+        u.upscaler.upscale(&plans, out, volume, &samples, &corners);
+    } else {
+        Upscaler::new(modes, cells).upscale(&plans, out, volume, &samples, &corners);
+    }
+}
+
+/// `NearestNeighborSampler.sampleVolume`: the input's own volume if it fits the grid
+/// (`DensityVolume.fitsOnGrid`); else the corners of every cell from the volume's minimum to its
+/// last position, each position taking its cell's corner.
+fn upscale_nearest(
+    f: &mut Fill,
+    volume: &Volume,
+    out: &mut [f32],
+    input: &Sampler,
+    cell: [i32; 3],
+) {
+    let fits = (0..3).all(|a| {
+        (volume.size[a] == 1 || volume.step[a].wrapping_rem(cell[a]) == 0)
+            && java::floor_mod(volume.min[a], cell[a]) == 0
+    });
+    if fits {
+        input.fill(f, volume, out);
+        return;
+    }
+    // getCellSampleVolume, with 26.4's maxBlock: the last position, min + (size − 1)·step.
+    let first: [i32; 3] = std::array::from_fn(|a| java::floor_div(volume.min[a], cell[a]));
+    let last: [i32; 3] = std::array::from_fn(|a| {
+        let max = volume.min[a].wrapping_add((volume.size[a] - 1).wrapping_mul(volume.step[a]));
+        java::floor_div(max, cell[a])
+    });
+    let grid = Volume::new(
+        std::array::from_fn(|a| last[a] - first[a] + 1),
+        std::array::from_fn(|a| first[a].wrapping_mul(cell[a])),
+        cell,
+    );
+    let corners = input.values(f, &grid);
+    let at = |a: usize, block: i32| java::floor_div(block, cell[a]) - first[a];
+    for_each(volume, |i, x, y, z| {
+        out[i] = corners[grid.index(at(0, x), at(1, y), at(2, z))];
+    });
+}
+
+/// `Upscaler.AxisPlan`: how one axis of a volume is upscaled. `cell` is the upscaler's cell size
+/// along the axis: the axis's, or its cell size in steps for a stepped volume, or 1 when the axis
+/// is exactly aligned.
+#[derive(Debug, Clone, Copy)]
+struct AxisPlan {
+    mode: UpscaleMode,
+    exactly_aligned: bool,
+    sample_count: i32,
+    sample_min: i32,
+    sample_step: i32,
+    output_count: i32,
+    min_output: i32,
+    cell: i32,
+}
+
+impl AxisPlan {
+    /// `UpscaleFunction.Axis.planUpsample(min, size, step)`, or `None` where the game plans
+    /// nothing and falls back. `Mth.isMultipleOf` is Java's `%`, so a negative multiple counts.
+    fn new(axis: UpscaleAxis, min: i32, size: i32, step: i32) -> Option<AxisPlan> {
+        let (mode, cell) = (axis.mode, axis.cell_size);
+        let step = if size == 1 { cell } else { step };
+        let multiple = |a: i32, b: i32| a.wrapping_rem(b) == 0;
+        let max = min.wrapping_add((size - 1).wrapping_mul(step));
+        if multiple(step, cell) && multiple(min, cell) && mode.exact_on_corner() {
+            // AxisPlan.exactlyAligned: the volume's own positions, as nearest with cell 1.
+            return Some(AxisPlan {
+                mode: UpscaleMode::NearestNeighbor,
+                exactly_aligned: true,
+                sample_count: size,
+                sample_min: min,
+                sample_step: step,
+                output_count: size,
+                min_output: 0,
+                cell: 1,
+            });
+        }
+        if !multiple(cell, step) {
+            return None;
+        }
+        let first = java::floor_div(min, cell);
+        let last = java::floor_div(max, cell);
+        let s0 = first - mode.samples_before();
+        let on_corner = i32::from(mode.exact_on_corner() && multiple(max, cell));
+        let s1 = last + (mode.samples_after() - on_corner).max(0);
+        // Where the first cell starts, relative to the volume: never after it.
+        let offset = first.wrapping_mul(cell).wrapping_sub(min);
+        let (min_output, cell_steps) = if step == 1 || size == 1 {
+            (offset, cell)
+        } else {
+            // The game tests the offset against the cell size, not the step, so a stepped
+            // volume whose minimum isn't on a corner falls back.
+            if !multiple(offset, cell) {
+                return None;
+            }
+            (offset / step, cell / step)
+        };
+        Some(AxisPlan {
+            mode,
+            exactly_aligned: false,
+            sample_count: s1 - s0 + 1,
+            sample_min: s0.wrapping_mul(cell),
+            sample_step: cell,
+            output_count: last - first + 1,
+            min_output,
+            cell: cell_steps,
+        })
+    }
+}
+
+/// `Upscaler.Coefficients`: one entry of an axis's table, the weights of its samples.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum Coefficients {
+    /// `Nearest`: the first sample.
+    Nearest,
+    /// `Linear(c1, c2)`.
+    Linear(f32, f32),
+    /// `Cubic(c1, c2, c3, c4)`: Catmull-Rom and the B-spline.
+    Cubic(f32, f32, f32, f32),
+}
+
+impl Coefficients {
+    /// `computeTable(cellSize, mode)`: entry `i` at `t = (float) i / (float) cellSize`.
+    pub(crate) fn table(cell: i32, mode: UpscaleMode) -> Vec<Coefficients> {
+        (0..cell)
+            .map(|i| Coefficients::at(mode, i as f32 / cell as f32))
+            .collect()
+    }
+
+    /// `Coefficients.compute(mode, t)`, all in `f32`, with `Mth.cube` as `(t·t)·t`.
+    fn at(mode: UpscaleMode, t: f32) -> Coefficients {
+        let square = |t: f32| t * t;
+        let cube = |t: f32| t * t * t;
+        match mode {
+            UpscaleMode::NearestNeighbor => Coefficients::Nearest,
+            UpscaleMode::InterpolateLinear => Coefficients::Linear(1.0 - t, t),
+            UpscaleMode::InterpolateCosine => {
+                let t = in_out_sine(t);
+                Coefficients::Linear(1.0 - t, t)
+            }
+            UpscaleMode::InterpolateCubic => Coefficients::Cubic(
+                (-0.5 * cube(t) + square(t)) - 0.5 * t,
+                (1.5 * cube(t) - 2.5 * square(t)) + 1.0,
+                (-1.5 * cube(t) + 2.0 * square(t)) + 0.5 * t,
+                0.5 * cube(t) - 0.5 * square(t),
+            ),
+            UpscaleMode::BSplineCubic => Coefficients::Cubic(
+                cube(1.0 - t) / 6.0,
+                ((3.0 * cube(t) - 6.0 * square(t)) + 4.0) / 6.0,
+                (((-3.0 * cube(t) + 3.0 * square(t)) + 3.0 * t) + 1.0) / 6.0,
+                cube(t) / 6.0,
+            ),
+        }
+    }
+
+    /// `multiply(samples, i, stride)`: the weighted samples `i`, `i + stride`, …, summed left to
+    /// right.
+    fn multiply(self, s: &[f32], i: usize, stride: usize) -> f32 {
+        match self {
+            Coefficients::Nearest => s[i],
+            Coefficients::Linear(c1, c2) => c1 * s[i] + c2 * s[i + stride],
+            Coefficients::Cubic(c1, c2, c3, c4) => {
+                ((c1 * s[i] + c2 * s[i + stride]) + c3 * s[i + 2 * stride]) + c4 * s[i + 3 * stride]
+            }
+        }
+    }
+
+    /// `asArray()`: the weights, in order (nearest's is 1).
+    pub(crate) fn as_array(self) -> Vec<f32> {
+        match self {
+            Coefficients::Nearest => vec![1.0],
+            Coefficients::Linear(c1, c2) => vec![c1, c2],
+            Coefficients::Cubic(c1, c2, c3, c4) => vec![c1, c2, c3, c4],
+        }
+    }
+}
+
+/// `Ease.inOutSine(t)`: `−(Mth.cos((double)(π_f · t)) − 1) / 2`, in `f32`.
+fn in_out_sine(t: f32) -> f32 {
+    -(mth_cos(f64::from(std::f32::consts::PI * t)) - 1.0) / 2.0
+}
+
+/// `Mth.cos(double)`: the sine table at `|x| · 65536 / 2π + 16384`, rounded half up, wrapped.
+fn mth_cos(x: f64) -> f32 {
+    const RADIANS_TO_INDEX: f64 = 10_430.378_350_470_453;
+    // dcmpl: NaN takes the negated branch, and (long) NaN is 0 either way.
+    let x = if x >= 0.0 { x } else { -x };
+    sin_table((((x * RADIANS_TO_INDEX + 16_384.0) + 0.5) as i64 & 65_535) as usize)
+}
+
+/// `Mth.SIN[i]`: `(float) Math.sin(i / 10430.378350470453)`, with the quarter turns set exactly.
+///
+/// Rust's `sin` isn't required to give Java's `Math.sin` bit for bit; both are narrowed to
+/// `f32`, so they differ only where the `f64` lies on a rounding boundary. Only the cosine mode,
+/// unused in vanilla, reads the table.
+fn sin_table(i: usize) -> f32 {
+    match i {
+        0 | 32_768 => 0.0,
+        16_384 => 1.0,
+        49_152 => -1.0,
+        _ => (i as f64 / 10_430.378_350_470_453).sin() as f32,
+    }
+}
+
+/// `PolymorphicUpscaler`: an upscaler for three modes and cell sizes (the game builds a
+/// specialized copy of it per parameter set, with the same arithmetic). Samples are laid out
+/// as a volume's, y fastest, then x, then z.
+#[derive(Debug)]
+pub(crate) struct Upscaler {
+    pub(crate) modes: [UpscaleMode; 3],
+    pub(crate) cells: [i32; 3],
+    /// `sampleCount` per axis.
+    counts: [usize; 3],
+    /// `sampleStrideX` (the y count) and `sampleStrideZ` (x count times y count); y's is 1.
+    stride_x: usize,
+    stride_z: usize,
+    /// `1.0f / (float) cellSizeX` and `cellSizeY`.
+    inv_x: f32,
+    inv_y: f32,
+    /// `computeTable(cellSize, mode)` per axis.
+    tables: [Vec<Coefficients>; 3],
+}
+
+impl Upscaler {
+    /// `new PolymorphicUpscaler(new Parameters(modes, cells))`.
+    pub(crate) fn new(modes: [UpscaleMode; 3], cells: [i32; 3]) -> Self {
+        let counts = modes.map(|m| m.sample_count() as usize);
+        Upscaler {
+            modes,
+            cells,
+            counts,
+            stride_x: counts[1],
+            stride_z: counts[0] * counts[1],
+            inv_x: 1.0 / cells[0] as f32,
+            inv_y: 1.0 / cells[1] as f32,
+            tables: std::array::from_fn(|a| Coefficients::table(cells[a], modes[a])),
+        }
+    }
+
+    /// `upscaleValue(fx, fy, fz, buffer)`: the point path's value at offsets `f` in the cell,
+    /// from the `sampleCount` corners per axis in `samples`: z, then x, then y.
+    pub(crate) fn value(&self, [fx, fy, fz]: [i32; 3], samples: &[f32]) -> f32 {
+        let z = self.tables[2][fz as usize];
+        let tz: Vec<f32> = (0..self.stride_z)
+            .map(|i| z.multiply(samples, i, self.stride_z))
+            .collect();
+        let x = self.tables[0][fx as usize];
+        let tx: Vec<f32> = (0..self.stride_x)
+            .map(|j| x.multiply(&tz, j, self.stride_x))
+            .collect();
+        self.tables[1][fy as usize].multiply(&tx, 0, 1)
+    }
+
+    /// `doUpscale`: for each output cell, z outer, then x, the samples around it (indices
+    /// clamped to the corner volume) are gathered, then each y cell is filled, the y samples
+    /// sliding down one corner per cell.
+    fn upscale(
+        &self,
+        plans: &[AxisPlan; 3],
+        out: &mut [f32],
+        volume: &Volume,
+        samples: &[f32],
+        corners: &Volume,
+    ) {
+        let [count_x, count_y, count_z] = self.counts;
+        let last_y = count_y - 1;
+        let size = corners.size;
+        let mut window = vec![0.0; count_x * count_y * count_z];
+        let mut tx = vec![0.0; self.stride_x];
+        let mut tz = vec![0.0; self.stride_z];
+        let [px, py, pz] = plans;
+        for cz in 0..pz.output_count {
+            let oz = pz.min_output + cz * self.cells[2];
+            for cx in 0..px.output_count {
+                let ox = px.min_output + cx * self.cells[0];
+                for k in 0..count_z {
+                    let zi = (cz + k as i32).min(size[2] - 1);
+                    for j in 0..count_x {
+                        let xi = (cx + j as i32).min(size[0] - 1);
+                        for l in 0..count_y {
+                            let yi = (l as i32).min(size[1] - 1);
+                            window[j * self.stride_x + l + k * self.stride_z] =
+                                samples[corners.index(xi, yi, zi)];
+                        }
+                    }
+                }
+                let o = [ox, py.min_output, oz];
+                self.fill_cell(out, volume, o, &window, &mut tx, &mut tz);
+                for cy in 1..py.output_count {
+                    let oy = py.min_output + cy * self.cells[1];
+                    let yi = (cy + last_y as i32).min(size[1] - 1);
+                    for k in 0..count_z {
+                        let zi = (cz + k as i32).min(size[2] - 1);
+                        for j in 0..count_x {
+                            let xi = (cx + j as i32).min(size[0] - 1);
+                            let base = j * self.stride_x + k * self.stride_z;
+                            window.copy_within(base + 1..base + count_y, base);
+                            window[base + last_y] = samples[corners.index(xi, yi, zi)];
+                        }
+                    }
+                    self.fill_cell(out, volume, [ox, oy, oz], &window, &mut tx, &mut tz);
+                }
+            }
+        }
+    }
+
+    /// `fillCell`: the cell at output position `o`, its offsets outside the volume skipped
+    /// (an axis of cell 1 always takes offset 0). Per z offset, `tz` from the z coefficients.
+    fn fill_cell(
+        &self,
+        out: &mut [f32],
+        volume: &Volume,
+        o: [i32; 3],
+        samples: &[f32],
+        tx: &mut [f32],
+        tz: &mut [f32],
+    ) {
+        let lo: [i32; 3] =
+            std::array::from_fn(|a| if self.cells[a] == 1 { 0 } else { 0.max(-o[a]) });
+        let hi: [i32; 3] = std::array::from_fn(|a| {
+            if self.cells[a] == 1 {
+                0
+            } else {
+                self.cells[a].min(volume.size[a] - o[a]) - 1
+            }
+        });
+        let (stride_x, stride_z) = (volume.size[1], volume.size[0] * volume.size[1]);
+        let mut index =
+            (o[1] + lo[1]) + ((o[0] + lo[0]) + (o[2] + lo[2]) * volume.size[0]) * volume.size[1];
+        for dz in lo[2]..=hi[2] {
+            let z = self.tables[2][dz as usize];
+            for (i, t) in tz.iter_mut().enumerate() {
+                *t = z.multiply(samples, i, self.stride_z);
+            }
+            self.fill_cell_xy(out, tz, tx, [lo[0], hi[0]], [lo[1], hi[1]], index, stride_x);
+            index += stride_z;
+        }
+    }
+
+    /// `fillCellXy`. With x linear and y nearest, x takes the step form, `a + step · (float) dx`
+    /// with `step = (b − a) · (1.0f / cellSizeX)`; otherwise `tx` from the x coefficients.
+    #[allow(clippy::too_many_arguments, reason = "mirrors fillCellXy's parameters")]
+    fn fill_cell_xy(
+        &self,
+        out: &mut [f32],
+        tz: &[f32],
+        tx: &mut [f32],
+        [x_lo, x_hi]: [i32; 2],
+        y: [i32; 2],
+        mut index: i32,
+        stride_x: i32,
+    ) {
+        if self.modes[0] == UpscaleMode::InterpolateLinear
+            && self.modes[1] == UpscaleMode::NearestNeighbor
+        {
+            let (a, b) = (tz[0], tz[1]);
+            let step = (b - a) * self.inv_x;
+            for dx in x_lo..=x_hi {
+                tx[0] = a + step * dx as f32;
+                self.fill_cell_y(out, tx, y, index);
+                index += stride_x;
+            }
+            return;
+        }
+        for dx in x_lo..=x_hi {
+            let x = self.tables[0][dx as usize];
+            for (j, t) in tx.iter_mut().enumerate() {
+                *t = x.multiply(tz, j, self.stride_x);
+            }
+            self.fill_cell_y(out, tx, y, index);
+            index += stride_x;
+        }
+    }
+
+    /// `fillCellY`: consecutive y values from `index`. Nearest repeats `tx[0]`; linear is
+    /// `a + step · (float) dy` for each `dy`, computed afresh, not accumulated; other modes use
+    /// their coefficients.
+    fn fill_cell_y(&self, out: &mut [f32], tx: &[f32], [lo, hi]: [i32; 2], index: i32) {
+        let values = (lo..=hi).zip(index as usize..);
+        match self.modes[1] {
+            UpscaleMode::NearestNeighbor => {
+                for (_, i) in values {
+                    out[i] = tx[0];
+                }
+            }
+            UpscaleMode::InterpolateLinear => {
+                let a = tx[0];
+                let step = (tx[1] - a) * self.inv_y;
+                for (dy, i) in values {
+                    out[i] = a + step * dy as f32;
+                }
+            }
+            _ => {
+                for (dy, i) in values {
+                    out[i] = self.tables[1][dy as usize].multiply(tx, 0, 1);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn plan(mode: UpscaleMode, cell_size: i32, min: i32, size: i32, step: i32) -> Option<AxisPlan> {
+        AxisPlan::new(UpscaleAxis { mode, cell_size }, min, size, step)
+    }
+
+    /// `(sample_count, sample_min, output_count, min_output, cell)`.
+    fn shape(p: AxisPlan) -> (i32, i32, i32, i32, i32) {
+        (
+            p.sample_count,
+            p.sample_min,
+            p.output_count,
+            p.min_output,
+            p.cell,
+        )
+    }
+
+    #[test]
+    fn axes_plan_their_corners() {
+        use UpscaleMode::*;
+        // Blocks −3..=16 in cells of 8: cells −1..=2, corners −8, 0, 8, 16 (16 is the last block
+        // and a corner, so no corner after it), the first cell starting 5 blocks early.
+        let p = plan(InterpolateLinear, 8, -3, 20, 1).unwrap();
+        assert!(!p.exactly_aligned && p.sample_step == 8);
+        assert_eq!(shape(p), (4, -8, 4, -5, 8));
+        // One position deep: the step becomes the cell size. Block 5 is in cell 1, corners 4, 8.
+        assert_eq!(
+            shape(plan(InterpolateLinear, 4, 5, 1, 1).unwrap()),
+            (2, 4, 1, -1, 4)
+        );
+        // On corners, a cell apart: the volume's own positions, as nearest with cell 1.
+        let p = plan(InterpolateLinear, 4, 8, 3, 4).unwrap();
+        assert!(p.exactly_aligned && p.mode == NearestNeighbor);
+        assert_eq!(shape(p), (3, 8, 3, 0, 1));
+        // A B-spline isn't exact on a corner: one corner before, two after, and the cell counted
+        // in steps.
+        let p = plan(BSplineCubic, 4, 8, 3, 4).unwrap();
+        assert!(!p.exactly_aligned);
+        assert_eq!(shape(p), (6, 4, 3, 0, 1));
+        let p = plan(InterpolateLinear, 8, 0, 4, 2).unwrap();
+        assert_eq!(shape(p), (2, 0, 1, 0, 4));
+        // No plan: a step that doesn't divide the cell, or a stepped volume off the corners.
+        assert!(plan(InterpolateLinear, 4, 0, 3, 3).is_none());
+        assert!(plan(InterpolateLinear, 4, 1, 3, 2).is_none());
+        // The minimum is tested against the cell even when the step would fit it.
+        assert!(plan(InterpolateLinear, 4, 2, 3, 2).is_none());
+    }
+
+    #[test]
+    fn coefficient_tables() {
+        use UpscaleMode::*;
+        assert_eq!(
+            Coefficients::table(4, InterpolateLinear),
+            [(1.0, 0.0), (0.75, 0.25), (0.5, 0.5), (0.25, 0.75)]
+                .map(|(a, b)| Coefficients::Linear(a, b))
+        );
+        // Ease.inOutSine at ½: cos(π/2) is the table's exact 0 at index 32768.
+        assert_eq!(
+            Coefficients::table(2, InterpolateCosine)[1],
+            Coefficients::Linear(0.5, 0.5)
+        );
+        // At ¼: SIN[24576] = sin(3π/4), so t = (1 − √½) / 2.
+        let Coefficients::Linear(_, t) = Coefficients::table(4, InterpolateCosine)[1] else {
+            panic!("cosine is linear");
+        };
+        assert!((t - 0.146_446_6).abs() < 1e-6, "{t}");
+        // Catmull-Rom passes through its second sample at t = 0; the B-spline weighs three.
+        assert_eq!(
+            Coefficients::table(2, InterpolateCubic)[0],
+            Coefficients::Cubic(0.0, 1.0, 0.0, 0.0)
+        );
+        assert_eq!(
+            Coefficients::table(2, BSplineCubic)[0],
+            Coefficients::Cubic(1.0 / 6.0, 4.0 / 6.0, 1.0 / 6.0, 0.0)
+        );
+        assert_eq!(Coefficients::table(3, NearestNeighbor).len(), 3);
     }
 }

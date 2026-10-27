@@ -18,7 +18,7 @@ mod volume;
 
 pub use function::{
     Axis, Binary, BlendedNoise, DensityFunction, Df, DistanceMetric, Gradient, Points, Round,
-    Spline, Tiling, Unary,
+    Spline, Tiling, Unary, UpscaleAxis, UpscaleMode,
 };
 pub use interval::{Interval, IntervalError};
 pub use load::{Loader, Resources};

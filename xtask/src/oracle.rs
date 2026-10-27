@@ -499,6 +499,35 @@ fn adapter(data_version: u32) -> Result<PathBuf> {
     }
 }
 
+/// An adapter's Java files with its bases' (ADR 0029): an `extends` file names the base adapter's
+/// directory, and a file in the adapter replaces the base's file of the same relative path.
+fn adapter_sources(adapter: &Path) -> Result<Vec<PathBuf>> {
+    let mut chain = vec![adapter.to_path_buf()];
+    loop {
+        let extends = chain.last().expect("never empty").join("extends");
+        if !extends.is_file() {
+            break;
+        }
+        let base = adapter
+            .parent()
+            .expect("adapters live in oracle/adapters")
+            .join(fs::read_to_string(&extends)?.trim());
+        if chain.contains(&base) || !base.is_dir() {
+            bail!("{} names no adapter, or a cycle", extends.display());
+        }
+        chain.push(base);
+    }
+    let mut by_name = std::collections::BTreeMap::new();
+    for dir in chain.iter().rev() {
+        let mut files = Vec::new();
+        collect_java(dir, &mut files)?;
+        for file in files {
+            by_name.insert(file.strip_prefix(dir)?.to_path_buf(), file);
+        }
+    }
+    Ok(by_name.into_values().collect())
+}
+
 /// Compiles `oracle/src` with `adapter` into `classes` unless the sources, adapter, jar and JDK
 /// are unchanged since the last build.
 fn compile(
@@ -512,7 +541,7 @@ fn compile(
     let oracle = repo_root().join("oracle");
     let mut sources = Vec::new();
     collect_java(&oracle.join("src"), &mut sources)?;
-    collect_java(adapter, &mut sources)?;
+    sources.extend(adapter_sources(adapter)?);
     sources.sort();
     if sources.is_empty() {
         bail!("no Java sources under {}", oracle.display());
@@ -539,7 +568,14 @@ fn compile(
     println!("compiling the oracle harness");
     let javac = jdk_bin.join(java::JAVAC_EXE);
     let status = Command::new(&javac)
-        .args(["--release", &major.to_string(), "-Xlint:all", "-Werror"])
+        // `classfile` warns about annotations the game's classes refer to but don't ship (JetBrains'
+        // `Contract`, from 26.4), which say nothing about the harness.
+        .args([
+            "--release",
+            &major.to_string(),
+            "-Xlint:all,-classfile",
+            "-Werror",
+        ])
         .arg("-d")
         .arg(classes)
         .arg("-cp")

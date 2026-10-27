@@ -5,10 +5,11 @@
 use spyglass_data::codec::LoadError;
 use spyglass_noise::mth::exp2i;
 
-use crate::function::{Binary, DensityFunction, Df, Spline, Unary};
+use crate::function::{Binary, DensityFunction, Df, Spline, Unary, UpscaleAxis};
 use crate::interval::Interval;
 use crate::java;
 use crate::sampler::{Binder, LIMIT_FACTOR, leaky_relu, round_to_integer, squeeze};
+use crate::volume::Coefficients;
 
 /// The range of `function`, its inputs' through `binder` (which remembers them).
 pub(crate) fn of(binder: &mut Binder<'_>, function: &Df) -> Result<Interval, LoadError> {
@@ -63,8 +64,17 @@ pub(crate) fn of(binder: &mut Binder<'_>, function: &Df) -> Result<Interval, Loa
             let rounded = Interval::map_monotonic(quotient, |v| round_to_integer(v, *kind))?;
             Interval::mul(rounded, m)?
         }
-        DensityFunction::Clamp { input, min, max } => {
-            Interval::clamp(binder.range(input)?, *min, *max)?
+        // ClampFunction: the same in every version, however it compiles.
+        DensityFunction::Clamp {
+            input, min, max, ..
+        } => Interval::clamp(binder.range(input)?, *min, *max)?,
+        // UpscaleFunction.range: each axis's modifyRange, z, then x, then y.
+        DensityFunction::Upscale { input, x, y, z } => {
+            let mut r = binder.range(input)?;
+            for axis in [z, x, y] {
+                r = upscale_range(r, axis)?;
+            }
+            r
         }
         DensityFunction::Pow { base, exponent } => {
             Interval::pow(binder.range(base)?, binder.range(exponent)?)?
@@ -137,6 +147,24 @@ fn fbm_range(first_octave: i32, smear: f64, factor: f64) -> Result<Interval, Loa
         amplitude *= 2.0;
     }
     Ok(range)
+}
+
+/// `Upscaler.Coefficients.modifyRange(range, cellSize, mode)`: over every entry of the axis's
+/// coefficient table, `Σ ofExact(c_k) · range` summed from `[0, 0]` in coefficient order, then
+/// the interval holding them all. Rounding can make it wider than `range`.
+fn upscale_range(range: Interval, axis: &UpscaleAxis) -> Result<Interval, LoadError> {
+    let ranges = Coefficients::table(axis.cell_size, axis.mode)
+        .iter()
+        .map(|coefficients| {
+            coefficients
+                .as_array()
+                .iter()
+                .try_fold(Interval::exact(0.0)?, |sum, &c| {
+                    Interval::add(sum, Interval::mul(Interval::exact(c)?, range)?)
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Interval::encapsulating(ranges)?)
 }
 
 /// `CubicSpline.range()`.
@@ -259,6 +287,44 @@ mod tests {
         // A coordinate reaching −1 and 2 extends the end values linearly: 0 + 4·(−1 − 0) and
         // 1 + 4·(2 − 1).
         assert_eq!(range_of(&spline(-1.0, 2.0, 4.0)), i(-4.0, 5.0));
+    }
+
+    #[test]
+    fn upscale_ranges_follow_the_coefficients() {
+        use crate::function::{UpscaleAxis, UpscaleMode};
+        let axis = |mode, cell_size| UpscaleAxis { mode, cell_size };
+        let x = Arc::new(DensityFunction::Gradient(Gradient {
+            axis: Axis::X,
+            tiling: Tiling::ClampToEdge,
+            from_coordinate: 0,
+            from_value: 0.0,
+            to_coordinate: 1,
+            to_value: 1.0,
+        }));
+        let upscale = |mode_x, cell_x| {
+            Arc::new(DensityFunction::Upscale {
+                input: x.clone(),
+                x: axis(mode_x, cell_x),
+                y: axis(UpscaleMode::NearestNeighbor, 1),
+                z: axis(UpscaleMode::NearestNeighbor, 1),
+            })
+        };
+        // Linear weights at t = 0 and ½ are exact: the input's range.
+        assert_eq!(
+            range_of(&upscale(UpscaleMode::InterpolateLinear, 2)),
+            i(0.0, 1.0)
+        );
+        // Catmull-Rom at t = ½ is (−1/16, 9/16, 9/16, −1/16): each negative weight reaches −1/16
+        // of the top, so [−1/8, 9/8]. The entry at t = 0, (0, 1, 0, 0), is inside it.
+        assert_eq!(
+            range_of(&upscale(UpscaleMode::InterpolateCubic, 2)),
+            i(-0.125, 1.125)
+        );
+        // Nearest is the input's, through 0 + 1·r.
+        assert_eq!(
+            range_of(&upscale(UpscaleMode::NearestNeighbor, 4)),
+            i(0.0, 1.0)
+        );
     }
 
     #[test]

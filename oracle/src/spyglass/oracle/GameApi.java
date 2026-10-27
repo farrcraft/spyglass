@@ -59,6 +59,12 @@ interface GameApi {
         void close();
     }
 
+    /**
+     * Whether {@code Climate.Parameter.distance} treats ranges as half-open, adding 1 above the
+     * range (26.4 on; {@code docs/specs/biome-lookup.md#fitness}).
+     */
+    boolean halfOpenClimate();
+
     /** {@code ParameterPoint.fitness}: the game's own distance from a point to a target. */
     long fitness(Climate.ParameterPoint point, Climate.TargetPoint target);
 

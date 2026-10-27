@@ -1,6 +1,6 @@
 # Noise
 
-Status: stable. Implemented in `spyglass-noise` for 26.3; checked against the game by the oracle's [probe files](oracle.md#probe-files). 26.2 and 26.4-snapshot-5 differences are drafted in _Versions_ notes from the bytecode and not yet checked against the oracle.
+Status: stable. Implemented in `spyglass-noise` for 26.3; checked against the game by the oracle's [probe files](oracle.md#probe-files). 26.4-snapshot-5 is implemented and checked against the oracle; 26.2's differences are drafted in _Versions_ notes from the bytecode and not yet checked.
 
 26.3 reworked noise since 1.21. `ImprovedNoise` is gone, samples are `float`, and the noise JSON has a new shape, so ports of older versions don't apply. Ported from the 26.3 bytecode (`net.minecraft.world.level.levelgen.synth`). Coordinates are `f64`; samples are `f32`. The type of each step below is part of the spec.
 

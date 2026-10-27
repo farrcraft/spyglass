@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-26
-- See also: [0004](0004-oracle-standalone-harness.md), which this extends; [0026](0026-how-game-versions-coexist.md), [0028](0028-supported-versions-and-ci.md)
+- See also: [0004](0004-oracle-standalone-harness.md), which this extends; [0026](0026-how-game-versions-coexist.md), [0028](0028-supported-versions-and-ci.md); [0029](0029-oracle-adapters-extend-a-base.md), which amends it
 
 ## Context
 

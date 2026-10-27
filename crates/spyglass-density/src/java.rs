@@ -27,6 +27,13 @@ pub(crate) fn max(a: f32, b: f32) -> f32 {
     }
 }
 
+/// `Math.clamp(float, float, float)`: `Math.min(max, Math.max(value, min))`, so `−0` clamped
+/// below by `+0` is `+0`, and NaN stays NaN. (The game's bounds are ordered and never NaN, which
+/// `Math.clamp` would throw on.)
+pub(crate) fn clamp(value: f32, min: f32, max: f32) -> f32 {
+    self::min(max, self::max(value, min))
+}
+
 /// `Math.floorDiv(int, int)`: rounds toward negative infinity, wrapping `MIN_VALUE / -1`.
 pub(crate) fn floor_div(x: i32, y: i32) -> i32 {
     let q = x.wrapping_div(y);
@@ -72,6 +79,16 @@ mod tests {
         assert!(max(0.0, -0.0).is_sign_positive());
         assert_eq!(min(2.0, -3.0), -3.0);
         assert_eq!(max(2.0, -3.0), 2.0);
+    }
+
+    #[test]
+    fn math_clamp_lifts_negative_zero() {
+        // Math.min(max, Math.max(−0, +0)) is +0, where Mth.clamp's `value < min` test keeps −0.
+        assert_eq!(clamp(-0.0, 0.0, 1.0).to_bits(), 0);
+        assert_eq!(clamp(-0.0, -1.0, 1.0).to_bits(), (-0.0_f32).to_bits());
+        assert!(clamp(f32::NAN, 0.0, 1.0).is_nan());
+        assert_eq!(clamp(5.0, 0.0, 1.0), 1.0);
+        assert_eq!(clamp(-5.0, 0.0, 1.0), 0.0);
     }
 
     #[test]

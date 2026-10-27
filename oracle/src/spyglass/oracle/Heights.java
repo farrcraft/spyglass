@@ -135,7 +135,9 @@ final class Heights {
             String last = null;
             int count = 0;
             for (int y = type.minY(); y < type.minY() + type.height(); y++) {
-                String id = BuiltInRegistries.BLOCK.getKey(column[y - type.minY()].getBlock()).toString();
+                BlockState block = column[y - type.minY()];
+                // Null where the version leaves a solid block to the material rule (26.4 on).
+                String id = block == null ? SOLID : BuiltInRegistries.BLOCK.getKey(block.getBlock()).toString();
                 if (id.equals(last)) {
                     count++;
                     continue;
@@ -155,6 +157,9 @@ final class Heights {
         root.add("columns", columns);
         return root;
     }
+
+    /** A column entry that's solid, but no block yet: the material rule decides which. */
+    private static final String SOLID = "solid";
 
     private static JsonArray run(String id, int count) {
         var arr = new JsonArray();

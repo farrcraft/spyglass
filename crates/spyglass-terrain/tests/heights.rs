@@ -127,7 +127,11 @@ fn check(path: &Path) -> (Vec<String>, usize) {
         let blocks = terrain.base_column(x, z);
         let min_y = int(&file["min_y"]);
         let got: Vec<&str> = (0..want.len() as i32)
-            .map(|i| block_id(blocks.at(min_y + i), &settings.default_block))
+            .map(|i| {
+                // 26.4 on: no default block; the oracle writes solid blocks as "solid".
+                let solid = settings.default_block.as_deref().unwrap_or("solid");
+                block_id(blocks.at(min_y + i), solid)
+            })
             .collect();
         checked += want.len();
         if let Some(i) = want.iter().zip(&got).position(|(w, g)| w != g) {

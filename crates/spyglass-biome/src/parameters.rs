@@ -21,6 +21,18 @@ pub struct Parameter {
 }
 
 impl Parameter {
+    /// The range as versions with the `climate_half_open` switch read it (ADR 0026): the data's
+    /// `[min, max)`, which over integers is `[min, max - 1]`. Their `distance` is
+    /// `(t - max) + 1` above the range, which is this range's `t - (max - 1)` in wrapping
+    /// arithmetic, so fitness, the search's box distances and spawn fitness need no change. A
+    /// single value becomes an empty range, never at distance 0, as in the game.
+    pub fn half_open(self) -> Self {
+        Parameter {
+            min: self.min,
+            max: self.max.wrapping_sub(1),
+        }
+    }
+
     /// `Climate.Parameter.distance(long)`: how far `target` is outside the range, 0 inside it.
     pub fn distance(self, target: i64) -> i64 {
         let above = target.wrapping_sub(self.max);
@@ -225,6 +237,15 @@ impl ParameterList {
         Ok(list)
     }
 
+    /// Every point's ranges made [half-open](Parameter::half_open), for versions with the
+    /// `climate_half_open` switch.
+    pub fn half_open(mut self) -> Self {
+        for point in &mut self.points {
+            point.parameters = point.parameters.map(Parameter::half_open);
+        }
+        self
+    }
+
     /// The parameter points, in list order.
     pub fn points(&self) -> &[ParameterPoint] {
         &self.points
@@ -350,6 +371,47 @@ mod tests {
         let target = TargetPoint([-150, 0, 75, 50, 51, -101]);
         // 50² + 0 + 25² + 0 + 1² + 1² + 3².
         assert_eq!(point.fitness(&target), 2500 + 625 + 1 + 1 + 9);
+    }
+
+    /// 26.4's `Climate.Parameter.distance`, written as the game does: `(t - max) + 1` above.
+    fn half_open_distance(p: Parameter, t: i64) -> i64 {
+        let above = t.wrapping_sub(p.max).wrapping_add(1);
+        let below = p.min.wrapping_sub(t);
+        if above > 0 { above } else { below.max(0) }
+    }
+
+    #[test]
+    fn half_open_ranges_are_the_games_distance() {
+        let p = Parameter { min: -100, max: 50 };
+        let h = p.half_open();
+        assert_eq!((h.distance(49), h.distance(50), h.distance(75)), (0, 1, 26));
+        assert_eq!((h.distance(-100), h.distance(-150)), (0, 50));
+        // A single value is never at distance 0.
+        let single = Parameter { min: 7, max: 7 }.half_open();
+        assert_eq!(
+            (single.distance(6), single.distance(7), single.distance(8)),
+            (1, 1, 2)
+        );
+        for p in [
+            p,
+            Parameter { min: 7, max: 7 },
+            Parameter {
+                min: i64::MIN,
+                max: i64::MAX,
+            },
+            Parameter {
+                min: -20000,
+                max: 20000,
+            },
+        ] {
+            for t in [i64::MIN, -20001, -100, 0, 6, 7, 8, 50, 20000, i64::MAX] {
+                assert_eq!(
+                    p.half_open().distance(t),
+                    half_open_distance(p, t),
+                    "{p:?} at {t}"
+                );
+            }
+        }
     }
 
     #[test]

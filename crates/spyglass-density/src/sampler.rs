@@ -29,10 +29,12 @@ use spyglass_rng::{
 
 use crate::function::{
     Axis, Binary, BlendedNoise, DensityFunction, Df, DistanceMetric, Round, Spline, Tiling, Unary,
+    UpscaleAxis, UpscaleMode,
 };
 use crate::interval::{Interval, IntervalError};
 use crate::java;
 use crate::range;
+use crate::volume::Upscaler;
 
 /// A density function bound to a seed's noises, ready to evaluate.
 #[derive(Debug, Clone)]
@@ -110,8 +112,10 @@ pub(crate) enum Node {
     Round(Round, Sampler, Sampler),
     /// `RoundFunction.IntegerMultipleSampler`: a multiple that's the constant 1.
     RoundInteger(Round, Sampler),
-    /// `ClampFunction.Sampler`.
+    /// `ClampFunction.Sampler`, with `Mth.clamp`.
     Clamp(Sampler, f32, f32),
+    /// `ClampFunction.Sampler`, with `Math.clamp` (switch `clamp_positive_zero`).
+    MathClamp(Sampler, f32, f32),
     /// `PowFunction.Sampler`.
     Pow(Sampler, Sampler),
     /// `PowFunction.ConstBaseSampler`.
@@ -151,6 +155,14 @@ pub(crate) enum Node {
         inv_xz: f32,
         inv_y: f32,
     },
+    /// `UpscaleFunction.Sampler`.
+    Upscale(Box<BoundUpscale>),
+    /// `UpscaleFunction.NearestNeighborSampler`: every axis `nearest_neighbor`, with the cell
+    /// sizes.
+    UpscaleNearest {
+        input: Sampler,
+        cell: [i32; 3],
+    },
     /// `FindTopSurfaceFunction.Sampler`, compiled inside a slice at y 0.
     FindTopSurface {
         density: Sampler,
@@ -186,6 +198,15 @@ pub(crate) enum Node {
     EndIslands(Arc<SimplexNoise>),
 }
 
+/// `UpscaleFunction.Sampler`'s parts: the input, the axes, and the upscaler for the axes' own
+/// modes and cell sizes (`valueUpscaler`).
+#[derive(Debug)]
+pub(crate) struct BoundUpscale {
+    pub(crate) input: Sampler,
+    pub(crate) axes: [UpscaleAxis; 3],
+    pub(crate) upscaler: Upscaler,
+}
+
 #[derive(Debug)]
 pub(crate) enum BoundSpline {
     Constant(f32),
@@ -194,6 +215,8 @@ pub(crate) enum BoundSpline {
         locations: Vec<f32>,
         values: Vec<BoundSpline>,
         derivatives: Vec<f32>,
+        /// Switch `spline_nan_is_nan`: sample as 26.4 does.
+        nan_is_nan: bool,
     },
 }
 
@@ -399,7 +422,15 @@ impl<'n> Binder<'n> {
                     Node::Round(*kind, input, self.bind(multiple)?)
                 }
             }
-            DensityFunction::Clamp { input, min, max } => {
+            DensityFunction::Clamp {
+                input,
+                min,
+                max,
+                math_clamp,
+            } => {
+                if *math_clamp {
+                    return self.compile_math_clamp(input, *min, *max);
+                }
                 Node::Clamp(self.bind(input)?, *min, *max)
             }
             DensityFunction::Pow { base, exponent } => {
@@ -504,6 +535,25 @@ impl<'n> Binder<'n> {
                 inv_xz: 1.0 / *cell_size_xz as f32,
                 inv_y: 1.0 / *cell_size_y as f32,
             },
+            // UpscaleFunction.compileSampler: all three axes nearest is NearestNeighborSampler,
+            // anything else the general sampler, with an upscaler for the axes as given.
+            DensityFunction::Upscale { input, x, y, z } => {
+                let input = self.bind(input)?;
+                let axes = [*x, *y, *z];
+                if axes.iter().all(|a| a.mode == UpscaleMode::NearestNeighbor) {
+                    Node::UpscaleNearest {
+                        input,
+                        cell: axes.map(|a| a.cell_size),
+                    }
+                } else {
+                    let upscaler = Upscaler::new(axes.map(|a| a.mode), axes.map(|a| a.cell_size));
+                    Node::Upscale(Box::new(BoundUpscale {
+                        input,
+                        axes,
+                        upscaler,
+                    }))
+                }
+            }
             DensityFunction::DistanceToPoint { point, metric } => Node::DistanceToPoint {
                 point: *point,
                 metric: *metric,
@@ -568,6 +618,29 @@ impl<'n> Binder<'n> {
                 }
             }
         }))
+    }
+
+    /// `ClampFunction.compileSampler` under switch `clamp_positive_zero`: by the input's range
+    /// `r`, the input itself if the bounds hold all of `r`, a `ConstMaxSampler` with `min` if
+    /// only `max` does, a `ConstMinSampler` with `max` if only `min` does, else the clamp, with
+    /// `Math.clamp`. A NaN bound of `r` fails every test.
+    fn compile_math_clamp(
+        &mut self,
+        input: &Df,
+        min: f32,
+        max: f32,
+    ) -> Result<Compiled, LoadError> {
+        let r = self.range(input)?;
+        let s = self.bind(input)?;
+        Ok(if min <= r.min() && max >= r.max() {
+            Compiled::Alias(s)
+        } else if max >= r.max() {
+            Compiled::Node(Node::MaxConst(s, min))
+        } else if min <= r.min() {
+            Compiled::Node(Node::MinConst(s, max))
+        } else {
+            Compiled::Node(Node::MathClamp(s, min, max))
+        })
     }
 
     /// `PowFunction.compileSampler` and `compileConstExponent`.
@@ -640,6 +713,8 @@ impl<'n> Binder<'n> {
         let main = noise(main, xz_multiplier / p.xz_factor, y_multiplier / p.y_factor);
         let half = self.sampler(Node::Constant(0.5));
         let shifted = self.sampler(Node::Add(main, half));
+        // 26.4 clamps with Math.clamp here, whatever the data says. main + 0.5 is never −0, so
+        // that's the same value as Mth.clamp, and switch clamp_positive_zero isn't needed.
         let alpha = self.sampler(Node::Clamp(shifted, 0.0, 1.0));
         Ok(Compiled::Node(Node::Lerp {
             alpha,
@@ -660,6 +735,7 @@ impl<'n> Binder<'n> {
                     .map(|v| self.bind_spline(v))
                     .collect::<Result<_, _>>()?,
                 derivatives: points.derivatives().to_vec(),
+                nan_is_nan: points.nan_is_nan(),
             },
         })
     }
@@ -991,6 +1067,7 @@ impl Node {
             }
             Node::RoundInteger(kind, input) => round_to_integer(input.eval(memo, pos), *kind),
             Node::Clamp(input, min, max) => clamp(input.eval(memo, pos), *min, *max),
+            Node::MathClamp(input, min, max) => java::clamp(input.eval(memo, pos), *min, *max),
             Node::Pow(base, exponent) => {
                 let b = f64::from(base.eval(memo, pos));
                 java_pow(b, f64::from(exponent.eval(memo, pos)))
@@ -1094,6 +1171,42 @@ impl Node {
                     at(1, 1, 1),
                 )
             }
+            // UpscaleFunction.Sampler.sampleValue: the input itself on a corner of every axis
+            // whose mode is exact there. Otherwise the corners around the cell, sampleCount per
+            // axis a cell apart, through the input's volume path, then upscaleValue: z, then x,
+            // then y, with each axis's coefficients at its offset in the cell.
+            Node::Upscale(u) => {
+                let [ax, ay, az] = u.axes;
+                let f = [
+                    java::floor_mod(x, ax.cell_size),
+                    java::floor_mod(y, ay.cell_size),
+                    java::floor_mod(z, az.cell_size),
+                ];
+                if f == [0, 0, 0] && u.axes.iter().all(|a| a.mode.exact_on_corner()) {
+                    return u.input.eval(memo, pos);
+                }
+                let first = |c: i32, f: i32, a: UpscaleAxis| {
+                    c.wrapping_sub(f)
+                        .wrapping_sub(a.mode.samples_before().wrapping_mul(a.cell_size))
+                };
+                let corners = Volume::new(
+                    u.axes.map(|a| a.mode.sample_count()),
+                    [first(x, f[0], ax), first(y, f[1], ay), first(z, f[2], az)],
+                    u.axes.map(|a| a.cell_size),
+                );
+                let samples = u.input.volume_in(memo, &corners);
+                u.upscaler.value(f, &samples)
+            }
+            // NearestNeighborSampler.sampleValue: the input at the cell's corner.
+            Node::UpscaleNearest { input, cell } => {
+                let corner = |c: i32, size: i32| java::floor_div(c, size).wrapping_mul(size);
+                input.eval_at(
+                    memo,
+                    corner(x, cell[0]),
+                    corner(y, cell[1]),
+                    corner(z, cell[2]),
+                )
+            }
             // FindTopSurfaceFunction.Sampler, inside a slice at y 0: the upper bound at
             // (x, 0, z), then findSurfaceFrom.
             Node::FindTopSurface {
@@ -1183,6 +1296,7 @@ impl Node {
             | Node::Unary(_, a)
             | Node::RoundInteger(_, a)
             | Node::Clamp(a, _, _)
+            | Node::MathClamp(a, _, _)
             | Node::PowConstBase(_, a)
             | Node::PowConstExponent(a, _) => a.depends_on_y,
             Node::Lerp {
@@ -1201,6 +1315,11 @@ impl Node {
             } => input.depends_on_y || samplers.iter().any(|s| s.depends_on_y),
             Node::Slice { axis, input, .. } => *axis != Axis::Y && input.depends_on_y,
             Node::Interpolated { input, .. } => input.depends_on_y,
+            // With y cells over 1, equal corners along y still give values that depend on the
+            // offset in the cell ((1 − t)·a + t·a isn't always a) and on whether a position is on
+            // a corner, so only a y cell of 1 passes the input's flag through.
+            Node::Upscale(u) => u.input.depends_on_y || u.axes[1].cell_size != 1,
+            Node::UpscaleNearest { input, cell } => input.depends_on_y || cell[1] != 1,
             Node::FindTopSurface { .. } => false,
             Node::Gradient { axis, .. } | Node::GradientRepeat { axis, .. } => *axis == Axis::Y,
             Node::DistanceToPoint { .. } => true,
@@ -1324,16 +1443,20 @@ impl BoundSpline {
     /// `CubicSpline.Multipoint.sample`, all in `f32`, with each coordinate's value from
     /// `coordinate_value`. Only the coordinates of points the value reaches are asked for.
     pub(crate) fn sample_with(&self, coordinate_value: &mut dyn FnMut(&Sampler) -> f32) -> f32 {
-        let (coordinate, locations, values, derivatives) = match self {
+        let (coordinate, locations, values, derivatives, nan_is_nan) = match self {
             BoundSpline::Constant(v) => return *v,
             BoundSpline::Multipoint {
                 coordinate,
                 locations,
                 values,
                 derivatives,
-            } => (coordinate, locations, values, derivatives),
+                nan_is_nan,
+            } => (coordinate, locations, values, derivatives, *nan_is_nan),
         };
         let c = coordinate_value(coordinate);
+        if nan_is_nan {
+            return sample_nan_is_nan(c, locations, values, derivatives, coordinate_value);
+        }
         // findIntervalStart: Mth.binarySearch for the first location above c, minus one. The
         // game's test is `c < location`, so a NaN coordinate finds no location and extends past
         // the last point; the negation keeps that.
@@ -1369,4 +1492,51 @@ impl BoundSpline {
         let lerp = |t: f32, p: f32, q: f32| p + t * (q - p);
         lerp(t, f0, f1) + t * (1.0 - t) * lerp(t, a, b)
     }
+}
+
+/// 26.4's `CubicSpline.Multipoint.sample` (switch `spline_nan_is_nan`), at coordinate value `c`:
+/// NaN for a NaN `c`; the first point, extended, at or before the first location, and the last
+/// at or after the last; else the interval a scan from the second location finds, with the same
+/// formula as 26.3. See `docs/specs/density-functions.md#types`.
+fn sample_nan_is_nan(
+    c: f32,
+    locations: &[f32],
+    values: &[BoundSpline],
+    derivatives: &[f32],
+    coordinate_value: &mut dyn FnMut(&Sampler) -> f32,
+) -> f32 {
+    if c.is_nan() {
+        return f32::NAN;
+    }
+    let last = locations.len() - 1;
+    // linearExtend: the point's value, plus its derivative times the distance if that's not 0.
+    let mut extend = |i: usize| {
+        let value = values[i].sample_with(coordinate_value);
+        let d = derivatives[i];
+        if d == 0.0 {
+            value
+        } else {
+            value + d * (c - locations[i])
+        }
+    };
+    if c <= locations[0] {
+        return extend(0);
+    }
+    if c >= locations[last] {
+        return extend(last);
+    }
+    let mut i = 1;
+    while i < last && c >= locations[i] {
+        i += 1;
+    }
+    let j = i - 1;
+    let (x0, x1) = (locations[j], locations[i]);
+    let f0 = values[j].sample_with(coordinate_value);
+    let f1 = values[i].sample_with(coordinate_value);
+    let (dx, df) = (x1 - x0, f1 - f0);
+    let t = (c - x0) / dx;
+    let a = derivatives[j] * dx - df;
+    let b = -derivatives[i] * dx + df;
+    let lerp = |t: f32, p: f32, q: f32| p + t * (q - p);
+    lerp(t, f0, f1) + t * (1.0 - t) * lerp(t, a, b)
 }

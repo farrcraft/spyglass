@@ -63,6 +63,9 @@ pub enum DensityFunction {
         min: f32,
         /// `max`, never below `min`.
         max: f32,
+        /// `Math.clamp`, and a sampler chosen by the input's range (switch `clamp_positive_zero`,
+        /// 26.4 on); else `Mth.clamp`, always (26.3).
+        math_clamp: bool,
     },
     /// `pow`: `PowFunction`.
     Pow {
@@ -121,6 +124,18 @@ pub enum DensityFunction {
         cell_size_xz: i32,
         /// `cell_size_y`, positive.
         cell_size_y: i32,
+    },
+    /// `upscale`: `UpscaleFunction` (26.4 on): the input at cell corners, upscaled inside cells
+    /// one axis at a time. Not bit-identical to `interpolated`, even with linear modes.
+    Upscale {
+        /// `input`.
+        input: Df,
+        /// `x`.
+        x: UpscaleAxis,
+        /// `y`.
+        y: UpscaleAxis,
+        /// `z`.
+        z: UpscaleAxis,
     },
     /// `find_top_surface`: `FindTopSurfaceFunction`.
     FindTopSurface {
@@ -311,6 +326,59 @@ pub enum DistanceMetric {
     Chebyshev,
 }
 
+/// `UpscaleFunction.Axis`: one axis's mode and cell size.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UpscaleAxis {
+    /// `mode`.
+    pub mode: UpscaleMode,
+    /// `cell_size`, 1 to 64.
+    pub cell_size: i32,
+}
+
+/// `UpscaleFunction.Mode`: how an axis fills its cells from the corner samples around them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpscaleMode {
+    /// `nearest_neighbor`: the cell's first corner.
+    NearestNeighbor,
+    /// `interpolate_linear`.
+    InterpolateLinear,
+    /// `interpolate_cosine`: linear, eased by `Ease.inOutSine`.
+    InterpolateCosine,
+    /// `interpolate_cubic`: Catmull-Rom.
+    InterpolateCubic,
+    /// `b_spline_cubic`: a cubic B-spline, which doesn't pass through the corners.
+    BSplineCubic,
+}
+
+impl UpscaleMode {
+    /// `samplesBefore`: corners sampled before the cell's first.
+    pub fn samples_before(self) -> i32 {
+        match self {
+            UpscaleMode::InterpolateCubic | UpscaleMode::BSplineCubic => 1,
+            _ => 0,
+        }
+    }
+
+    /// `samplesAfter`: corners sampled after the cell's first.
+    pub fn samples_after(self) -> i32 {
+        match self {
+            UpscaleMode::NearestNeighbor => 0,
+            UpscaleMode::InterpolateLinear | UpscaleMode::InterpolateCosine => 1,
+            UpscaleMode::InterpolateCubic | UpscaleMode::BSplineCubic => 2,
+        }
+    }
+
+    /// `sampleCount`: `samplesBefore + 1 + samplesAfter`.
+    pub fn sample_count(self) -> i32 {
+        self.samples_before() + 1 + self.samples_after()
+    }
+
+    /// `exactValueOnVertex`: whether the value on a corner is the corner's sample.
+    pub fn exact_on_corner(self) -> bool {
+        self != UpscaleMode::BSplineCubic
+    }
+}
+
 /// `CubicSpline`, with density functions as coordinates.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Spline {
@@ -328,6 +396,7 @@ pub struct Points {
     locations: Vec<f32>,
     values: Vec<Spline>,
     derivatives: Vec<f32>,
+    nan_is_nan: bool,
 }
 
 impl Points {
@@ -345,7 +414,24 @@ impl Points {
             locations,
             values,
             derivatives,
+            nan_is_nan: false,
         })
+    }
+
+    /// The points, sampled as 26.4 samples them if `on` (switch `spline_nan_is_nan`): a NaN
+    /// coordinate gives NaN, and a coordinate on the first location takes the first point,
+    /// extended.
+    pub fn with_nan_is_nan(self, on: bool) -> Self {
+        Points {
+            nan_is_nan: on,
+            ..self
+        }
+    }
+
+    /// Whether sampling follows switch `spline_nan_is_nan` (see
+    /// [`with_nan_is_nan`](Self::with_nan_is_nan)).
+    pub fn nan_is_nan(&self) -> bool {
+        self.nan_is_nan
     }
 
     /// `coordinate`: the function whose value picks the interval.

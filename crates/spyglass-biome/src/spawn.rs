@@ -62,7 +62,11 @@ impl SpawnTargets {
                 if !seen.insert(full_id(function)) {
                     return Err(error(path, LoadErrorKind::Invalid("duplicate key")));
                 }
-                let parameter = Parameter::from_codec(range).map_err(|kind| error(path, kind))?;
+                let mut parameter =
+                    Parameter::from_codec(range).map_err(|kind| error(path, kind))?;
+                if resources.behavior().climate_half_open {
+                    parameter = parameter.half_open();
+                }
                 parameters.push((loader.function(function)?, parameter));
             }
             points.push(parameters);

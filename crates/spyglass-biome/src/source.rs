@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use serde_json::Value;
 use spyglass_data::bundle::Bundle;
 use spyglass_data::codec::{LoadError, LoadErrorKind, full_id};
-use spyglass_density::{ClimateRouter, ClimateSampler};
+use spyglass_density::{ClimateRouter, ClimateSampler, Resources};
 use spyglass_rng::RandomSource;
 
 use crate::parameters::{BiomeId, BiomeNames, ParameterList, TargetPoint};
@@ -129,7 +129,10 @@ impl BiomeSource {
         let report = bundle
             .report(&report_path)
             .map_err(|e| error(&report_path, "", e.into()))?;
-        let parameters = ParameterList::from_report(&report, &report_path)?;
+        let mut parameters = ParameterList::from_report(&report, &report_path)?;
+        if bundle.behavior().climate_half_open {
+            parameters = parameters.half_open();
+        }
 
         Ok(BiomeSource {
             router: ClimateRouter::load(bundle, settings)?,

@@ -37,13 +37,17 @@ pub struct TerrainSettings {
     pub height: i32,
     /// `sea_level`.
     pub sea_level: i32,
-    /// `default_block`, a block id (`minecraft:stone` in the Overworld).
-    pub default_block: String,
+    /// `default_block`, a block id (`minecraft:stone` in the Overworld). Absent from 26.4 on,
+    /// where a column leaves solid blocks to the material rule (`docs/specs/terrain.md`).
+    pub default_block: Option<String>,
     /// `default_fluid`.
     pub default_fluid: Block,
-    /// Whether `default_block` is in `#minecraft:blocks_motion_in_heightmap`, so counts for
-    /// `OCEAN_FLOOR_WG`.
+    /// Whether a solid block counts for `OCEAN_FLOOR_WG`: whether `default_block` is in
+    /// `#minecraft:blocks_motion_in_heightmap`, or always with the `solid_only_heights` switch.
     pub default_block_blocks_motion: bool,
+    /// The `solid_only_heights` switch (ADR 0026): an empty column's height is the column's
+    /// bottom, not the level's.
+    pub solid_only_heights: bool,
     /// The dimension type's `min_y`: the level's bottom, which queries are clamped to.
     pub level_min_y: i32,
     /// The dimension type's `height`.
@@ -104,10 +108,11 @@ impl TerrainSettings {
             field(settings, "sea_level", &root)?,
             &root.child("sea_level"),
         )?;
-        let default_block = block_id(
-            field(settings, "default_block", &root)?,
-            &root.child("default_block"),
-        )?;
+        let default_block = match settings.get("default_block") {
+            Some(json) => Some(block_id(json, &root.child("default_block"))?),
+            None => None,
+        };
+        let solid_only_heights = resources.behavior().solid_only_heights;
         let fluid_at = root.child("default_fluid");
         let default_fluid =
             match block_id(field(settings, "default_fluid", &root)?, &fluid_at)?.as_str() {
@@ -121,8 +126,13 @@ impl TerrainSettings {
                     }));
                 }
             };
-        let default_block_blocks_motion =
-            block_tag(resources, "minecraft:blocks_motion_in_heightmap")?.contains(&default_block);
+        let default_block_blocks_motion = match &default_block {
+            _ if solid_only_heights => true,
+            Some(block) => {
+                block_tag(resources, "minecraft:blocks_motion_in_heightmap")?.contains(block)
+            }
+            None => return Err(root.error(LoadErrorKind::Missing("default_block"))),
+        };
         let (level_min_y, level_height) = level_range(resources, dimension_type)?;
         let mut loader = Loader::new(resources);
         let router = field(settings, "noise_router", &root)?;
@@ -151,6 +161,7 @@ impl TerrainSettings {
             default_block,
             default_fluid,
             default_block_blocks_motion,
+            solid_only_heights,
             level_min_y,
             level_height,
             final_density,

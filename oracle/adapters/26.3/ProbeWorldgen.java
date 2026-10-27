@@ -19,7 +19,6 @@ import net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator;
 import net.minecraft.world.level.levelgen.NoiseChunk;
 import net.minecraft.world.level.levelgen.NoiseGeneratorSettings;
 import net.minecraft.world.level.levelgen.Noises;
-import net.minecraft.world.level.levelgen.blending.Blender;
 import net.minecraft.world.level.levelgen.PositionalRandomFactory;
 import net.minecraft.world.level.levelgen.RandomState;
 import net.minecraft.world.level.levelgen.WorldOptions;
@@ -427,7 +426,7 @@ final class ProbeWorldgen {
             for (int[] col : COLUMNS) {
                 var volume = new DensityVolume(1, height, 1, col[0], minY, col[1]);
                 for (int d = -1; d < AQUIFER_DENSITIES.length; d++) {
-                    try (var chunk = new NoiseChunk(state, null, settings, picker, Blender.empty(), volume)) {
+                    try (var chunk = Calls.probeChunk(state, settings, picker, volume)) {
                         Aquifer aquifer = chunk.aquifer();
                         float[] density = null;
                         if (d < 0) {

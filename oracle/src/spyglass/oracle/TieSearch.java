@@ -70,14 +70,20 @@ final class TieSearch {
         }
     }
 
-    /** Min then max per dimension, as in {@code Climate.ParameterPoint.parameterSpace}. */
+    /**
+     * Min then max per dimension, as in {@code Climate.ParameterPoint.parameterSpace}. Where the
+     * game's ranges are half-open ({@link GameApi#halfOpenClimate}), {@code [min, max)} is stored as
+     * {@code [min, max - 1]}: the same distances, so the search below is unchanged. The offset is
+     * a value, not a range, and never shifts.
+     */
     private static long[] bounds(Climate.ParameterPoint p) {
+        long shift = GameApi.get().halfOpenClimate() ? 1 : 0;
         Climate.Parameter[] space = {p.temperature(), p.humidity(), p.continentalness(), p.erosion(), p.depth(),
             p.weirdness(), new Climate.Parameter(p.offset(), p.offset())};
         long[] b = new long[2 * DIMENSIONS];
         for (int d = 0; d < DIMENSIONS; d++) {
             b[d] = space[d].min();
-            b[DIMENSIONS + d] = space[d].max();
+            b[DIMENSIONS + d] = d < DIMENSIONS - 1 ? space[d].max() - shift : space[d].max();
         }
         return b;
     }

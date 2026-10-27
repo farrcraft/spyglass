@@ -9,11 +9,12 @@ use spyglass_data::bundle::{Bundle, BundleError};
 use spyglass_data::codec::{
     At, LoadErrorKind, LoadResult, double, field, float, full_id, int, int_field, out_of_range,
 };
+use spyglass_data::versions::Behavior;
 use spyglass_noise::{NormalNoiseParameters, Normalization};
 
 use crate::function::{
     Axis, Binary, BlendedNoise, DensityFunction, Df, DistanceMetric, Gradient, Points, Round,
-    Spline, Tiling, Unary,
+    Spline, Tiling, Unary, UpscaleAxis, UpscaleMode,
 };
 
 /// Registry paths, as the game's data packs lay them out.
@@ -24,11 +25,21 @@ pub(crate) const NOISE: &str = "worldgen/noise";
 pub trait Resources {
     /// The JSON of the entry `id` in `registry` (a registry path, e.g. `worldgen/noise`).
     fn resource(&self, registry: &str, id: &str) -> Result<Value, BundleError>;
+
+    /// The behavior switches for the version the resources come from (ADR 0026). Hand-built
+    /// resources are 26.3's shape, so by default every switch is off.
+    fn behavior(&self) -> Behavior {
+        Behavior::default()
+    }
 }
 
 impl Resources for Bundle {
     fn resource(&self, registry: &str, id: &str) -> Result<Value, BundleError> {
         Bundle::resource(self, registry, id)
+    }
+
+    fn behavior(&self) -> Behavior {
+        Behavior::of(self.manifest().data_version)
     }
 }
 
@@ -44,6 +55,8 @@ impl Resources for HashMap<String, Value> {
 /// Loads named density functions and noises, sharing each one however often it's referenced.
 pub struct Loader<'r, R: Resources + ?Sized> {
     resources: &'r R,
+    /// The resources' behavior switches, baked into what's loaded.
+    behavior: Behavior,
     functions: HashMap<String, Df>,
     noises: HashMap<String, NormalNoiseParameters>,
     /// Named functions being loaded, outermost first, for cycle detection.
@@ -55,6 +68,7 @@ impl<'r, R: Resources + ?Sized> Loader<'r, R> {
     pub fn new(resources: &'r R) -> Self {
         Loader {
             resources,
+            behavior: resources.behavior(),
             functions: HashMap::new(),
             noises: HashMap::new(),
             loading: Vec::new(),
@@ -197,7 +211,7 @@ impl<'r, R: Resources + ?Sized> Loader<'r, R> {
             // CacheFunction and BlendDensityFunction: {"input"}.
             "minecraft:cache" => DensityFunction::Cache(arg(self, "input")?),
             "minecraft:blend_density" => DensityFunction::BlendDensity(arg(self, "input")?),
-            // ClampFunction, validated: max must not be below min.
+            // ClampFunction, validated: max must not be below min. How it clamps is a switch.
             "minecraft:clamp" => {
                 let input = arg(self, "input")?;
                 let min = noise_value(field(obj, "min", at)?, &at.child("min"))?;
@@ -205,7 +219,12 @@ impl<'r, R: Resources + ?Sized> Loader<'r, R> {
                 if max < min {
                     return Err(at.error(LoadErrorKind::Invalid("max is below min")));
                 }
-                DensityFunction::Clamp { input, min, max }
+                DensityFunction::Clamp {
+                    input,
+                    min,
+                    max,
+                    math_clamp: self.behavior.clamp_positive_zero,
+                }
             }
             "minecraft:pow" => DensityFunction::Pow {
                 base: arg(self, "base")?,
@@ -242,6 +261,13 @@ impl<'r, R: Resources + ?Sized> Loader<'r, R> {
                 input: arg(self, "input")?,
                 cell_size_xz: int_field(obj, "cell_size_xz", (1, i32::MAX), None, at)?,
                 cell_size_y: int_field(obj, "cell_size_y", (1, i32::MAX), None, at)?,
+            },
+            // UpscaleFunction (26.4 on): {"input", "x", "y", "z"}, each axis required.
+            "minecraft:upscale" => DensityFunction::Upscale {
+                input: arg(self, "input")?,
+                x: parse_upscale_axis(field(obj, "x", at)?, &at.child("x"))?,
+                y: parse_upscale_axis(field(obj, "y", at)?, &at.child("y"))?,
+                z: parse_upscale_axis(field(obj, "z", at)?, &at.child("z"))?,
             },
             // FindTopSurfaceFunction: lower_bound within twice DimensionType's y range.
             "minecraft:find_top_surface" => DensityFunction::FindTopSurface {
@@ -332,7 +358,8 @@ impl<'r, R: Resources + ?Sized> Loader<'r, R> {
                     )?);
                 }
                 let points = Points::new(coordinate, locations, values, derivatives)
-                    .expect("one location, value and derivative per point, and at least one");
+                    .expect("one location, value and derivative per point, and at least one")
+                    .with_nan_is_nan(self.behavior.spline_nan_is_nan);
                 Ok(Spline::Multipoint(points))
             }
             _ => Err(at.error(LoadErrorKind::Shape("a number or a spline object"))),
@@ -460,6 +487,31 @@ fn parse_blended_noise(obj: &Map<String, Value>, at: &At<'_>) -> LoadResult<Blen
         xz_factor: ranged("xz_factor", 0.001, 1000.0)?,
         y_factor: ranged("y_factor", 0.001, 1000.0)?,
         smear_scale_multiplier: ranged("smear_scale_multiplier", 1.0, 8.0)?,
+    })
+}
+
+/// `UpscaleFunction.Axis.CODEC`: `{"mode": Mode.CODEC, "cell_size": intRange(1, 64)}`, both
+/// required.
+fn parse_upscale_axis(json: &Value, at: &At<'_>) -> LoadResult<UpscaleAxis> {
+    let obj = json
+        .as_object()
+        .ok_or_else(|| at.error(LoadErrorKind::Shape("an upscale axis object")))?;
+    let mode = match field(obj, "mode", at)?.as_str() {
+        Some("nearest_neighbor") => UpscaleMode::NearestNeighbor,
+        Some("interpolate_linear") => UpscaleMode::InterpolateLinear,
+        Some("interpolate_cosine") => UpscaleMode::InterpolateCosine,
+        Some("interpolate_cubic") => UpscaleMode::InterpolateCubic,
+        Some("b_spline_cubic") => UpscaleMode::BSplineCubic,
+        _ => {
+            return Err(at.child("mode").error(LoadErrorKind::Shape(
+                "\"nearest_neighbor\", \"interpolate_linear\", \"interpolate_cosine\", \
+                 \"interpolate_cubic\" or \"b_spline_cubic\"",
+            )));
+        }
+    };
+    Ok(UpscaleAxis {
+        mode,
+        cell_size: int_field(obj, "cell_size", (1, 64), None, at)?,
     })
 }
 

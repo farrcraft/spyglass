@@ -1,6 +1,6 @@
 # Density functions
 
-Status: stable for every type's point and volume paths, implemented in `spyglass-density` for 26.3 and checked against the game by the oracle's [probe files](oracle.md#probe-files). 26.2 and 26.4-snapshot-5 differences are drafted in _Versions_ notes and the [26.2 section](#262-evaluation) from the bytecode, and not yet checked against the oracle.
+Status: stable for every type's point and volume paths, implemented in `spyglass-density` for 26.3 and 26.4-snapshot-5 and checked against the game by the oracle's [probe files](oracle.md#probe-files). 26.2's differences are drafted in _Versions_ notes and the [26.2 section](#262-evaluation) from the bytecode, and not yet checked against the oracle.
 
 26.3 reworked density functions since 1.21. They are compiled into samplers (`DensityFunctionCompiler`, package `net.minecraft.world.level.levelgen.densityfunction`) that return `float`, after rewrite rules (`DfRewriteRule.INLINE_REFERENCE`, `SLICE_UNIFORM_AXES`). Older ports, which evaluate in `double`, don't apply. Ported from the 26.3 bytecode.
 
@@ -48,7 +48,7 @@ _Versions:_ (switch `spline_nan_is_nan`) 26.4-snapshot-5 (`CubicSpline.Multipoin
 2. `c ≤ location_0`: the first point, extended linearly. `c ≥ location_last`: the last point, extended.
 3. Otherwise `i` is found by a linear scan (`i = 1`; while `i < n − 1` and `c ≥ location_i`, `i++`; the interval is `i − 1, i`), the same interval as 26.3's search, with the same formula.
 
-So 26.4 differs from 26.3 only for a NaN `c`, and at `c == location_0`, where 26.3 computes the interval formula at `t = 0`: the two agree unless the first value is `−0` or a neighbouring value or derivative isn't finite. 26.2 samples splines with code identical to 26.3's, each coordinate being `(float)` of its `f64` value and the result widened to `f64` ([below](#262-types)).
+So 26.4 differs from 26.3 only for a NaN `c`, and at `c == location_0`, where 26.3 computes the interval formula at `t = 0`: the two agree unless the first value is `−0` or a neighbouring value or derivative isn't finite. (The scan and the binary search find the same interval while the locations increase, as in all vanilla data.) The switch is read when the spline is loaded, so each spline samples one way. 26.2 samples splines with code identical to 26.3's, each coordinate being `(float)` of its `f64` value and the result widened to `f64` ([below](#262-types)).
 
 ### Terrain types
 
@@ -88,7 +88,7 @@ _Versions:_ (switch `clamp_positive_zero`) 26.4-snapshot-5 removes `Mth.clamp`; 
 - `min ≤ r.min`: `ConstMinSampler(input, max)`, mirrored;
 - else the clamp.
 
-Values are the same except for signed zeros and NaN: the unclamped input keeps a `−0` that a clamp at `min = +0` would turn into `+0`, and the volume path of the constant `max` and `min` keeps a NaN. Ranges don't change.
+Values are the same except for signed zeros and NaN: the unclamped input keeps a `−0` that a clamp at `min = +0` would turn into `+0`, and the volume path of the constant `max` and `min` keeps a NaN, and a `−0` under `min = +0` (`+0` isn't above `−0`), where its point path (`Math.max`) gives `+0`. Ranges don't change. The switch covers both the clamp and the compile choice, and is read when the function is loaded. `old_blended_noise`'s clamp of `main + 0.5` to `[0, 1]` is `Math.clamp` in 26.4 whatever the switch, but `main + 0.5` is never `−0`, so it has the same values.
 
 **`Math.pow` and `Math.log`** aren't required by Java to be correctly rounded, and spyglass uses Rust's `powf` and `ln`. So `pow`, `log` and `pow`'s range bounds may differ from the game's in the last bit of the `f64`, before it's narrowed to `f32`. No vanilla function uses them. `Math.sqrt` is correctly rounded in both.
 
@@ -108,7 +108,7 @@ _Versions:_ 26.4-snapshot-5 has no `interpolated`: its data uses [`upscale`](#up
 
 _Versions:_ 26.4-snapshot-5 only (package `densityfunction.op.upscale`, `UpscaleFunction`, `Upscaler`, `PolymorphicUpscaler`). Not in 26.2 or 26.3.
 
-Fields: `input`, and `x`, `y`, `z`, each `{"mode": M, "cell_size": N}`. Cells are aligned to absolute coordinates with `floorDiv`, as for `interpolated`. Each axis is upscaled on its own, with a mode:
+Fields: `input`, and `x`, `y`, `z`, each `{"mode": M, "cell_size": N}` (`UpscaleFunction.Axis.CODEC`; all fields required, `cell_size` an int from 1 to 64, `mode` one of the names below). Cells are aligned to absolute coordinates with `floorDiv`, as for `interpolated`. Each axis is upscaled on its own, with a mode:
 
 | Mode                 | Samples before | Samples after | Exact on a corner |
 | -------------------- | -------------- | ------------- | ----------------- |
@@ -124,11 +124,13 @@ A mode samples `before + after + 1` corners per axis. 26.4's vanilla data maps e
 
 - nearest: the first sample, `s0`.
 - linear: `c1 = 1 − t`, `c2 = t`; the value is `c1·s0 + c2·s1`.
-- cosine: linear with `t` replaced by `Ease.inOutSine(t) = −(Mth.cos(π·t) − 1) / 2`, with the game's table cosine.
+- cosine: linear with `t` replaced by `Ease.inOutSine(t) = −(Mth.cos((double)(π_f·t)) − 1) / 2`, with `π_f` the `float` π. `Mth.cos(x)` is the game's sine table at `(long)(|x| · 10430.378350470453 + 16384.0 + 0.5) & 65535`, where entry `i` is `(float) Math.sin(i / 10430.378350470453)`, but exactly 0, 1, 0 and −1 at 0, 16384, 32768 and 49152. spyglass computes that entry with Rust's `sin`, which, as for `Math.pow` above, may differ from Java's in the last bit of the `f64` before it's narrowed. No vanilla function uses the cosine mode.
 - cubic (Catmull-Rom): `c1 = (−0.5·cube(t) + square(t)) − 0.5·t`, `c2 = (1.5·cube(t) − 2.5·square(t)) + 1`, `c3 = (−1.5·cube(t) + 2·square(t)) + 0.5·t`, `c4 = 0.5·cube(t) − 0.5·square(t)`; the value is `((c1·s0 + c2·s1) + c3·s2) + c4·s3`.
 - b-spline: `c1 = cube(1 − t) / 6`, `c2 = ((3·cube(t) − 6·square(t)) + 4) / 6`, `c3 = (((−3·cube(t) + 3·square(t)) + 3·t) + 1) / 6`, `c4 = cube(t) / 6`, combined as cubic.
 
-**Point** (`UpscaleFunction.Sampler.sampleValue`): with `f` = `floorMod` of each coordinate by its cell size, if all three are 0 and every mode is exact on a corner, the value is the input's at the point. Otherwise the input is sampled through its volume path over a `countX × countY × countZ` volume (each count `before + after + 1`), one cell apart, from `(x − fx − beforeX·cx, y − fy − beforeY·cy, z − fz − beforeZ·cz)`. Then, with the buffer y fastest, then x, then z:
+`compileSampler` makes an `upscale` whose three modes are all nearest a `NearestNeighborSampler` (**All nearest**, below); any other mix is the general sampler, where a nearest axis samples one corner. The general sampler's upscaler (`PolymorphicUpscaler`, which `makeMonomorphicDelegate` specializes per parameter set: not traced in the bytecode, and the oracle agrees with the polymorphic arithmetic) holds each axis's coefficient table, `1.0f / (float) cell` for x and y, and the sample counts, with the samples laid out as a volume's: y stride 1, x stride `countY`, z stride `countX·countY`. `combine` below is `Coefficients.multiply`.
+
+**Point** (`UpscaleFunction.Sampler.sampleValue`), with the upscaler for the function's own modes and cell sizes: with `f` = `floorMod` of each coordinate by its cell size, if all three are 0 and every mode is exact on a corner, the value is the input's at the point. Otherwise the input is sampled through its volume path over a `countX × countY × countZ` volume (each count `before + after + 1`), one cell apart, from `(x − fx − beforeX·cx, y − fy − beforeY·cy, z − fz − beforeZ·cz)`. Then, with the buffer y fastest, then x, then z:
 
 ```text
 for i in 0..countX·countY:  tz[i] = coefZ[fz].combine(buf, i, stride countX·countY)   // z first
@@ -154,11 +156,15 @@ else: if offset % cell != 0: no plan            // tests against cell, not step
 corners: s1 − s0 + 1 from s0·cell, one cell apart; output cells last − first + 1
 ```
 
-- If any axis has no plan, the block-step box the volume spans is upscaled, then every `step`th value picked (as `sampleWithNonBlockStep`). The `offset % cell` test sends every stepped volume whose minimum isn't on a corner here. It changes the work, not the values.
+`isMultipleOf` (`%` above) is Java's `irem`, so `−8 % 4` is 0. Integer arithmetic wraps.
+
+- If any axis has no plan (`sampleAndUpscaleFallback`), the box of every block from the volume's minimum to its last position (`(size − 1)·step + 1` per axis, steps of 1) is upscaled, each of its axes planned with step 1 (which always has a plan), then every `step`th value is picked. The `offset % cell` test sends every stepped volume whose minimum isn't on a corner here.
 - If all three axes are exactly aligned, the value is the input's own volume.
-- Otherwise the input is sampled over the corner volume, and each output cell `(cz, cx)`, then each y cell, is filled. A cell's samples are gathered with indices clamped to the corner volume (`min(c + k, count − 1)`). Offsets outside the volume are skipped as in `interpolated`'s `fillCell`. Per `dz`, `tz[i] = coefZ[dz].combine(samples, i, strideZ)`; then:
-  - x linear and y nearest (`chunk_surface_level`, y cell 1): `a = tz[0]`, `b = tz[1]`, `step = (b − a) · (1.0f / cx)`, and per `dx` the value is `a + step · (float) dx`, the same down y;
-  - else, per `dx`, `tx[j] = coefX[dx].combine(tz, j, strideX)`; then per `dy`: nearest is `tx[0]`; linear is `a + step · (float) dy` with `a = tx[0]`, `step = (tx[1] − a) · (1.0f / cy)`, computed directly for each `dy` (not accumulated); other modes use their coefficients.
+- Otherwise the input is sampled over the corner volume (each axis's `s1 − s0 + 1` corners from `s0·cell`, step `cell`; an exactly aligned axis's own positions), and upscaled (`Upscaler.upscale`) by the upscaler for the **plans'** modes and cell sizes, not the function's: an exactly aligned axis is nearest with cell 1, and a stepped axis's cell is `cellSteps`, so its table has `cellSteps` entries at `t = i / (float) cellSteps` and its reciprocal is `1.0f / cellSteps`.
+- `doUpscale`: for each output cell `cz`, then `cx`, then `cy`, the cell starts at output position `minOut + c·cell` on each axis and reads corners `c` to `c + count − 1`, each index clamped to the corner volume (`min(c + k, size − 1)`). For each y cell after the first, the y samples slide down one and the next corner is read. `fillCell` writes the cell's offsets inside the volume: from `max(0, −o)` to `min(cell, size − o) − 1` along each axis, with `o` the cell's start, or just offset 0 along an axis whose cell is 1. Per `dz`, `tz[i] = coefZ[dz].combine(samples, i, strideZ)`; then:
+  - x linear and y nearest (as the upscaler's modes, so whenever x is linear and y exactly aligned: always for a y cell of 1, as in `chunk_surface_level`): `a = tz[0]`, `b = tz[1]`, `step = (b − a) · (1.0f / cx)`, and per `dx` the value is `a + step · (float) dx`, the same down y;
+  - else, per `dx`, `tx[j] = coefX[dx].combine(tz, j, strideX)`; then per `dy`: nearest is `tx[0]`; linear is `a + step · (float) dy` with `a = tx[0]`, `step = (tx[1] − a) · (1.0f / cy)`, computed directly for each `dy` (not accumulated); other modes (cosine included) use their coefficients.
+- A stepped volume therefore gives the values of the blocks it picks when it falls back, and when it's planned with power-of-two steps (`t` is the same division, and the reciprocals differ by an exact power of two).
 
 **Linear `upscale` against 26.3's `interpolated`.** With the same cell sizes the results aren't bit-identical:
 
@@ -168,7 +174,7 @@ corners: s1 − s0 + 1 from s0·cell, one cell apart; output cells last − firs
 - Point and volume still differ in the low bits: y uses weights on the point path and the step form on the volume path.
 - At `t = 0` the weighted form gives `1·a + 0·b`: NaN if `b` is infinite or NaN, and `+0` for `a = −0`, where an exactly aligned axis returns `a`. Edge cases only.
 
-**All nearest** (`NearestNeighborSampler`): point is the input at `(floorDiv(x, cx)·cx, floorDiv(y, cy)·cy, floorDiv(z, cz)·cz)`. A volume that fits the grid (`DensityVolume.fitsOnGrid`) is the input's own volume; otherwise the cell-corner grid is sampled and replicated. Unused in vanilla.
+**All nearest** (`NearestNeighborSampler`): point is the input at `(floorDiv(x, cx)·cx, floorDiv(y, cy)·cy, floorDiv(z, cz)·cz)`. A volume that fits the grid (`DensityVolume.fitsOnGrid`: on each axis one position deep or a step that's a multiple of the cell, and a minimum whose `floorMod` by the cell is 0) is the input's own volume. Otherwise the input is sampled over the cells' corners, from `floorDiv(min, cell)` to `floorDiv(last, cell)` on each axis, one cell apart, and each position takes its cell's corner. `last` is 26.4's `maxBlock`, the last position, `min + (size − 1)·step` (26.3's `maxBlock` was `min + size·step − 1`). Unused in vanilla.
 
 Its range is in [Ranges](#ranges).
 
@@ -250,7 +256,7 @@ _Versions:_ 26.2 has `end_islands` instead, with the central island in code, on 
 | `blend_alpha`; `blend_offset`, `beardifier`            | `[0, 1]`; `[−∞, ∞]`                                                                                                                                                                                                                                                                                                                                                                           |
 | `distance_to_point`; `end_outer_islands`               | `[0, ∞]`; `[−0.84375, 0.5625]`                                                                                                                                                                                                                                                                                                                                                                |
 
-_Versions:_ 26.4-snapshot-5's `upscale` range is the input's range `r` modified per axis, z, then x, then y (`UpscaleFunction.Axis.modifyRange`): for each entry of the axis's coefficient table, `Σ_k ofExact(c_k) · r` (Interval `mul` and `add`, in coefficient order), then `encapsulating` over all entries. Rounding can make it wider than `r`, where 26.3's `interpolated` keeps `r`. That only matters to range-driven compile choices (`min`, `max`, `clamp`), so for NaN and signed zeros. 26.2's ranges are `f64` and its own ([below](#262-ranges)).
+_Versions:_ 26.4-snapshot-5's `upscale` range is the input's range `r` modified per axis, z, then x, then y (`UpscaleFunction.Axis.modifyRange`): for each entry of the axis's coefficient table (`computeTable(cell_size, mode)`, the function's own), `Σ_k ofExact(c_k) · r` (Interval `mul` and `add`, from `ofExact(0)`, in coefficient order; nearest's one weight is 1), then `encapsulating` over all entries. Catmull-Rom's negative weights widen it (a cell of 2 takes `[0, 1]` to `[−0.125, 1.125]`), and rounding can too, where 26.3's `interpolated` keeps `r`. That only matters to range-driven compile choices (`min`, `max`, `clamp`), so for NaN and signed zeros. 26.2's ranges are `f64` and its own ([below](#262-ranges)).
 
 #### Spline ranges
 
@@ -301,7 +307,7 @@ Over a volume, each sampler samples its inputs over the same volume, then combin
 - **`find_top_surface`** samples `upper_bound` over the volume (the game requires it one block deep, which its slice guarantees), then searches each column with `density` at points.
 - **Splines** sample every coordinate they hold over the volume, then evaluate per position.
 
-_Versions:_ 26.4-snapshot-5 has the same paths, with [`upscale`](#upscale) in place of `interpolated`. Its range choices (`range_choice`, `interval_select`) sample the first-needed branch over the whole volume and stop if every position chose it, else every other needed branch over the whole volume: the same values as 26.3 (`interval_select` is not confirmed in the bytecode, only its structure). 26.2 has no volume arithmetic at all: every `fillArray` ends in each position's point value, and only the `NoiseChunk`'s interpolation and caches differ from a point ([below](#262-noisechunk)).
+_Versions:_ 26.4-snapshot-5 has the same paths, with [`upscale`](#upscale) in place of `interpolated` (its point path also samples corners through the volume path; its volume value at a block doesn't depend on where the volume starts), and `clamp`'s [range-chosen samplers](#terrain-types) under switch `clamp_positive_zero`. Its range choices (`range_choice`, `interval_select`) sample the first-needed branch over the whole volume and stop if every position chose it, else every other needed branch over the whole volume: the same values as 26.3 (`interval_select` is not confirmed in the bytecode, only its structure). 26.2 has no volume arithmetic at all: every `fillArray` ends in each position's point value, and only the `NoiseChunk`'s interpolation and caches differ from a point ([below](#262-noisechunk)).
 
 The climate's scales are 0.25 and 1, so its volume and point values are equal: the probe compares them for the six climate functions over whole chunks (4 chunks × 10 seeds in 26.3), and fails if that changes.
 
@@ -327,6 +333,7 @@ What depends on y:
 - `shift` and a `gradient` along y do. Constants, `shift_a`, `shift_b` and other gradients don't.
 - A `noise` depends on y if its `y_scale` isn't 0 or its `shift_y` depends on y. With a y scale of 0 the y input is `+0.0` or `-0.0`, depending on the sign of y (plus a y-independent shift). Each Perlin octave adds its y offset, `nextDouble() · 256`, which is never `-0.0`, so the two zeros give the same noise.
 - A `slice` along y and `find_top_surface` don't, whatever their inputs.
+- An `upscale` (26.4) with a y cell above 1 does, whatever its input: equal corners along y still give `(1 − t)·a + t·a`, which isn't always `a`, and a position on a corner takes the input's point value where others take its volume path. With a y cell of 1 it depends on y if its input does: every y is on a corner, and a volume one position deep at y 0 plans y the same way as a taller one.
 - Everything else depends on y if any input does, including a spline's coordinate or any of its point values.
 
 ## The climate sampler
@@ -454,4 +461,6 @@ The noise settings carry `size_horizontal` and `size_vertical` (each 1 to 4): Ov
 
 ## Testing
 
-Committed tests use hand-written JSON ([ADR 0008](../adr/0008-game-derived-test-values-stay-local.md)): shorthands, sharing, cycles, error paths, codec defaults and validation, each type's values worked out by hand, the compile choices where they're visible (the zero short-circuit, `div` by a constant, `min` and `max` by range through signed zeros and NaN, `pow` by exponent), and column folding against per-cell evaluation. For the volume path: `interpolated`'s point and volume arithmetic worked out from the corners, columns against chunks and stepped volumes against block volumes, the volume-only signed zeros of `min`, `max` and `mul`, y-independent nodes, `find_top_surface`, and remembered against fresh values with points and volumes mixed. Unit tests cover `Interval`'s arithmetic and the spline and blended-noise ranges, and the noise crate covers Perlin's volume path. The ignored tests in `spyglass-density/tests/probe.rs` check every `density.json` case, including the column and chunk digests, in all three dimensions, and that every density function in the bundle loads. In the Nether and the End they bind with legacy randomness, and include the router's inline entries. Functions that can't be bound are skipped and listed; in 26.3 there are none. For 26.3: 19,660 cases, 2,240 of them the Nether's and 2,760 the End's, all equal. Skipping 17,291 draws instead of 17,292 for the End's islands fails 548.
+Committed tests use hand-written JSON ([ADR 0008](../adr/0008-game-derived-test-values-stay-local.md)): shorthands, sharing, cycles, error paths, codec defaults and validation, each type's values worked out by hand, the compile choices where they're visible (the zero short-circuit, `div` by a constant, `min` and `max` by range through signed zeros and NaN, `pow` by exponent), and column folding against per-cell evaluation. For the volume path: `interpolated`'s point and volume arithmetic worked out from the corners, columns against chunks and stepped volumes against block volumes, the volume-only signed zeros of `min`, `max` and `mul`, y-independent nodes, `find_top_surface`, and remembered against fresh values with points and volumes mixed. Unit tests cover `Interval`'s arithmetic and the spline and blended-noise ranges, and the noise crate covers Perlin's volume path. The ignored tests in `spyglass-density/tests/probe.rs` check every `density.json` case, including the column and chunk digests, in all three dimensions, and that every density function in the bundle loads. In the Nether and the End they bind with legacy randomness, and include the router's inline entries. Functions that can't be bound are skipped and listed; in 26.3 there are none. For 26.3: 19,660 cases, 2,240 of them the Nether's and 2,760 the End's, all equal. Skipping 17,291 draws instead of 17,292 for the End's islands fails 548. For 26.4-snapshot-5, whose routers use `upscale` throughout: the same 19,660 cases, all equal, and all 55 density functions load; weighing `upscale`'s linear y on the volume path as the point path does, instead of the step form, fails 838.
+
+For 26.4: hand-worked `upscale` values on the point path (z, then x, then y weights) and the volume path (each y step from its cell's corner, and x's step form when y is nearest), linear `upscale` against `interpolated` on the same input (corners equal, points, chunks and y-shifted columns not), stepped volumes (planned and fallen back) against block volumes, Catmull-Rom and B-spline along one axis, all-nearest points and volumes, the axis codec's limits, axis plans and coefficient tables, and the Catmull-Rom range. Each switch is pinned by a case that differs between its settings: `clamp_positive_zero`'s `−0` under `min = +0` through each of the compile choices, on both paths, and `spline_nan_is_nan`'s NaN coordinate and `−0` first value.

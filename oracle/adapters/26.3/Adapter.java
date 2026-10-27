@@ -29,9 +29,7 @@ import net.minecraft.tags.TagLoader;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LevelHeightAccessor;
-import net.minecraft.world.level.NoiseColumn;
 import net.minecraft.world.level.biome.Biome;
-import net.minecraft.world.level.biome.BiomeResolver;
 import net.minecraft.world.level.biome.BiomeSource;
 import net.minecraft.world.level.biome.Climate;
 import net.minecraft.world.level.block.state.BlockState;
@@ -125,12 +123,12 @@ final class Adapter implements GameApi {
         try {
             var context = SamplerContext.builder().enableCaches().useBufferArena(pool).build();
             Climate.Sampler sampler = random.createClimateSampler(context);
-            BiomeResolver resolver = source.createResolverForChunk(sampler, qx0, qy0, qz0, width, height, width);
+            Calls.QuartBiomes resolver = Calls.resolver(source, sampler, qx0, qy0, qz0, width, height);
             if (!targets) {
                 return new ChunkBiomes() {
                     @Override
                     public Holder<Biome> biome(int qx, int qy, int qz) {
-                        return resolver.getNoiseBiome(qx, qy, qz);
+                        return resolver.at(qx, qy, qz);
                     }
 
                     @Override
@@ -156,7 +154,7 @@ final class Adapter implements GameApi {
             return new ChunkBiomes() {
                 @Override
                 public Holder<Biome> biome(int qx, int qy, int qz) {
-                    return resolver.getNoiseBiome(qx, qy, qz);
+                    return resolver.at(qx, qy, qz);
                 }
 
                 @Override
@@ -183,6 +181,11 @@ final class Adapter implements GameApi {
     }
 
     @Override
+    public boolean halfOpenClimate() {
+        return Calls.HALF_OPEN_CLIMATE;
+    }
+
+    @Override
     public long fitness(Climate.ParameterPoint point, Climate.TargetPoint target) {
         return point.fitness(target);
     }
@@ -190,18 +193,13 @@ final class Adapter implements GameApi {
     @Override
     public int baseHeight(NoiseBasedChunkGenerator generator, int x, int z, Heightmap.Types type,
             LevelHeightAccessor height, RandomState random) {
-        return generator.getBaseHeight(x, z, type, height, random);
+        return Calls.baseHeight(generator, x, z, type, height, random);
     }
 
     @Override
     public BlockState[] baseColumn(NoiseBasedChunkGenerator generator, int x, int z, LevelHeightAccessor height,
             RandomState random) {
-        NoiseColumn column = generator.getBaseColumn(x, z, height, random);
-        var blocks = new BlockState[height.getHeight()];
-        for (int i = 0; i < blocks.length; i++) {
-            blocks[i] = column.getBlock(height.getMinY() + i);
-        }
-        return blocks;
+        return Calls.baseColumn(generator, x, z, height, random);
     }
 
     @Override
@@ -268,15 +266,15 @@ final class Adapter implements GameApi {
         Boolean validBiome = null;
         if (stub.isPresent()) {
             pos = stub.get().position();
-            biome = context.biomeResolver().getNoiseBiome(QuartPos.fromBlock(pos.getX()),
-                    QuartPos.fromBlock(pos.getY()), QuartPos.fromBlock(pos.getZ()));
+            biome = Calls.contextBiome(context, QuartPos.fromBlock(pos.getX()), QuartPos.fromBlock(pos.getY()),
+                    QuartPos.fromBlock(pos.getZ()));
             validBiome = context.isValidBiome(stub.get());
         }
 
         // What the game itself does: ChunkGenerator.tryGenerateStructure.
-        var start = structure.generate(holder, level, game.access, generator, generator.getBiomeSource(), sampler,
-                random, templates, seed, chunk, 0, height, valid);
-        return new StructureTry(pos, biome, validBiome, start.isValid() ? start : null);
+        var start = Calls.generate(structure, holder, level, game.access, generator, sampler, random, templates, seed,
+                chunk, height, valid);
+        return new StructureTry(pos, biome, validBiome, start);
     }
 
     @Override

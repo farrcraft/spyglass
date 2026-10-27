@@ -1,6 +1,6 @@
 # Biome lookup
 
-Status: stable. Covers the Default world preset's three dimensions, implemented in `spyglass-biome` for 26.3 and checked cell by cell against the oracle's [golden biome files](oracle.md#golden-biome-files). 26.2 and 26.4-snapshot-5 differences are drafted in _Versions_ notes from the bytecode and not yet checked against the oracle.
+Status: stable. Covers the Default world preset's three dimensions, implemented in `spyglass-biome` for 26.3 and checked cell by cell against the oracle's [golden biome files](oracle.md#golden-biome-files). 26.4-snapshot-5 is implemented and checked against the oracle; 26.2's differences are drafted in _Versions_ notes from the bytecode and not yet checked.
 
 A multi-noise biome source (`MultiNoiseBiomeSource`) picks a biome at quart (1:4) resolution: it samples six climate values, quantizes them, and finds the nearest parameter point in the dimension's parameter list. Classes are in `net.minecraft.world.level.biome` unless stated otherwise.
 
@@ -83,7 +83,7 @@ spyglass searches exactly and returns a `Lookup`:
 
 **The answer for a tied cell is the biome of the first point at the minimum, in list order.** That's what `Climate.ParameterList.findValueBruteForce` returns, and it's deterministic and independent of threads and lookup order. Any member of the set is what the game might show; `Lookup::is_tied` lets front ends say so.
 
-_Versions:_ 26.2's `Climate.RTree` has 6 children per node, 26.3's and 26.4-snapshot-5's 19 (`ParameterList` passes the count). The tree's shape can change which tied biome the game's warm-started search returns, never a unique cell's, so spyglass's tie sets and tie answer need no change.
+_Versions:_ 26.2's `Climate.RTree` has 6 children per node, 26.3's and 26.4-snapshot-5's 19 (`ParameterList` passes the count). The tree's shape can change which tied biome the game's warm-started search returns, never a unique cell's, so spyglass's tie sets and tie answer need no change. In 26.4-snapshot-5, with half-open ranges (switch `climate_half_open`), a value on the boundary between two neighbouring ranges is in only one of them, so ties are far rarer: 1,008 tied cells in the golden set against 60,361 for 26.3, about 1 cell in 70,000.
 
 ## Search
 

@@ -57,7 +57,9 @@ pub struct Terrain {
     /// The column's range: the noise range clamped to the level (`clampToHeightAccessor`).
     min_y: i32,
     height: i32,
-    level_min_y: i32,
+    /// The height of a column with nothing the heightmap counts: the level's bottom, or with
+    /// `solid_only_heights`, the column's.
+    empty_height: i32,
     default_block_blocks_motion: bool,
     /// The aquifers' surface levels, kept for the seed: each region's aquifer samples the
     /// levels around it, and nearby regions share most of them.
@@ -74,7 +76,11 @@ impl Terrain {
             bound: settings.bind(seed)?,
             min_y,
             height: top - min_y,
-            level_min_y: settings.level_min_y,
+            empty_height: if settings.solid_only_heights {
+                min_y
+            } else {
+                settings.level_min_y
+            },
             default_block_blocks_motion: settings.default_block_blocks_motion,
             levels: SurfaceLevels::default(),
         })
@@ -160,11 +166,11 @@ impl Terrain {
         None
     }
 
-    /// `getBaseHeight(x, z, heightmap)`: one above the highest block `heightmap` counts, or the
-    /// level's minimum y if there's none.
+    /// `getBaseHeight(x, z, heightmap)`: one above the highest block `heightmap` counts, or, if
+    /// there's none, the level's minimum y (the column's with `solid_only_heights`).
     pub fn base_height(&self, x: i32, z: i32, heightmap: Heightmap) -> i32 {
         self.scan(x, z, Some(heightmap), None)
-            .unwrap_or(self.level_min_y)
+            .unwrap_or(self.empty_height)
     }
 
     /// [`base_height`](Self::base_height) for every column of the box from `min`, `size` columns
@@ -173,7 +179,7 @@ impl Terrain {
     /// as its own would (`docs/specs/terrain.md`) for much less work.
     pub fn base_heights(&self, min: [i32; 2], size: [i32; 2], heightmap: Heightmap) -> Vec<i32> {
         let [w, d] = size.map(|s| s.max(0));
-        let mut out = vec![self.level_min_y; (w as usize) * (d as usize)];
+        let mut out = vec![self.empty_height; (w as usize) * (d as usize)];
         if self.height <= 0 || w == 0 || d == 0 {
             return out;
         }
@@ -201,7 +207,7 @@ impl Terrain {
                             None,
                         );
                         let i = (z - min[1]) as usize * w as usize + (x - min[0]) as usize;
-                        out[i] = height.unwrap_or(self.level_min_y);
+                        out[i] = height.unwrap_or(self.empty_height);
                     }
                 }
                 x0 = x1;
@@ -217,7 +223,7 @@ impl Terrain {
     /// around its columns, so a sparse grid costs about one column per chunk.
     pub fn base_heights_on(&self, xs: &[i32], zs: &[i32], heightmap: Heightmap) -> Vec<i32> {
         debug_assert!(xs.is_sorted() && zs.is_sorted(), "ascending coordinates");
-        let mut out = vec![self.level_min_y; xs.len() * zs.len()];
+        let mut out = vec![self.empty_height; xs.len() * zs.len()];
         if self.height <= 0 {
             return out;
         }
@@ -258,7 +264,7 @@ impl Terrain {
                             Some(heightmap),
                             None,
                         );
-                        out[j * xs.len() + i] = height.unwrap_or(self.level_min_y);
+                        out[j * xs.len() + i] = height.unwrap_or(self.empty_height);
                     }
                 }
             }
@@ -292,6 +298,7 @@ mod tests {
     use std::collections::HashMap;
 
     use serde_json::{Value, json};
+    use spyglass_density::Resources;
 
     use super::*;
 
@@ -353,6 +360,78 @@ mod tests {
         assert_eq!(column.at(-64), Block::Default);
         assert_eq!(column.at(-1000), Block::Air);
         assert_eq!(column.blocks.len(), 384);
+    }
+
+    /// Resources read as a version with every 26.4-snapshot-5 switch on.
+    struct Snapshot(HashMap<String, Value>);
+
+    impl Resources for Snapshot {
+        fn resource(
+            &self,
+            registry: &str,
+            id: &str,
+        ) -> Result<Value, spyglass_data::bundle::BundleError> {
+            self.0.resource(registry, id)
+        }
+
+        fn behavior(&self) -> spyglass_data::versions::Behavior {
+            spyglass_data::versions::Behavior::of(5125)
+        }
+    }
+
+    #[test]
+    fn without_a_default_block_solid_counts_and_empty_columns_end_at_their_bottom() {
+        // 26.4's noise settings: no default_block, and no tags needed. The noise starts at y 0,
+        // above the level's bottom, and final_density is negative everywhere but below y 10.
+        let settings = |default_block: Option<&str>| {
+            let mut json = json!({
+                "noise": {"min_y": 0, "height": 128}, "sea_level": -100,
+                "default_fluid": "minecraft:water",
+                "noise_router": {"final_density": {"type": "gradient", "axis": "y",
+                    "from_coordinate": 9, "from_value": 1, "to_coordinate": 10, "to_value": -1}},
+            });
+            if let Some(block) = default_block {
+                json["default_block"] = block.into();
+            }
+            let map: HashMap<String, Value> = [
+                ("worldgen/noise_settings/minecraft:t".to_string(), json),
+                (
+                    "dimension_type/minecraft:t".to_string(),
+                    json!({"min_y": -64, "height": 384}),
+                ),
+            ]
+            .into_iter()
+            .collect();
+            map
+        };
+        let loaded = TerrainSettings::load(&Snapshot(settings(None)), "t", "t").unwrap();
+        assert_eq!(loaded.default_block, None);
+        let t = Terrain::new(&loaded, 0).unwrap();
+        // Solid below y 10 counts for OCEAN_FLOOR_WG without any tag.
+        assert_eq!(t.base_height(0, 0, Heightmap::OceanFloorWg), 10);
+        // A gradient that's never positive: nothing counts, so the column's bottom, y 0.
+        let mut empty = settings(None);
+        empty
+            .get_mut("worldgen/noise_settings/minecraft:t")
+            .unwrap()["noise_router"]["final_density"] = json!(-1.0);
+        let t = Terrain::new(
+            &TerrainSettings::load(&Snapshot(empty.clone()), "t", "t").unwrap(),
+            0,
+        )
+        .unwrap();
+        assert_eq!(t.base_height(0, 0, Heightmap::OceanFloorWg), 0);
+        // 26.3 answers the level's bottom, and needs a default block.
+        let mut with_block = empty;
+        with_block
+            .get_mut("worldgen/noise_settings/minecraft:t")
+            .unwrap()["default_block"] = json!("minecraft:stone");
+        with_block.insert(
+            "tags/block/minecraft:blocks_motion_in_heightmap".into(),
+            json!({"values": ["minecraft:stone"]}),
+        );
+        let t = Terrain::new(&TerrainSettings::load(&with_block, "t", "t").unwrap(), 0).unwrap();
+        assert_eq!(t.base_height(0, 0, Heightmap::OceanFloorWg), -64);
+        assert!(TerrainSettings::load(&settings(None), "t", "t").is_err());
     }
 
     #[test]

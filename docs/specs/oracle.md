@@ -262,8 +262,8 @@ Structures ask the generator about terrain before any chunk exists ([terrain.md]
 }
 ```
 
-- `regions` are square block regions: `origin` (−128 to 127), and 64 × 64 at `far-pos`, `far-neg`, `border-pos` and `border-neg`, as for biomes. For each heightmap, keyed by its serialization key, every column's `ChunkGenerator.getBaseHeight(x, z, heightmap, level, randomState)`, z outer and x inner.
-- `columns` are `getBaseColumn(x, z, level, randomState)` at 64 positions on a grid over the origin region and two corners of each other region. Each is a list of runs of one block, from `min_y` up, covering the full `height`.
+- `regions` are square block regions: `origin` (−128 to 127), and 64 × 64 at `far-pos`, `far-neg`, `border-pos` and `border-neg`, as for biomes. For each heightmap, keyed by its serialization key, every column's `ChunkGenerator.getBaseHeight(x, z, heightmap, level, randomState)`, z outer and x inner. 26.4 has no `getBaseHeight`; its adapter writes `getFirstFreeHeight`, which in 26.3 returns `getBaseHeight`'s value.
+- `columns` are `getBaseColumn(x, z, level, randomState)` at 64 positions on a grid over the origin region and two corners of each other region. Each is a list of runs of one block, from `min_y` up, covering the full `height`. From 26.4 a column leaves solid blocks undecided (`NoiseColumn.SOLID`, which the material rule fills later); those runs are `"solid"`, not a block id.
 
 The level is the dimension type's height, as for structures. `cargo xtask oracle heights` takes about 90 seconds for the golden set on 16 cores: each `getBaseHeight` costs the game about half a millisecond.
 

@@ -4,8 +4,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde_json::{Value, json};
+use spyglass_data::bundle::BundleError;
 use spyglass_data::codec::LoadErrorKind;
-use spyglass_density::{Binary, Binder, ClimateRouter, DensityFunction, Loader, Sampler, Volume};
+use spyglass_data::versions::Behavior;
+use spyglass_density::{
+    Binary, Binder, ClimateRouter, DensityFunction, Loader, Resources, Sampler, Volume,
+};
 use spyglass_noise::Normalization;
 
 /// Resources from `registry/id` keys.
@@ -994,4 +998,362 @@ fn bad_parameters_are_errors() {
     let short =
         load_error(json!({"type": "distance_to_point", "point": [1, 2], "metric": "manhattan"}));
     assert!(matches!(short, LoadErrorKind::Shape(_)), "{short}");
+}
+
+/// `{"type": "upscale", ...}` with `(mode, cell_size)` for x, y and z.
+fn upscale(input: Value, [x, y, z]: [(&str, i32); 3]) -> Value {
+    let axis = |(mode, cell): (&str, i32)| json!({"mode": mode, "cell_size": cell});
+    json!({"type": "upscale", "input": input, "x": axis(x), "y": axis(y), "z": axis(z)})
+}
+
+/// 26.4's form of `interpolated(input, xz, y)`: all three axes linear.
+fn linear(input: Value, xz: i32, y: i32) -> Value {
+    let l = "interpolate_linear";
+    upscale(input, [(l, xz), (l, y), (l, xz)])
+}
+
+/// A linear upscale's weights: `(1 − t)·a + t·b`.
+fn weigh(t: f32, a: f32, b: f32) -> f32 {
+    (1.0 - t) * a + t * b
+}
+
+#[test]
+fn upscale_points_weigh_z_then_x_then_y() {
+    let map = with_noise(
+        linear(noise(1.0, 1.0), 4, 8),
+        vec![df("minecraft:raw", noise(1.0, 1.0))],
+    );
+    let f = bind_one(&map, "f");
+    let raw = bind_one(&map, "raw");
+    // On a corner, the input itself.
+    assert_eq!(f.sample(8, -16, 4), raw.sample(8, -16, 4));
+    // Inside a cell, the corners weighed along z, then x, then y, each t a division.
+    let c = |x, y, z| raw.sample(x, y, z);
+    let (tx, ty, tz) = (1.0 / 4.0, 3.0 / 8.0, 2.0 / 4.0);
+    let along_x = |y| {
+        weigh(
+            tx,
+            weigh(tz, c(4, y, -8), c(4, y, -4)),
+            weigh(tz, c(8, y, -8), c(8, y, -4)),
+        )
+    };
+    assert_eq!(f.sample(5, 19, -6), weigh(ty, along_x(16), along_x(24)));
+}
+
+#[test]
+fn upscale_volumes_step_down_each_cell_from_its_corner() {
+    let map = with_noise(
+        linear(noise(1.0, 1.0), 4, 8),
+        vec![df("minecraft:raw", noise(1.0, 1.0))],
+    );
+    let f = bind_one(&map, "f");
+    let raw = bind_one(&map, "raw");
+    let values = f.sample_volume(&Volume::blocks([1, 20, 1], [5, -3, -6]));
+    // z and x weighed as on the point path; y is a + ((b − a) · (1/8)) · dy, from each cell's
+    // corner, not accumulated from the volume's first y.
+    let c = |x, y, z| raw.sample(x, y, z);
+    let along_x = |y| {
+        weigh(
+            0.25,
+            weigh(0.5, c(4, y, -8), c(4, y, -4)),
+            weigh(0.5, c(8, y, -8), c(8, y, -4)),
+        )
+    };
+    let mut want = Vec::new();
+    for (y0, dys) in [(-8, 5..8), (0, 0..8), (8, 0..8), (16, 0..1)] {
+        // The last block is on a corner, and its cell's far corner is clamped to that corner.
+        let (a, b) = (along_x(y0), along_x((y0 + 8).min(16)));
+        for dy in dys {
+            want.push(a + ((b - a) * 0.125) * dy as f32);
+        }
+    }
+    assert_eq!(values, want);
+    // Points use the weights along y instead, which aren't always the same float.
+    let points: Vec<f32> = (-3..17).map(|y| f.sample(5, y, -6)).collect();
+    assert_ne!(points, values);
+    // A block's value depends only on where it is in its cell: any volume gives it.
+    let chunk = Volume::blocks([16, 30, 16], [0, -10, -16]);
+    let in_chunk = f.sample_volume(&chunk);
+    for (iy, v) in values.iter().enumerate() {
+        assert_eq!(*v, in_chunk[chunk.index(5, iy as i32 + 7, 10)]);
+    }
+}
+
+#[test]
+fn linear_upscale_is_not_interpolated() {
+    // The same input and cells, in 26.3's form and 26.4's. Corners agree; inside cells the
+    // weights, the order of the axes and the y steps differ in the low bits.
+    let input = bin("add", noise(1.0, 1.0), op("square", noise(0.5, 2.0)));
+    let old = bind_one(&with_noise(interpolated(input.clone(), 4, 8), vec![]), "f");
+    let new = bind_one(&with_noise(linear(input, 4, 8), vec![]), "f");
+    assert_eq!(old.sample(-16, 8, 12), new.sample(-16, 8, 12));
+    let points = |s: &Sampler| -> Vec<f32> {
+        (0..64)
+            .map(|i| s.sample(i % 7 - 3, i - 30, i / 5))
+            .collect()
+    };
+    assert_ne!(points(&old), points(&new));
+    let chunk = Volume::blocks([16, 24, 16], [-16, -61, 32]);
+    let (a, b) = (old.sample_volume(&chunk), new.sample_volume(&chunk));
+    assert_eq!(a.len(), b.len());
+    assert_ne!(a, b);
+    // interpolated's volume depends on where the volume starts in y; upscale's doesn't.
+    let column = |s: &Sampler, y0| s.sample_volume(&Volume::blocks([1, 16, 1], [-13, y0, 35]));
+    let shifted = |s: &Sampler| -> Vec<(f32, f32)> {
+        let (low, high) = (column(s, -61), column(s, -59));
+        (0..14).map(|i| (low[i + 2], high[i])).collect()
+    };
+    assert!(shifted(&old).iter().any(|(l, h)| l != h));
+    assert!(shifted(&new).iter().all(|(l, h)| l == h));
+}
+
+#[test]
+fn upscale_steps_x_when_y_is_nearest() {
+    // chunk_surface_level's shape: y cells of 1 are always on a corner, so y is nearest over a
+    // volume, and x takes the step form a + ((b − a) · (1/4)) · dx.
+    let l = "interpolate_linear";
+    let map = with_noise(
+        upscale(noise(1.0, 1.0), [(l, 4), (l, 1), (l, 4)]),
+        vec![df("minecraft:raw", noise(1.0, 1.0))],
+    );
+    let f = bind_one(&map, "f");
+    let raw = bind_one(&map, "raw");
+    let c = |x, y, z| raw.sample(x, y, z);
+    let along_z = |x, y| weigh(0.5, c(x, y, -8), c(x, y, -4));
+    let row = f.sample_volume(&Volume::blocks([8, 1, 1], [0, 5, -6]));
+    let mut want = Vec::new();
+    for x0 in [0, 4] {
+        let (a, b) = (along_z(x0, 5), along_z(x0 + 4, 5));
+        for dx in 0..4 {
+            want.push(a + ((b - a) * 0.25) * dx as f32);
+        }
+    }
+    assert_eq!(row, want);
+    // The point path weighs x, and samples y and y + 1 with weights 1 and 0.
+    let along_x = |y| weigh(0.25, along_z(0, y), along_z(4, y));
+    assert_eq!(f.sample(1, 5, -6), 1.0 * along_x(5) + 0.0 * along_x(6));
+}
+
+#[test]
+fn stepped_upscale_volumes_pick_from_blocks() {
+    let f = linear(
+        bin("add", noise(1.0, 1.0), op("square", noise(0.5, 2.0))),
+        4,
+        8,
+    );
+    let sampler = bind_one(&with_noise(f, vec![]), "f");
+    let full_volume = Volume::blocks([16, 40, 16], [-16, -64, 32]);
+    let full = sampler.sample_volume(&full_volume);
+    let picks = |stepped: Volume| {
+        let got = sampler.sample_volume(&stepped);
+        for (i, (x, y, z)) in positions(&stepped).into_iter().enumerate() {
+            assert_eq!(
+                got[i],
+                full[full_volume.index(x + 16, y + 64, z - 32)],
+                "{stepped:?} at {x} {y} {z}"
+            );
+        }
+    };
+    // Steps that don't divide the cells: no plan, so the blocks are upscaled and picked from.
+    picks(Volume::new([5, 9, 3], [-15, -63, 33], [3, 4, 5]));
+    // Steps that divide them, from a corner: planned in cells of steps.
+    picks(Volume::new([8, 10, 8], [-16, -64, 32], [2, 4, 2]));
+    // From off a corner, with steps that divide the cells: no plan either.
+    picks(Volume::new([7, 9, 7], [-14, -62, 34], [2, 4, 2]));
+    // On corners, a cell apart: the input's own volume.
+    let corners = Volume::new([3, 4, 2], [-16, -64, 32], [4, 8, 4]);
+    let input = bind_one(
+        &with_noise(
+            bin("add", noise(1.0, 1.0), op("square", noise(0.5, 2.0))),
+            vec![],
+        ),
+        "f",
+    );
+    assert_eq!(
+        sampler.sample_volume(&corners),
+        input.sample_volume(&corners)
+    );
+}
+
+#[test]
+fn cubic_upscales_along_one_axis() {
+    // x² along x (0 to 64), in cells of 4 along x only.
+    let x = json!({"type": "gradient", "axis": "x", "from_coordinate": 0, "from_value": 0,
+        "to_coordinate": 64, "to_value": 64});
+    let along_x = |mode| {
+        let n = "nearest_neighbor";
+        let map = resources(vec![df(
+            "minecraft:f",
+            upscale(op("square", x.clone()), [(mode, 4), (n, 1), (n, 1)]),
+        )]);
+        bind_one(&map, "f")
+    };
+    let cubic = along_x("interpolate_cubic");
+    // Catmull-Rom is exact on a corner, and reproduces a quadratic between: at x = 10 the
+    // samples 16, 64, 144, 256 weigh (−1/16, 9/16, 9/16, −1/16).
+    assert_eq!(cubic.sample(8, 0, 0), 64.0);
+    assert_eq!(cubic.sample(10, 0, 0), 100.0);
+    // A B-spline isn't exact on a corner: (1/6, 4/6, 1/6, 0) of the samples around it.
+    let b_spline = along_x("b_spline_cubic");
+    let (c1, c2, c3) = (1.0_f32 / 6.0, 4.0_f32 / 6.0, 1.0_f32 / 6.0);
+    assert_eq!(
+        b_spline.sample(8, 0, 0),
+        ((c1 * 16.0 + c2 * 64.0) + c3 * 144.0) + 0.0 * 256.0
+    );
+    // With y and z nearest, a volume weighs x as a point does.
+    let row = Volume::blocks([17, 1, 1], [3, 0, 0]);
+    for s in [&cubic, &b_spline] {
+        let points: Vec<f32> = (3..20).map(|x| s.sample(x, 0, 0)).collect();
+        assert_eq!(s.sample_volume(&row), points);
+    }
+}
+
+#[test]
+fn nearest_upscales_take_the_cell_corner() {
+    let n = "nearest_neighbor";
+    let map = with_noise(
+        upscale(noise(1.0, 1.0), [(n, 4), (n, 8), (n, 4)]),
+        vec![df("minecraft:raw", noise(1.0, 1.0))],
+    );
+    let f = bind_one(&map, "f");
+    let raw = bind_one(&map, "raw");
+    assert_eq!(f.sample(5, 19, -6), raw.sample(4, 16, -8));
+    assert_eq!(f.sample(-1, -1, -1), raw.sample(-4, -8, -4));
+    // Over a volume off the grid, the corners are sampled once and copied to their cells.
+    let volume = Volume::new([6, 10, 3], [5, -3, -6], [1, 2, 3]);
+    let want: Vec<f32> = positions(&volume)
+        .into_iter()
+        .map(|(x, y, z)| f.sample(x, y, z))
+        .collect();
+    assert_eq!(f.sample_volume(&volume), want);
+    // On the grid, the input's own volume.
+    let grid = Volume::new([2, 2, 2], [4, 8, -8], [4, 8, 4]);
+    assert_eq!(f.sample_volume(&grid), raw.sample_volume(&grid));
+}
+
+#[test]
+fn upscale_axes_follow_the_codec() {
+    let bad = |axis: Value| {
+        let l = json!({"mode": "interpolate_linear", "cell_size": 4});
+        load_error(json!({"type": "upscale", "input": 1, "x": l, "y": axis, "z": l}))
+    };
+    for cell in [0, 65] {
+        let e = bad(json!({"mode": "interpolate_linear", "cell_size": cell}));
+        assert!(matches!(e, LoadErrorKind::OutOfRange { .. }), "{e}");
+    }
+    let e = bad(json!({"mode": "interpolate_quadratic", "cell_size": 4}));
+    assert!(matches!(e, LoadErrorKind::Shape(_)), "{e}");
+    let e = bad(json!({"mode": "interpolate_linear"}));
+    assert!(matches!(e, LoadErrorKind::Missing("cell_size")), "{e}");
+    let e = load_error(json!({"type": "upscale", "input": 1, "x": {}, "z": {}}));
+    assert!(matches!(e, LoadErrorKind::Missing(_)), "{e}");
+    // Every mode and the largest cell load.
+    for mode in [
+        "nearest_neighbor",
+        "interpolate_linear",
+        "interpolate_cosine",
+        "interpolate_cubic",
+        "b_spline_cubic",
+    ] {
+        let a = json!({"mode": mode, "cell_size": 64});
+        assert_eq!(
+            at0(json!({"type": "upscale", "input": 2, "x": a, "y": a, "z": a})),
+            2.0,
+            "{mode}"
+        );
+    }
+}
+
+/// Hand-built resources with some behavior switches on.
+struct Switched {
+    map: Map,
+    behavior: Behavior,
+}
+
+impl Resources for Switched {
+    fn resource(&self, registry: &str, id: &str) -> Result<Value, BundleError> {
+        self.map.resource(registry, id)
+    }
+
+    fn behavior(&self) -> Behavior {
+        self.behavior
+    }
+}
+
+/// `function` bound for seed 0, from resources with `behavior`.
+fn bind_with(function: Value, behavior: Behavior) -> Sampler {
+    let resources = Switched {
+        map: resources(vec![df("minecraft:f", function)]),
+        behavior,
+    };
+    let mut loader = Loader::new(&resources);
+    let f = loader.function("f").unwrap();
+    Binder::new(loader.noises(), 0).bind(&f).unwrap()
+}
+
+#[test]
+fn clamp_positive_zero_switch() {
+    let mut on = Behavior::default();
+    on.clamp_positive_zero = true;
+    let off = Behavior::default();
+    let point = |f: &Value, b| bits(bind_with(f.clone(), b).sample(0, 0, 0));
+    let volume = |f: &Value, b| {
+        bits(bind_with(f.clone(), b).sample_volume(&Volume::blocks([1, 1, 1], [0, 0, 0]))[0])
+    };
+    let clamp = |input: Value, min: f32, max: f32| json!({"type": "clamp", "input": input, "min": min, "max": max});
+    // −y along a gradient: −0 at y 0, in [−1, 0]; and the same over [−1, 2], in [−2, 1].
+    let gradient = |from: i32, to: i32| {
+        json!({"type": "gradient", "axis": "y", "from_coordinate": from, "from_value": from,
+            "to_coordinate": to, "to_value": to})
+    };
+    let narrow = bin("mul", gradient(0, 1), json!(-1));
+    let wide = bin("mul", gradient(-1, 2), json!(-1));
+    let (neg, pos) = ((-0.0_f32).to_bits(), 0);
+    // Mth.clamp keeps −0: it isn't below +0.
+    let f = clamp(wide.clone(), 0.0, 0.5);
+    assert_eq!((point(&f, off), volume(&f, off)), (neg, neg));
+    // Math.clamp lifts it to +0, at a point and over a volume.
+    assert_eq!((point(&f, on), volume(&f, on)), (pos, pos));
+    // max holds the range's top, so only the lower bound is applied, by ConstMaxSampler:
+    // Math.max at a point, but over a volume +0 replaces −0 only if above it.
+    let f = clamp(narrow, 0.0, 1.0);
+    assert_eq!(point(&f, off), neg);
+    assert_eq!((point(&f, on), volume(&f, on)), (pos, neg));
+    // Both bounds hold the range: the input itself, unclamped.
+    let f = clamp(hidden(-0.0), 0.0, 1.0);
+    assert_eq!((point(&f, on), volume(&f, on)), (neg, neg));
+}
+
+#[test]
+fn spline_nan_is_nan_switch() {
+    let mut on = Behavior::default();
+    on.spline_nan_is_nan = true;
+    let off = Behavior::default();
+    let spline = |coordinate: Value, first: f32| {
+        json!({"type": "spline", "spline": {"coordinate": coordinate, "points": [
+            {"location": 0, "value": first, "derivative": 0},
+            {"location": 1, "value": 7, "derivative": 0}
+        ]}})
+    };
+    let at = |f: &Value, b| bind_with(f.clone(), b).sample(0, 0, 0);
+    // A NaN coordinate: 26.3 finds no location above it and takes the last point; 26.4 is NaN.
+    let nan = spline(op("sqrt", json!(-1)), 0.0);
+    assert_eq!(at(&nan, off), 7.0);
+    assert!(at(&nan, on).is_nan());
+    // On the first location: 26.3 computes the first interval at t = 0, −0 + 0·(7 − −0) = +0;
+    // 26.4 extends the first point, −0.
+    let first = spline(json!(0), -0.0);
+    assert_eq!(bits(at(&first, off)), 0);
+    assert_eq!(bits(at(&first, on)), (-0.0_f32).to_bits());
+    // Elsewhere the two agree: inside an interval, and past either end.
+    let x = json!({"type": "gradient", "axis": "x", "from_coordinate": -4, "from_value": -1,
+        "to_coordinate": 8, "to_value": 2});
+    let inside = spline(x, 3.0);
+    for x in -6..10 {
+        let (a, b) = (
+            bind_with(inside.clone(), off).sample(x, 0, 0),
+            bind_with(inside.clone(), on).sample(x, 0, 0),
+        );
+        assert_eq!(bits(a), bits(b), "x {x}");
+    }
 }

@@ -1,6 +1,6 @@
 # 0029. Oracle adapters can extend a base adapter
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-26
 - See also: [0027](0027-oracle-harness-across-versions.md), which this amends (an adapter is no longer compiled alone)
 

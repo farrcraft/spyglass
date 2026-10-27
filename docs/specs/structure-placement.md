@@ -248,7 +248,7 @@ Implemented in `Jigsaw::assemble` (`spyglass-structure`), with the pools `Jigsaw
 
 **Attaching.** `C` attaches to `J` (`JigsawBlock.canAttach`) if `C`'s front is opposite `J`'s, their tops are equal unless `J`'s joint is `rollable`, and `C`'s name is `J`'s target. A feature element's jigsaw has no name and matches any target. Orientation rotates with the piece: horizontal directions turn with the rotation, up and down stay.
 
-_Versions:_ in 26.2, `FeaturePoolElement.getShuffledJigsawBlocks` names its jigsaw `minecraft:bottom` (from the NBT its constructor builds in `fillDefaultJigsawNBT`), and `JigsawBlock.canAttach` needs an exact match:
+_Versions:_ (switch `feature_jigsaw_named_bottom`) in 26.2, `FeaturePoolElement.getShuffledJigsawBlocks` names its jigsaw `minecraft:bottom` (from the NBT its constructor builds in `fillDefaultJigsawNBT`), and `JigsawBlock.canAttach` needs an exact match:
 
 ```java
 // 26.2

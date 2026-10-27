@@ -39,7 +39,7 @@ _Versions:_ 26.2's `spawn_target` is a list of `Climate.ParameterPoint`s (`Param
 3. Climate fitness is the minimum over targets (starting from `Long.MAX_VALUE`).
 4. The result is `climate * Mth.square(2048) + Mth.square(x) + Mth.square(z)` (x and z widened to `long`), at position `(x, 0, z)`: the unsnapped position.
 
-_Versions:_ in 26.4-snapshot-5, `SpawnTargetPoint.sampleFitness` is unchanged but calls the new `Climate.Parameter.distance`, so step 2 uses half-open ranges: `distance = (t − max) + 1` when that is positive, else `max(min − t, 0)` ([biome-lookup.md](biome-lookup.md#fitness)). A climate value exactly at a target's `max` is 1 away, not 0.
+_Versions:_ (switch `climate_half_open`) in 26.4-snapshot-5, `SpawnTargetPoint.sampleFitness` is unchanged but calls the new `Climate.Parameter.distance`, so step 2 uses half-open ranges: `distance = (t − max) + 1` when that is positive, else `max(min − t, 0)` ([biome-lookup.md](biome-lookup.md#fitness)). A climate value exactly at a target's `max` is 1 away, not 0.
 
 **Search**: the fitness at (0, 0), then `radialSearch(2048, 512)`, then `radialSearch(512, 32)`. `radialSearch(max, step)` from the current best position `(cx, cz)`:
 

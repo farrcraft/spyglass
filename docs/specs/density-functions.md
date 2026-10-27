@@ -42,7 +42,7 @@ Point evaluation at block `(x, y, z)` (ints), in `f32` unless stated. `X`, `Y`, 
 - `i < 0` or `i` is the last point: the point's value `v`, extended linearly. That's `v` if its derivative `d` is 0, else `v + d·(c − location)`;
 - otherwise, with `x0, x1` the locations, `f0, f1` the values and `d0, d1` the derivatives of points `i` and `i + 1`: `t = (c − x0)/(x1 − x0)`, `a = d0·(x1 − x0) − (f1 − f0)`, `b = −d1·(x1 − x0) + (f1 − f0)`, and the value is `lerp(t, f0, f1) + (t·(1 − t))·lerp(t, a, b)`, in exactly that order.
 
-_Versions:_ 26.4-snapshot-5 (`CubicSpline.Multipoint.sample`) tests the coordinate first:
+_Versions:_ (switch `spline_nan_is_nan`) 26.4-snapshot-5 (`CubicSpline.Multipoint.sample`) tests the coordinate first:
 
 1. `c` is NaN: the value is NaN. (26.3 lands past the end, so a NaN `c` gives the last point's `v` when its derivative is 0.)
 2. `c ≤ location_0`: the first point, extended linearly. `c ≥ location_last`: the last point, extended.
@@ -81,7 +81,7 @@ The types terrain needs ([terrain.md](terrain.md)), and the rest of 26.3's 44 ty
 | `distance_to_point`                            | `point` (three ints), `metric` (`euclidean`, `euclidean_squared`, `manhattan`, `chebyshev`)                                              | [Below](#distance_to_point)                                                                                                                                                                                                                                                                |
 | `end_outer_islands`                            | none                                                                                                                                     | [Below](#end_outer_islands)                                                                                                                                                                                                                                                                |
 
-_Versions:_ 26.4-snapshot-5 removes `Mth.clamp`; `clamp` (and `squeeze`'s clamp) use `Math.clamp(x, min, max)` = `Math.min(max, Math.max(x, min))`. That differs from `Mth.clamp` only for `x = −0` with `min = +0`, which gives `+0` (`Mth.clamp` gives `−0`); NaN stays NaN. `squeeze`'s bounds are ±1, so it doesn't change. `ClampFunction.compileSampler` also chooses by the input's range `r` (in this order):
+_Versions:_ (switch `clamp_positive_zero`) 26.4-snapshot-5 removes `Mth.clamp`; `clamp` (and `squeeze`'s clamp) use `Math.clamp(x, min, max)` = `Math.min(max, Math.max(x, min))`. That differs from `Mth.clamp` only for `x = −0` with `min = +0`, which gives `+0` (`Mth.clamp` gives `−0`); NaN stays NaN. `squeeze`'s bounds are ±1, so it doesn't change. `ClampFunction.compileSampler` also chooses by the input's range `r` (in this order):
 
 - `min ≤ r.min` and `max ≥ r.max`: the input's own sampler, unclamped;
 - `max ≥ r.max`: `ConstMaxSampler(input, min)`, the constant `max` above (point `Math.max(x, min)`; volume: `min` replaces `x` only if `min > x`);

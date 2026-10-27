@@ -62,7 +62,7 @@ target = Climate.target((float) temperature.compute(ctx), (float) humidity.compu
 
 The biome is the one whose parameter point has the minimum fitness.
 
-_Versions:_ 26.4-snapshot-5's `Climate.Parameter.distance` adds 1 above the range:
+_Versions:_ (switch `climate_half_open`) 26.4-snapshot-5's `Climate.Parameter.distance` adds 1 above the range:
 
 ```text
 above = (t − max) + 1                 // wrapping long

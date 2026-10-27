@@ -16,7 +16,7 @@ Structures decide where they start, and at what height, before their chunks are 
 | `getFirstOccupiedHeight(x, z, heightmap)` | `getBaseHeight − 1`.                                                                                                                 |
 | `getSpawnHeight`                          | 64.                                                                                                                                  |
 
-_Versions:_ 26.2's queries are the same, with its own [column](#262-columns). 26.4-snapshot-5 (`ChunkGenerator`, `NoiseBasedChunkGenerator`) removes `getBaseHeight`; structures call `getFirstFreeHeight`, which reads the column (`getBaseColumn`, a `levelgen.NoiseColumn`):
+_Versions:_ (switch `solid_only_heights` for 26.4) 26.2's queries are the same, with its own [column](#262-columns). 26.4-snapshot-5 (`ChunkGenerator`, `NoiseBasedChunkGenerator`) removes `getBaseHeight`; structures call `getFirstFreeHeight`, which reads the column (`getBaseColumn`, a `levelgen.NoiseColumn`):
 
 - `WORLD_SURFACE` and `WORLD_SURFACE_WG`: one above the top block that isn't air (solid or fluid), `topBlockY() + 1`.
 - Every other heightmap: one above the top **solid** block, `findTopSolidBlockY() + 1`. Fluids never count, so `MOTION_BLOCKING` and `MOTION_BLOCKING_NO_LEAVES` now ignore water and lava, where 26.3 counted them. No block tag is read.

@@ -4,7 +4,8 @@
 //! changed. For the JSON registries spyglass loads it also compares their shapes: which fields
 //! each `type` (or untyped object, by its path) has and what kind of value each holds. A shape in
 //! the new bundle that the old one never had is a form some loader may not accept yet, so it
-//! shows up here before any load fails.
+//! shows up here before any load fails. It also lists the behavior switches that differ between
+//! the two (ADR 0026), and, given one bundle, every switch and whether it's on for it.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -14,6 +15,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde_json::Value;
 use spyglass_data::bundle::{self, Manifest};
+use spyglass_data::versions::SWITCHES;
 
 /// The JSON registries whose contents spyglass parses; their shapes are compared field by field.
 const READ: &[&str] = &[
@@ -42,17 +44,50 @@ const MAX_ENUM_LEN: usize = 32;
 
 #[derive(clap::Args)]
 pub struct VersionDiff {
-    /// The older bundle: a directory, or a version under `bundles/`.
+    /// The older bundle: a directory, or a version under `bundles/`. Alone, its behavior
+    /// switches are printed.
     old: String,
     /// The newer bundle: a directory, or a version under `bundles/`.
-    new: String,
+    new: Option<String>,
 }
 
 pub fn run(args: &VersionDiff) -> Result<()> {
+    let Some(new) = &args.new else {
+        let dir = resolve(&args.old);
+        let manifest = bundle::read_manifest(&dir)
+            .with_context(|| format!("reading the bundle at {}", dir.display()))?;
+        print!("{}", switches(&manifest));
+        return Ok(());
+    };
     let old = Snapshot::read(&resolve(&args.old))?;
-    let new = Snapshot::read(&resolve(&args.new))?;
+    let new = Snapshot::read(&resolve(new))?;
     print!("{}", report(&old, &new));
     Ok(())
+}
+
+/// Every behavior switch and whether it's on for this bundle.
+fn switches(manifest: &Manifest) -> String {
+    let mut out = format!(
+        "{} (data version {}): behavior switches (ADR 0026)
+",
+        manifest.version, manifest.data_version
+    );
+    for switch in SWITCHES {
+        let state = if switch.is_on(manifest.data_version) {
+            "on "
+        } else {
+            "off"
+        };
+        let spans: Vec<String> = switch.spans.iter().map(ToString::to_string).collect();
+        let _ = writeln!(
+            out,
+            "  {state} {}  (data versions {}; {})",
+            switch.name,
+            spans.join(", "),
+            switch.spec
+        );
+    }
+    out
 }
 
 fn resolve(arg: &str) -> PathBuf {
@@ -211,6 +246,32 @@ fn report(old: &Snapshot, new: &Snapshot) -> String {
         "{} (data version {}) -> {} (data version {})",
         o.version, o.data_version, n.version, n.data_version
     );
+    let flipped: Vec<String> = SWITCHES
+        .iter()
+        .filter(|s| s.is_on(o.data_version) != s.is_on(n.data_version))
+        .map(|s| {
+            let state = |v| if s.is_on(v) { "on" } else { "off" };
+            format!(
+                "  {}: {} -> {}  ({})",
+                s.name,
+                state(o.data_version),
+                state(n.data_version),
+                s.spec
+            )
+        })
+        .collect();
+    if !flipped.is_empty() {
+        let _ = writeln!(
+            out,
+            "
+behavior switches that change:
+{}",
+            flipped.join(
+                "
+"
+            )
+        );
+    }
     let registries: BTreeSet<&String> = old.ids.keys().chain(new.ids.keys()).collect();
     let empty_ids = BTreeMap::new();
     let empty_shapes = BTreeMap::new();

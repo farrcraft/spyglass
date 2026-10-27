@@ -176,7 +176,7 @@ Specs and ADRs that govern this: [data-sources.md](../specs/data-sources.md), [b
 
 ### Phase 2: version-aware infrastructure
 
-- [ ] The behavior switch table, each switch holding the data-version ranges it applies to, printed by `version-diff` for any bundle.
+- [x] The behavior switch table, each switch holding the data-version ranges it applies to, printed by `version-diff` for any bundle. `spyglass_data::versions`: five switches so far (four for 26.4, one for 26.2), each named in its spec note.
 - [ ] A test that every supported bundle on the machine loads and binds in all three dimensions, so old dispatch arms keep working as new ones are added.
 - [ ] `spyglass-oracle` lists the versions with inputs. Every ignored comparison runs for each, and `oracle-test` reports per version.
 - [ ] The harness split into core and a 26.3 adapter, with no change in output: 26.3's goldens stay byte-identical.

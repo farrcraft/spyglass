@@ -7,6 +7,14 @@
 use serde_json::Value;
 use spyglass::{Dimension, World};
 
+/// Whether the game rejected the case's target as unknown, as `/locate` does for an id or tag
+/// its version doesn't have.
+fn game_rejected(case: &Value) -> bool {
+    case["message"]
+        .as_str()
+        .is_some_and(|m| m.starts_with("There is no "))
+}
+
 fn ints(v: &Value) -> Vec<Option<i32>> {
     v.as_array()
         .unwrap()
@@ -29,7 +37,7 @@ fn dimension(case: &Value) -> Dimension {
 fn locate_agrees_with_the_game() {
     let root = spyglass_oracle::default_dir();
     let mut failures = Vec::new();
-    let (mut cases, mut first, mut inconclusive) = (0, 0, 0);
+    let (mut cases, mut first, mut inconclusive, mut rejected) = (0, 0, 0, 0);
     // Confirmed structure cases, and those whose hits were all certain, so that spyglass's
     // answer was exactly the game's.
     let (mut confirmed, mut decided) = (0, 0);
@@ -85,7 +93,10 @@ fn locate_agrees_with_the_game() {
                 "seed {seed}: {target} from {from:?} in {}, confirmed",
                 dimension(case)
             );
-            let query = session.world().structure_query(target).unwrap();
+            // Unknown targets are checked with the other cases below.
+            let Ok(query) = session.world().structure_query(target) else {
+                continue;
+            };
             let r = session
                 .locate_structure(&query, from, &spyglass::LocateOptions::default())
                 .unwrap();
@@ -128,6 +139,24 @@ fn locate_agrees_with_the_game() {
             let from = [from[0], from[1], from[2]];
             let game = case["answer"].as_array().map(|_| ints(&case["answer"]));
             let name = format!("seed {seed}: {target} from {from:?} in {}", dimension(case));
+            // spyglass rejects exactly the targets the game does.
+            let ours = match case["kind"].as_str().unwrap() {
+                "structure" => session.world().structure_query(target).err(),
+                _ => session.world().biome_query(target).err(),
+            };
+            match (game_rejected(case), ours) {
+                (false, None) => {}
+                (true, Some(spyglass::Error::Unknown { .. })) => {
+                    rejected += 1;
+                    continue;
+                }
+                (game, ours) => {
+                    failures.push(format!(
+                        "{name}: the game rejected it: {game}, our error: {ours:?}"
+                    ));
+                    continue;
+                }
+            }
             // Our hits as (x, z) or (x, y, z), whether the list is complete, and whether
             // it holds a certain hit.
             let (hits, complete, certain): (Vec<[Option<i32>; 3]>, bool, bool) =
@@ -194,7 +223,7 @@ fn locate_agrees_with_the_game() {
     assert!(cases > 0, "no locate files; run cargo xtask oracle locate");
     println!(
         "{cases} cases {by_dimension:?}: the game's answer was our first hit in {first}; \
-         {inconclusive} beyond our candidate cap. {confirmed} structure cases confirmed, \
+         {inconclusive} beyond our candidate cap; {rejected} targets unknown to both. {confirmed} structure cases confirmed, \
          {decided} with every hit certain, all equal to the game's"
     );
     assert!(failures.is_empty(), "{}", failures.join("\n"));

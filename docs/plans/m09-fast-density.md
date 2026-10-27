@@ -99,14 +99,14 @@ Specs and ADRs that govern this: [density-functions.md](../specs/density-functio
 - [x] Prototype the hottest part of the breakdown, to check the design reaches 150 µs before building all of it. Two prototypes (notes): a vectorized noise kernel (no), and the point path's split inside `find_top_surface`. Projection: about 200 to 220 µs from removing the interpreter's overhead; 150 µs would need more (see phase 4).
 - [x] ADR: the flattened evaluation. Covers the program form, the runners, buffers, which kernels are SIMD and how (auto-vectorization, `std::arch` with runtime detection, or a crate), the families, and what happens to the interpreter. [ADR 0031](../adr/0031-flattened-density-evaluation.md), accepted: no SIMD dependency for now.
 
-### Phase 2: the program, 26.3's family
+### Phase 2: the program, 26.2's family
 
-- [ ] Compile a bound `Sampler` into a `Program`, keeping binding's choices; a point runner over it.
-- [ ] The volume runner, with an arena of buffers reused between calls; y-independent operations once per column; `upscale`, `interpolated`, `slice`, `domain_warp`, `find_top_surface` and the caches as operations.
-- [ ] Differential tests against the interpreter on every bundle's functions, points and volumes.
-- [ ] Switch the climate router, terrain, spawn and corner constraints to the program. `oracle-test` passes for 26.3, both 26.4 snapshots and the test pack.
+Reordered on 2026-10-27, with the user: 26.2 first, since its point evaluations have no memo and its gains are several-fold, against about 8 to 10% for 26.3's (see the notes).
 
-- [ ] Measure every line against the before lines, then decide the isolated column's target with the user (agreed 2026-10-27: decided here, not before).
+- [ ] 26.2's evaluator on the program, with `NoiseChunk`'s caches and interpolation as operations, and its single-point evaluations sharing subgraphs.
+- [ ] Columns without a `NoiseChunk` each, where the spec shows the answers are unchanged.
+- [ ] Differential tests against the interpreter on 26.2's functions, points and cells; `oracle-test` for 26.2.
+- [ ] Measure 26.2's lines against its before lines and its target (within 2× of 26.3's isolated column).
 
 ### Phase 3: kernels
 
@@ -119,13 +119,16 @@ Specs and ADRs that govern this: [density-functions.md](../specs/density-functio
 - [ ] `find_top_surface` batched across the aquifer's 49 samples, with the point path's arithmetic.
 - [ ] Prototype a per-seed cache of y-independent values at quart positions, shared between the volume path's cell corners and `find_top_surface`'s points, and across columns. First show the two paths give the same bits for those nodes; then measure nearby columns, regions, layouts and the isolated column.
 - [ ] Whatever else the profile shows in the aquifer's scan.
-- [ ] The isolated column at or under the target set after phase 2 (26.3). Exit criterion 2.
+- [ ] The isolated column at or under the target set after phase 5 (26.3). Exit criterion 2.
 
-### Phase 5: 26.2's family
+### Phase 5: the program, 26.3's family
 
-- [ ] 26.2's evaluator on the program, with `NoiseChunk`'s caches and interpolation as operations.
-- [ ] Columns without a `NoiseChunk` each, where the spec shows the answers are unchanged.
-- [ ] Differential tests and `oracle-test` for 26.2.
+- [ ] Compile a bound `Sampler` into a `Program`, keeping binding's choices; a point runner over it.
+- [ ] The volume runner, with an arena of buffers reused between calls; y-independent operations once per column; `upscale`, `interpolated`, `slice`, `domain_warp`, `find_top_surface` and the caches as operations.
+- [ ] Differential tests against the interpreter on every bundle's functions, points and volumes.
+- [ ] Switch the climate router, terrain, spawn and corner constraints to the program. `oracle-test` passes for 26.3, both 26.4 snapshots and the test pack.
+
+- [ ] Measure every line against the before lines, then decide the isolated column's target with the user (agreed 2026-10-27: decided after the programs are built, not before).
 
 ### Phase 6: close-out
 
@@ -155,7 +158,7 @@ Agreed on 2026-10-27: the interpreter stays as a test reference, 26.2's target i
 - **The interpreter survives as a test reference** (behind `cfg(test)` or a test-only feature) after the switch, for the differential tests. It never evaluates outside tests.
 - **Measurements use the `dist` profile:** release with fat LTO and one codegen unit, so speed depends on the code, not on how crates are split (see the notes). `cargo xtask bench`, the exit criterion and binaries for users use it; tests stay on release.
 - **A target for 26.2:** its isolated column within 2× of 26.3's.
-- **The isolated column's target is decided after phase 2** (2026-10-27), with the flattened program measured, since phase 1's projection is 200 to 220 µs against the milestone's 150 µs. The milestone asks that every family be covered but sets no number.
+- **The isolated column's target is decided after the programs are built** (2026-10-27), with the flattened program measured, since phase 1's projection is 200 to 220 µs against the milestone's 150 µs. The milestone asks that every family be covered but sets no number.
 
 ### SIMD options
 

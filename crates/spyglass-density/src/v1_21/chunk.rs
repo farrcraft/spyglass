@@ -239,6 +239,7 @@ impl NoiseChunk {
             z,
             chunk: Some(self),
             own,
+            stamp: super::bind::next_stamp(),
         }
     }
 

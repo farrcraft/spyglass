@@ -5,10 +5,16 @@
 //! choosing a constant-operand form and computing `minValue()`/`maxValue()` from the operands,
 //! and rebuilds it each time a visitor maps it (`mapAll`). Three visitors matter, and they see
 //! different graphs, so binding takes the [`Wiring`] it follows.
+//!
+//! Evaluation remembers each bound function's value per context ([`Ctx`]): a function shared by
+//! several others (a named function the graph references more than once, or a spline coordinate
+//! read at every level) is computed once per point. The game recomputes it, but every function
+//! here is pure, so only the work changes, never a value.
 
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use spyglass_data::codec::{LoadError, LoadErrorKind};
 use spyglass_noise::NormalNoiseParameters;
@@ -46,6 +52,43 @@ pub struct Function {
     min: f64,
     /// `maxValue()`.
     max: f64,
+    /// Where its value is remembered per context, once the graph is seen to share it. `None`
+    /// for constants and functions made outside a binder.
+    memo: Option<Arc<MemoSlot>>,
+}
+
+/// A bound function's place in the memo.
+#[derive(Debug)]
+struct MemoSlot {
+    binder: u64,
+    slot: u32,
+    /// Whether more than one place binds the function, so remembering it can save work. The
+    /// binder sets it on the second binding.
+    shared: AtomicBool,
+}
+
+/// One remembered value: the context's stamp, the binder, and the value.
+#[derive(Clone, Copy)]
+struct Remembered {
+    stamp: u64,
+    binder: u64,
+    value: f64,
+}
+
+thread_local! {
+    /// Each thread's remembered values, by memo slot.
+    static MEMO: RefCell<Vec<Remembered>> = const { RefCell::new(Vec::new()) };
+    /// The last context stamp handed out on this thread.
+    static STAMP: Cell<u64> = const { Cell::new(0) };
+}
+
+/// A stamp no earlier context on this thread has had.
+pub(crate) fn next_stamp() -> u64 {
+    STAMP.with(|s| {
+        let next = s.get() + 1;
+        s.set(next);
+        next
+    })
 }
 
 #[derive(Debug)]
@@ -138,6 +181,8 @@ pub(crate) struct Ctx<'c> {
     pub(crate) z: i32,
     pub(crate) chunk: Option<&'c NoiseChunk>,
     pub(crate) own: Own,
+    /// Identifies this context for the memo: unique per context made on a thread.
+    pub(crate) stamp: u64,
 }
 
 /// What a context is to the `NoiseChunk` evaluating it.
@@ -179,6 +224,7 @@ impl<'c> Ctx<'c> {
             z,
             chunk: None,
             own: Own::Foreign,
+            stamp: next_stamp(),
         }
     }
 
@@ -190,6 +236,7 @@ impl<'c> Ctx<'c> {
             z,
             chunk: self.chunk,
             own: Own::Foreign,
+            stamp: next_stamp(),
         }
     }
 }
@@ -200,6 +247,7 @@ impl Function {
             node: Arc::new(node),
             min,
             max,
+            memo: None,
         }
     }
 
@@ -232,6 +280,45 @@ impl Function {
     }
 
     pub(crate) fn eval(&self, ctx: &Ctx<'_>) -> f64 {
+        let Some(memo) = self
+            .memo
+            .as_deref()
+            .filter(|m| m.shared.load(Ordering::Relaxed))
+        else {
+            return self.compute_node(ctx);
+        };
+        let (binder, slot) = (memo.binder, memo.slot as usize);
+        let known = MEMO.with_borrow(|m| {
+            m.get(slot)
+                .filter(|r| r.stamp == ctx.stamp && r.binder == binder)
+                .map(|r| r.value)
+        });
+        if let Some(value) = known {
+            return value;
+        }
+        let value = self.compute_node(ctx);
+        MEMO.with_borrow_mut(|m| {
+            if m.len() <= slot {
+                m.resize(
+                    slot + 1,
+                    Remembered {
+                        stamp: 0,
+                        binder: 0,
+                        value: 0.0,
+                    },
+                );
+            }
+            m[slot] = Remembered {
+                stamp: ctx.stamp,
+                binder,
+                value,
+            };
+        });
+        value
+    }
+
+    /// The function's value at `ctx`, its inputs' through [`eval`](Self::eval).
+    fn compute_node(&self, ctx: &Ctx<'_>) -> f64 {
         match &*self.node {
             Node::Constant(v) => *v,
             Node::Add(a, b) => a.eval(ctx) + b.eval(ctx),
@@ -555,6 +642,8 @@ pub struct Binder<'n> {
     bound: HashMap<(*const DensityFunction, Wiring), (Df, Function)>,
     id: u64,
     slots: u32,
+    /// Memo slots numbered so far ([`Function`]'s `memo`).
+    memo_slots: u32,
 }
 
 impl<'n> Binder<'n> {
@@ -581,6 +670,7 @@ impl<'n> Binder<'n> {
             bound: HashMap::new(),
             id: BINDERS.fetch_add(1, Ordering::Relaxed),
             slots: 0,
+            memo_slots: 0,
         }
     }
 
@@ -662,9 +752,26 @@ impl<'n> Binder<'n> {
     ) -> Result<Function, LoadError> {
         let key = (Arc::as_ptr(function), wiring);
         if let Some((_, f)) = self.bound.get(&key) {
+            if let Some(memo) = &f.memo {
+                memo.shared.store(true, Ordering::Relaxed);
+            }
             return Ok(f.clone());
         }
-        let bound = self.compile(function, wiring)?;
+        let mut bound = self.compile(function, wiring)?;
+        // A loaded function is what the graph shares; remember its value per context. A
+        // reference's bound function is its target's, already numbered.
+        match &bound.memo {
+            Some(memo) => memo.shared.store(true, Ordering::Relaxed),
+            None if !matches!(&*bound.node, Node::Constant(_)) => {
+                bound.memo = Some(Arc::new(MemoSlot {
+                    binder: self.id,
+                    slot: self.memo_slots,
+                    shared: AtomicBool::new(false),
+                }));
+                self.memo_slots += 1;
+            }
+            None => {}
+        }
         self.bound.insert(key, (function.clone(), bound.clone()));
         Ok(bound)
     }

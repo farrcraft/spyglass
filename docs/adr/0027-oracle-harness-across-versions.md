@@ -2,7 +2,7 @@
 
 - Status: Proposed
 - Date: 2026-10-26
-- See also: [0004](0004-oracle-standalone-harness.md), which this extends; [0026](0026-how-game-versions-coexist.md)
+- See also: [0004](0004-oracle-standalone-harness.md), which this extends; [0026](0026-how-game-versions-coexist.md), [0028](0028-supported-versions-and-ci.md)
 
 ## Context
 
@@ -24,7 +24,7 @@ We will split the harness into a core and adapters:
   - the spawn search;
   - heights and base columns;
   - starting a structure in a chunk.
-- **Adapters** (`oracle/adapters/<first version>/`) implement `GameApi` for a range of versions. Each declares the first data version it supports. `cargo xtask oracle` reads the jar's data version, picks the adapter with the highest first version not above it, and compiles the core with that adapter alone.
+- **Adapters** (`oracle/adapters/<first version>/`) implement `GameApi` for a set of versions. Each declares the data-version ranges it covers, as switches do ([ADR 0026](0026-how-game-versions-coexist.md)), so a snapshot that reverts an API can go back to an older adapter. `cargo xtask oracle` reads the jar's data version and picks the one adapter whose ranges hold it. No adapter, or more than one, is an error. It compiles the core with that adapter alone.
   - A version gets a new adapter only when the previous one doesn't compile against it.
   - Small differences inside a range are runtime checks in the adapter, not copies.
 - **Ranges now:** `26.2` for the 1.21-family API, `26.3`, and `26.4` from the first 26.4 snapshot.
@@ -37,7 +37,7 @@ We will split the harness into a core and adapters:
 - **Each adapter only compiles against its own range.** `xtask` builds what it picks, so a stale adapter can go unnoticed. CI's matrix compiles every supported version, which catches it.
 - **The core can't call game API outside `GameApi`.** Anything new the oracle needs goes through the interface and every live adapter. That makes adding a check more work, but it's the point of the split.
 - **26.2's adapter is the largest.** Its density path is the 1.21 one ([ADR 0026](0026-how-game-versions-coexist.md)).
-- **Dropping a version deletes its adapter** once no supported version falls in its range.
+- **Adapters accumulate.** Support is permanent ([ADR 0028](0028-supported-versions-and-ci.md)), so no adapter is ever deleted, and a change to `GameApi` touches every adapter. Keeping the interface narrow keeps that affordable, and it's the main reason to resist adding to it.
 
 ## Alternatives considered
 

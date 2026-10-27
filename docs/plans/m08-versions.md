@@ -80,7 +80,7 @@ To be decided in an ADR in phase 1. The recommendation:
   - Code reads switches, never data versions.
   - Each switch names its spec section.
   - A tool prints any bundle's switches.
-- **A version's support is removable.** Dropping a version deletes the dispatch arms and switches only it used. The switch table shows which those are.
+- **Support is permanent, snapshots included.** Dispatch arms, switches, families and harness adapters accumulate and are never deleted, so each says which versions use it.
 - **Specs describe each algorithm once**, with a _Versions_ note wherever it differs.
 
 The alternatives the ADR weighs:
@@ -127,18 +127,15 @@ The pieces:
   - the time taken;
   - the oracle result.
 - **Cheap** means about a day or less, confined to loaders, switches, harness adapters and spec notes. Any other update gets a short retro in this plan's notes: what forced the work, and what change to the structure would have made it cheap. That change becomes a task here, or an ADR when it's a design change. The point is to learn, not to hit a number.
-- **Which snapshots are supported:**
-  - Releases from 26.2 on, plus the latest snapshot.
-  - When a newer snapshot lands, the older one's switches stay but its bundle and goldens go.
-  - On release, 26.4 replaces its snapshots.
-  - The policy is in the ADR on supported versions.
-- **Defaults prefer releases.** The CLI and the viewer pick the newest _release_ bundle unless a snapshot is asked for by name. That fixes the trap that pinned the CLI tests.
+- **Which versions are supported: all of them, permanently.** Snapshots are versions of their own, which people play and keep worlds in, not a step to throw away when the release ships. Every version added stays supported: its bundle, its oracle comparisons, its CI job and its cost-log row. New versions are added as they come out, from 26.2 and 26.4-snapshot-5 on; older ones, 26.4's first four snapshots included, can be added later by the guide. The policy is in [ADR 0028](../adr/0028-supported-versions-and-ci.md).
+- **Switches and adapters hold data-version ranges**, not a starting version, because a later snapshot can revert a change.
+- **Defaults prefer releases.** The CLI and the viewer pick the newest _release_ bundle unless a snapshot is asked for by name, or a save's data version matches it. That fixes the trap that pinned the CLI tests. It decides only the default; snapshots are as supported as releases.
 
 ### CI
 
 Decided on 2026-10-26: GitHub Actions, downloading the server jar from Mojang on each run, with nothing game-derived committed or kept. The ADR records the details:
 
-- A matrix over the supported versions. Each job runs, in a fresh runner:
+- A matrix over every supported version, which only grows. Every version runs on every push and pull request until the matrix takes over an hour of wall-clock time; then an ADR picks a cheaper schedule. Each job runs, in a fresh runner:
   1. extract the bundle;
   2. `cargo xtask oracle golden` and `oracle locate`;
   3. `cargo xtask oracle-test`.
@@ -179,7 +176,8 @@ Specs and ADRs that govern this: [data-sources.md](../specs/data-sources.md), [b
 
 ### Phase 2: version-aware infrastructure
 
-- [ ] The behavior switch table, keyed by data version, printed by `version-diff` for any bundle.
+- [ ] The behavior switch table, each switch holding the data-version ranges it applies to, printed by `version-diff` for any bundle.
+- [ ] A test that every supported bundle on the machine loads and binds in all three dimensions, so old dispatch arms keep working as new ones are added.
 - [ ] `spyglass-oracle` lists the versions with inputs. Every ignored comparison runs for each, and `oracle-test` reports per version.
 - [ ] The harness split into core and a 26.3 adapter, with no change in output: 26.3's goldens stay byte-identical.
 - [ ] Release-first defaults in `find_bundle`, the CLI and the viewer. Snapshots are chosen only by name. The CLI tests stop pinning 26.3.
@@ -212,7 +210,7 @@ Specs and ADRs that govern this: [data-sources.md](../specs/data-sources.md), [b
 
 ### Phase 6: snapshots while the plan runs
 
-- [ ] Each 26.4 snapshot released before the plan completes: the loop, a cost-log row, and a retro and follow-up task where it wasn't cheap. Snapshot 6 is likely on 2026-10-27.
+- [ ] Each 26.4 snapshot, pre-release and release candidate released before the plan completes, added for good: the loop, its bundle and goldens kept beside the earlier snapshots', every earlier version's comparisons still passing, a cost-log row, and a retro and follow-up task where it wasn't cheap. Snapshot 6 is likely on 2026-10-27.
 
 ### Phase 7: CI
 
@@ -258,6 +256,7 @@ Agreed on 2026-10-26:
 
 - **Both versions now.** 26.2 and 26.4 are planned together, with 26.4 tracked through its snapshots instead of waiting for its release. Rework from snapshot changes should be cheap. When it isn't, that's evidence for improving how spyglass handles versions, and the plan acts on it.
 - **26.2 stays in this plan** (2026-10-26, after the phase 1 survey showed it needs an `f64` evaluator family of its own). The ADR on how versions coexist records the second family.
+- **Support is permanent, and every snapshot is a version** (2026-10-26). Once a version is supported it stays supported, snapshots included: people play specific snapshots and keep worlds in them. Nothing is dropped when a newer snapshot or the release lands.
 - **CI:** GitHub Actions, downloading the server jar from Mojang during each run, with nothing game-derived committed or kept (agreed with m08-dimensions).
 
 To be decided in phase 1's ADRs, with the recommendations above: how versions coexist, the harness's adapters, and supported versions with release-first defaults.
@@ -276,3 +275,4 @@ Open for the user: publishing the repository on GitHub, which exit criterion 2 n
   - **Unchanged in all three:** every RNG class, seeding and the positional factories, placement and the weighted structure pick, jigsaw assembly, the spawn search loop, the biome zoom. Every noise class is unchanged from 26.3 to 26.4.
   - **Loader-only for 26.2:** template palettes use `Name`/`Properties`; feature pool elements' jigsaws are named `minecraft:bottom` (same results with vanilla data); `spawn_target` is full parameter points.
 - 2026-10-26: Phase 1 done but for accepting the three ADRs. The survey is drafted into the specs as _Versions_ notes (inline where a version differs at a point, a `26.2` section where it differs throughout: noise, density functions, terrain, spawn), each spec's status line saying they're unchecked against the oracle. ADRs 0026 to 0028 are proposed. Open points the notes flag as inferred: 26.2's chunk-path climate sampler against its point path, how often 26.2's quantized deep-dark test flips a column, and 26.4's per-block biomes needing every neighbour's quart biomes.
+- 2026-10-26: Support is permanent, snapshots included: snapshots are versions people play, not steps to discard on release. ADR 0028 now says so, ADR 0026's switches and ADR 0027's adapters hold data-version ranges (a snapshot can revert a change), and nothing is ever removed. Phase 6 keeps every snapshot it adds.

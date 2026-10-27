@@ -148,10 +148,48 @@ Specs and ADRs that govern this: [density-functions.md](../specs/density-functio
 
 Open for the user, to settle in phase 1's ADR:
 
-- **How SIMD is done.** Auto-vectorized fixed-width loops need nothing new. `std::arch` with runtime detection is fastest, but means unsafe code per platform. A crate (`wide`, `pulp`) means a new dependency.
+- **How SIMD is done.** Researched on 2026-10-27 (see [SIMD options](#simd-options)). The lead candidate is `fearless_simd`, unless the profile shows the column's time is mostly tree-walking and allocation. In that case, auto-vectorized loops with `multiversion` may be enough and add no SIMD API.
 - **Whether the interpreter survives as a test reference** (behind `cfg(test)`) after the switch, or is deleted.
 - **A target for 26.2.** The milestone asks that every family be covered but sets no number. Proposed: 26.2's isolated column within 2× of 26.3's.
 
+### SIMD options
+
+What spyglass needs:
+
+- stable Rust within the MSRV (1.95), since `std::simd` is still nightly-only;
+- runtime CPU dispatch, because release builds target baseline x86-64 (SSE2);
+- the same bits at every instruction level, so plain IEEE add, multiply and divide only, never a fused multiply-add;
+- Java's `Math.min`/`max`, `Mth.floor` and `(int)` casts, which we write ourselves with any crate;
+- the noise tables' gathers, which are the hard part.
+
+| Option                                          | Dispatch at run time                 | Assessment                                                                                                                                                                                                                                 |
+| ----------------------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `fearless_simd` 1.1 (1.2.0 released 2026-10-25) | Yes: `Level`, `#[simd]`, `dispatch!` | Best fit. MIT/Apache-2.0, MSRV 1.89, no dependencies beyond an optional `libm`. Safe API over SSE2, SSE4.2, AVX2, AVX-512, NEON, WASM and a scalar fallback. Fixed-width `f64x4` and native-width types, and `kernel!` for raw intrinsics. |
+| `wide` 1.7                                      | No                                   | Mature and widely used, but gets AVX2 only with `-C target-cpu`, so generic release builds would stay at SSE2.                                                                                                                             |
+| `pulp` 0.22                                     | Yes                                  | Built for faer. Native-width API only, undocumented fixed widths, verbose dispatch, pre-1.0, no stated MSRV.                                                                                                                               |
+| `macerator` 0.5                                 | Yes                                  | Built for burn. Thin documentation, no safe intrinsics, AVX-512 needs nightly.                                                                                                                                                             |
+| Auto-vectorization with `multiversion` 0.9      | Yes, via `multiversion`              | A credible baseline: plain loops and no SIMD API, but whether a loop vectorizes can change between compiler versions.                                                                                                                      |
+| `std::arch`                                     | Write it yourself                    | Last resort: unsafe code for each platform.                                                                                                                                                                                                |
+
+Findings that bear on bit-exactness:
+
+- **`fearless_simd`'s `mul_add` may be fused or not, by platform**, so it must never be used. `to_int_precise` saturates and maps NaN to 0, as Java's `(int)` does. Its `min`/`max` don't document NaN and signed-zero behavior, so Java's would be built from compares and selects.
+- **No crate offers gather, and hardware gather wouldn't help.** AMD Zen has no native gather, and LLVM's gathers have measured 1.75 to 4 times slower than scalar loads. The noise kernels should look up tables per lane in scalar code, and vectorize the gradient, fade and lerp arithmetic.
+- **To confirm:** whether `fearless_simd` can force a lower `Level`. If it can, the differential tests can check that the scalar, SSE2, AVX2 and NEON paths give identical bits.
+
+Housekeeping:
+
+- Every candidate's license is already allowed in `deny.toml`.
+- `fearless_simd` 0.4.1 is already in the tree through the viewer (`epaint` → `vello_cpu`), so 1.x would be a second copy, visible only in the viewer.
+- Pin a release at least 7 days old, as Dependabot's cooldown does for actions: 1.1.x until 1.2.0 has aged.
+
+Sources:
+
+- [The state of SIMD in Rust in 2026](https://shnatsel.github.io/state-of-simd-rust-2026/), by a `fearless_simd` maintainer;
+- the [`fearless_simd` 1.1.0 documentation](https://docs.rs/fearless_simd/1.1.0);
+- crates.io metadata for each crate, fetched 2026-10-27.
+
 ## Notes
 
+- 2026-10-27: Researched the SIMD options for stable Rust; findings in [Decisions](#simd-options).
 - 2026-10-27: Drafted from the code at c98dbeb, today's bench of all four versions and milestone 07's measurements.

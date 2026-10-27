@@ -18,6 +18,14 @@ use crate::tags::block_tag;
 const DIMENSION_MIN_Y: i32 = -2032;
 const DIMENSION_MAX_Y: i32 = 2031;
 
+/// Default blocks whose `blocksMotion()` is true, for versions with the
+/// `heightmap_blocks_motion` switch: the ones vanilla noise settings name.
+const BLOCKS_MOTION: [&str; 3] = [
+    "minecraft:stone",
+    "minecraft:netherrack",
+    "minecraft:end_stone",
+];
+
 /// The `aquifers` entries, in the order of [`AquiferSamplers`]' fields.
 const AQUIFER_ENTRIES: [&str; 6] = [
     "barrier",
@@ -126,8 +134,22 @@ impl TerrainSettings {
                     }));
                 }
             };
+        let behavior = resources.behavior();
         let default_block_blocks_motion = match &default_block {
             _ if solid_only_heights => true,
+            // `blocksMotion()` is a block property spyglass doesn't have, so only the default
+            // blocks vanilla settings name, which all block motion, are supported.
+            Some(block) if behavior.heightmap_blocks_motion => {
+                if !BLOCKS_MOTION.contains(&block.as_str()) {
+                    return Err(root
+                        .child("default_block")
+                        .error(LoadErrorKind::Unsupported {
+                            what: "default block, for blocksMotion(),",
+                            name: block.clone(),
+                        }));
+                }
+                true
+            }
             Some(block) => {
                 block_tag(resources, "minecraft:blocks_motion_in_heightmap")?.contains(block)
             }

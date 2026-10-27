@@ -29,7 +29,7 @@ Vanilla structure code asks the generator for `WORLD_SURFACE_WG` and `OCEAN_FLOO
 - `WORLD_SURFACE_WG`: any block that isn't air. Water and lava count, so over an ocean the answer is the sea level.
 - `OCEAN_FLOOR_WG`: blocks in `#minecraft:blocks_motion_in_heightmap`. 26.3 tests a block tag here, not `blocksMotion()`. In a column, only the default block (stone) is in it. The tag comes from the bundle's block tags ([bundle-format.md](bundle-format.md)), nested tags resolved.
 
-_Versions:_ 26.2 tests `blocksMotion()` for `OCEAN_FLOOR_WG` (and `MOTION_BLOCKING*`), not a tag; on a column's blocks (the default block, ore-vein blocks, water, lava, air) the answers are the same. 26.4-snapshot-5 counts every solid position, without the tag (above).
+_Versions:_ (switch `heightmap_blocks_motion`) 26.2 tests `blocksMotion()` for `OCEAN_FLOOR_WG` (and `MOTION_BLOCKING*`), not a tag; on a column's blocks (the default block, ore-vein blocks, water, lava, air) the answers are the same. 26.4-snapshot-5 counts every solid position, without the tag (above).
 
 ## The column
 

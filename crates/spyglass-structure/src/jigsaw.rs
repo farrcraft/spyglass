@@ -10,6 +10,7 @@ use serde_json::{Map, Value};
 use spyglass_data::bundle::{Bundle, BundleError};
 use spyglass_data::codec;
 use spyglass_data::nbt::{self, Tag};
+use spyglass_data::versions::Behavior;
 use spyglass_rng::{LegacyRandomSource, RandomSource};
 
 use spyglass_data::codec::{At, LoadError, LoadErrorKind, LoadResult, full_id};
@@ -225,6 +226,13 @@ static FEATURE_JIGSAW: LazyLock<JigsawData> = LazyLock::new(|| JigsawData {
     selection_priority: 0,
 });
 
+/// [`FEATURE_JIGSAW`] as versions with the `feature_jigsaw_named_bottom` switch have it: named
+/// `minecraft:bottom`, so only a parent targeting that attaches (ADR 0026).
+static FEATURE_JIGSAW_NAMED_BOTTOM: LazyLock<JigsawData> = LazyLock::new(|| JigsawData {
+    name: Some("minecraft:bottom".to_string()),
+    ..FEATURE_JIGSAW.clone()
+});
+
 /// A jigsaw block in a template: its position and orientation (`JigsawBlock.ORIENTATION`, front
 /// and top) in the template, and its fields.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -303,7 +311,11 @@ impl Template {
                 for (i, block) in blocks.iter().enumerate() {
                     let state = block.get("state").and_then(Tag::as_int).unwrap_or(0);
                     let entry = usize::try_from(state).ok().and_then(|s| palette.get(s));
-                    let name = entry.and_then(|p| p.get("id")).and_then(Tag::as_str);
+                    // `NbtUtils.readBlockState`: `id` and `properties`, or in 26.2 `Name` and
+                    // `Properties`; the template says which.
+                    let name = entry
+                        .and_then(|p| p.get("id").or_else(|| p.get("Name")))
+                        .and_then(Tag::as_str);
                     if name.map(full_id).as_deref() != Some("minecraft:jigsaw") {
                         continue;
                     }
@@ -313,7 +325,7 @@ impl Template {
                     // The orientation property, `<front>_<top>`, in the entry's `properties`;
                     // the default state is north_up.
                     let (front, top) = entry
-                        .and_then(|p| p.get("properties"))
+                        .and_then(|p| p.get("properties").or_else(|| p.get("Properties")))
                         .and_then(|p| p.get("orientation"))
                         .and_then(Tag::as_str)
                         .and_then(|o| o.split_once('_'))
@@ -433,8 +445,9 @@ pub enum PoolElement {
     Single(Arc<Template>, Projection),
     /// `list_pool_element`: several elements placed together.
     List(Vec<PoolElement>, Projection),
-    /// `feature_pool_element`: a placed feature, with a 1 × 1 × 1 box.
-    Feature(Projection),
+    /// `feature_pool_element`: a placed feature, with a 1 × 1 × 1 box. The flag is the
+    /// `feature_jigsaw_named_bottom` switch: whether its jigsaw is named `minecraft:bottom`.
+    Feature(Projection, bool),
     /// `empty_pool_element`.
     Empty,
 }
@@ -443,7 +456,7 @@ impl PoolElement {
     /// `getProjection`. The empty element is never placed, so its projection doesn't matter.
     pub(crate) fn projection(&self) -> Projection {
         match self {
-            PoolElement::Single(_, p) | PoolElement::List(_, p) | PoolElement::Feature(p) => *p,
+            PoolElement::Single(_, p) | PoolElement::List(_, p) | PoolElement::Feature(p, _) => *p,
             PoolElement::Empty => Projection::Rigid,
         }
     }
@@ -457,7 +470,7 @@ impl PoolElement {
                 .iter()
                 .filter_map(|e| e.bounding_box(pos, rotation))
                 .reduce(BoundingBox::encapsulate),
-            PoolElement::Feature(_) => Some(BoundingBox { min: pos, max: pos }),
+            PoolElement::Feature(..) => Some(BoundingBox { min: pos, max: pos }),
             PoolElement::Empty => None,
         }
     }
@@ -482,11 +495,15 @@ impl PoolElement {
                 .first()
                 .map(|e| e.shuffled_jigsaws(pos, rotation, random))
                 .unwrap_or_default(),
-            PoolElement::Feature(_) => vec![PlacedJigsaw {
+            PoolElement::Feature(_, named_bottom) => vec![PlacedJigsaw {
                 pos,
                 front: Direction::Down,
                 top: Direction::South,
-                data: &FEATURE_JIGSAW,
+                data: if *named_bottom {
+                    &FEATURE_JIGSAW_NAMED_BOTTOM
+                } else {
+                    &FEATURE_JIGSAW
+                },
             }],
             PoolElement::Empty => Vec::new(),
         }
@@ -497,7 +514,7 @@ impl PoolElement {
         match self {
             PoolElement::Single(t, _) => vec![t],
             PoolElement::List(elements, _) => elements.iter().flat_map(|e| e.templates()).collect(),
-            PoolElement::Feature(_) | PoolElement::Empty => Vec::new(),
+            PoolElement::Feature(..) | PoolElement::Empty => Vec::new(),
         }
     }
 }
@@ -841,6 +858,8 @@ fn alias_names(json: &Value) -> Vec<&str> {
 /// Loads template pools and templates, each once.
 pub(crate) struct JigsawLoader<'a> {
     bundle: &'a Bundle,
+    /// The `feature_jigsaw_named_bottom` switch for the bundle's version.
+    feature_jigsaw_named_bottom: bool,
     pools: HashMap<String, Arc<Pool>>,
     templates: HashMap<String, Arc<Template>>,
 }
@@ -849,6 +868,8 @@ impl<'a> JigsawLoader<'a> {
     pub(crate) fn new(bundle: &'a Bundle) -> Self {
         JigsawLoader {
             bundle,
+            feature_jigsaw_named_bottom: Behavior::of(bundle.manifest().data_version)
+                .feature_jigsaw_named_bottom,
             pools: HashMap::new(),
             templates: HashMap::new(),
         }
@@ -1036,7 +1057,7 @@ impl<'a> JigsawLoader<'a> {
             for template in element.templates() {
                 out.extend(template.pools().map(str::to_string));
             }
-            if matches!(element, PoolElement::Feature(_)) {
+            if matches!(element, PoolElement::Feature(..)) {
                 out.push(FEATURE_JIGSAW.pool.clone());
             }
         }
@@ -1081,7 +1102,9 @@ impl<'a> JigsawLoader<'a> {
                 }
                 PoolElement::List(elements, projection)
             }
-            "minecraft:feature_pool_element" => PoolElement::Feature(projection),
+            "minecraft:feature_pool_element" => {
+                PoolElement::Feature(projection, self.feature_jigsaw_named_bottom)
+            }
             _ => {
                 return Err(at.child("element_type").error(LoadErrorKind::Unsupported {
                     what: "pool element type",
@@ -1425,6 +1448,11 @@ mod tests {
         let feature = at(Down, South, &FEATURE_JIGSAW);
         assert!(!at(Up, Up, &aligned).can_attach(&feature));
         assert!(at(Up, Up, &rollable).can_attach(&feature));
+        // With feature_jigsaw_named_bottom (26.2), only a parent targeting minecraft:bottom.
+        let named = at(Down, South, &FEATURE_JIGSAW_NAMED_BOTTOM);
+        assert!(!at(Up, Up, &rollable).can_attach(&named));
+        let bottom = jigsaw("a:p", "minecraft:bottom", Joint::Rollable);
+        assert!(at(Up, Up, &bottom).can_attach(&named));
     }
 
     #[test]

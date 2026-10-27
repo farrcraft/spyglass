@@ -114,6 +114,10 @@ switches! {
     /// A feature pool element's jigsaw is named `minecraft:bottom`, and attaches only to a parent
     /// jigsaw targeting that name exactly. Later versions leave the name empty, matching any target.
     feature_jigsaw_named_bottom, "structure-placement.md#jigsaw-assembly", [0..5023];
+
+    /// `OCEAN_FLOOR_WG` counts blocks whose `blocksMotion()` is true, a block property, not the
+    /// `#minecraft:blocks_motion_in_heightmap` tag, which doesn't exist.
+    heightmap_blocks_motion, "terrain.md#queries", [0..5023];
 }
 
 #[cfg(test)]

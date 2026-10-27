@@ -207,7 +207,7 @@ Specs and ADRs that govern this: [data-sources.md](../specs/data-sources.md), [b
 ### Phase 5: 26.2 end to end
 
 - [ ] Goldens for 26.2 in all three dimensions. Biome, height, structure, spawn and `/locate` comparisons pass, confirmed included.
-- [ ] Templates' `Name`/`Properties` palettes, feature pool elements' `minecraft:bottom` jigsaws, and 26.2's heightmap predicates without the `blocks_motion_in_heightmap` tag.
+- [x] Templates' `Name`/`Properties` palettes, feature pool elements' `minecraft:bottom` jigsaws, and 26.2's heightmap predicates without the `blocks_motion_in_heightmap` tag. Loaders and switches done (`feature_jigsaw_named_bottom`, `heightmap_blocks_motion`, which supports the three vanilla default blocks and refuses others); checked against the game with phase 5's goldens.
 - [ ] Cost logged for 26.2, the first full version added by the guide.
 
 ### Phase 6: snapshots while the plan runs

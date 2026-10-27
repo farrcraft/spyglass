@@ -1,7 +1,7 @@
 # m08. The Nether and the End
 
 - Status: Completed
-- Milestone: [08. Nether, End and multiple versions](../../roadmap/08-dimensions-and-versions.md)
+- Milestone: [08. Nether, End and multiple versions](../../roadmap/completed/08-dimensions-and-versions.md)
 - Started: 2026-10-26
 - Completed: 2026-10-26
 

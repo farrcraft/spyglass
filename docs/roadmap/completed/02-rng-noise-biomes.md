@@ -23,5 +23,5 @@ Overworld biome lookup that matches the game bit for bit.
 
 ## Not in this milestone
 
-- Nether and End biomes ([08](../08-dimensions-and-versions.md)).
+- Nether and End biomes ([08](08-dimensions-and-versions.md)).
 - Performance work beyond what's needed to run the tests in reasonable time.

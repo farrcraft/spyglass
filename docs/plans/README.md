@@ -6,4 +6,4 @@ Code must not reference plans. Anything durable a plan produces belongs in a spe
 
 ## Active
 
-None. Milestone [08](../roadmap/08-dimensions-and-versions.md)'s remaining follow-ups (the first CI run on GitHub, and each new 26.4 snapshot) need no plan of their own.
+None. Milestone 08's follow-ups ([roadmap](../roadmap/README.md#follow-ups)) need no plan of their own.

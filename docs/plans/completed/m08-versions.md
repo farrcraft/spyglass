@@ -1,7 +1,7 @@
 # m08. More than one game version
 
 - Status: Completed
-- Milestone: [08. Nether, End and multiple versions](../../roadmap/08-dimensions-and-versions.md)
+- Milestone: [08. Nether, End and multiple versions](../../roadmap/completed/08-dimensions-and-versions.md)
 - Started: 2026-10-26
 - Completed: 2026-10-27
 
@@ -279,7 +279,7 @@ Open for the user: publishing the repository on GitHub, which exit criterion 2 n
 
 ## Follow-ups
 
-Agreed on 2026-10-27 when closing the plan: two items continue outside it, under [milestone 08](../../roadmap/08-dimensions-and-versions.md), which stays in progress until both are done.
+Agreed on 2026-10-27 when closing the plan: two items continue outside it, under [milestone 08](../../roadmap/completed/08-dimensions-and-versions.md), which moved to completed with them open; the roadmap lists them until done.
 
 - **The first green CI run on GitHub** (exit criterion 2), once the repository is published there. The workflow and `cargo xtask ci` are ready and pass locally for every version.
 - **Each new 26.4 snapshot**, pre-release, release candidate and the release, added by [the guide](../../adding-a-version.md) with a cost-log row. The first, likely 26.4-snapshot-7 on 2026-11-03, is the first addition made from the guide as written (exit criterion 3).

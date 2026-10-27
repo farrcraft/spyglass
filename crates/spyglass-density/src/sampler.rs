@@ -1457,41 +1457,56 @@ impl BoundSpline {
         if nan_is_nan {
             return sample_nan_is_nan(c, locations, values, derivatives, coordinate_value);
         }
-        // findIntervalStart: Mth.binarySearch for the first location above c, minus one. The
-        // game's test is `c < location`, so a NaN coordinate finds no location and extends past
-        // the last point; the negation keeps that.
-        #[allow(
-            clippy::neg_cmp_op_on_partial_ord,
-            reason = "mirrors the game's NaN behavior"
-        )]
-        let i = locations.partition_point(|&l| !(c < l)) as isize - 1;
-        let last = locations.len() - 1;
-        // linearExtend outside the points.
-        let mut extend = |i: usize| {
-            let value = values[i].sample_with(coordinate_value);
-            let d = derivatives[i];
-            if d == 0.0 {
-                value
-            } else {
-                value + d * (c - locations[i])
-            }
-        };
-        if i < 0 {
-            return extend(0);
-        }
-        let i = i as usize;
-        if i == last {
-            return extend(last);
-        }
-        let (x0, x1) = (locations[i], locations[i + 1]);
-        let t = (c - x0) / (x1 - x0);
-        let f0 = values[i].sample_with(coordinate_value);
-        let f1 = values[i + 1].sample_with(coordinate_value);
-        let a = derivatives[i] * (x1 - x0) - (f1 - f0);
-        let b = -derivatives[i + 1] * (x1 - x0) + (f1 - f0);
-        let lerp = |t: f32, p: f32, q: f32| p + t * (q - p);
-        lerp(t, f0, f1) + t * (1.0 - t) * lerp(t, a, b)
+        sample_multipoint(c, locations, values, derivatives, &mut |v: &BoundSpline| {
+            v.sample_with(coordinate_value)
+        })
     }
+}
+
+/// `CubicSpline.Multipoint.sample` at coordinate value `c`, all in `f32`, with each point's
+/// value from `value`, asked for only the points the result reaches. The bytecode is the same in
+/// 26.2 and 26.3, so both families share it.
+pub(crate) fn sample_multipoint<V>(
+    c: f32,
+    locations: &[f32],
+    values: &[V],
+    derivatives: &[f32],
+    mut value: impl FnMut(&V) -> f32,
+) -> f32 {
+    // findIntervalStart: Mth.binarySearch for the first location above c, minus one. The
+    // game's test is `c < location`, so a NaN coordinate finds no location and extends past
+    // the last point; the negation keeps that.
+    #[allow(
+        clippy::neg_cmp_op_on_partial_ord,
+        reason = "mirrors the game's NaN behavior"
+    )]
+    let i = locations.partition_point(|&l| !(c < l)) as isize - 1;
+    let last = locations.len() - 1;
+    // linearExtend outside the points.
+    let mut extend = |i: usize| {
+        let v = value(&values[i]);
+        let d = derivatives[i];
+        if d == 0.0 {
+            v
+        } else {
+            v + d * (c - locations[i])
+        }
+    };
+    if i < 0 {
+        return extend(0);
+    }
+    let i = i as usize;
+    if i == last {
+        return extend(last);
+    }
+    let (x0, x1) = (locations[i], locations[i + 1]);
+    let t = (c - x0) / (x1 - x0);
+    let f0 = value(&values[i]);
+    let f1 = value(&values[i + 1]);
+    let a = derivatives[i] * (x1 - x0) - (f1 - f0);
+    let b = -derivatives[i + 1] * (x1 - x0) + (f1 - f0);
+    let lerp = |t: f32, p: f32, q: f32| p + t * (q - p);
+    lerp(t, f0, f1) + t * (1.0 - t) * lerp(t, a, b)
 }
 
 /// 26.4's `CubicSpline.Multipoint.sample` (switch `spline_nan_is_nan`), at coordinate value `c`:

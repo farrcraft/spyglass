@@ -6,6 +6,10 @@
 //! by constants and by [`Interval`] ranges. A [`Sampler`] evaluates the result with the game's
 //! `float` arithmetic, at a block position or over a [`Volume`] of them, which the game computes
 //! differently in places. See `docs/specs/density-functions.md`.
+//!
+//! 26.2's density evaluation is another algorithm family (ADR 0026), in [`v1_21`]. The climate
+//! router and sampler dispatch on a dimension's noise settings, so callers don't need to know
+//! which family they hold.
 
 mod function;
 mod interval;
@@ -14,6 +18,7 @@ mod load;
 mod range;
 mod router;
 mod sampler;
+pub mod v1_21;
 mod volume;
 
 pub use function::{

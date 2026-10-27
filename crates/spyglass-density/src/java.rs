@@ -27,6 +27,42 @@ pub(crate) fn max(a: f32, b: f32) -> f32 {
     }
 }
 
+/// `Math.min(double, double)`: NaN if either is NaN, and `-0.0` below `+0.0`.
+pub(crate) fn min_f64(a: f64, b: f64) -> f64 {
+    if a.is_nan() {
+        a
+    } else if a == 0.0 && b == 0.0 && b.is_sign_negative() {
+        b
+    } else if a <= b {
+        a
+    } else {
+        b
+    }
+}
+
+/// `Math.max(double, double)`: NaN if either is NaN, and `+0.0` above `-0.0`.
+pub(crate) fn max_f64(a: f64, b: f64) -> f64 {
+    if a.is_nan() {
+        a
+    } else if a == 0.0 && b == 0.0 && a.is_sign_negative() {
+        b
+    } else if a >= b {
+        a
+    } else {
+        b
+    }
+}
+
+/// `Mth.clamp(double, double, double)`: `min` if `value < min`, else `Math.min(value, max)`,
+/// so a NaN value stays NaN and `−0` clamped below by `+0` stays `−0`.
+pub(crate) fn mth_clamp_f64(value: f64, min: f64, max: f64) -> f64 {
+    if value < min {
+        min
+    } else {
+        min_f64(value, max)
+    }
+}
+
 /// `Math.clamp(float, float, float)`: `Math.min(max, Math.max(value, min))`, so `−0` clamped
 /// below by `+0` is `+0`, and NaN stays NaN. (The game's bounds are ordered and never NaN, which
 /// `Math.clamp` would throw on.)
@@ -79,6 +115,16 @@ mod tests {
         assert!(max(0.0, -0.0).is_sign_positive());
         assert_eq!(min(2.0, -3.0), -3.0);
         assert_eq!(max(2.0, -3.0), 2.0);
+        assert!(min_f64(f64::NAN, 1.0).is_nan());
+        assert!(min_f64(1.0, f64::NAN).is_nan());
+        assert!(max_f64(1.0, f64::NAN).is_nan());
+        assert!(min_f64(0.0, -0.0).is_sign_negative());
+        assert!(max_f64(-0.0, 0.0).is_sign_positive());
+        assert_eq!(
+            mth_clamp_f64(-0.0, 0.0, 1.0).to_bits(),
+            (-0.0_f64).to_bits()
+        );
+        assert!(mth_clamp_f64(f64::NAN, -1.0, 1.0).is_nan());
     }
 
     #[test]

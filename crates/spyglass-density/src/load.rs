@@ -413,8 +413,8 @@ impl<'r, R: Resources + ?Sized> Loader<'r, R> {
 }
 
 /// `DimensionType.MIN_Y` and `MAX_Y`: the y range block positions can pack.
-const DIMENSION_MIN_Y: i32 = -2032;
-const DIMENSION_MAX_Y: i32 = 2031;
+pub(crate) const DIMENSION_MIN_Y: i32 = -2032;
+pub(crate) const DIMENSION_MAX_Y: i32 = 2031;
 
 /// The ids `BinaryFunction.Type` registers.
 fn binary_type(kind: &str) -> Option<Binary> {
@@ -471,7 +471,10 @@ fn parse_axis(obj: &Map<String, Value>, at: &At<'_>) -> LoadResult<Axis> {
 }
 
 /// `BlendedNoise.CODEC`: four scales in `[0.001, 1000]` and a smear multiplier in `[1, 8]`.
-fn parse_blended_noise(obj: &Map<String, Value>, at: &At<'_>) -> LoadResult<BlendedNoise> {
+pub(crate) fn parse_blended_noise(
+    obj: &Map<String, Value>,
+    at: &At<'_>,
+) -> LoadResult<BlendedNoise> {
     let ranged = |name: &'static str, min: f64, max: f64| -> LoadResult<f64> {
         let json = field(obj, name, at)?;
         let v = double(json, &at.child(name))?;
@@ -586,7 +589,7 @@ fn parse_gradient(obj: &Map<String, Value>, at: &At<'_>) -> LoadResult<Gradient>
 
 /// A noise, in either form (ADR 0026): 26.2's `{"firstOctave", "amplitudes"}` when it has
 /// `firstOctave` and no `base_octave`, else 26.3's (and 26.4's) `{"base_octave", ...}`.
-fn parse_noise(json: &Value, at: &At<'_>) -> LoadResult<NormalNoiseParameters> {
+pub(crate) fn parse_noise(json: &Value, at: &At<'_>) -> LoadResult<NormalNoiseParameters> {
     let obj = json
         .as_object()
         .ok_or_else(|| at.error(LoadErrorKind::Shape("a noise object")))?;

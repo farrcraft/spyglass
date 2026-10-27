@@ -1,10 +1,12 @@
 //! `Aquifer.NoiseBasedAquifer`: which fluid, if any, fills each open block, from fluid levels
-//! chosen per aquifer cell and barriers between them. Ported from the 26.3 bytecode; see
-//! `docs/specs/terrain.md`.
+//! chosen per aquifer cell and barriers between them. Ported from the 26.3 bytecode; 26.2's is the
+//! same algorithm with other inputs (`docs/specs/terrain.md#262-aquifer`), which `Inputs`
+//! supplies.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+use spyglass_density::v1_21::{NoiseChunk, RouterEntry};
 use spyglass_density::{Sampler, Volume};
 use spyglass_noise::mth;
 use spyglass_rng::{PositionalRandomFactory, RandomSource, XoroshiroPositionalRandomFactory};
@@ -12,8 +14,8 @@ use spyglass_rng::{PositionalRandomFactory, RandomSource, XoroshiroPositionalRan
 /// `DimensionType.WAY_BELOW_MIN_Y`: a fluid level below any world, so no block is under it.
 pub const WAY_BELOW_MIN_Y: i32 = -32512;
 
-/// A block of the generator's column: the noise settings' default block, or what the aquifer
-/// fills an open block with.
+/// A block of the generator's column: the noise settings' default block, what the aquifer
+/// fills an open block with, or, in 26.2, an ore vein's block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Block {
     /// The noise settings' `default_block` (`minecraft:stone` in the Overworld): what the
@@ -25,6 +27,41 @@ pub enum Block {
     Water,
     /// `minecraft:lava`.
     Lava,
+    /// A block the ore veinifier put in place of the default block. Only 26.2's columns have
+    /// them (`docs/specs/terrain.md#262-columns`).
+    Vein(VeinBlock),
+}
+
+/// The blocks of 26.2's ore veins (`OreVeinifier.VeinType`): each type's ore, raw-ore block
+/// and filler.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum VeinBlock {
+    /// `minecraft:copper_ore`.
+    CopperOre,
+    /// `minecraft:raw_copper_block`.
+    RawCopperBlock,
+    /// `minecraft:granite`, the copper vein's filler.
+    Granite,
+    /// `minecraft:deepslate_iron_ore`.
+    DeepslateIronOre,
+    /// `minecraft:raw_iron_block`.
+    RawIronBlock,
+    /// `minecraft:tuff`, the iron vein's filler.
+    Tuff,
+}
+
+impl VeinBlock {
+    /// The block's id, e.g. `minecraft:copper_ore`.
+    pub fn id(self) -> &'static str {
+        match self {
+            VeinBlock::CopperOre => "minecraft:copper_ore",
+            VeinBlock::RawCopperBlock => "minecraft:raw_copper_block",
+            VeinBlock::Granite => "minecraft:granite",
+            VeinBlock::DeepslateIronOre => "minecraft:deepslate_iron_ore",
+            VeinBlock::RawIronBlock => "minecraft:raw_iron_block",
+            VeinBlock::Tuff => "minecraft:tuff",
+        }
+    }
 }
 
 /// `Aquifer.FluidStatus`: a fluid up to a level, and air from there up.
@@ -121,7 +158,7 @@ impl Clone for SurfaceLevels {
 }
 
 impl SurfaceLevels {
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<(i32, i32), i32>> {
+    pub(crate) fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<(i32, i32), i32>> {
         // A panic while holding the lock leaves only whole entries behind.
         self.0.lock().unwrap_or_else(|e| e.into_inner())
     }
@@ -131,7 +168,7 @@ impl SurfaceLevels {
 /// centre and fluid status, and surface levels, so asking about one block changes nothing
 /// another answer depends on: the answers don't depend on the order of questions.
 pub struct Aquifer<'s> {
-    samplers: &'s AquiferSamplers,
+    inputs: Inputs<'s>,
     random: XoroshiroPositionalRandomFactory,
     picker: FluidPicker,
     min_grid: [i32; 3],
@@ -146,6 +183,22 @@ pub struct Aquifer<'s> {
     shared: Option<&'s SurfaceLevels>,
     skip_sampling_above_y: i32,
 }
+
+/// What the aquifer samples: the inputs that differ between the families, behind one interface
+/// (ADR 0026).
+#[derive(Clone, Copy)]
+enum Inputs<'s> {
+    /// 26.3 on: the noise settings' `aquifers` functions, each `f32` widened to `f64`.
+    Functions(&'s AquiferSamplers),
+    /// 26.2: the router's fields as a `NoiseChunk` maps them, in `f64`, and the deep-dark test
+    /// in code for the exclusion.
+    Chunk(&'s NoiseChunk),
+}
+
+/// `OverworldBiomeBuilder.isDeepDarkRegion`'s thresholds, `(double) -0.225f` and
+/// `(double) 0.9f`.
+const DEEP_DARK_EROSION: f64 = -0.225f32 as f64;
+const DEEP_DARK_DEPTH: f64 = 0.9f32 as f64;
 
 fn grid_x(x: i32) -> i32 {
     x >> 4
@@ -193,7 +246,8 @@ impl<'s> Aquifer<'s> {
         region: &Volume,
         picker: FluidPicker,
     ) -> Self {
-        Self::build(samplers, random, region, picker, None)
+        let inputs = Inputs::Functions(samplers);
+        Self::build(inputs, random, region.min, region.max_block(), picker, None)
     }
 
     /// [`new`](Self::new), with surface levels shared with the seed's other aquifers: those
@@ -205,21 +259,43 @@ impl<'s> Aquifer<'s> {
         picker: FluidPicker,
         levels: &'s SurfaceLevels,
     ) -> Self {
-        Self::build(samplers, random, region, picker, Some(levels))
+        let inputs = Inputs::Functions(samplers);
+        let (min, max) = (region.min, region.max_block());
+        Self::build(inputs, random, min, max, picker, Some(levels))
+    }
+
+    /// 26.2's aquifer in `chunk` (`Aquifer.create(noiseChunk, chunkPos, router, ...)`): for the
+    /// chunk at `chunk_pos` and the noise range from `min_y`, `height` blocks high, whatever
+    /// part of it `chunk` covers, with its inputs from `chunk`'s router. Surface levels are
+    /// shared with the seed's other aquifers through `levels`, if given; a surface level is the
+    /// same through every `NoiseChunk` (`docs/specs/terrain.md#262-aquifer`).
+    pub(crate) fn for_chunk(
+        chunk: &'s NoiseChunk,
+        random: XoroshiroPositionalRandomFactory,
+        chunk_pos: [i32; 2],
+        [min_y, height]: [i32; 2],
+        picker: FluidPicker,
+        levels: Option<&'s SurfaceLevels>,
+    ) -> Self {
+        let [x0, z0] = chunk_pos.map(|c| c.wrapping_mul(16));
+        // ChunkPos's min and max blocks; the y grid runs to gridY(minY + height + 1) + 1.
+        let min = [x0, min_y, z0];
+        let max = [x0 + 15, min_y.wrapping_add(height), z0 + 15];
+        Self::build(Inputs::Chunk(chunk), random, min, max, picker, levels)
     }
 
     fn build(
-        samplers: &'s AquiferSamplers,
+        inputs: Inputs<'s>,
         random: XoroshiroPositionalRandomFactory,
-        region: &Volume,
+        min: [i32; 3],
+        max: [i32; 3],
         picker: FluidPicker,
         shared: Option<&'s SurfaceLevels>,
     ) -> Self {
-        let max = region.max_block();
         let min_grid = [
-            grid_x(region.min[0] - 5),
-            grid_y(region.min[1] + 1) - 1,
-            grid_z(region.min[2] - 5),
+            grid_x(min[0] - 5),
+            grid_y(min[1] + 1) - 1,
+            grid_z(min[2] - 5),
         ];
         let max_grid = [
             grid_x(max[0] - 5) + 1,
@@ -229,7 +305,7 @@ impl<'s> Aquifer<'s> {
         let grid_size: [i32; 3] = std::array::from_fn(|a| max_grid[a] - min_grid[a] + 1);
         let cells = grid_size.iter().map(|&s| s as usize).product();
         let mut aquifer = Aquifer {
-            samplers,
+            inputs,
             random,
             picker,
             min_grid,
@@ -252,8 +328,28 @@ impl<'s> Aquifer<'s> {
     }
 
     /// `maxSurfaceLevel`: surface levels at every quart column of the box, sampled as one volume
-    /// at y 0 and remembered, and the highest.
+    /// at y 0 and remembered, and the highest. In 26.2, `maxPreliminarySurfaceLevel`: the same
+    /// columns (the box starts quart-aligned), each at a point, and the highest.
     fn max_surface_level(&mut self, x0: i32, z0: i32, x1: i32, z1: i32) -> i32 {
+        let samplers = match self.inputs {
+            Inputs::Functions(samplers) => samplers,
+            Inputs::Chunk(chunk) => {
+                let Some(shared) = self.shared else {
+                    return chunk.max_preliminary_surface_level(x0, z0, x1, z1);
+                };
+                let mut max = i32::MIN;
+                let mut z = z0;
+                while z <= z1 {
+                    let mut x = x0;
+                    while x <= x1 {
+                        max = max.max(chunk_surface_level(chunk, shared, x, z));
+                        x = x.wrapping_add(4);
+                    }
+                    z = z.wrapping_add(4);
+                }
+                return max;
+            }
+        };
         let (qx0, qx1, qz0, qz1) = (x0 >> 2, x1 >> 2, z0 >> 2, z1 >> 2);
         let volume = Volume::new(
             [qx1 - qx0 + 1, 1, qz1 - qz0 + 1],
@@ -278,7 +374,7 @@ impl<'s> Aquifer<'s> {
                 return levels.into_iter().max().unwrap_or(i32::MIN);
             }
         }
-        let values = self.samplers.surface_level.sample_volume(&volume);
+        let values = samplers.surface_level.sample_volume(&volume);
         let mut highest = i32::MIN;
         for iz in 0..volume.size[2] {
             for ix in 0..volume.size[0] {
@@ -299,6 +395,16 @@ impl<'s> Aquifer<'s> {
     /// `surfaceLevel(int, int)`: at the quart column holding `(x, z)`, remembered, sampled at a
     /// point at y 0 if the region's volume didn't cover it.
     fn surface_level(&mut self, x: i32, z: i32) -> i32 {
+        let samplers = match self.inputs {
+            Inputs::Functions(samplers) => samplers,
+            // `NoiseChunk.preliminarySurfaceLevel`, which snaps and remembers.
+            Inputs::Chunk(chunk) => {
+                return match self.shared {
+                    Some(shared) => chunk_surface_level(chunk, shared, x, z),
+                    None => chunk.preliminary_surface_level(x, z),
+                };
+            }
+        };
         let (x, z) = ((x >> 2) << 2, (z >> 2) << 2);
         if let Some(&level) = self.surface_levels.get(&(x, z)) {
             return level;
@@ -307,7 +413,7 @@ impl<'s> Aquifer<'s> {
         let level = shared
             .and_then(|s| s.lock().get(&(x, z)).copied())
             .unwrap_or_else(|| {
-                let level = mth::floor(f64::from(self.samplers.surface_level.sample(x, 0, z)));
+                let level = mth::floor(f64::from(samplers.surface_level.sample(x, 0, z)));
                 if let Some(s) = shared {
                     s.lock().insert((x, z), level);
                 }
@@ -448,7 +554,11 @@ impl<'s> Aquifer<'s> {
             0.0
         } else {
             if barrier.is_nan() {
-                *barrier = f64::from(self.samplers.barrier.sample(x, y, z));
+                *barrier = match self.inputs {
+                    Inputs::Functions(s) => f64::from(s.barrier.sample(x, y, z)),
+                    // At the block, with the positioned NoiseChunk as the context.
+                    Inputs::Chunk(c) => c.compute_positioned(RouterEntry::Barrier, x, y, z),
+                };
             }
             *barrier
         };
@@ -500,7 +610,7 @@ impl<'s> Aquifer<'s> {
         lowest_surface: i32,
         flooded: bool,
     ) -> i32 {
-        let (partial, full) = if f64::from(self.samplers.exclusion.sample(x, y, z)) > 0.0 {
+        let (partial, full) = if self.excluded(x, y, z) {
             (-1.0, -1.0)
         } else {
             let distance = (lowest_surface + 8) - y;
@@ -509,7 +619,10 @@ impl<'s> Aquifer<'s> {
             } else {
                 0.0
             };
-            let floodedness = f64::from(self.samplers.fluid_level_floodedness.sample(x, y, z));
+            let floodedness = match self.inputs {
+                Inputs::Functions(s) => f64::from(s.fluid_level_floodedness.sample(x, y, z)),
+                Inputs::Chunk(c) => c.compute(RouterEntry::FluidLevelFloodedness, x, y, z),
+            };
             let n = clamp(floodedness, -1.0, 1.0);
             let full_threshold = map(f, 1.0, 0.0, -0.3, 0.8);
             let partial_threshold = map(f, 1.0, 0.0, -0.8, 0.4);
@@ -524,12 +637,29 @@ impl<'s> Aquifer<'s> {
         }
     }
 
+    /// Whether a centre's cell is empty: `exclusion` is positive there, or in 26.2,
+    /// `OverworldBiomeBuilder.isDeepDarkRegion(erosion, depth, SinglePointContext(x, y, z))`,
+    /// erosion first and depth only if it passes.
+    fn excluded(&self, x: i32, y: i32, z: i32) -> bool {
+        match self.inputs {
+            Inputs::Functions(s) => f64::from(s.exclusion.sample(x, y, z)) > 0.0,
+            Inputs::Chunk(c) => {
+                c.compute(RouterEntry::Erosion, x, y, z) < DEEP_DARK_EROSION
+                    && c.compute(RouterEntry::Depth, x, y, z) > DEEP_DARK_DEPTH
+            }
+        }
+    }
+
     /// `computeRandomizedFluidSurfaceLevel`: a level in the 40-block band holding y, moved by
-    /// the spread noise, sampled at the grid position, in steps of 3.
+    /// the spread noise, sampled at the grid position, in steps of 3. The spread is `· 10.0f`
+    /// in `f32`, then widened; in 26.2, `· 10.0` in `f64`.
     fn randomized_level(&self, x: i32, y: i32, z: i32, lowest_surface: i32) -> i32 {
         let (gx, gy, gz) = (x.div_euclid(16), y.div_euclid(40), z.div_euclid(16));
         let middle = gy * 40 + 20;
-        let spread = f64::from(self.samplers.fluid_level_spread.sample(gx, gy, gz) * 10.0);
+        let spread = match self.inputs {
+            Inputs::Functions(s) => f64::from(s.fluid_level_spread.sample(gx, gy, gz) * 10.0),
+            Inputs::Chunk(c) => c.compute(RouterEntry::FluidLevelSpread, gx, gy, gz) * 10.0,
+        };
         // Mth.quantize(spread, 3).
         let shift = mth::floor(spread / 3.0) * 3;
         lowest_surface.min(middle + shift)
@@ -540,13 +670,28 @@ impl<'s> Aquifer<'s> {
     fn compute_fluid_type(&self, x: i32, y: i32, z: i32, global: FluidStatus, level: i32) -> Block {
         if level <= -10 && level != WAY_BELOW_MIN_Y && global.fluid != Block::Lava {
             let (gx, gy, gz) = (x.div_euclid(64), y.div_euclid(40), z.div_euclid(64));
-            let lava = f64::from(self.samplers.lava.sample(gx, gy, gz));
+            let lava = match self.inputs {
+                Inputs::Functions(s) => f64::from(s.lava.sample(gx, gy, gz)),
+                Inputs::Chunk(c) => c.compute(RouterEntry::Lava, gx, gy, gz),
+            };
             if lava.abs() > 0.3 {
                 return Block::Lava;
             }
         }
         global.fluid
     }
+}
+
+/// A 26.2 surface level (`preliminarySurfaceLevel`) remembered for the seed: `Mth.floor` of
+/// `preliminary_surface_level` at `SinglePointContext(x & ~3, 0, z & ~3)`.
+fn chunk_surface_level(chunk: &NoiseChunk, shared: &SurfaceLevels, x: i32, z: i32) -> i32 {
+    let (x, z) = ((x >> 2) << 2, (z >> 2) << 2);
+    if let Some(&level) = shared.lock().get(&(x, z)) {
+        return level;
+    }
+    let level = mth::floor(chunk.compute(RouterEntry::PreliminarySurfaceLevel, x, 0, z));
+    shared.lock().insert((x, z), level);
+    level
 }
 
 /// `Mth.clamp(double, double, double)`: `min` if below it, else `Math.min(value, max)`.
@@ -578,7 +723,7 @@ fn map(v: f64, a: f64, b: f64, c: f64, d: f64) -> f64 {
 }
 
 /// `Mth.clampedMap`: as [`map`], with `t` clamped to `[0, 1]` (`clampedLerp`).
-fn clamped_map(v: f64, a: f64, b: f64, c: f64, d: f64) -> f64 {
+pub(crate) fn clamped_map(v: f64, a: f64, b: f64, c: f64, d: f64) -> f64 {
     let t = (v - a) / (b - a);
     if t < 0.0 {
         c
@@ -756,6 +901,50 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// 26.2's deep-dark exclusion with constant erosion and depth: both thresholds are floats
+    /// widened, so −0.225 in `f64` is below −0.225f, and 0.9 is above 0.9f.
+    #[test]
+    fn the_deep_dark_test_uses_widened_floats() {
+        use spyglass_density::v1_21::NoiseRouter;
+
+        let excluded = |erosion: f64, depth: f64| {
+            let resources = crate::v1_21::fixture::settings(
+                &[("erosion", json!(erosion)), ("depth", json!(depth))],
+                true,
+                false,
+            );
+            let router = NoiseRouter::load(&resources, "minecraft:t").unwrap();
+            let state = router.bind(0).unwrap();
+            let chunk = NoiseChunk::for_column(&state, 0, 0, -64, 384);
+            let aquifer = Aquifer::for_chunk(&chunk, random(), [0, 0], [-64, 384], PICKER, None);
+            aquifer.excluded(5, -20, 9)
+        };
+        assert!(excluded(-0.225, 0.9));
+        assert!(excluded(-1.0, 2.0));
+        assert!(!excluded(f64::from(-0.225f32), 0.9));
+        assert!(!excluded(-0.225, f64::from(0.9f32)));
+        assert!(!excluded(-0.2249, 1.0));
+        assert!(!excluded(-0.3, 0.5));
+        // Excluded cells are empty: below every level, so a cell's fluid is far below the
+        // world unless the surface floods it.
+        let resources = crate::v1_21::fixture::settings(
+            &[
+                ("erosion", json!(-1.0)),
+                ("depth", json!(1.0)),
+                ("fluid_level_floodedness", json!(1.0)),
+                ("preliminary_surface_level", json!(200.0)),
+            ],
+            true,
+            false,
+        );
+        let router = NoiseRouter::load(&resources, "minecraft:t").unwrap();
+        let state = router.bind(0).unwrap();
+        let chunk = NoiseChunk::for_column(&state, 0, 0, -64, 384);
+        let mut aquifer = Aquifer::for_chunk(&chunk, random(), [0, 0], [-64, 384], PICKER, None);
+        let status = aquifer.compute_fluid(5, -20, 9);
+        assert_eq!(status.level, WAY_BELOW_MIN_Y);
     }
 
     #[test]

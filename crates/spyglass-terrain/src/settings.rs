@@ -1,11 +1,12 @@
 //! The parts of a dimension's noise settings (`NoiseGeneratorSettings`) that terrain needs, and
-//! their binding to a seed.
+//! their binding to a seed. 26.2's settings (the 1.21 family, ADR 0026) load as a whole
+//! [`v1_21::NoiseRouter`].
 
 use std::collections::HashMap;
 
 use serde_json::Value;
 use spyglass_data::codec::{At, LoadError, LoadErrorKind, field, full_id, int, object};
-use spyglass_density::{Binder, Df, Loader, NOISE_SETTINGS, Resources, Sampler};
+use spyglass_density::{Binder, Df, Loader, NOISE_SETTINGS, Resources, Sampler, v1_21};
 use spyglass_noise::NormalNoiseParameters;
 use spyglass_rng::{
     PositionalRandomFactory, RandomSource, XoroshiroPositionalRandomFactory, XoroshiroRandomSource,
@@ -60,12 +61,23 @@ pub struct TerrainSettings {
     pub level_min_y: i32,
     /// The dimension type's `height`.
     pub level_height: i32,
-    final_density: Df,
-    /// `aquifers`, absent where the dimension has none (the aquifer is then disabled).
-    aquifers: Option<[Df; 6]>,
-    noises: HashMap<String, NormalNoiseParameters>,
-    /// `legacy_random_source`.
-    legacy: bool,
+    pub(crate) family: Family,
+}
+
+/// The density functions terrain evaluates, by algorithm family (ADR 0026).
+#[derive(Debug, Clone)]
+pub(crate) enum Family {
+    /// 26.3 on: `final_density` and the `aquifers` functions, evaluated over volumes.
+    Volume {
+        final_density: Df,
+        /// `aquifers`, absent where the dimension has none (the aquifer is then disabled).
+        aquifers: Option<[Df; 6]>,
+        noises: HashMap<String, NormalNoiseParameters>,
+        /// `legacy_random_source`.
+        legacy: bool,
+    },
+    /// 26.2: the whole router, evaluated through `NoiseChunk`s.
+    V1_21(Box<v1_21::NoiseRouter>),
 }
 
 /// Terrain's functions bound to one seed.
@@ -87,6 +99,10 @@ impl TerrainSettings {
     /// `dimension_type` (e.g. `minecraft:overworld`), the level's range. With
     /// `legacy_random_source: true`, settings with aquifers aren't supported: no vanilla
     /// dimension has both, and the aquifer's random source isn't ported for legacy.
+    ///
+    /// 26.2's noise settings (`noise.size_horizontal`, [`v1_21::is_v1_21`]) load their whole
+    /// router, with `aquifers_enabled` and `ore_veins_enabled`; legacy randomness with either
+    /// isn't supported, for the same reason.
     pub fn load<R: Resources + ?Sized>(
         resources: &R,
         noise_settings: &str,
@@ -98,6 +114,23 @@ impl TerrainSettings {
             .resource(NOISE_SETTINGS, &id)
             .map_err(|e| root.error(e.into()))?;
         let settings = object(&json, &root)?;
+        let router = if v1_21::is_v1_21(&json) {
+            let router = v1_21::NoiseRouter::from_json(resources, &id, &json)?;
+            for (enabled, name) in [
+                (router.aquifers_enabled(), "aquifers_enabled"),
+                (router.ore_veins_enabled(), "ore_veins_enabled"),
+            ] {
+                if enabled && router.legacy_random_source() {
+                    return Err(root.child(name).error(LoadErrorKind::Unsupported {
+                        what: "aquifers or ore veins with",
+                        name: "legacy_random_source".to_string(),
+                    }));
+                }
+            }
+            Some(router)
+        } else {
+            None
+        };
         let legacy = match settings.get("legacy_random_source") {
             None => false,
             Some(v) => v.as_bool().ok_or_else(|| {
@@ -105,13 +138,19 @@ impl TerrainSettings {
                     .error(LoadErrorKind::Shape("true or false"))
             })?,
         };
-        if legacy && settings.contains_key("aquifers") {
+        if legacy && router.is_none() && settings.contains_key("aquifers") {
             return Err(root.child("aquifers").error(LoadErrorKind::Unsupported {
                 what: "aquifers with",
                 name: "legacy_random_source".to_string(),
             }));
         }
-        let (min_y, height) = noise_range(field(settings, "noise", &root)?, &root.child("noise"))?;
+        let (min_y, height) = match &router {
+            Some(router) => {
+                let noise = router.noise_settings();
+                (noise.min_y, noise.height)
+            }
+            None => noise_range(field(settings, "noise", &root)?, &root.child("noise"))?,
+        };
         let sea_level = int(
             field(settings, "sea_level", &root)?,
             &root.child("sea_level"),
@@ -156,6 +195,20 @@ impl TerrainSettings {
             None => return Err(root.error(LoadErrorKind::Missing("default_block"))),
         };
         let (level_min_y, level_height) = level_range(resources, dimension_type)?;
+        if let Some(router) = router {
+            return Ok(TerrainSettings {
+                min_y,
+                height,
+                sea_level,
+                default_block,
+                default_fluid,
+                default_block_blocks_motion,
+                solid_only_heights,
+                level_min_y,
+                level_height,
+                family: Family::V1_21(Box::new(router)),
+            });
+        }
         let mut loader = Loader::new(resources);
         let router = field(settings, "noise_router", &root)?;
         let router = object(router, &root.child("noise_router"))?;
@@ -186,16 +239,30 @@ impl TerrainSettings {
             solid_only_heights,
             level_min_y,
             level_height,
-            final_density,
-            aquifers,
-            noises: loader.noises().clone(),
-            legacy,
+            family: Family::Volume {
+                final_density,
+                aquifers,
+                noises: loader.noises().clone(),
+                legacy,
+            },
         })
     }
 
-    /// `final_density`, unbound.
-    pub fn final_density(&self) -> &Df {
-        &self.final_density
+    /// `final_density`, unbound; `None` for 26.2's settings, whose functions are another
+    /// family's ([`router_v1_21`](Self::router_v1_21)).
+    pub fn final_density(&self) -> Option<&Df> {
+        match &self.family {
+            Family::Volume { final_density, .. } => Some(final_density),
+            Family::V1_21(_) => None,
+        }
+    }
+
+    /// 26.2's noise router, if these are 26.2's settings.
+    pub fn router_v1_21(&self) -> Option<&v1_21::NoiseRouter> {
+        match &self.family {
+            Family::Volume { .. } => None,
+            Family::V1_21(router) => Some(router),
+        }
     }
 
     /// The fluid picker for these settings (`NoiseBasedChunkGenerator.createFluidPicker`).
@@ -207,11 +274,28 @@ impl TerrainSettings {
     }
 
     /// Binds terrain's functions for `seed` with one [`Binder`], so they share their common
-    /// nodes and noises as `RandomState` shares them.
+    /// nodes and noises as `RandomState` shares them. 26.2's settings don't bind this way:
+    /// [`Terrain::new`](crate::Terrain::new) binds them.
     pub fn bind(&self, seed: i64) -> Result<BoundTerrain, LoadError> {
-        let mut binder = Binder::with_legacy_random(&self.noises, seed, self.legacy);
-        let final_density = binder.bind(&self.final_density)?;
-        let aquifer = match &self.aquifers {
+        let Family::Volume {
+            final_density,
+            aquifers,
+            noises,
+            legacy,
+        } = &self.family
+        else {
+            return Err(LoadError::new(
+                "",
+                "",
+                LoadErrorKind::Unsupported {
+                    what: "binding as volumes for",
+                    name: "26.2's noise settings".to_string(),
+                },
+            ));
+        };
+        let mut binder = Binder::with_legacy_random(noises, seed, *legacy);
+        let final_density = binder.bind(final_density)?;
+        let aquifer = match aquifers {
             None => None,
             Some(functions) => {
                 let [a, b, c, d, e, f] = functions.each_ref().map(|f| binder.bind(f));

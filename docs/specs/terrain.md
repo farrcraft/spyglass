@@ -1,6 +1,6 @@
 # Terrain
 
-Status: stable. Covers what the generator answers about terrain before any chunk exists, in the Default preset's three dimensions, for 26.3 and 26.4-snapshot-5, in `spyglass-terrain` ([ADR 0022](../adr/0022-terrain-crate-and-volume-evaluation.md)). Implemented, and checked against the oracle's [probe files](oracle.md#probe-files) (the aquifer) and [height golden files](oracle.md#height-golden-files) (every query) for both. 26.2's differences are drafted in _Versions_ notes and the [26.2 section](#262-terrain) from the bytecode and not yet checked. Ported from the 26.3 bytecode; worldgen before 26.x (surface rules, noise router fields, `blocksMotion`) doesn't apply. 26.2 and 26.4-snapshot-5 differences are drafted in _Versions_ notes and the [26.2 section](#262-terrain) from the bytecode, and not yet checked against the oracle.
+Status: stable. Covers what the generator answers about terrain before any chunk exists, in the Default preset's three dimensions, for 26.2, 26.3 and 26.4-snapshot-5, in `spyglass-terrain` ([ADR 0022](../adr/0022-terrain-crate-and-volume-evaluation.md)). Implemented, and checked against the oracle's [probe files](oracle.md#probe-files) (the aquifer) and [height golden files](oracle.md#height-golden-files) (every query) for all three. Ported from the 26.3 bytecode; 26.4-snapshot-5's differences are _Versions_ notes, and 26.2, another algorithm family ([ADR 0026](../adr/0026-how-game-versions-coexist.md)), has its own [section](#262-terrain), ported from the 26.2 bytecode.
 
 Structures decide where they start, and at what height, before their chunks are generated. They ask the chunk generator for heights and block columns, which it computes from the density graph and the aquifer alone. That's this spec. Real chunks differ from these answers: structures' terrain adaptation (the beardifier), the material rule (surface blocks, ore veins, frozen-ocean holes, swamp water), carvers and features all come later. Classes are in `net.minecraft.world.level.levelgen` unless stated otherwise.
 
@@ -53,7 +53,7 @@ The aquifer is asked twice for the blocks it visits on both passes. It doesn't d
 
 **Regions.** Heights for many columns are computed chunk by chunk, as chunk generation does: `final_density` over each chunk's part of the box as one volume, and one aquifer for it. Each column gets the same blocks as on its own, because columns and chunks agree on density and the aquifer doesn't depend on its region ([below](#settled-questions)), and neighbouring columns share cell corners, surface levels and aquifer statuses, about 20 times less work for a 40 × 25 box.
 
-_Versions:_ 26.2's aquifer exclusion test depends on the `NoiseChunk`'s flat-cache window, which differs between a chunk and a column query ([below](#262-aquifer)). To give the generator's column answers, a region must evaluate that test with each column's own window.
+_Versions:_ 26.2's aquifer exclusion test depends on the `NoiseChunk`'s flat-cache window, which differs between a chunk and a column query ([below](#262-aquifer)). To give the generator's column answers, a region must evaluate that test with each column's own window. spyglass computes 26.2's regions and grids cell by cell: the columns of one cell get the same one-cell `NoiseChunk` and the same aquifer from `iterateNoiseColumn`, so they share them, and surface levels are shared for the seed (they're the same through every `NoiseChunk`).
 
 **Grids.** A sparse grid of columns, as a map samples one per pixel, is computed the same way: chunk by chunk, with each chunk's volume only as large as the box around its sampled columns. A box's density doesn't depend on where it starts, for the reason columns and chunks agree, so each column again gets its own answers.
 
@@ -147,19 +147,29 @@ Open when this spec was drafted, and settled since:
 
 ## 26.2 terrain
 
-From the 26.2 bytecode (`NoiseBasedChunkGenerator`, `NoiseChunk`, `Aquifer.NoiseBasedAquifer`, `OverworldBiomeBuilder`). Not yet checked against the oracle. Density evaluation is [density-functions.md's 26.2 section](density-functions.md#262-evaluation).
+From the 26.2 bytecode (`NoiseBasedChunkGenerator`, `NoiseChunk`, `Aquifer.NoiseBasedAquifer`, `OreVeinifier`, `OverworldBiomeBuilder`), and checked against the oracle: every block of 26.2's [aquifer probe cases](oracle.md#262s-probe-cases), and every height and block column of its height golden files, ore veins included. Density evaluation is [density-functions.md's 26.2 section](density-functions.md#262-evaluation). In `spyglass-terrain` it's its own path behind the same queries, chosen by the noise settings' shape (`noise.size_horizontal`).
+
+**Settings.** 26.2's noise settings have `default_block` and `default_fluid` as block states (`{"Name": ..., "Properties": ...}`), `aquifers_enabled` and `ore_veins_enabled` instead of `aquifers` and the material rule's vein rules, and the fifteen-entry router ([density-functions.md](density-functions.md#262-router)). `OCEAN_FLOOR_WG` tests `blocksMotion()` (switch `heightmap_blocks_motion`). Legacy randomness with aquifers or ore veins isn't supported, as in 26.3; no vanilla dimension has both.
 
 ### 26.2 columns
 
 `iterateNoiseColumn(x, z)`, for `getBaseHeight` and `getBaseColumn`:
 
 1. The y range is clamped as in 26.3. With `cellHeight` and `cellWidth` from the noise settings' `size_vertical` and `size_horizontal`, `cellMinY = floorDiv(min y, cellHeight)` and `cellCountY = floorDiv(height, cellHeight)`; if that is 0 or less, there's no column. The column covers whole cells, `[cellMinY·cellHeight, (cellMinY + cellCountY)·cellHeight)`, the same range for the vanilla dimensions.
-2. A one-cell `NoiseChunk` at `(floorDiv(x, cellWidth)·cellWidth, floorDiv(z, cellWidth)·cellWidth)`, with the beardifier 0 and no blending. Its aquifer is built for the chunk holding that corner.
+2. A one-cell `NoiseChunk` at `(floorDiv(x, cellWidth)·cellWidth, floorDiv(z, cellWidth)·cellWidth)`, with the beardifier 0 and no blending. Its aquifer is built for the chunk holding that corner (`SectionPos.blockToSectionCoord`), if `aquifers_enabled`; else it's the disabled aquifer.
 3. From the top cell down, and in each cell from the top block down, at `y = (cellMinY + cellY)·cellHeight + dy`: the block is the first answer of `aquifer.computeSubstance(context, density)`, then, if `ore_veins_enabled`, the ore veinifier; if neither gives one, `default_block`. A query stops at the first block its heightmap counts and returns `y + 1`.
 
 The density is the `NoiseChunk`'s interpolated `final_density` (plus the beardifier) in `f64`, passed to the aquifer without narrowing. It depends only on the block's offsets in its cell, so a column and a chunk agree.
 
-**Ore veins.** The veinifier (`OreVeinifier`, from the router's `vein_toggle`, `vein_ridged` and `vein_gap` and the `"minecraft:ore"` factory) is asked only where the aquifer returned nothing, and gives an ore, a raw-ore block or its filler (granite or tuff in the Overworld), or nothing. Its internals, and that list of blocks, are not confirmed in the bytecode. Every vein block is non-air and `blocksMotion()`, so heights don't change; only `getBaseColumn`'s solid blocks do. It reads `vein_toggle` and `vein_ridged` through the interpolator's incremental path ([density-functions.md](density-functions.md#262-noisechunk)).
+**Ore veins.** The veinifier (`OreVeinifier.create(vein_toggle, vein_ridged, vein_gap, oreRandom)`) is asked only where the aquifer returned nothing. `oreRandom` is the seed's positional factory, then `fromHashOf("minecraft:ore").forkPositional()`, as for the aquifer. Its functions are evaluated with the positioned `NoiseChunk` as the context, so `vein_toggle`'s and `vein_ridged`'s `interpolated` take the incremental path ([density-functions.md](density-functions.md#262-noisechunk)). At block `(x, y, z)`, all in `f64`:
+
+1. `t = vein_toggle`. The vein type is copper if `t > 0` (NaN is iron): copper is `copper_ore`, `raw_copper_block` and `granite` (its filler) from y 0 to 50; iron is `deepslate_iron_ore`, `raw_iron_block` and `tuff` from −60 to −8, both ends included. Outside the type's range: nothing.
+2. With `e` the distance to the nearer end of the range, if `|t| + clampedMap(e, 0, 20, −0.2, 0) < (double) 0.4f`: nothing (a NaN sum passes, as `dcmpg` does).
+3. `r = oreRandom.at(x, y, z)`. If `r.nextFloat() > 0.7f`: nothing.
+4. If `vein_ridged ≥ 0`: nothing.
+5. If `(double) r.nextFloat() < clampedMap(|t|, 0.4f, 0.6f, 0.1f, 0.3f)` (bounds widened floats) and `vein_gap > (double) −0.3f` (evaluated only if the first holds): the raw-ore block if `r.nextFloat() < 0.02f`, else the ore. Otherwise the filler.
+
+So `vein_ridged` and `vein_gap` are evaluated only when reached. The types and their blocks are code (`OreVeinifier.VeinType`), not data. Every vein block is a full block that blocks motion, so heights don't change; only `getBaseColumn`'s solid blocks do. A height query can skip the veinifier.
 
 The Nether and the End have neither aquifers nor ore veins (`aquifers_enabled` and `ore_veins_enabled` false). The End's cells are 8 × 4 × 8.
 
@@ -169,21 +179,21 @@ The algorithm is 26.3's: grid, randomness, the nearest four centres and their sl
 
 | Input         | 26.2                                                                                                                                                                                    |
 | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| barrier       | the router's `barrier` at the block, `f64`                                                                                                                                              |
+| barrier       | the router's `barrier` at the block, `f64`, with the positioned `NoiseChunk` as the context (vanilla's is a plain noise)                                                                |
 | floodedness   | `Mth.clamp(fluid_level_floodedness at SinglePointContext(x, y, z), −1.0, 1.0)`, `f64`                                                                                                   |
 | spread        | `fluid_level_spread at SinglePointContext(floorDiv(x, 16), floorDiv(y, 40), floorDiv(z, 16)) · 10.0`, in `f64` (26.3: `· 10.0f` in `f32`, then widened)                                 |
 | lava          | `abs(lava at SinglePointContext(floorDiv(x, 64), floorDiv(y, 40), floorDiv(z, 64))) > 0.3`, `f64`                                                                                       |
 | surface level | `Mth.floor(preliminary_surface_level at SinglePointContext(x & ~3, 0, z & ~3))`, `f64`, remembered per `NoiseChunk`, with no prefill. It is the same at a point as anywhere, as in 26.3 |
 | exclusion     | the deep-dark test below                                                                                                                                                                |
 
-The functions are the router's as mapped by the `NoiseChunk` ([density-functions.md](density-functions.md#262-noisechunk)).
+The functions are the router's as mapped by the `NoiseChunk` ([density-functions.md](density-functions.md#262-noisechunk)). The region's grid is the chunk's: x and z as for 26.3's region of the chunk's 16 × 16 blocks, and y from `gridY(minY + 1) − 1` to `gridY(minY + height + 1) + 1`, one above 26.3's top for the same range. That only sizes the caches. `skipSamplingAboveY` uses `adjustSurfaceLevel(maxPreliminarySurfaceLevel(...))`, which adds 8, as 26.3's formula does.
 
 **The deep-dark test.** In `computeSurfaceLevel`, at the centre `(cx, cy, cz)`: `OverworldBiomeBuilder.isDeepDarkRegion(erosion, depth, SinglePointContext(cx, cy, cz))`, which is `erosion < (double) −0.225f && depth > (double) 0.9f` (`−0.22499999403953552`, `0.8999999761581421`), `erosion` first. If it holds, both thresholds are −1.0, so the level is far below the world, as 26.3's positive `exclusion` gives.
 
-`erosion` and `depth` are the router's fields as mapped by the `NoiseChunk`: they hold the flat-cached `overworld/erosion` and `overworld/offset` (`depth` is a y gradient plus `offset`). So for a centre whose quart `(cx >> 2, cz >> 2)` is inside the `NoiseChunk`'s flat-cache window, erosion and offset are the values at `(4·(cx >> 2), 4·(cz >> 2))`; outside it they're exact. The window is blocks `[minX, minX + 19]` for a chunk and `[x0, x0 + 4·(cellWidth / 4 + 1) − 1]` (8 blocks in the Overworld) for a column query with cell corner `x0`, z alike. So a column query can answer differently from chunk generation for the same block, when a centre's quantized and exact values fall on opposite sides of −0.225 or 0.9. How often that happens is not measured.
+`erosion` and `depth` are the router's fields as mapped by the `NoiseChunk`: they hold the flat-cached `overworld/erosion` and `overworld/offset` (`depth` is a y gradient plus `offset`). So for a centre whose quart `(cx >> 2, cz >> 2)` is inside the `NoiseChunk`'s flat-cache window, erosion and offset are the values at `(4·(cx >> 2), 4·(cz >> 2))`; outside it they're exact. The window is blocks `[minX, minX + 19]` for a chunk and `[x0, x0 + 4·(cellWidth / 4 + 1) − 1]` (8 blocks in the Overworld) for a column query with cell corner `x0`, z alike. So a column query can answer differently from chunk generation for the same block, when a centre's quantized and exact values fall on opposite sides of −0.225 or 0.9. It's rare: building each column's aquifer on its chunk's `NoiseChunk` instead of the column's changes none of the 6.1 million values in 26.2's height golden files, so the oracle doesn't tell the two apart. spyglass uses the column's window, as the bytecode does. Dropping the test altogether changes 8 of the 320 aquifer probe cases and one block column.
 
 ## Testing
 
-- **Unit tests** on hand-written density functions and aquifer settings: the slot order and ties, pressure cases, the fluid picker's boundaries, skipping against the full path, and answers independent of the order of questions.
-- **The ignored aquifer test** (`spyglass-terrain/tests/probe.rs`) compares every block of the probe's aquifer columns.
+- **Unit tests** on hand-written density functions and aquifer settings: the slot order and ties, pressure cases, the fluid picker's boundaries, skipping against the full path, and answers independent of the order of questions. For 26.2: loading its settings, the deep-dark test's widened thresholds, the veinifier's ranges, draws and outcomes, and regions against columns.
+- **The ignored aquifer test** (`spyglass-terrain/tests/probe.rs`) compares every block of the probe's aquifer columns: 26.3's `aquifer_column` cases, and 26.2's `noise_chunk_aquifer_column`, through the column's own `NoiseChunk`.
 - **The ignored golden test** (`spyglass-terrain/tests/heights.rs`) compares every height in the [height golden files](oracle.md#height-golden-files) of all three dimensions, both heightmaps, computed by regions, every 13th by its own column, and every 5th column of every 5th row as a grid; and every sampled block column. Run by `cargo xtask oracle-test`.

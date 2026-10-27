@@ -37,6 +37,7 @@ fn block_id(block: Block, default_block: &str) -> &str {
         Block::Air => "minecraft:air",
         Block::Water => "minecraft:water",
         Block::Lava => "minecraft:lava",
+        Block::Vein(v) => v.id(),
     }
 }
 

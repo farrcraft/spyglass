@@ -1,8 +1,8 @@
 # 09. Fast density evaluation
 
-- Status: Planned
+- Status: In progress
 - Depends on: [07](completed/07-terrain-and-validity.md)
-- Plans: [m09-fast-density](../plans/m09-fast-density.md) (draft)
+- Plans: [m09-fast-density](../plans/m09-fast-density.md) (in progress)
 
 ## Goal
 
@@ -19,5 +19,5 @@ Make terrain cheap enough that a single column costs well under the game's, so h
 ## Exit criteria
 
 - [ ] Every density, height and structure oracle comparison still passes.
-- [ ] `height_at` for one isolated column in a bound session takes at most 150 µs (release, one thread, 26.3), the target milestone 07 retired.
+- [ ] `height_at` for one isolated column in a bound session takes at most 150 µs (the `dist` profile, one thread, 26.3), the target milestone 07 retired.
 - [ ] Bench lines for columns, regions, confirmed search and jigsaw layouts, recorded before and after.

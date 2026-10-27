@@ -1,5 +1,5 @@
 //! Times the public API's main operations, for comparing changes: `cargo xtask bench`, or
-//! `cargo run --release -p spyglass --example bench -- [bundle dir or version]`. Needs a bundle:
+//! `cargo run --profile dist -p spyglass --example bench -- [bundle dir or version]`. Needs a bundle:
 //! a directory, a version in `bundles/`, or by default the newest release there. Each line is
 //! the median of several runs.
 

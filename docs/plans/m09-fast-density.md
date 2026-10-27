@@ -1,6 +1,6 @@
 # m09. Fast density evaluation
 
-- Status: Draft
+- Status: In progress
 - Milestone: [09. Fast density evaluation](../roadmap/09-fast-density.md)
 - Started: 2026-10-27
 - Completed: not yet
@@ -10,7 +10,7 @@
 Replace the density graph interpreter with a flattened evaluation, through both the point and the volume paths, for every evaluator family. Values must stay the same bit for bit, and terrain must cost well under the game's. This covers all three of the milestone's exit criteria:
 
 - **Every density, height and structure oracle comparison still passes**, for every supported version.
-- **`height_at` for one isolated column in a bound session takes at most 150 µs** (release, one thread, 26.3).
+- **`height_at` for one isolated column in a bound session takes at most 150 µs** (the `dist` profile, one thread, 26.3).
 - **Bench lines for columns, regions, confirmed search and jigsaw layouts**, recorded before and after.
 
 ## Facts established up front
@@ -74,7 +74,7 @@ To be decided in an ADR after the measurement. The likely shape:
 - **Batched, SIMD-friendly kernels where the arithmetic allows.** Noise octaves, splines, and the clamp and unary operations over whole buffers, written so each lane does exactly the scalar operations.
 - **One program form per family.** 26.2's `f64` family compiles to the same kind of program with its own operations, or to a variant the ADR names. The point is to share the runner's structure, not the arithmetic ([ADR 0026](../adr/0026-how-game-versions-coexist.md)).
 
-The interpreter stays only as long as it's useful as a reference for differential tests. ADR 0026's one code path per algorithm means it doesn't stay as a second way to evaluate. The ADR decides whether it survives behind `cfg(test)`.
+The interpreter stays as the reference for differential tests, behind `cfg(test)` or a test-only feature. ADR 0026's one code path per algorithm means it never evaluates outside tests.
 
 ### Cheaper surface levels and 26.2's columns
 
@@ -93,7 +93,7 @@ Specs and ADRs that govern this: [density-functions.md](../specs/density-functio
 
 ### Phase 1: measure and decide
 
-- [ ] Find why the isolated column went from 243 µs (milestone 07's close, 0ef3687) to 393 µs: bench both commits on the same machine in one sitting, then bisect if it's real. Fix it if it's a mistake rather than a cost of supporting versions.
+- [x] Find why the isolated column went from 243 µs (milestone 07's close, 0ef3687) to 393 µs: bench both commits on the same machine in one sitting, then bisect if it's real. Fix it if it's a mistake rather than a cost of supporting versions. Mostly the bench's noise; the real regression is codegen, not code (see the notes). Fixed by measuring with a `dist` profile (fat LTO, one codegen unit), decided 2026-10-27.
 - [ ] Bench lines before, for every supported version: the bench's terrain lines, plus `structure_layout`, confirmed search and region lines, recorded in the notes.
 - [ ] A profile of an isolated column, a nearby column, a 40 × 25 region and a village layout, for 26.3 and 26.2, split into tree-walking, allocation, memo, noise, `find_top_surface`, aquifer and the rest.
 - [ ] Prototype the hottest part of the breakdown, to check the design reaches 150 µs before building all of it.
@@ -126,7 +126,7 @@ Specs and ADRs that govern this: [density-functions.md](../specs/density-functio
 
 ### Phase 6: close-out
 
-- [ ] Remove the interpreter, or keep it as the ADR says.
+- [ ] Move the interpreter behind `cfg(test)` or a test-only feature, as the differential tests' reference.
 - [ ] Bench lines after, for every version, beside the before lines. Exit criterion 3.
 - [ ] Specs: density-functions.md, noise.md and terrain.md describe the evaluation where it's observable (never values; those don't change). architecture.md's density row.
 - [ ] `cargo xtask check` and `cargo xtask oracle-test` for every version. Exit criterion 1. Move this plan to `completed/`, and milestone 09 with it.
@@ -146,11 +146,12 @@ Specs and ADRs that govern this: [density-functions.md](../specs/density-functio
 
 ## Decisions
 
-Open for the user, to settle in phase 1's ADR:
+Agreed on 2026-10-27: the interpreter stays as a test reference, 26.2's target is as proposed, and measurements use a `dist` profile. The SIMD approach is settled in phase 1's ADR.
 
 - **How SIMD is done.** Researched on 2026-10-27 (see [SIMD options](#simd-options)). The lead candidate is `fearless_simd`, unless the profile shows the column's time is mostly tree-walking and allocation. In that case, auto-vectorized loops with `multiversion` may be enough and add no SIMD API.
-- **Whether the interpreter survives as a test reference** (behind `cfg(test)`) after the switch, or is deleted.
-- **A target for 26.2.** The milestone asks that every family be covered but sets no number. Proposed: 26.2's isolated column within 2× of 26.3's.
+- **The interpreter survives as a test reference** (behind `cfg(test)` or a test-only feature) after the switch, for the differential tests. It never evaluates outside tests.
+- **Measurements use the `dist` profile:** release with fat LTO and one codegen unit, so speed depends on the code, not on how crates are split (see the notes). `cargo xtask bench`, the exit criterion and binaries for users use it; tests stay on release.
+- **A target for 26.2:** its isolated column within 2× of 26.3's. The milestone asks that every family be covered but sets no number.
 
 ### SIMD options
 
@@ -190,6 +191,13 @@ Sources:
 - crates.io metadata for each crate, fetched 2026-10-27.
 
 ## Notes
+
+- 2026-10-27: **The 243 → 393 µs question.** Timed with a throwaway program (400 isolated columns, 400 nearby, 30 village layouts per run), alternating builds over several rounds, since this machine (Balanced power plan, a browser open) drifts by tens of percent between runs.
+  - **The isolated column barely moved.** Medians of 246 to 278 µs at 0ef3687 against 268 to 277 µs at HEAD, and minimums of 186 against 208 µs. The bench's 393 µs was its 20-sample median of a quantity that varies by ±30%. The target needs about 1.8× from today's typical column, not 2.6×.
+  - **Jigsaw layouts got 55 to 70% slower.** A plains village went from 66 to 79 ms to 114 to 127 ms. Bisected to 5f9d4ac, "Add 26.2's f64 noise family", which changed no 26.3 code on the sampling path.
+  - **The cause is codegen.** With fat LTO and one codegen unit, both commits measure the same (columns from 180 µs minimum, layouts 75 to 80 ms). Under the default profile (16 codegen units, no cross-crate LTO), builds with identical settings but different metadata hashes split the noise and density crates differently. Some splits inline the hot noise functions and some don't. The standard `target/release` build happened to get a slow split after 5f9d4ac; another target directory, or thin LTO, got a fast one for the timing program but a slow one for the bench. So today's numbers say as much about the luck of the split as about the code.
+  - **Fat LTO with one codegen unit is fast and stable** in both binaries. Bench, two rounds against the default: layouts 75 to 83 ms against 103 to 114 ms; the isolated column 235 to 240 µs against 264 to 291 µs; everything else the same or better. It costs build time: rebuilding after touching `spyglass-density` takes 29 s against 10 s. Every release test binary that `oracle-test` and `ci` build would pay that.
+  - **Consequences for this plan.** Measurements must use a build whose inlining doesn't depend on the split, or they measure noise. The hot path itself should be written so its speed doesn't rely on lucky inlining: explicit `#[inline]` on small hot functions, and the flattened kernels in one place.
 
 - 2026-10-27: Researched the SIMD options for stable Rust; findings in [Decisions](#simd-options).
 - 2026-10-27: Drafted from the code at c98dbeb, today's bench of all four versions and milestone 07's measurements.

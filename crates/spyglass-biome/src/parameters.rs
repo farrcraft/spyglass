@@ -105,6 +105,37 @@ pub struct ParameterPoint {
 }
 
 impl ParameterPoint {
+    /// `Climate.ParameterPoint.CODEC` on data (not a report), as 26.2's `spawn_target` holds
+    /// it: an object with the six parameters, each read by [`Parameter::from_codec`], and an
+    /// `offset`, a float in `[0, 1]` (`Codec.floatRange`, by `Float.compareTo`) quantized with
+    /// [`quantize`]. Other fields are ignored, as a record codec does. An error names the field
+    /// it's in, or `None` for the point itself.
+    pub fn from_codec(json: &Value) -> Result<Self, (Option<&'static str>, LoadErrorKind)> {
+        let fields = json
+            .as_object()
+            .ok_or((None, LoadErrorKind::Shape("a parameter point")))?;
+        let field =
+            |name: &'static str| fields.get(name).ok_or((None, LoadErrorKind::Missing(name)));
+        let mut parameters = [Parameter { min: 0, max: 0 }; 6];
+        for (range, name) in parameters.iter_mut().zip(PARAMETERS) {
+            *range = Parameter::from_codec(field(name)?).map_err(|kind| (Some(name), kind))?;
+        }
+        let at = |kind| (Some("offset"), kind);
+        let value = field("offset")?;
+        let offset = codec::f32_of(value).ok_or(at(LoadErrorKind::Shape("a number")))?;
+        if offset.total_cmp(&0.0).is_lt() || offset.total_cmp(&1.0).is_gt() {
+            return Err(at(LoadErrorKind::OutOfRange {
+                value: value.to_string(),
+                min: "0".into(),
+                max: "1".into(),
+            }));
+        }
+        Ok(ParameterPoint {
+            parameters,
+            offset: quantize(offset),
+        })
+    }
+
     /// `Climate.ParameterPoint.fitness`: the sum of the squared distances (`Mth.square`), plus
     /// the squared offset, in wrapping `long` arithmetic.
     pub fn fitness(&self, target: &TargetPoint) -> i64 {

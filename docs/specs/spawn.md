@@ -1,6 +1,6 @@
 # World spawn
 
-Status: stable. Covers the spawn origin of a noise-based dimension (the Default world preset's three), implemented in `spyglass-biome` for 26.3 and checked against the oracle's [spawn golden files](oracle.md#spawn-golden-files). The final spawn block needs generated blocks (the surface and features), not only the generator's heights, and is deferred to a later milestone ([roadmap](../roadmap/README.md)). 26.4-snapshot-5 is implemented and checked against the oracle; 26.2's differences are drafted in _Versions_ notes from the bytecode and not yet checked.
+Status: stable. Covers the spawn origin of a noise-based dimension (the Default world preset's three), implemented in `spyglass-biome` for 26.3 and checked against the oracle's [spawn golden files](oracle.md#spawn-golden-files). The final spawn block needs generated blocks (the surface and features), not only the generator's heights, and is deferred to a later milestone ([roadmap](../roadmap/README.md)). 26.4-snapshot-5 and 26.2 are implemented and checked against the oracle; their differences are in _Versions_ notes and [26.2](#262).
 
 ## How the game picks the spawn
 
@@ -24,7 +24,7 @@ The Nether's and the End's settings have no spawn targets, so their origin is ch
 
 The functions are bound to the seed as the router's are ([density-functions.md](density-functions.md)). 26.3's overworld has two targets, over `continents`, `erosion`, `ridges`, `temperature` and `vegetation`: inland (continents −0.11 to 1), with ridges either −1 to −0.16 or 0.16 to 1.
 
-`SpawnTargets::load(resources, noise_settings)` reads them; `BiomeSource::noise_settings` names the dimension's settings.
+`SpawnTargets::load(resources, noise_settings)` reads them; `BiomeSource::noise_settings` names the dimension's settings. Which shape it reads follows the settings' family (ADR 0026): 26.2's noise settings (`noise.size_horizontal`) hold 26.2's shape, so a 26.3-shaped target in them is an error, as in the game.
 
 _Versions:_ 26.2's `spawn_target` is a list of `Climate.ParameterPoint`s (`ParameterPoint.CODEC.listOf()`), not maps: [26.2](#262).
 
@@ -69,7 +69,7 @@ From the 26.2 bytecode (`Climate$SpawnFinder`, `Climate.Sampler`, `MinecraftServ
 
 **Origin**: `ChunkPos.containing(sampler.findSpawnPosition())`, where `sampler` is the `RandomState`'s `Climate.Sampler`, which holds the settings' spawn targets. With no targets it returns block (0, 0, 0), so chunk (0, 0), as in 26.3. Otherwise it runs `Climate$SpawnFinder`: the fitness at (0, 0), `radialSearch(2048, 512)`, then `radialSearch(512, 32)`, exactly [as above](#the-search), with `java.lang.Math.sin` and `cos` (the [trig](#trig) analysis applies unchanged).
 
-**Targets**: `NoiseGeneratorSettings.spawn_target` is a list of `Climate.ParameterPoint`s. Each has all six parameters, `temperature`, `humidity`, `continentalness`, `erosion`, `depth` and `weirdness`, each a `Climate.Parameter` as in 26.3 (number, pair or object, ends in `[-2, 2]`, quantized by `quantizeCoord`), and an `offset`, a float in `[0, 1]`, quantized the same way. 26.2's overworld has two, from `OverworldBiomeBuilder.spawnTarget()`: temperature, humidity and erosion `[-1, 1]`, continentalness `[-0.11, 1]`, depth `0`, weirdness `[-1, -0.16]` or `[0.16, 1]`, offset 0.
+**Targets**: `NoiseGeneratorSettings.spawn_target` is a list of `Climate.ParameterPoint`s. Each has all six parameters, `temperature`, `humidity`, `continentalness`, `erosion`, `depth` and `weirdness`, each a `Climate.Parameter` as in 26.3 (number, pair or object, ends in `[-2, 2]`, quantized by `quantizeCoord`), and an `offset`, a float in `[0, 1]` by `Float.compareTo` (so `-0.0` is out of range), quantized the same way. Other fields are ignored (a record codec). 26.2's overworld has two, from `OverworldBiomeBuilder.spawnTarget()`: temperature, humidity and erosion `[-1, 1]`, continentalness `[-0.11, 1]`, depth `0`, weirdness `[-1, -0.16]` or `[0.16, 1]`, offset 0.
 
 **Fitness** at block `(x, z)` (`getSpawnPositionAndFitness`), wrapping `long` arithmetic:
 
@@ -84,9 +84,11 @@ return climate * Mth.square(2048L) + Mth.square((long) x) + Mth.square((long) z)
 - `sample` is 26.2's `f64` evaluation narrowed to `f32`, then quantized ([biome-lookup.md](biome-lookup.md#climate-sampler)); the climate functions are the router's `temperature`, `vegetation`, `continents`, `erosion`, `depth` and `ridges`. Depth is evaluated and then discarded.
 - `ParameterPoint.fitness` is the biome [fitness](biome-lookup.md#fitness): all six squared distances plus `Mth.square(offset)`. Every parameter counts, a full range `[-1, 1]` included, and depth is measured against 0, not the sampled depth.
 
+spyglass loads these as `ParameterPoint`s and samples through the dimension's `ClimateSampler`, which for 26.2's settings is this `f64` evaluation; `SpawnOrigin::chunk` is `found >> 4`, which is `ChunkPos.containing`, and (0, 0) without targets. The radial search, the trig flag and the quart snap are shared with 26.3.
+
 For 26.2's overworld targets this is 26.3's fitness: depth `0` is at distance 0 from a target of 0, the offset is 0, and the other five ranges are 26.3's entries. Only the sampled climate values differ, by the `f64` evaluation. That the router's functions are the ones 26.3's targets name is data, not confirmed in the bytecode.
 
 ## Testing
 
-- **Unit tests** cover the data codec for parameters, loading errors, the fitness formula (quart snapping, the minimum over targets, wrapping), the search on hand-written gradients, and the trig flag.
-- **The ignored golden test** `crates/spyglass-biome/tests/spawn.rs` compares against the [spawn golden files](oracle.md#spawn-golden-files): the origin chunk and the found position and fitness must be equal, each phase is rerun from the game's previous one and must be equal, and so must the fitness at every sampled position. Run it with `cargo test --release -p spyglass-biome --test spawn -- --ignored`. All 10 golden seeds match.
+- **Unit tests** cover the data codec for parameters, loading errors, the fitness formula (quart snapping, the minimum over targets, wrapping), the search on hand-written gradients, and the trig flag; for 26.2, the `ParameterPoint` codec and its errors, depth measured against 0, the offset term and the minimum over targets, on a router of constants.
+- **The ignored golden test** `crates/spyglass-biome/tests/spawn.rs` compares against the [spawn golden files](oracle.md#spawn-golden-files): the origin chunk and the found position and fitness must be equal, each phase is rerun from the game's previous one and must be equal, and so must the fitness at every sampled position. Run it with `cargo test --release -p spyglass-biome --test spawn -- --ignored`. All 10 golden seeds match, for 26.3, 26.4-snapshot-5 and 26.2, in all three dimensions (30 files per version); none is flagged platform-dependent.

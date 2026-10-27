@@ -1,30 +1,46 @@
-//! The world spawn's climate search (`NoiseSpawnFinder`) over a dimension's spawn targets
-//! (`NoiseGeneratorSettings.spawnTarget`): the chunk the game's spawn search starts from. See
-//! `docs/specs/spawn.md`.
+//! The world spawn's climate search (`NoiseSpawnFinder`, 26.2's `Climate$SpawnFinder`) over a
+//! dimension's spawn targets (`NoiseGeneratorSettings.spawnTarget`): the chunk the game's spawn
+//! search starts from. See `docs/specs/spawn.md`.
 
 use std::collections::{HashMap, HashSet};
 
 use spyglass_data::codec::{LoadError, LoadErrorKind, full_id};
-use spyglass_density::{Binder, Df, Loader, NOISE_SETTINGS, Resources, Sampler};
+use spyglass_density::{
+    Binder, ClimateRouter, ClimateSampler, Df, Loader, NOISE_SETTINGS, Resources, Sampler, v1_21,
+};
 use spyglass_noise::NormalNoiseParameters;
 
-use crate::parameters::{Parameter, quantize};
+use crate::parameters::{Parameter, ParameterPoint, TargetPoint, quantize};
 
 /// `Mth.square(2048L)`: how much one unit of climate fitness outweighs squared distance.
 const FITNESS_WEIGHT: i64 = 2048 * 2048;
 
-/// A dimension's spawn targets, independent of the seed. Each is a `SpawnTargetPoint`: density
-/// functions, each with the range its value should be in.
+/// A dimension's spawn targets, independent of the seed.
 #[derive(Debug, Clone)]
-pub struct SpawnTargets {
-    points: Vec<Vec<(Df, Parameter)>>,
-    noises: HashMap<String, NormalNoiseParameters>,
+pub struct SpawnTargets(Targets);
+
+#[derive(Debug, Clone)]
+enum Targets {
+    /// 26.3's: each a `SpawnTargetPoint`, density functions each with the range its value
+    /// should be in. Also any family's empty list, which never samples.
+    Functions {
+        points: Vec<Vec<(Df, Parameter)>>,
+        noises: HashMap<String, NormalNoiseParameters>,
+    },
+    /// 26.2's (the 1.21 family, ADR 0026): each a `Climate.ParameterPoint`, measured against
+    /// the dimension's climate sampler.
+    Points {
+        points: Vec<ParameterPoint>,
+        router: Box<ClimateRouter>,
+    },
 }
 
 impl SpawnTargets {
-    /// The `spawn_target` list of `noise_settings` (e.g. `minecraft:overworld`): maps from
-    /// density-function ids to parameters (`SpawnTargetPoint.CODEC`), read with
-    /// [`Parameter::from_codec`].
+    /// The `spawn_target` list of `noise_settings` (e.g. `minecraft:overworld`). In 26.3's
+    /// family, maps from density-function ids to parameters (`SpawnTargetPoint.CODEC`), read
+    /// with [`Parameter::from_codec`]. In 26.2's (noise settings with `noise.size_horizontal`,
+    /// [`v1_21::is_v1_21`]), `Climate.ParameterPoint`s ([`ParameterPoint::from_codec`]), with
+    /// the settings' climate router to sample.
     pub fn load<R: Resources + ?Sized>(
         resources: &R,
         noise_settings: &str,
@@ -44,6 +60,33 @@ impl SpawnTargets {
                     LoadErrorKind::Shape("a list of spawn targets"),
                 )
             })?;
+        let half_open = resources.behavior().climate_half_open;
+        if v1_21::is_v1_21(&json) {
+            let mut points = Vec::with_capacity(list.len());
+            for (i, point) in list.iter().enumerate() {
+                let mut point = ParameterPoint::from_codec(point).map_err(|(field, kind)| {
+                    let path = match field {
+                        Some(field) => format!("spawn_target[{i}].{field}"),
+                        None => format!("spawn_target[{i}]"),
+                    };
+                    error(path, kind)
+                })?;
+                if half_open {
+                    point.parameters = point.parameters.map(Parameter::half_open);
+                }
+                points.push(point);
+            }
+            if !points.is_empty() {
+                return Ok(SpawnTargets(Targets::Points {
+                    points,
+                    router: Box::new(ClimateRouter::load(resources, &id)?),
+                }));
+            }
+            return Ok(SpawnTargets(Targets::Functions {
+                points: Vec::new(),
+                noises: HashMap::new(),
+            }));
+        }
         let mut loader = Loader::new(resources);
         let mut points = Vec::with_capacity(list.len());
         for (i, point) in list.iter().enumerate() {
@@ -64,38 +107,48 @@ impl SpawnTargets {
                 }
                 let mut parameter =
                     Parameter::from_codec(range).map_err(|kind| error(path, kind))?;
-                if resources.behavior().climate_half_open {
+                if half_open {
                     parameter = parameter.half_open();
                 }
                 parameters.push((loader.function(function)?, parameter));
             }
             points.push(parameters);
         }
-        Ok(SpawnTargets {
+        Ok(SpawnTargets(Targets::Functions {
             points,
             noises: loader.noises().clone(),
-        })
+        }))
     }
 
     /// Whether there are no targets, so the search doesn't run.
     pub fn is_empty(&self) -> bool {
-        self.points.is_empty()
+        match &self.0 {
+            Targets::Functions { points, .. } => points.is_empty(),
+            Targets::Points { points, .. } => points.is_empty(),
+        }
     }
 
     /// The search for `seed`.
     pub fn with_seed(&self, seed: i64) -> Result<SpawnSearch, LoadError> {
-        let mut binder = Binder::new(&self.noises, seed);
-        let points = self
-            .points
-            .iter()
-            .map(|point| {
-                point
+        match &self.0 {
+            Targets::Functions { points, noises } => {
+                let mut binder = Binder::new(noises, seed);
+                let points = points
                     .iter()
-                    .map(|(f, range)| Ok((binder.bind(f)?, *range)))
-                    .collect()
-            })
-            .collect::<Result<_, LoadError>>()?;
-        Ok(SpawnSearch { points })
+                    .map(|point| {
+                        point
+                            .iter()
+                            .map(|(f, range)| Ok((binder.bind(f)?, *range)))
+                            .collect()
+                    })
+                    .collect::<Result<_, LoadError>>()?;
+                Ok(SpawnSearch(Search::Functions(points)))
+            }
+            Targets::Points { points, router } => Ok(SpawnSearch(Search::Points {
+                points: points.clone(),
+                climate: router.sampler(seed)?,
+            })),
+        }
     }
 }
 
@@ -112,7 +165,8 @@ pub struct SpawnPoint {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SpawnOrigin {
     /// `ChunkGenerator.getOrigin`: the chunk containing [`found`](Self::found), or (0, 0)
-    /// without spawn targets.
+    /// without spawn targets. In 26.2, `ChunkPos.containing(sampler.findSpawnPosition())`,
+    /// which is the same chunk: `findSpawnPosition` gives block (0, 0, 0) without targets.
     pub chunk: [i32; 2],
     /// The climate search's result.
     pub found: Option<SpawnPoint>,
@@ -124,29 +178,53 @@ pub struct SpawnOrigin {
 
 /// The spawn search for one seed.
 #[derive(Debug, Clone)]
-pub struct SpawnSearch {
-    points: Vec<Vec<(Sampler, Parameter)>>,
+pub struct SpawnSearch(Search);
+
+#[derive(Debug, Clone)]
+enum Search {
+    Functions(Vec<Vec<(Sampler, Parameter)>>),
+    Points {
+        points: Vec<ParameterPoint>,
+        climate: ClimateSampler,
+    },
 }
 
 impl SpawnSearch {
     /// `NoiseSpawnFinder.getSpawnPositionAndFitness`: the climate fitness at the quart
-    /// containing `(x, 0, z)` (the minimum of each target's `SpawnTargetPoint.sampleFitness`,
-    /// the sum of its squared parameter distances), times 2048², plus `x² + z²`, all in wrapping
-    /// `long` arithmetic. The position is `(x, z)` itself, not the quart's.
+    /// containing `(x, 0, z)` (the minimum over targets), times 2048², plus `x² + z²`, all in
+    /// wrapping `long` arithmetic. The position is `(x, z)` itself, not the quart's.
+    ///
+    /// In 26.3's family a target's fitness is `SpawnTargetPoint.sampleFitness`, the sum of its
+    /// squared parameter distances. In 26.2's (`Climate$SpawnFinder`) it is
+    /// `ParameterPoint.fitness` of the climate sampler's quantized values at the quart, with
+    /// depth replaced by 0.
     pub fn fitness_at(&self, x: i32, z: i32) -> SpawnPoint {
-        // QuartPos.toBlock(QuartPos.fromBlock(x)).
-        let (qx, qz) = ((x >> 2) << 2, (z >> 2) << 2);
         let square = |v: i64| v.wrapping_mul(v);
-        let climate = self
-            .points
-            .iter()
-            .map(|point| {
-                point.iter().fold(0_i64, |sum, (f, range)| {
-                    let value = quantize(f.sample(qx, 0, qz));
-                    sum.wrapping_add(square(range.distance(value)))
-                })
-            })
-            .fold(i64::MAX, i64::min);
+        let climate = match &self.0 {
+            Search::Functions(points) => {
+                // QuartPos.toBlock(QuartPos.fromBlock(x)).
+                let (qx, qz) = ((x >> 2) << 2, (z >> 2) << 2);
+                points
+                    .iter()
+                    .map(|point| {
+                        point.iter().fold(0_i64, |sum, (f, range)| {
+                            let value = quantize(f.sample(qx, 0, qz));
+                            sum.wrapping_add(square(range.distance(value)))
+                        })
+                    })
+                    .fold(i64::MAX, i64::min)
+            }
+            Search::Points { points, climate } => {
+                // sampler.sample(QuartPos.fromBlock(x), 0, QuartPos.fromBlock(z)), then a
+                // TargetPoint with depth 0.
+                let mut target = TargetPoint::quantize(climate.sample(x >> 2, 0, z >> 2));
+                target.0[4] = 0;
+                points
+                    .iter()
+                    .map(|point| point.fitness(&target))
+                    .fold(i64::MAX, i64::min)
+            }
+        };
         let distance = square(i64::from(x)).wrapping_add(square(i64::from(z)));
         SpawnPoint {
             position: [x, z],
@@ -210,8 +288,14 @@ impl SpawnSearch {
     /// `NoiseBasedChunkGenerator.getOrigin`: without spawn targets, chunk (0, 0); otherwise
     /// `NoiseSpawnFinder.findSpawnPosition`, the fitness at (0, 0) improved by a radial search
     /// with radius 2048 and step 512 and then one with 512 and 32, and the chunk containing it.
+    /// 26.2's `Climate.Sampler.findSpawnPosition` and `Climate$SpawnFinder` search the same
+    /// way.
     pub fn origin(&self) -> SpawnOrigin {
-        if self.points.is_empty() {
+        let empty = match &self.0 {
+            Search::Functions(points) => points.is_empty(),
+            Search::Points { points, .. } => points.is_empty(),
+        };
+        if empty {
             return SpawnOrigin {
                 chunk: [0, 0],
                 found: None,
@@ -358,6 +442,111 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(*e.kind, LoadErrorKind::Missing("spawn_target")));
+    }
+
+    /// 26.2 noise settings `minecraft:old` with `spawn_target` and a router of constants:
+    /// temperature 0.25, vegetation −0.5, continents 0, erosion 0.75, depth 0.5, ridges 0.375.
+    fn v1_21_resources(spawn_target: Value) -> HashMap<String, Value> {
+        let mut router = serde_json::Map::new();
+        for entry in v1_21::RouterEntry::ALL {
+            router.insert(entry.name().to_string(), json!(0));
+        }
+        for (name, value) in [
+            ("temperature", 0.25),
+            ("vegetation", -0.5),
+            ("erosion", 0.75),
+            ("depth", 0.5),
+            ("ridges", 0.375),
+        ] {
+            router.insert(name.to_string(), json!(value));
+        }
+        HashMap::from([(
+            "worldgen/noise_settings/minecraft:old".to_string(),
+            json!({
+                "noise": {"min_y": -64, "height": 384, "size_horizontal": 1, "size_vertical": 2},
+                "noise_router": router,
+                "legacy_random_source": false,
+                "aquifers_enabled": true,
+                "ore_veins_enabled": true,
+                "spawn_target": spawn_target,
+            }),
+        )])
+    }
+
+    fn v1_21_search(spawn_target: Value) -> SpawnSearch {
+        SpawnTargets::load(&v1_21_resources(spawn_target), "old")
+            .unwrap()
+            .with_seed(0)
+            .unwrap()
+    }
+
+    /// A 26.2 parameter point: every range full, then `fields`.
+    fn point(fields: Value) -> Value {
+        let mut point = json!({"temperature": [-1.0, 1.0], "humidity": [-1.0, 1.0],
+            "continentalness": [-1.0, 1.0], "erosion": [-1.0, 1.0], "depth": [-1.0, 1.0],
+            "weirdness": [-1.0, 1.0], "offset": 0.0});
+        for (k, v) in fields.as_object().unwrap() {
+            point[k] = v.clone();
+        }
+        point
+    }
+
+    #[test]
+    fn v1_21_fitness_is_the_parameter_point_fitness() {
+        // Temperature 2500 below [0.5, 1], continentalness 1250 from 0.125; the rest inside.
+        let s = v1_21_search(json!([point(json!({
+            "temperature": [0.5, 1.0], "continentalness": 0.125, "weirdness": [0.25, 0.5]}))]));
+        let climate = (2500 * 2500 + 1250 * 1250) * FITNESS_WEIGHT;
+        assert_eq!(s.fitness_at(0, 0).fitness, climate);
+        assert_eq!(s.fitness_at(-3, 4).fitness, climate + 25);
+        // Depth is measured against 0, not the sampled 0.5: a target of 0 is at distance 0,
+        // one of 0.5 at 5000. The offset counts as a seventh distance.
+        let s = v1_21_search(json!([point(json!({"depth": 0.0}))]));
+        assert_eq!(s.fitness_at(0, 0).fitness, 0);
+        let s = v1_21_search(json!([point(json!({"depth": 0.5, "offset": 0.25}))]));
+        let climate = (5000 * 5000 + 2500 * 2500) * FITNESS_WEIGHT;
+        assert_eq!(s.fitness_at(0, 0).fitness, climate);
+        // The best target counts; a full range [-1, 1] counts as any other.
+        let s = v1_21_search(json!([
+            point(json!({"humidity": [0.0, 1.0]})),
+            point(json!({"erosion": [-1.0, 0.5]})),
+        ]));
+        assert_eq!(s.fitness_at(0, 0).fitness, 2500 * 2500 * FITNESS_WEIGHT);
+        // Everywhere equal: nothing beats (0, 0).
+        let origin = s.origin();
+        assert_eq!(origin.found.unwrap().position, [0, 0]);
+        assert_eq!(origin.chunk, [0, 0]);
+    }
+
+    #[test]
+    fn v1_21_targets_load_as_parameter_points() {
+        let load = |target: Value| SpawnTargets::load(&v1_21_resources(target), "old");
+        // No targets: chunk (0, 0), as `findSpawnPosition` gives block (0, 0, 0).
+        let targets = load(json!([])).unwrap();
+        assert!(targets.is_empty());
+        assert_eq!(targets.with_seed(1).unwrap().origin().chunk, [0, 0]);
+        // 26.3's shape is not 26.2's.
+        let e = load(json!([{"minecraft:overworld/continents": [-0.11, 1.0]}])).unwrap_err();
+        assert_eq!(e.path, "spawn_target[0]");
+        assert!(
+            matches!(*e.kind, LoadErrorKind::Missing("temperature")),
+            "{e}"
+        );
+        let mut missing = point(json!({}));
+        missing.as_object_mut().unwrap().remove("offset");
+        let e = load(json!([point(json!({})), missing])).unwrap_err();
+        assert_eq!(e.path, "spawn_target[1]");
+        assert!(matches!(*e.kind, LoadErrorKind::Missing("offset")), "{e}");
+        let e = load(json!([point(json!({"weirdness": [0.5, 0.25]}))])).unwrap_err();
+        assert_eq!(e.path, "spawn_target[0].weirdness");
+        // Codec.floatRange(0, 1) by Float.compareTo: -0.0 is below 0.
+        for offset in [json!(1.5), json!(-0.0)] {
+            let e = load(json!([point(json!({"offset": offset}))])).unwrap_err();
+            assert_eq!(e.path, "spawn_target[0].offset");
+            assert!(matches!(*e.kind, LoadErrorKind::OutOfRange { .. }), "{e}");
+        }
+        let e = load(json!([1.0])).unwrap_err();
+        assert_eq!(e.path, "spawn_target[0]");
     }
 
     #[test]

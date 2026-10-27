@@ -1,6 +1,6 @@
 # Biome lookup
 
-Status: stable. Covers the Default world preset's three dimensions, implemented in `spyglass-biome` for 26.3 and checked cell by cell against the oracle's [golden biome files](oracle.md#golden-biome-files). 26.4-snapshot-5 is implemented and checked against the oracle; 26.2's differences are drafted in _Versions_ notes from the bytecode and not yet checked.
+Status: stable. Covers the Default world preset's three dimensions, implemented in `spyglass-biome` for 26.3 and checked cell by cell against the oracle's [golden biome files](oracle.md#golden-biome-files). 26.4-snapshot-5 and 26.2 are implemented and checked against the oracle; their differences are in _Versions_ notes.
 
 A multi-noise biome source (`MultiNoiseBiomeSource`) picks a biome at quart (1:4) resolution: it samples six climate values, quantizes them, and finds the nearest parameter point in the dimension's parameter list. Classes are in `net.minecraft.world.level.biome` unless stated otherwise.
 
@@ -27,7 +27,7 @@ For quart `(qx, qy, qz)`: `bx = qx << 2`, `bz = qz << 2`, section `sx = bx >> 4`
 
 `end/islands` doesn't depend on y, so neither does the End's biome.
 
-_Versions:_ in 26.2, `e` is `erosion.compute(new SinglePointContext(x, y, z))` at the same block: the `f64` value of the `f64` density evaluation, never narrowed. The island test and thresholds are 26.3's, so the answer differs from 26.3's only where a threshold falls between that value and 26.3's `f32` one.
+_Versions:_ in 26.2, `e` is `erosion.compute(new SinglePointContext(x, y, z))` at the same block, with the climate sampler's `erosion`: the `f64` value of the `f64` density evaluation, never narrowed (`ClimateSampler::v1_21`'s erosion function, not `sample`). The island test and thresholds are 26.3's, so the answer differs from narrowing only where a threshold falls between the `f64` value and its `f32` rounding. No golden End cell does: narrowing would also match all 42,598,400; a unit test covers the difference.
 
 ## The Nether
 
@@ -54,7 +54,7 @@ target = Climate.target((float) temperature.compute(ctx), (float) humidity.compu
                         (float) depth.compute(ctx), (float) weirdness.compute(ctx))
 ```
 
-`compute` is the `f64` density evaluation ([density-functions.md](density-functions.md)), with the router's cache markers and holders stripped by `RandomState`. The functions, the block, the order and `quantizeCoord` are 26.3's. 26.2's chunk generation samples through `NoiseChunk.cachedClimateSampler`, which flat-caches values at y = 0; that it gives the same values as the point path, since only depth's y gradient depends on y and it isn't cached, is not confirmed in the bytecode.
+`compute` is the `f64` density evaluation ([density-functions.md](density-functions.md)), with the router's cache markers and holders stripped by `RandomState`. The functions, the block, the order and `quantizeCoord` are 26.3's. spyglass's `ClimateSampler` for 26.2's noise settings does this ([ADR 0026](../adr/0026-how-game-versions-coexist.md)). 26.2's chunk generation samples through `NoiseChunk.cachedClimateSampler`, which flat-caches values at y = 0; that it gives the same values as the point path, since only depth's y gradient depends on y and it isn't cached, is not confirmed in the bytecode.
 
 ## Fitness
 
@@ -83,7 +83,7 @@ spyglass searches exactly and returns a `Lookup`:
 
 **The answer for a tied cell is the biome of the first point at the minimum, in list order.** That's what `Climate.ParameterList.findValueBruteForce` returns, and it's deterministic and independent of threads and lookup order. Any member of the set is what the game might show; `Lookup::is_tied` lets front ends say so.
 
-_Versions:_ 26.2's `Climate.RTree` has 6 children per node, 26.3's and 26.4-snapshot-5's 19 (`ParameterList` passes the count). The tree's shape can change which tied biome the game's warm-started search returns, never a unique cell's, so spyglass's tie sets and tie answer need no change. In 26.4-snapshot-5, with half-open ranges (switch `climate_half_open`), a value on the boundary between two neighbouring ranges is in only one of them, so ties are far rarer: 1,008 tied cells in the golden set against 60,361 for 26.3, about 1 cell in 70,000.
+_Versions:_ 26.2's `Climate.RTree` has 6 children per node, 26.3's and 26.4-snapshot-5's 19 (`ParameterList` passes the count). The tree's shape can change which tied biome the game's warm-started search returns, never a unique cell's, so spyglass's tie sets and tie answer need no change. 26.2's golden tie sets match exactly (60,434 tied cells). In 26.4-snapshot-5, with half-open ranges (switch `climate_half_open`), a value on the boundary between two neighbouring ranges is in only one of them, so ties are far rarer: 1,008 tied cells in the golden set against 60,361 for 26.3, about 1 cell in 70,000.
 
 ## Search
 
@@ -107,4 +107,4 @@ In 26.3's overworld, five climate functions don't depend on y at all, and depth 
 
 ## Testing
 
-Committed tests use hand-written reports ([ADR 0008](../adr/0008-game-derived-test-values-stay-local.md)): quantization round trips, fitness, ties and the tie answer, and tree against brute force. The ignored tests in `spyglass-biome/tests/golden.rs` check every cell of every golden file by the tie rule, in all three dimensions. For 26.3: the Overworld's 63,897,600 cells (52,297 tied), the Nether's 42,598,400 (8,064 tied) and the End's 42,598,400, all equal. They also require the tie set to equal the golden set exactly, and the number of tied cells to match. Further ignored tests compare the tree with brute force on the probed climate targets, and the region fill with `biome_at`. See [oracle.md](oracle.md#rust-side-comparison) for running them.
+Committed tests use hand-written reports ([ADR 0008](../adr/0008-game-derived-test-values-stay-local.md)): quantization round trips, fitness, ties and the tie answer, and tree against brute force. The ignored tests in `spyglass-biome/tests/golden.rs` check every cell of every golden file by the tie rule, in all three dimensions. For 26.3: the Overworld's 63,897,600 cells (52,297 tied), the Nether's 42,598,400 (8,064 tied) and the End's 42,598,400, all equal. For 26.2 the same counts with 52,370 tied in the Overworld and 8,064 in the Nether, all equal; for 26.4-snapshot-5, 1,008 and none. They also require the tie set to equal the golden set exactly, and the number of tied cells to match. Further ignored tests compare the tree with brute force on the probed climate targets, and the region fill with `biome_at`. See [oracle.md](oracle.md#rust-side-comparison) for running them.

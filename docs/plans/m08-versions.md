@@ -199,7 +199,7 @@ Specs and ADRs that govern this: [data-sources.md](../specs/data-sources.md), [b
 
 - [x] Noises from `firstOctave` and `amplitudes`: `NormalNoise`'s value factor from the amplitude list, `f64` `SimplexNoise`, and the `f64` 1.21 `BlendedNoise`.
 - [x] The 1.21-family evaluator: every 26.2 density type (`argument1`/`argument2`, `cache_2d`, `flat_cache`, `cache_once`, `shifted_noise`, `y_clamped_gradient`, `end_islands` with its central island, `old_blended_noise`, splines on narrowed coordinates), all in `f64`, with `NoiseChunk`'s caches and `lerp3` interpolation and its `flat_cache` window.
-- [ ] Climate sampling in `f64` narrowed to `f32`, the End source on it, and the spawn targets as parameter points. Climate sampling done in the density crate (`ClimateSampler` holds either family); the End source and spawn targets remain.
+- [x] Climate sampling in `f64` narrowed to `f32`, the End source on it, and the spawn targets as parameter points. Every 26.2 golden biome cell (ties included) and spawn file matches. The golden biomes come through `NoiseChunk.cachedClimateSampler`, so chunk generation's climate path equals the point path spyglass uses.
 - [ ] 26.2's noise-settings keys (`default_block` and `default_fluid` as block states, `size_horizontal`/`size_vertical`, `aquifers_enabled`, `ore_veins_enabled`), its 15-field router, and its aquifer from the router's fields with the exclusion test in code.
 - [ ] Ore veins in block columns.
 - [ ] A 26.2 harness adapter. The 26.2 probe passes bit for bit in all three dimensions. Adapter done: `oracle/adapters/26.2/`, standalone; 26.2's golden set (52,370 tied overworld cells, 8,064 in the Nether) and locate answers generate, and 26.3's stay byte-identical. The probe passing waits for the evaluator.

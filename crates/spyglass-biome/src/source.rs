@@ -221,7 +221,8 @@ impl Biomes<'_> {
 
     /// `TheEndBiomeSource.getNoiseBiome`: `the_end` within 64 sections of the origin, else by the
     /// router's erosion at the section's centre block, `((s·2 + 1)·8, qy << 2, …)`. That block
-    /// is quart `4s + 2`, so the climate sampler's quart sample gives it.
+    /// is quart `4s + 2`, so the climate sampler's quart sample gives it. In 26.3's family the
+    /// value is the sampler's `f32` widened; in 26.2's it is the `f64` evaluation itself.
     fn end_biome(&self, qx: i32, qy: i32, qz: i32) -> BiomeId {
         // QuartPos.toBlock, then SectionPos.blockToSectionCoord.
         let sx = qx.wrapping_shl(2) >> 4;
@@ -231,7 +232,15 @@ impl Biomes<'_> {
             return BiomeId(0);
         }
         let quart = |s: i32| s.wrapping_mul(4).wrapping_add(2);
-        let erosion = f64::from(self.climate.sample(quart(sx), qy, quart(sz))[3]);
+        let erosion = match self.climate.v1_21() {
+            // 26.2: erosion().compute(new SinglePointContext(...)), never narrowed.
+            Some(sampler) => sampler.functions()[3].compute(
+                quart(sx).wrapping_mul(4),
+                qy.wrapping_mul(4),
+                quart(sz).wrapping_mul(4),
+            ),
+            None => f64::from(self.climate.sample(quart(sx), qy, quart(sz))[3]),
+        };
         // dcmpl/ifle, dcmpl/iflt, dcmpg/ifge: NaN fails every test and gives barrens.
         if erosion > 0.25 {
             BiomeId(1)
@@ -554,5 +563,64 @@ impl BiomeRegion {
     /// Number of tied cells.
     pub fn tie_count(&self) -> usize {
         self.ties.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use serde_json::{Value, json};
+
+    use super::*;
+
+    /// The End's source over noise settings `minecraft:end` whose erosion is `erosion`, in
+    /// 26.2's family if `v1_21`, else 26.3's.
+    fn end(erosion: f64, v1_21: bool) -> BiomeSource {
+        let settings = if v1_21 {
+            let mut router = serde_json::Map::new();
+            for entry in spyglass_density::v1_21::RouterEntry::ALL {
+                router.insert(entry.name().to_string(), json!(0));
+            }
+            router.insert("erosion".to_string(), json!(erosion));
+            json!({
+                "noise": {"min_y": 0, "height": 128, "size_horizontal": 2, "size_vertical": 1},
+                "noise_router": router,
+                "legacy_random_source": true,
+                "aquifers_enabled": false,
+                "ore_veins_enabled": false,
+            })
+        } else {
+            let mut router: serde_json::Map<String, Value> = spyglass_density::CLIMATE_ENTRIES
+                .iter()
+                .map(|e| (e.to_string(), json!(0)))
+                .collect();
+            router.insert("erosion".to_string(), json!(erosion));
+            json!({"noise_router": router, "legacy_random_source": true})
+        };
+        let resources = HashMap::from([(
+            "worldgen/noise_settings/minecraft:end".to_string(),
+            settings,
+        )]);
+        BiomeSource {
+            router: ClimateRouter::load(&resources, "end").unwrap(),
+            kind: Kind::TheEnd,
+            names: BiomeNames::new(END_BIOMES.map(str::to_string).to_vec()),
+            noise_settings: "minecraft:end".to_string(),
+        }
+    }
+
+    #[test]
+    fn the_ends_erosion_is_f64_in_26_2() {
+        // Section (100, 0), off the main island. Just above 0.25 in f64 is highlands; narrowed
+        // to f32 it is 0.25 itself, which is midlands.
+        let above = 0.25_f64.next_up();
+        assert_eq!(above as f32, 0.25);
+        let biome = |source: &BiomeSource| source.with_seed(0).unwrap().biome_at(400, 0, 0);
+        assert_eq!(biome(&end(above, true)), Lookup::Unique(BiomeId(1)));
+        assert_eq!(biome(&end(above, false)), Lookup::Unique(BiomeId(2)));
+        // The main island ignores erosion.
+        let island = end(above, true).with_seed(0).unwrap().biome_at(0, 0, 0);
+        assert_eq!(island, Lookup::Unique(BiomeId(0)));
     }
 }

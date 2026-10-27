@@ -1,0 +1,64 @@
+# CI (ADR 0028): every check, and one oracle job per supported game version. Each oracle job
+# downloads its server jar from Mojang, extracts the bundle and regenerates every oracle output
+# in a fresh runner; nothing derived from the game is cached or uploaded (ADR 0008). The jobs
+# only call `cargo xtask`, so they run the same locally.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: cargo xtask check
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: The viewer's system libraries
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libxkbcommon-dev libwayland-dev libx11-dev \
+            libxcursor-dev libxrandr-dev libxi-dev libvulkan-dev
+      - name: The JDK major the latest release needs
+        id: jdk
+        run: echo "major=$(cargo xtask jdk-status | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ steps.jdk.outputs.major }}
+      - name: Setup
+        run: scripts/setup.sh --oracle
+      - run: cargo xtask check
+
+  oracle:
+    name: oracle ${{ matrix.version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every supported version, permanently (ADR 0028). docs/adding-a-version.md adds to it.
+        version:
+          - "26.2"
+          - "26.3"
+          - "26.4-snapshot-5"
+          - "26.4-snapshot-6"
+    steps:
+      - uses: actions/checkout@v4
+      - name: The JDK major ${{ matrix.version }} needs
+        id: jdk
+        run: |
+          echo "major=$(cargo xtask jdk-status --game-version '${{ matrix.version }}' | cut -d' ' -f1)" \
+            >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ steps.jdk.outputs.major }}
+      - run: cargo xtask ci --game-version '${{ matrix.version }}'

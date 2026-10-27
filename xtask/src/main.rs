@@ -8,6 +8,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use spyglass_extract::{java, manifest};
 
+mod ci;
 mod code_diff;
 mod linux_check;
 mod locate;
@@ -31,6 +32,9 @@ enum Cmd {
     },
     /// Run every check in .pre-commit-config.yaml against the whole repo, as CI does.
     Check,
+    /// Run one game version's CI job: extract its bundle, regenerate every oracle output
+    /// (goldens, locate and, where it loads, the test pack), and run every comparison.
+    Ci(ci::Ci),
     /// Report whether this machine is ready to work on spyglass. Never installs anything.
     Doctor {
         /// Game version whose Java requirement to check: an id, `latest` or `latest-snapshot`.
@@ -78,6 +82,7 @@ fn main() -> ExitCode {
     let result = match cli.command {
         Cmd::Bench { bundle } => bench(bundle.as_deref()),
         Cmd::Check => check(),
+        Cmd::Ci(args) => ci::run(&args),
         Cmd::Doctor { game_version, java } => doctor(&game_version, java.as_deref()),
         Cmd::JdkStatus { game_version } => jdk_status(&game_version),
         Cmd::LinuxCheck(args) => linux_check::run(&args),

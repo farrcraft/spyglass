@@ -145,6 +145,7 @@ Project-level commands live in the `xtask` crate and run as `cargo xtask <comman
 | ------------------------- | --------------------------------------------------------- |
 | `cargo xtask bench`       | Times the public API's main operations (release build).   |
 | `cargo xtask check`       | Every check in the pre-commit config, on all files.       |
+| `cargo xtask ci`          | One game version's CI job, from extraction to comparison. |
 | `cargo xtask doctor`      | Reports whether this machine is ready.                    |
 | `cargo xtask linux-check` | Checks a fresh clone on a clean Linux machine, in Docker. |
 | `cargo xtask msrv`        | Builds the workspace with its minimum Rust version.       |

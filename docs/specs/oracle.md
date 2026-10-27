@@ -49,6 +49,17 @@ The harness runs with `target/oracle/<version>/run/` as its working directory, w
 
 The Rust tests that compare spyglass with these files are `#[ignore]`d, since the files are local ([ADR 0008](../adr/0008-game-derived-test-values-stay-local.md)), so neither the git hooks nor `cargo xtask check` run them. `cargo xtask oracle-test` does: for each game version with a bundle in `bundles/`, oldest first (or only `--game-version <id>`), it runs, in a release build, every comparison whose inputs for that version (its bundle, and its probe, biome, structure, spawn, locate or height outputs) exist, names each one it skips and the command that would make its inputs, and ends with a pass, fail or skip line per version. Each test checks one version, which it reads from `SPYGLASS_ORACLE_VERSION` (the newest release bundle when unset; `spyglass_oracle::version`). A few tests expect one version's values exactly, and run only for it. Running it is part of completing any plan that touches worldgen ([development-process.md](../development-process.md#lifecycle)). A new ignored comparison test goes in its list in `xtask/src/oracle_test.rs`.
 
+### One version's CI job
+
+`cargo xtask ci --game-version <id>` is the job CI runs for each supported version ([ADR 0028](../adr/0028-supported-versions-and-ci.md)), and runs the same locally. In order, it:
+
+1. extracts the bundle into `bundles/<id>/`, replacing any there, which downloads the server jar into the jar cache if it isn't already there;
+2. runs `oracle golden`, then `oracle locate`;
+3. runs `oracle test-pack` if [the test pack](#the-test-pack) loads in the version;
+4. runs `oracle-test` for `<id>`, then for `<id>+testpack` if step 3 ran.
+
+Unlike a plain `oracle-test`, a comparison that can't run because an input the job just made is missing is an error, not a skip, and so is a version with no comparison at all. A skip would hide a broken step. The tests pinned to another version are still left out. The workflow, `.github/workflows/ci.yml`, calls only this command and `cargo xtask check`.
+
 ### What the harness does
 
 As the 26.3 adapter (`oracle/adapters/26.3/`) does it; other versions' adapters follow their own game's code paths to the same outputs, and their differences are noted here as they're added.
@@ -400,7 +411,7 @@ Then the same for the Nether and the End, each case with a `dimension` (cases wi
 
 Some forms the game accepts aren't in its vanilla data: 26.4-snapshot-6's [`domain_warp`](density-functions.md#domain_warp), [gradient anchors](density-functions.md#gradient-anchors) and [corner constraints](structure-placement.md#corner-constraints). spyglass supports them because data packs written for a supported version must load ([ADR 0026](../adr/0026-how-game-versions-coexist.md)), and the oracle checks them with a data pack of its own ([ADR 0030](../adr/0030-a-test-pack-for-forms-vanilla-doesnt-use.md)): `oracle/testpack/`, committed, since it's spyglass's JSON. It names only vanilla noises, density functions and templates by id, so no game data is in it ([ADR 0008](../adr/0008-game-derived-test-values-stay-local.md)). Its namespace is `spyglass_test`.
 
-`cargo xtask oracle test-pack --game-version <id>` (26.4-snapshot-6 on):
+`cargo xtask oracle test-pack --game-version <id>` runs for the versions the pack loads in, which `oracle/testpack/data-versions` lists as data-version ranges in the adapters' format ([ADR 0027](../adr/0027-oracle-harness-across-versions.md)): 26.4-snapshot-6 on. For any other version it stops with an error, since the game would reject the pack. It:
 
 1. builds `target/oracle/bundles/<id>+testpack/`: `bundles/<id>/` with the pack's `data/` files added, its `bundle.json` naming the version `<id>+testpack` and listing them;
 2. runs the harness's `probe` and `structures` with `--pack oracle/testpack`, which load the pack over the vanilla one and name the version `<id>+testpack` in their files, into `oracle-out/<id>+testpack/`.

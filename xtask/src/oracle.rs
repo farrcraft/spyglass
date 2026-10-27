@@ -105,6 +105,17 @@ pub struct Common {
     java: Option<PathBuf>,
 }
 
+impl Common {
+    /// `version` with the default jar cache and JDK, as `cargo xtask ci` runs it.
+    pub(crate) fn for_version(version: &str) -> Self {
+        Self {
+            game_version: version.to_string(),
+            cache_dir: None,
+            java: None,
+        }
+    }
+}
+
 /// The golden seed set. Text seeds are hashed by the game, as typed into the world-creation screen.
 const GOLDEN_SEEDS: &[&str] = &[
     "0",
@@ -208,6 +219,13 @@ pub fn run(cmd: OracleCmd) -> Result<()> {
 /// bundle merged with the pack that spyglass's comparisons read.
 fn test_pack(common: &Common) -> Result<()> {
     let mut harness = build(common)?;
+    if !test_pack_covers(harness.data_version)? {
+        bail!(
+            "the test pack doesn't load in {} (data version {}); see oracle/{TEST_PACK}/data-versions",
+            harness.version,
+            harness.data_version
+        );
+    }
     let pack = repo_root().join("oracle").join(TEST_PACK);
     let variant = format!("{}+{TEST_PACK}", harness.version);
     let bundle = merge_bundle(&harness.version, &pack, &variant)?;
@@ -339,6 +357,7 @@ struct Job {
 /// A compiled harness, ready to run.
 pub(crate) struct Harness {
     pub(crate) version: String,
+    pub(crate) data_version: u32,
     pub(crate) java: PathBuf,
     /// The JDK's major version.
     pub(crate) major: u32,
@@ -518,6 +537,7 @@ fn build(common: &Common) -> Result<Harness> {
     let classpath = std::env::join_paths(std::iter::once(classes).chain(jars))?;
     Ok(Harness {
         version: resolved.version,
+        data_version,
         java: jdk.executable,
         major,
         classpath,
@@ -547,6 +567,45 @@ fn unpack(jar: &Path, sha1: &str, dest: &Path) -> Result<Vec<PathBuf>> {
     Ok(jars)
 }
 
+/// Whether a `data-versions` file holds `data_version`: one `from..` or `from..until` per line
+/// (`until` exclusive), with `#` comments.
+fn covers(ranges: &Path, data_version: u32) -> Result<bool> {
+    let text =
+        fs::read_to_string(ranges).with_context(|| format!("reading {}", ranges.display()))?;
+    for line in text
+        .lines()
+        .map(|l| l.split('#').next().unwrap_or("").trim())
+    {
+        if line.is_empty() {
+            continue;
+        }
+        let (from, until) = line
+            .split_once("..")
+            .with_context(|| format!("{}: {line:?} isn't from..[until]", ranges.display()))?;
+        let from: u32 = from.trim().parse()?;
+        let until: Option<u32> = match until.trim() {
+            "" => None,
+            n => Some(n.parse()?),
+        };
+        if data_version >= from && until.is_none_or(|u| data_version < u) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Whether the test pack loads in `data_version`: its `data-versions` file holds it. The pack
+/// uses forms older versions reject.
+pub(crate) fn test_pack_covers(data_version: u32) -> Result<bool> {
+    covers(
+        &repo_root()
+            .join("oracle")
+            .join(TEST_PACK)
+            .join("data-versions"),
+        data_version,
+    )
+}
+
 /// The adapter in `oracle/adapters/` whose data-version ranges hold `data_version` (ADR 0027).
 /// Each adapter lists its ranges in a `data-versions` file, one `from..` or `from..until` per
 /// line (`until` exclusive), with `#` comments.
@@ -556,29 +615,8 @@ fn adapter(data_version: u32) -> Result<PathBuf> {
     for entry in fs::read_dir(&dir).with_context(|| format!("reading {}", dir.display()))? {
         let path = entry?.path();
         let ranges = path.join("data-versions");
-        if !ranges.is_file() {
-            continue;
-        }
-        let text = fs::read_to_string(&ranges)?;
-        for line in text
-            .lines()
-            .map(|l| l.split('#').next().unwrap_or("").trim())
-        {
-            if line.is_empty() {
-                continue;
-            }
-            let (from, until) = line
-                .split_once("..")
-                .with_context(|| format!("{}: {line:?} isn't from..[until]", ranges.display()))?;
-            let from: u32 = from.trim().parse()?;
-            let until: Option<u32> = match until.trim() {
-                "" => None,
-                n => Some(n.parse()?),
-            };
-            if data_version >= from && until.is_none_or(|u| data_version < u) {
-                found.push(path.clone());
-                break;
-            }
+        if ranges.is_file() && covers(&ranges, data_version)? {
+            found.push(path);
         }
     }
     match found.as_slice() {

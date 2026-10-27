@@ -17,6 +17,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo run -p spyglass-viewer                  # run the viewer
 cargo xtask check                             # every check, whole repo (as CI)
 cargo xtask oracle-test                       # ignored comparisons with the game, where inputs exist
+cargo xtask ci --game-version <v>             # one version's CI job: extract, regenerate, compare
 cargo xtask bench                             # time the public API's main operations
 cargo xtask doctor                            # is this machine ready? (check-only)
 cargo xtask msrv                              # build with the minimum supported Rust version

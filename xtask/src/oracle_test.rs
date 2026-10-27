@@ -14,7 +14,7 @@ const VERSION_VAR: &str = "SPYGLASS_ORACLE_VERSION";
 
 /// What a test reads: a bundle, or one of the oracle's outputs under `oracle-out/<version>/`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Input {
+pub(crate) enum Input {
     Bundle,
     /// A bundle extracted into `bundles/`, which the front ends find by version; not a merged
     /// test pack's.
@@ -254,7 +254,7 @@ pub fn run(version: Option<&str>) -> Result<()> {
     let mut outcomes = Vec::new();
     for version in &versions {
         println!("== {version}");
-        let outcome = run_version(root, version)?;
+        let outcome = run_version(root, version, &[])?;
         outcomes.push((version, outcome));
     }
     println!("oracle tests by version:");
@@ -293,8 +293,22 @@ fn bundled_versions(root: &Path) -> Vec<String> {
     found.into_iter().map(|(_, v)| v).collect()
 }
 
-/// Runs the tests whose inputs `version` has, in one cargo invocation.
-fn run_version(root: &Path, version: &str) -> Result<Outcome> {
+/// Runs `version`'s tests as `cargo xtask ci` does, after making `made`: a test that needs one of
+/// those and finds it missing is an error, not a skip, and so is a run with no test.
+pub(crate) fn run_made(version: &str, made: &[Input]) -> Result<()> {
+    match run_version(repo_root(), version, made)? {
+        Outcome::Passed(n) => {
+            println!("{version}: passed ({n} tests)");
+            Ok(())
+        }
+        Outcome::Failed => bail!("oracle tests failed for {version}"),
+        Outcome::NoInputs => bail!("no oracle test ran for {version}"),
+    }
+}
+
+/// Runs the tests whose inputs `version` has, in one cargo invocation. A test missing any of
+/// `made`, which the caller just made, is an error.
+fn run_version(root: &Path, version: &str, made: &[Input]) -> Result<Outcome> {
     let mut packages = Vec::new();
     let mut names = Vec::new();
     for &(package, name, inputs) in TESTS {
@@ -315,6 +329,12 @@ fn run_version(root: &Path, version: &str) -> Result<Outcome> {
             names.push(name);
         } else {
             let how: Vec<&str> = missing.iter().map(|i| i.how()).collect();
+            if missing.iter().any(|i| made.contains(i)) {
+                bail!(
+                    "{package} {name} can't run for {version}: missing {}, which should have been made",
+                    how.join(", ")
+                );
+            }
             println!("skipping {package} {name}: needs {}", how.join(", "));
         }
     }

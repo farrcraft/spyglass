@@ -162,7 +162,7 @@ Specs and ADRs that govern this: [data-sources.md](../specs/data-sources.md), [b
 
 ### Phase 1: survey, tools and decisions
 
-- [ ] Bytecode diffs, 26.2 to 26.3 to 26.4-snapshot-5, for every class spyglass ports:
+- [x] Bytecode diffs, 26.2 to 26.3 to 26.4-snapshot-5, for every class spyglass ports:
   - `RandomState`, `NormalNoise`, `PerlinNoise`, `SimplexNoise`;
   - every density function, `NoiseRouter`, `NoiseChunk` and the aquifer;
   - `EndIslandDensityFunction`, `TheEndBiomeSource`, `Climate` and the spawn search;
@@ -172,9 +172,9 @@ Specs and ADRs that govern this: [data-sources.md](../specs/data-sources.md), [b
 
 - [x] Where 26.4's default block comes from, now that `default_block` is gone: the material rule's last entry (see notes).
 - [x] `cargo xtask version-diff`, with tests on fixture bundles. Its report on 26.2 → 26.3 and 26.3 → 26.4-snapshot-5 must name every change listed above.
-- [ ] ADR: how versions coexist (shape dispatch and behavior switches).
-- [ ] ADR: the oracle harness across versions (core and adapters).
-- [ ] ADR: supported versions, snapshots, release-first defaults, and CI on GitHub Actions.
+- [x] ADR: how versions coexist (shape dispatch and behavior switches): [0026](../adr/0026-how-game-versions-coexist.md), proposed.
+- [x] ADR: the oracle harness across versions (core and adapters): [0027](../adr/0027-oracle-harness-across-versions.md), proposed.
+- [x] ADR: supported versions, snapshots, release-first defaults, and CI on GitHub Actions: [0028](../adr/0028-supported-versions-and-ci.md), proposed.
 - [x] Timing: goldens and locate for one version on 4 cores, as CI will have.
 
 ### Phase 2: version-aware infrastructure
@@ -275,3 +275,4 @@ Open for the user: publishing the repository on GitHub, which exit criterion 2 n
   - **26.2 is a different evaluator, not a different format.** Its density functions, noises (`SimplexNoise` returns `f64`; `BlendedNoise` is the `f64` 1.21 code; `NormalNoise`'s factor from the amplitude list), climate sampling and End islands are all `f64`. It has no volume arithmetic; caches and interpolation live only in `NoiseChunk` (`lerp3` x then y then z; `flat_cache` quantized to the quart corner inside the chunk's window, which makes column and chunk answers differ). `y_clamped_gradient` and `end_islands` (central island on /8-quantized coordinates) aren't 26.3's formulas. The aquifer is the same algorithm with router inputs and an exclusion test in code. Columns gain ore veins.
   - **Unchanged in all three:** every RNG class, seeding and the positional factories, placement and the weighted structure pick, jigsaw assembly, the spawn search loop, the biome zoom. Every noise class is unchanged from 26.3 to 26.4.
   - **Loader-only for 26.2:** template palettes use `Name`/`Properties`; feature pool elements' jigsaws are named `minecraft:bottom` (same results with vanilla data); `spawn_target` is full parameter points.
+- 2026-10-26: Phase 1 done but for accepting the three ADRs. The survey is drafted into the specs as _Versions_ notes (inline where a version differs at a point, a `26.2` section where it differs throughout: noise, density functions, terrain, spawn), each spec's status line saying they're unchecked against the oracle. ADRs 0026 to 0028 are proposed. Open points the notes flag as inferred: 26.2's chunk-path climate sampler against its point path, how often 26.2's quantized deep-dark test flips a column, and 26.4's per-block biomes needing every neighbour's quart biomes.

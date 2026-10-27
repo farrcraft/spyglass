@@ -1,8 +1,10 @@
 # Biome lookup
 
-Status: stable. Covers the Default world preset's three dimensions, implemented in `spyglass-biome` for 26.3 and checked cell by cell against the oracle's [golden biome files](oracle.md#golden-biome-files).
+Status: stable. Covers the Default world preset's three dimensions, implemented in `spyglass-biome` for 26.3 and checked cell by cell against the oracle's [golden biome files](oracle.md#golden-biome-files). 26.2 and 26.4-snapshot-5 differences are drafted in _Versions_ notes from the bytecode and not yet checked against the oracle.
 
 A multi-noise biome source (`MultiNoiseBiomeSource`) picks a biome at quart (1:4) resolution: it samples six climate values, quantizes them, and finds the nearest parameter point in the dimension's parameter list. Classes are in `net.minecraft.world.level.biome` unless stated otherwise.
+
+_Versions:_ 26.4-snapshot-5 computes the same quart biomes but stores a chunk's biomes per block. A new `BIOMES` chunk status (`ChunkStatusTasks.upscaleBiomes`, `CachedChunkBiomeResolver`) applies `BiomeManager`'s zoom, seeded with `BiomeManager.obfuscateSeed(seed)`, to the quart biomes, so each stored block biome is what 26.3's `BiomeManager.getBiome` gives at that block. The arithmetic matches; that the neighbours' quart biomes are always still there when it runs is not confirmed in the bytecode. The quart lookup this spec describes is unchanged; how saves store biomes is in [world-saves.md](world-saves.md).
 
 ## Which source
 
@@ -25,6 +27,8 @@ For quart `(qx, qy, qz)`: `bx = qx << 2`, `bz = qz << 2`, section `sx = bx >> 4`
 
 `end/islands` doesn't depend on y, so neither does the End's biome.
 
+_Versions:_ in 26.2, `e` is `erosion.compute(new SinglePointContext(x, y, z))` at the same block: the `f64` value of the `f64` density evaluation, never narrowed. The island test and thresholds are 26.3's, so the answer differs from 26.3's only where a threshold falls between that value and 26.3's `f32` one.
+
 ## The Nether
 
 The Nether's source is `multi_noise` with the `minecraft:nether` preset, five biomes, read and searched as the Overworld's. Its router gives only `temperature` and `vegetation` ([noise.md](noise.md#the-nether-biome-noises)), with `y_scale` 0, and 0 for the other four, so its biomes don't depend on y either.
@@ -35,15 +39,38 @@ The report is `{"biomes": [...]}`. Each entry is `{"biome": id, "parameters": {.
 
 Each value is recovered as its quantized long by round-to-nearest of `f32(value) × 10000` in `f64`, never by the game's truncating `quantizeCoord` ([data-sources.md](data-sources.md#climate-parameter-values)). The loader checks the codec's ranges: parameters in `[-2, 2]` with `min <= max`, offset in `[0, 1]`.
 
+_Versions:_ the lists differ only in data, which the report carries; the point shape and the report format are the same in all three versions. 26.2's `OverworldBiomeBuilder` has an empty slot where 26.3's has `dappled_forest`. 26.4-snapshot-5's `addUndergroundBiomes` narrows `dripstone_caves`' and `sulfur_caves`' humidity to `[-1, 0.7]` and appends `ice_caves` after `deep_dark`. 26.4-snapshot-5 also adds a codec check to inline parameter lists (`ParameterList.validate`): two entries with different biomes, equal offsets and all six parameters overlapping are an error, where ranges overlap if equal or if `max(min₁, min₂) < min(max₁, max₂)`, so touching ranges don't. spyglass reads the report, not that codec.
+
 ## Climate sampler
 
 `Climate.Sampler.sample(qx, qy, qz)` evaluates the router's six climate functions at block `(4·qx, 4·qy, 4·qz)` and quantizes each with `quantizeCoord(f) = (long)(f · 10000.0f)` ([density-functions.md](density-functions.md#the-climate-sampler)). The router's `vegetation` feeds humidity and `ridges` feeds weirdness. A `Climate.TargetPoint` holds the six longs in the order temperature, humidity, continentalness, erosion, depth, weirdness.
+
+_Versions:_ 26.4-snapshot-5's sampler is byte-identical to 26.3's. 26.2's `Climate.Sampler.sample` evaluates each function in `f64` and narrows it once:
+
+```text
+ctx = new SinglePointContext(4·qx, 4·qy, 4·qz)
+target = Climate.target((float) temperature.compute(ctx), (float) humidity.compute(ctx),
+                        (float) continentalness.compute(ctx), (float) erosion.compute(ctx),
+                        (float) depth.compute(ctx), (float) weirdness.compute(ctx))
+```
+
+`compute` is the `f64` density evaluation ([density-functions.md](density-functions.md)), with the router's cache markers and holders stripped by `RandomState`. The functions, the block, the order and `quantizeCoord` are 26.3's. 26.2's chunk generation samples through `NoiseChunk.cachedClimateSampler`, which flat-caches values at y = 0; that it gives the same values as the point path, since only depth's y gradient depends on y and it isn't cached, is not confirmed in the bytecode.
 
 ## Fitness
 
 `Climate.Parameter.distance(t)` is `t - max` above the range, `min - t` below it, and 0 inside. `Climate.ParameterPoint.fitness(target)` is the sum of the six squared distances (`Mth.square(long)`) plus the squared offset, in wrapping `long` arithmetic. The offset acts as a seventh distance against a target of 0, as in `ParameterPoint.parameterSpace` and `TargetPoint.toParameterArray`.
 
 The biome is the one whose parameter point has the minimum fitness.
+
+_Versions:_ 26.4-snapshot-5's `Climate.Parameter.distance` adds 1 above the range:
+
+```text
+above = (t − max) + 1                 // wrapping long
+below = min − t
+distance = above > 0 ? above : Math.max(below, 0)
+```
+
+So ranges are half-open, `[min, max)`: `t == max` is 1 (was 0), `t > max` is `t − max + 1`, and below and inside are unchanged. A single-number parameter (`min == max`) is never at distance 0. The offset term doesn't call `distance` and is unchanged. 26.2's `distance` is 26.3's.
 
 ## Ties
 
@@ -56,6 +83,8 @@ spyglass searches exactly and returns a `Lookup`:
 
 **The answer for a tied cell is the biome of the first point at the minimum, in list order.** That's what `Climate.ParameterList.findValueBruteForce` returns, and it's deterministic and independent of threads and lookup order. Any member of the set is what the game might show; `Lookup::is_tied` lets front ends say so.
 
+_Versions:_ 26.2's `Climate.RTree` has 6 children per node, 26.3's and 26.4-snapshot-5's 19 (`ParameterList` passes the count). The tree's shape can change which tied biome the game's warm-started search returns, never a unique cell's, so spyglass's tie sets and tie answer need no change.
+
 ## Search
 
 The reference is brute force over every point with `ParameterPoint::fitness`. The fast search is a bounding-box tree over the seven dimensions (as the oracle's `TieSearch`, not `Climate.RTree`):
@@ -63,6 +92,8 @@ The reference is brute force over every point with `ParameterPoint::fitness`. Th
 - Leaves hold up to 8 points. Each inner node splits its points at the median, along the dimension (sorted by box centre) that minimises the children's total box span. The split only affects speed.
 - The search visits the nearer child first and **prunes only strictly farther boxes**, since a box at exactly the best distance can still hold a tie. It collects every point at the minimum.
 - Box distances use the same arithmetic as fitness, which can only prune correctly without overflow. When any target value is outside `±2^30`, the search falls back to brute force. Climate values never come near that.
+
+_Versions:_ for 26.4-snapshot-5, box distances use its `distance` with the `+1` ([Fitness](#fitness)), as `Climate.RTree$Node.distance` does; the `±2^30` fallback still holds.
 
 The tree and brute force are compared on random lists with frequent ties, and on every climate target in the probe files.
 

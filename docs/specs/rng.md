@@ -1,6 +1,8 @@
 # Random sources
 
-Status: stable. Implemented in `spyglass-rng` for 26.3; checked against the game by the oracle's [probe files](oracle.md#probe-files).
+Status: stable. Implemented in `spyglass-rng` for 26.3; checked against the game by the oracle's [probe files](oracle.md#probe-files). It holds unchanged for 26.2 and 26.4-snapshot-5, compared in the bytecode and not yet checked against the oracle.
+
+_Versions:_ every random-source class (`LegacyRandomSource`, `XoroshiroRandomSource`, `Xoroshiro128PlusPlus`, `RandomSupport`, `MarsagliaPolarGaussian`, `WorldgenRandom`, the positional factories and their interfaces) and `Mth.getSeed` are byte-identical in 26.2, 26.3 and 26.4-snapshot-5, and `RandomState` makes its positional factory the same way in all three.
 
 Worldgen draws all its randomness from two random sources and the factories that derive per-position and per-name sources from them. Every call must consume exactly the values the game's does: one extra or missing call shifts everything after it. Ported from the 26.3 bytecode (`net.minecraft.world.level.levelgen`).
 
@@ -42,7 +44,7 @@ The source for `legacy_random_source: false`, which the overworld uses.
 - `fork()`: a source seeded with `nextLong()`. `forkPositional()`: a factory seeded with `nextLong()`.
 - **Positional factory** (`seed`): `at(x, y, z)` is a source seeded with `getSeed(x, y, z) ^ seed`; `fromHashOf(name)` uses `String.hashCode()` (not MD5): `(long)hash ^ seed`, the hash sign-extended; `fromSeed(s)` ignores the factory's seed. An identifier is hashed as its full text, e.g. `minecraft:aquifer`.
 
-With `legacy_random_source: true`, `RandomState`'s positional factory is `LegacyRandomSource(seed).forkPositional()`, so its seed is that source's first `nextLong()` (from the 26.3 bytecode; [noise.md](noise.md#in-a-world) and [density-functions.md](density-functions.md#binding-to-a-seed) say which noises use it).
+With `legacy_random_source: true`, `RandomState`'s positional factory is `LegacyRandomSource(seed).forkPositional()`, so its seed is that source's first `nextLong()` (from the 26.3 bytecode; [noise.md](noise.md#normal-noise-normalnoise) and [density-functions.md](density-functions.md#binding-to-a-seed) say which noises use it).
 
 ## Worldgen seeding (`WorldgenRandom`)
 

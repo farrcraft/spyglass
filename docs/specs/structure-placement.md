@@ -1,6 +1,6 @@
 # Structure placement
 
-Status: stable. Covers the Default world preset's three dimensions, implemented in `spyglass-structure` for 26.3 and checked against the oracle's [structure golden files](oracle.md#structure-golden-files).
+Status: stable. Covers the Default world preset's three dimensions, implemented in `spyglass-structure` for 26.3 and checked against the oracle's [structure golden files](oracle.md#structure-golden-files). 26.2 and 26.4-snapshot-5 differences are drafted in _Versions_ notes from the bytecode and not yet checked against the oracle.
 
 The game decides where a structure starts in three steps:
 
@@ -9,6 +9,8 @@ The game decides where a structure starts in three steps:
 3. **Validity**: the structure's pieces, and conditions on terrain.
 
 This spec covers the first two, and says exactly what spyglass can decide without terrain and [with terrain](#with-terrain) from [terrain.md](terrain.md). Of validity, it covers [jigsaw assembly](#jigsaw-assembly) and the [bounds](#bounds) it gives. Classes are in `net.minecraft.world.level.levelgen.structure` unless stated otherwise.
+
+_Versions:_ placement (random spread, concentric rings, salts, frequency reducers, exclusion zones, the locate position), the weighted structure pick and jigsaw assembly (`JigsawPlacement.addPieces` and `$Placer`: the queue, depth, `size`, pool aliases, dimension padding, free space and the expansion hack) are the same in 26.2, 26.3 and 26.4-snapshot-5, as are `BoundingBox`, template boxes, rotation and jigsaw lists, and the single, list and empty pool elements. Where a version differs, a note says so in its section.
 
 ## Loading
 
@@ -25,11 +27,16 @@ This spec covers the first two, and says exactly what spyglass can decide withou
   | `salt`                       | required    | an int                                     |
   | `exclusion_zone`             | none        | `{other_set, chunk_count}`, count 1..=16   |
 
+  _Versions:_ in 26.2, `StructurePlacement` is an abstract class that holds these fields and `isStructureChunk` itself. 26.3 makes it an interface and moves them, unchanged, into `AbstractSpreadingStructurePlacement`. 26.3 also adds the placement type `minecraft:dimension_origin` (`DimensionOriginStructurePlacement`), which no vanilla set uses in any of the three versions.
+
 - **`minecraft:random_spread`**: `spacing` and `separation` in 0..=4096, with spacing strictly greater ("Spacing has to be larger than separation"). `spread_type` is `linear` (the default) or `triangular`.
 - **`minecraft:concentric_rings`**: `distance` and `spread` in 0..=1023, `count` in 1..=4095, and `preferred_biomes`.
 - **Structure** (`Structure`): `type` and `biomes`, plus the jigsaw fields [below](#jigsaw-starts). The supported types are the 16 vanilla ones.
 - **Biome sets** (`HolderSet<Biome>`) are `"#tag"`, an id, or a list of ids. Tags are `tags/worldgen/biome/*.json`, `{"values": [...]}`. Each entry is an id, a `#tag`, or `{"id", "required"}`, and a missing entry is skipped only when `required` is false. Biomes must exist in `worldgen/biome/`. Sets are resolved to the biome source's biomes; others, like the Nether's in the Overworld, can't occur, so they're dropped.
 - **Which sets apply** (`ChunkGeneratorStructureState.hasBiomesForStructureSet`): a set applies when some structure's biomes intersect the source's. Other sets are kept with `possible: false`, because an exclusion zone may name one. In 26.3, 18 of the 21 sets apply to the Overworld. `end_cities`, `nether_complexes` and `nether_fossils` don't.
+
+  _Versions:_ the data differs, not the loading. 26.2 has 20 sets: `abandoned_camp` (one set of jigsaw structures, one per biome) is new in 26.3, which also adds `dappled_forest` to `#has_structure/trial_chambers`. 26.4-snapshot-5 adds its new `ice_caves` biome to `#has_structure/mineshaft`, `#has_structure/ruined_portal_standard`, `#has_structure/trial_chambers` and `#stronghold_biased_to`.
+
 - **Heights**: the preset's dimension type gives the level's `min_y` and `height`; its noise settings give `noise.min_y`, `noise.height` and `sea_level`. `WorldGenerationContext` uses the larger minimum and the smaller height.
 
 ## Placement
@@ -74,6 +81,8 @@ This spec covers the first two, and says exactly what spyglass can decide withou
 
 **Tie-dependent positions.** A tied biome cell can match the preferred biomes for one candidate and not another, and the game's answer depends on lookup history ([biome-lookup.md](biome-lookup.md#ties)). spyglass uses each cell's first candidate. It then replays the search for every combination of the disagreeing cells, up to 12 of them, from the same random state. A position is flagged `tie_dependent` if any replay moves it. Beyond 12 such cells it's flagged without replaying.
 
+_Versions:_ 26.2's `findBiomeHorizontal` takes `randomState.sampler()` and reads `BiomeSource.getNoiseBiome(qx, qy, qz, sampler)`. 26.3 and 26.4-snapshot-5 take the `RandomState` and read through `BiomeSource.createCachingResolver(randomState)`, a climate sampler with caches enabled. The loops, the reservoir draw and every unique cell's biome are the same. Only a tied cell's answer can differ, since it depends on lookup history, and spyglass replays tied cells anyway.
+
 ## Choosing a structure
 
 In each placement chunk, `ChunkGenerator.createStructures` takes a single-entry set's structure directly. For several entries it does a weighted pick:
@@ -83,6 +92,8 @@ In each placement chunk, `ChunkGenerator.createStructures` takes a single-entry 
 3. Try that structure. If it produces no valid start, remove it and draw again from the same random.
 
 Each try builds its own context random (`GenerationContext.makeRandom`): a legacy random with `setLargeFeatureSeed(seed, chunkX, chunkZ)`, independent of the pick.
+
+_Versions:_ 26.4-snapshot-5 moves the pick into `StructureSet.tryGenerateStartInChunk`, with the same draws in the same order, and `ChunkGenerator.createStructures` still skips a set when the chunk already stores a start for one of its structures. `Structure.generate` loses its `int references` parameter (references are set after generation) and returns `null` for no start instead of `StructureStart.INVALID_START`. It's non-null exactly when the pieces aren't empty, which is 26.3's `StructureStart.isValid()`, so the same tries fail.
 
 spyglass runs the same loop with a three-way answer for each try ([below](#what-spyglass-can-decide)). A `Rejected` structure is removed. A `Passes` structure ends the loop. A `Candidate` is recorded, and the loop goes on as if it failed. So a `Selection` lists the structures the game may start, in the order it tries them: candidates, then possibly one that passes. If the last one passes, the start is certain.
 
@@ -94,6 +105,8 @@ spyglass runs the same loop with a three-way answer for each try ([below](#what-
 - **Structure-column test** (`couldStructureExistInColumn(x, z, minY, maxY)`): the same over the level's own height.
 
 Heights are the generator's ([terrain.md](terrain.md#queries)). "First occupied" is `getFirstOccupiedHeight`, one below the heightmap's `getBaseHeight`.
+
+_Versions:_ 26.4-snapshot-5 has no `getBaseHeight`. `getFirstOccupiedHeight` is one below `getFirstFreeHeight`, which it reimplements on the base column; [terrain.md](terrain.md#queries) says when its answer differs. `Structure`, `JigsawPlacement`, ruined portals and mineshafts call it where 26.3 calls `getBaseHeight`.
 
 | Type                                            | Check position                                | y from                                                                                   | Climate-only conditions first                                                                                                                    | Other rejections (with terrain)                                    |
 | ----------------------------------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------ |
@@ -109,6 +122,16 @@ Heights are the generator's ([terrain.md](terrain.md#queries)). "First occupied"
 | nether fossil                                   | `(minX + nextInt(16), y, minZ + nextInt(16))` | a height provider, then a downward block scan                                            | none                                                                                                                                             | y ≤ sea level                                                      |
 
 `getBiomesWithin(x, y, z, r)` is every quart from `(p − r) >> 2` to `(p + r) >> 2` on each axis.
+
+_Versions:_ 26.2's `Structure$GenerationContext` has no climate sampler or biome resolver, and none of the column tests (`couldValidBiomeExistOnTopOfChunkCenter`, `couldValidBiomeExistInTerrainColumn`, `couldStructureExistInColumn`). Its check is the private static `Structure.isValidBiome(stub, context)`:
+
+```java
+BlockPos p = stub.position();
+return validBiome.test(chunkGenerator.getBiomeSource().getNoiseBiome(
+    QuartPos.fromBlock(p.getX()), QuartPos.fromBlock(p.getY()), QuartPos.fromBlock(p.getZ()), randomState.sampler()));
+```
+
+That's the same quart as 26.3's. So in 26.2 the only climate-only condition the game runs is the monument's `getBiomesWithin`; the table's others aren't steps. Surface types go straight to `onTopOfChunkCenter`. The mansion and the end city draw the rotation first, then take the 5 × 5 box at `(minX + 7, minZ + 7)` (`getLowestYIn5by5BoxOffset7Blocks`). A projected jigsaw goes straight to its first free height. The outcomes are the same: each skipped test asks whether some quart of a column holds a valid biome, and the final check tests one quart of that column, since a first occupied height is in `minY − 1..=maxY`. The mansion's earlier rotation draw is unobservable, because each try has its own context random. The exception, which vanilla terrain never meets (inferred, not confirmed in the bytecode): a projected jigsaw whose check y falls below the level, such as a trail ruin (start height `absolute −15`) over a first free height below `minY + 15`, could start in 26.2 where 26.3 rejects it.
 
 Pieces are built after the check (`GenerationStub` builds them lazily), so their random draws don't affect it. Mineshafts are the exception: they lay out their pieces first.
 
@@ -132,6 +155,8 @@ Pieces are built after the check (`GenerationStub` builds them lazily), so their
    - **Projected:** the structure-column test at the centre comes first. Then y is `P.y + getFirstFreeHeight(centre, heightmap) + offset.y`, which needs terrain.
 7. With `dimension_padding` (an int for both, or `{bottom, top}`), the piece moves so its box's minimum y is at `y − 1`, the ground level delta. There's no start if the box then reaches below `minY + bottom` or above `maxY − top`.
 
+_Versions:_ 26.2 has no structure-column test in step 6 ([above](#the-biome-check)). In 26.4-snapshot-5, anchors resolve against `VerticalAnchor.Context.from(generator, level)` instead of `WorldGenerationContext`, with the same minimum, height and sea level. It adds the anchor `relative_to_sea_level` (`seaLevel + offset`), which no structure uses.
+
 **Elements:**
 
 - `single_pool_element` and `legacy_single_pool_element` are one template. The box is the template's corners `(0, 0, 0)` and `size − 1`, rotated about the origin and moved to the position.
@@ -151,6 +176,8 @@ The rotation is `StructureTemplate.transform` with mirror none and pivot 0. Cloc
 - Data version: the game data-fixes a template saved by an older version. spyglass doesn't, so a template's `DataVersion` must equal the bundle's data version. All of 26.3's do.
 - A missing template is empty (`StructureTemplateManager.getOrCreate`): size zero and no palettes, so its box is the corners `(0, 0, 0)` and `(−1, −1, −1)`, and it has no jigsaw blocks. 26.3's `ancient_city/walls/no_corners` pool names one, `intact_horizontal_wall_stairs_5`.
 
+_Versions:_ 26.2's `NbtUtils.readBlockState` reads the block from **`Name`** and its properties from **`Properties`**; 26.3 and 26.4-snapshot-5 read `id` and `properties`. Every palette entry in 26.2's templates uses the 26.2 keys, so finding jigsaw blocks (`minecraft:jigsaw`) and their `orientation` depends on reading them. Nothing else spyglass reads differs: top-level keys, block entries and jigsaw `nbt` keys are the same, and each version's templates carry its own data version (26.2: 4903; 26.4-snapshot-5: 5125). In 26.4-snapshot-5 a missing template is `StructureTemplate.EMPTY` (`getOrEmpty`), with the same empty box and no jigsaw blocks.
+
 ## What spyglass can decide
 
 For each try, `Starts::check` answers, from the climate alone (`Starts::new`) or with the seed's terrain (`Starts::with_terrain`, [below](#with-terrain)):
@@ -162,6 +189,8 @@ For each try, `Starts::check` answers, from the climate alone (`Starts::new`) or
 With terrain, the same answers hold with the real check position wherever spyglass computes it (every Overworld type but mineshafts, whose layout isn't ported): `Rejected` also covers terrain's own rejections, and a candidate remains only behind a tied cell or for a mineshaft whose column is mixed. `Starts::stub` gives the check position itself.
 
 A lookup counts as in a set if every candidate of the cell is, and out if none is. Mixed cells make the answer `Candidate`.
+
+_Versions:_ in 26.2 the climate-only conditions aren't game steps ([above](#the-biome-check)), but each is implied by the final check, so `Rejected` holds. For a projected jigsaw that's so only while the check's y is in the level, as it is on vanilla terrain (inferred, not confirmed in the bytecode).
 
 `Passes` covers the biome check only. Without terrain, validity that depends on pieces or terrain can still reject a start, as the table lists. Of the 870 starts the golden set calls certain without terrain, the game made all 870. With terrain, 5,986 of its 6,056 placement chunks have a decided outcome, every one the game's ([Testing](#testing)).
 
@@ -182,6 +211,23 @@ Implemented in `Starts::with_terrain`, except mineshafts. Each type's check with
 - **Shipwreck:** no terrain beyond the check: the game's later height fix applies only to templates over 32 blocks, and 26.3 has none.
 - **Projected jigsaw:** `y = start height + first free height` at the centre, then [as before](#jigsaw-starts).
 
+_Versions:_
+
+- **26.2 ruined portals** have `air_pocket_probability` 0.5 for `on_land_surface` (the standard, jungle and mountain setups) and for the Nether, where 26.3 has 0. That's data: the air pocket draw in step 1 happens, and the rest follows as written.
+- **26.4-snapshot-5 ruined portals** (`RuinedPortalStructure`): `Y0` is `getFirstFreeHeight − 1` with the same heightmap, where 26.3 has `getBaseHeight − 1` ([terrain.md](terrain.md#queries)). `findSuitableY` tests the base column (`NoiseColumn`) directly, with the same draws, corner order, floor and three-of-four rule:
+
+  ```java
+  // 26.3
+  Predicate<BlockState> p = (onOceanFloor ? OCEAN_FLOOR_WG : WORLD_SURFACE_WG).isOpaque();
+  hit = p.test(column.getBlock(y));
+  // 26.4-snapshot-5
+  hit = onOceanFloor ? column.isSolid(y) : !column.isEmpty(y);
+  ```
+
+  `isSolid` is the default block and `isEmpty` is air. A base column holds only the default block, fluids and air, and the 26.3 predicates count the default block for both heightmaps and fluids for `WORLD_SURFACE_WG` only, so the answers are the same (inferred, not confirmed in the bytecode).
+
+- **26.4-snapshot-5 mineshafts** (`MineshaftStructure`): the mesa's `h` is `getFirstFreeHeight` of `WORLD_SURFACE_WG`, where 26.3 has `getBaseHeight`.
+
 So with terrain every Overworld type's check is at a known position, but for mineshafts until their layout is ported. The only answers that stay open are tied biome cells, platform-dependent ring positions, and mineshafts in mixed columns.
 
 ## Jigsaw assembly
@@ -201,6 +247,19 @@ Implemented in `Jigsaw::assemble` (`spyglass-structure`), with the pools `Jigsaw
 3. For each candidate: an empty element ends `J`. Else for each rotation in a shuffled copy of the four (3 draws): the candidate's jigsaw blocks at the origin with that rotation, shuffled and sorted (draws), and its box at the origin; then each of those jigsaws `C` that attaches to `J`, placed and tested against the free space as below. The first that fits is added to the start's pieces, queued at depth + 1 if that's at most `size`, with `J`'s placement priority, and `J` is done.
 
 **Attaching.** `C` attaches to `J` (`JigsawBlock.canAttach`) if `C`'s front is opposite `J`'s, their tops are equal unless `J`'s joint is `rollable`, and `C`'s name is `J`'s target. A feature element's jigsaw has no name and matches any target. Orientation rotates with the piece: horizontal directions turn with the rotation, up and down stay.
+
+_Versions:_ in 26.2, `FeaturePoolElement.getShuffledJigsawBlocks` names its jigsaw `minecraft:bottom` (from the NBT its constructor builds in `fillDefaultJigsawNBT`), and `JigsawBlock.canAttach` needs an exact match:
+
+```java
+// 26.2
+return front(J) == front(C).getOpposite() && (J.jointType() == ROLLABLE || top(J) == top(C))
+    && J.target().equals(C.name());
+// 26.3, 26.4-snapshot-5: C's name is null for a feature element
+return front(J) == front(C).getOpposite() && (J.jointType() == ROLLABLE || top(J) == top(C))
+    && (C.name() == null || J.target().equals(C.name()));
+```
+
+So in 26.2 a feature element attaches only to a parent whose target is `minecraft:bottom`. With vanilla data the results are the same: every 26.2 jigsaw whose pool or fallback holds a feature element targets `minecraft:bottom`. (Some of 26.3's abandoned-camp jigsaws target `minecraft:down`, which needs the null rule.) In 26.4-snapshot-5's data, `village/snowy/houses/snowy_shepherds_house_1` has a jigsaw `name` and `target` fixed to `minecraft:building_entrance` (26.3 has it misspelled, with the `l` and `d` swapped), so that house's entrance can now attach to streets.
 
 **Placing.** `T` is `J`'s position plus `J`'s front step, and `C₀` is `C`'s position at the origin. The candidate goes at `T − C₀`, then moves in y so its box's minimum y is:
 
@@ -238,7 +297,9 @@ From the 26.3 bytecode, checked against the structure golden files for both dime
 
   In 26.3's columns this is the first y from the start − 1 down to 33 with netherrack at y and air above.
 
-- **Ruined portal (`in_nether`):** as [above](#with-terrain), with one setup and no air pocket. Lava counts for `findSuitableY`, so in the Nether its y is always 27 to 100. Its tag is every Nether biome, so it always passes. Without terrain, spyglass decides a ruined portal whose biomes are all of the source's (it passes wherever its check is) or none of them (it fails), as it does mineshafts whose column is all in their biomes.
+  _Versions:_ 26.4-snapshot-5's scan tests the base column directly, `while (y > seaLevel) { y--; if (column.isEmpty(y + 1) && column.isSolid(y)) break; }`, with the height from `VerticalAnchor.Context`. Soul sand never appears in a base column, so this is the same first y (inferred, not confirmed in the bytecode).
+
+- **Ruined portal (`in_nether`):** as [above](#with-terrain), with one setup and no air pocket. Lava counts for `findSuitableY`, so in the Nether its y is always 27 to 100 (26.2's Nether setup has an air pocket probability of 0.5, so its draw happens, and y stays in that range). Its tag is every Nether biome, so it always passes. Without terrain, spyglass decides a ruined portal whose biomes are all of the source's (it passes wherever its check is) or none of them (it fails), as it does mineshafts whose column is all in their biomes.
 - **The shared `ruined_portals` set** applies in both the Overworld and the Nether. In the Nether the six Overworld portals fail their biome checks and the pick draws again, so every placement chunk gets a Nether portal.
 - **End city:** the mansion's footprint rule, as in the table. A corner over the void has base height 0, so its first occupied height is −1, below 60. The main island is `the_end`, which isn't in its biomes.
 

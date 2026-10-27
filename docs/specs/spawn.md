@@ -1,6 +1,6 @@
 # World spawn
 
-Status: stable. Covers the spawn origin of a noise-based dimension (the Default world preset's three), implemented in `spyglass-biome` for 26.3 and checked against the oracle's [spawn golden files](oracle.md#spawn-golden-files). The final spawn block needs generated blocks (the surface and features), not only the generator's heights, and is deferred to a later milestone ([roadmap](../roadmap/README.md)).
+Status: stable. Covers the spawn origin of a noise-based dimension (the Default world preset's three), implemented in `spyglass-biome` for 26.3 and checked against the oracle's [spawn golden files](oracle.md#spawn-golden-files). The final spawn block needs generated blocks (the surface and features), not only the generator's heights, and is deferred to a later milestone ([roadmap](../roadmap/README.md)). 26.2 and 26.4-snapshot-5 differences are drafted in _Versions_ notes from the bytecode and not yet checked against the oracle.
 
 ## How the game picks the spawn
 
@@ -10,6 +10,8 @@ Status: stable. Covers the spawn origin of a noise-based dimension (the Default 
 2. **The spawn block**: an 11 × 11 spiral of chunks around the origin, trying `PlayerSpawnFinder.getSpawnPosInChunk` in each, which reads generated blocks. If nothing fits, the fallback is the origin chunk's centre at `getSpawnHeight`, or the `WORLD_SURFACE` heightmap there. This needs terrain.
 
 So the origin is exact now, and the spawn block is in the 11 × 11 chunks around it. In the four 26.3 worlds checked (the two Seed Check worlds and two others), the saved spawn was in the origin chunk itself.
+
+_Versions:_ 26.2's `setInitialSpawn` gets the origin from `ChunkPos.containing(randomState.sampler().findSpawnPosition())` instead of `getOrigin` ([26.2](#262)); the rest, `PlayerSpawnFinder` included, is the same in all three versions. 26.4-snapshot-5's spawn classes are byte-identical to 26.3's, but its fitness changes through `Climate.Parameter.distance` ([The search](#the-search)).
 
 ## Spawn targets
 
@@ -24,6 +26,8 @@ The functions are bound to the seed as the router's are ([density-functions.md](
 
 `SpawnTargets::load(resources, noise_settings)` reads them; `BiomeSource::noise_settings` names the dimension's settings.
 
+_Versions:_ 26.2's `spawn_target` is a list of `Climate.ParameterPoint`s (`ParameterPoint.CODEC.listOf()`), not maps: [26.2](#262).
+
 ## The search
 
 `NoiseBasedChunkGenerator.getOrigin`: with no targets, chunk (0, 0). Otherwise `NoiseSpawnFinder.findSpawnPosition`, then `ChunkPos.containing` (`x >> 4`, `z >> 4`).
@@ -34,6 +38,8 @@ The functions are bound to the seed as the router's are ([density-functions.md](
 2. For each target, `sampleFitness`: the sum over its entries of `Mth.square(parameter.distance(quantizeCoord(f(qx, 0, qz))))`, with `f` evaluated as `f32`. Entry order doesn't matter: integer addition.
 3. Climate fitness is the minimum over targets (starting from `Long.MAX_VALUE`).
 4. The result is `climate * Mth.square(2048) + Mth.square(x) + Mth.square(z)` (x and z widened to `long`), at position `(x, 0, z)`: the unsnapped position.
+
+_Versions:_ in 26.4-snapshot-5, `SpawnTargetPoint.sampleFitness` is unchanged but calls the new `Climate.Parameter.distance`, so step 2 uses half-open ranges: `distance = (t − max) + 1` when that is positive, else `max(min − t, 0)` ([biome-lookup.md](biome-lookup.md#fitness)). A climate value exactly at a target's `max` is 1 away, not 0.
 
 **Search**: the fitness at (0, 0), then `radialSearch(2048, 512)`, then `radialSearch(512, 32)`. `radialSearch(max, step)` from the current best position `(cx, cz)`:
 
@@ -56,6 +62,29 @@ The sample positions call `Math.sin` and `Math.cos`, whose results depend on the
 - spyglass uses `f64::sin` and `f64::cos`, and a sample is **sensitive** if moving the trig value by up to 4 ulps either way changes its truncated product. At angle 0, sine is 0 and cosine 1 on every platform, so those samples are never sensitive. Without this exception every ring's first sample would be: `1.0 * radius` is exactly an integer.
 - A sensitive sample changes nothing if neither its position nor its other possible position beats the best so far: every platform then passes through the same bests. Otherwise `SpawnOrigin::platform_dependent` is set.
 - Measured on 26.3: none of the 10 golden seeds and none of 3,000 random seeds is flagged.
+
+## 26.2
+
+From the 26.2 bytecode (`Climate$SpawnFinder`, `Climate.Sampler`, `MinecraftServer.setInitialSpawn`). The search is 26.3's; the targets and the fitness have a different shape.
+
+**Origin**: `ChunkPos.containing(sampler.findSpawnPosition())`, where `sampler` is the `RandomState`'s `Climate.Sampler`, which holds the settings' spawn targets. With no targets it returns block (0, 0, 0), so chunk (0, 0), as in 26.3. Otherwise it runs `Climate$SpawnFinder`: the fitness at (0, 0), `radialSearch(2048, 512)`, then `radialSearch(512, 32)`, exactly [as above](#the-search), with `java.lang.Math.sin` and `cos` (the [trig](#trig) analysis applies unchanged).
+
+**Targets**: `NoiseGeneratorSettings.spawn_target` is a list of `Climate.ParameterPoint`s. Each has all six parameters, `temperature`, `humidity`, `continentalness`, `erosion`, `depth` and `weirdness`, each a `Climate.Parameter` as in 26.3 (number, pair or object, ends in `[-2, 2]`, quantized by `quantizeCoord`), and an `offset`, a float in `[0, 1]`, quantized the same way. 26.2's overworld has two, from `OverworldBiomeBuilder.spawnTarget()`: temperature, humidity and erosion `[-1, 1]`, continentalness `[-0.11, 1]`, depth `0`, weirdness `[-1, -0.16]` or `[0.16, 1]`, offset 0.
+
+**Fitness** at block `(x, z)` (`getSpawnPositionAndFitness`), wrapping `long` arithmetic:
+
+```text
+t = sampler.sample(x >> 2, 0, z >> 2)          // all six, at block ((x >> 2) << 2, 0, (z >> 2) << 2)
+t = TargetPoint(t.temperature, t.humidity, t.continentalness, t.erosion, 0, t.weirdness)
+climate = Long.MAX_VALUE
+for p in targets: climate = min(climate, p.fitness(t))
+return climate * Mth.square(2048L) + Mth.square((long) x) + Mth.square((long) z), at (x, 0, z)
+```
+
+- `sample` is 26.2's `f64` evaluation narrowed to `f32`, then quantized ([biome-lookup.md](biome-lookup.md#climate-sampler)); the climate functions are the router's `temperature`, `vegetation`, `continents`, `erosion`, `depth` and `ridges`. Depth is evaluated and then discarded.
+- `ParameterPoint.fitness` is the biome [fitness](biome-lookup.md#fitness): all six squared distances plus `Mth.square(offset)`. Every parameter counts, a full range `[-1, 1]` included, and depth is measured against 0, not the sampled depth.
+
+For 26.2's overworld targets this is 26.3's fitness: depth `0` is at distance 0 from a target of 0, the offset is 0, and the other five ranges are 26.3's entries. Only the sampled climate values differ, by the `f64` evaluation. That the router's functions are the ones 26.3's targets name is data, not confirmed in the bytecode.
 
 ## Testing
 

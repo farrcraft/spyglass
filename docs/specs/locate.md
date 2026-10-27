@@ -1,6 +1,6 @@
 # Locate queries
 
-Status: stable. Covers `/locate structure` and `/locate biome` in the Default world preset's three dimensions, implemented in `spyglass-structure` and `spyglass-biome` and exposed by the `spyglass` crate ([ADR 0014](../adr/0014-public-api-world-and-session.md)). Checked against the real game's `/locate` ([ADR 0015](../adr/0015-locate-checks-on-a-real-server.md)) for 26.3.
+Status: stable. Covers `/locate structure` and `/locate biome` in the Default world preset's three dimensions, implemented in `spyglass-structure` and `spyglass-biome` and exposed by the `spyglass` crate ([ADR 0014](../adr/0014-public-api-world-and-session.md)). Checked against the real game's `/locate` ([ADR 0015](../adr/0015-locate-checks-on-a-real-server.md)) for 26.3. 26.2 and 26.4-snapshot-5 differences are drafted in _Versions_ notes from the bytecode and not yet checked against the oracle.
 
 `/locate` doesn't return the nearest structure or biome. It returns the first one its search order finds, so spyglass ports the search order and the distance measure exactly. Where spyglass can't decide whether the game generates a structure in a chunk, it returns every place the game's answer may be, in search order, each labelled `certain` or not. [Confirmed](#confirmed-mode), terrain decides nearly every chunk.
 
@@ -26,6 +26,8 @@ Status: stable. Covers `/locate structure` and `/locate biome` in the Default wo
 - otherwise a **candidate**.
 
 The position reported is `getLocatePos`: the chunk's minimum block plus the set's `locate_offset`.
+
+_Versions:_ `ChunkGenerator.findNearestMapStructure` and its search are the same in 26.2, 26.3 and 26.4-snapshot-5, and so is `StructureCheck.canCreateStructure`. Whether a chunk generates a target follows each version's rules in [structure-placement.md](structure-placement.md), whose _Versions_ notes say where they differ.
 
 **Search order.**
 
@@ -60,6 +62,8 @@ Unconfirmed, most surface structures' hits are all candidates, so lists run to t
 4. The first `(x, y, z)` whose quart's biome matches is the answer.
 
 A tied cell whose biomes disagree on the predicate is a candidate: the game's answer there depends on lookup history ([biome-lookup.md](biome-lookup.md#ties)). The list ends at the first certain match, or after 16 candidates. The distance shown is `Mth.floor(Mth.sqrt((float) pos.distSqr(result)))`, in 3D.
+
+_Versions:_ the search is the same in all three. 26.2's `BiomeSource.findClosestBiome3d` takes a `Climate.Sampler` and reads `getNoiseBiome(qx, qy, qz, sampler)`; 26.3 and 26.4-snapshot-5 take the `RandomState` and read through `createCachingResolver(randomState)`. Every unique cell's biome is the same, and a tied cell stays a candidate. In 26.4-snapshot-5 chunks store a biome per block ([world-saves.md](world-saves.md#chunk-biomes)), but `/locate biome` still tests quart biomes from the biome source, not stored ones.
 
 ## Testing
 

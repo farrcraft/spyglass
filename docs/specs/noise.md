@@ -1,8 +1,10 @@
 # Noise
 
-Status: stable. Implemented in `spyglass-noise` for 26.3; checked against the game by the oracle's [probe files](oracle.md#probe-files).
+Status: stable. Implemented in `spyglass-noise` for 26.3; checked against the game by the oracle's [probe files](oracle.md#probe-files). 26.2 and 26.4-snapshot-5 differences are drafted in _Versions_ notes from the bytecode and not yet checked against the oracle.
 
 26.3 reworked noise since 1.21. `ImprovedNoise` is gone, samples are `float`, and the noise JSON has a new shape, so ports of older versions don't apply. Ported from the 26.3 bytecode (`net.minecraft.world.level.levelgen.synth`). Coordinates are `f64`; samples are `f32`. The type of each step below is part of the spec.
+
+_Versions:_ every `synth` class in 26.4-snapshot-5 is byte-identical to 26.3's, so this spec holds for it unchanged. 26.2 still has the 1.18–1.21 noise, all in `f64`; [26.2](#262) describes it in full. Its draws and seeds are 26.3's; its arithmetic and its noise JSON aren't. (26.4-snapshot-5 also changes `Mth.sin` and `Mth.cos`, which only carvers and features use; spyglass doesn't port them.)
 
 ## Perlin (`PerlinNoise`, `GradientNoise`)
 
@@ -20,6 +22,8 @@ Status: stable. Implemented in `spyglass-noise` for 26.3; checked against the ga
 
 **`get(x, z)`** is `get(wrap(x), 0.0, wrap(z))`.
 
+_Versions:_ 26.2's Perlin is `ImprovedNoise`: the same construction, hashing and corner order, but fractions, gradient dots, `smoothstep` and `lerp3` all in `f64`, and the caller wraps the coordinates ([26.2](#262-improved-noise-improvednoise)).
+
 ## Smeared Perlin (`SmearedPerlinNoise`)
 
 Perlin noise whose y gradient input is snapped down to a multiple of a scale `s` (`fudgeYScale`), so it smears along y. [Old blended noise](density-functions.md#old_blended_noise) is built from it. It's constructed exactly as Perlin, from the same draws. **`get(x, y, z)`**:
@@ -27,6 +31,8 @@ Perlin noise whose y gradient input is snapped down to a multiple of a scale `s`
 1. As Perlin: wrapped and offset coordinates, `xi`, `yi`, `zi` and `xf`, `zf` as `f32`, but `yd = y' − yi` stays `f64`.
 2. `r = y` (the input before wrapping) if `0 ≤ y < yd`, else `yd`; `fudge = (double) floor(r / s + 1.0000000116860974E-7) · s`, where the constant is `1.0E-7f` widened and `floor` is `Mth.floor` (saturating).
 3. Perlin's corner values and lerp, with `(float)(yd − fudge)` as the y for the gradient dots and `(float) yd` for the y smoothstep.
+
+_Versions:_ in 26.2, smeared Perlin is `ImprovedNoise.noise` with a non-zero y scale, in `f64`; the unwrapped y arrives as a separate `yMax` argument ([26.2](#262-improved-noise-improvednoise)).
 
 ## Volumes (`addToVolume`)
 
@@ -36,13 +42,19 @@ Density functions' [volume path](density-functions.md#point-and-volume-evaluatio
 - **Smeared Perlin:** the same, with the gradients' y fraction `(float)(yd − fudge)` and `fudge` from the unwrapped `blockY · yScale`, as `get` computes it from its `y`.
 - **Stack:** each layer in order adds its noise with `xzScale · f`, `yScale · f` and `factor · amplitude`: scales and weights are multiplied first, where `get` multiplies the coordinate.
 
+_Versions:_ 26.2's noise classes have no volume path. Every sample is a point sample.
+
 ## Noise stack (`NoiseStack`)
 
 A list of layers `(noise, frequency: f64, amplitude: f32)`, all Perlin or all smeared Perlin. `get(x, y, z)` accumulates `sum = sum + amplitude · noise.get(x·f, y·f, z·f)` in `f32`, in layer order, starting from 0. `get(x, z)` does the same with each layer's 2D sample. Rust never contracts `a + b·c` into a fused multiply-add, and neither does Java. Its volume path is [above](#volumes-addtovolume).
 
+_Versions:_ 26.2 has no `NoiseStack`. Its octave set is `PerlinNoise`, an `f64` sum with per-octave weights computed as it goes ([26.2](#262-octave-set-perlinnoise)).
+
 ## Normal noise (`NormalNoise`)
 
 **Parameters** (`worldgen/noise/*.json`): `base_octave` (required, −32 to 32), `base_amplitude` (default 1.0), `octave_count` (default 1, at most 32), `normalize` (`true` for enabled, `false` for disabled, or the string `"legacy"`; default **enabled**), `amplitude_modifiers` (default empty; up to 32 numbers in `[0, 1000000]`, and if not empty, exactly `octave_count` of them). `base_amplitude` must be in `[9.999999747378752e-6, 1000000]`. No 26.3 noise sets `normalize`.
+
+_Versions:_ 26.2's noise JSON is `{"firstOctave": int, "amplitudes": [double…]}`, and its normal noise has a different value factor and no `f32` amplitudes ([26.2](#262-normal-noise-normalnoise)). Octaves, normalization, range and creation below are 26.3's only; the seeding in [In a world](#normal-noise-normalnoise) is the same in 26.2.
 
 **Octaves** (`buildOctaves`): `frequency = 2^base_octave`, `amplitude = base_amplitude`, times `2^(count−1) / (2^count − 1)` unless normalization is disabled. For each `i` in `0..octave_count`: the modifier is 1 if the list is empty, else `amplitude_modifiers[i]`. A non-zero modifier adds the octave `(index base_octave + i, frequency, amplitude · modifier)`. Then `frequency *= 2` and `amplitude *= 0.5`. The game computes the powers with `Math.pow(2.0, n)` and `Math.pow(0.5, n)`, which are exact for these integer `n`. spyglass builds them from the exponent bits.
 
@@ -79,6 +91,8 @@ From the 26.3 bytecode (`RandomState`'s compile context, `NormalNoise.createForL
 
 Its range is the parameters' `range()` as usual. For 26.3's two noises (`base_octave` −7, two octaves, `base_amplitude` 0.9494731054427981), each stack builds and drops the zero octave, skips 5 × 262 draws, then builds layers 1 and 0.
 
+_Versions:_ 26.2 makes these two noises with `NormalNoise.createLegacyNetherBiome`, from the same sources, keyed the same way, and with the same draws (steps 1–3, with `amps` = the `amplitudes` list). Its values follow [26.2's normal noise](#262-normal-noise-normalnoise): the amplitudes as they are, no `base_amplitude`, and the two sets summed separately.
+
 ## Simplex (`SimplexNoise`)
 
 From the 26.3 bytecode. The End's outer islands use it ([density-functions.md](density-functions.md#end_outer_islands)). In 26.3 it's a `GradientNoise`, like Perlin, and returns `f32`.
@@ -99,9 +113,124 @@ From the 26.3 bytecode. The End's outer islands use it ([density-functions.md](d
 
 3D isn't used by vanilla worldgen and isn't ported.
 
+_Versions:_ 26.2's 2D simplex returns the `f64` `70 · ((n0 + n1) + n2)`, not narrowed, and doesn't add the offsets ([26.2](#262-simplex-simplexnoise)).
+
 ## Parity descriptions
 
 The game describes a noise's setup with `parityConfigString`: per Perlin octave, `xo=%.3f, yo=%.3f, zo=%.3f, p0=%d, p255=%d` (the offsets as `float`, `perms[0]` and `perms[255]` as signed bytes). For a normal noise, the first stack's octaves come in order, with `null` for skipped ones, then the second stack's. The probe records them. Comparing them to spyglass's layers separates a construction bug from a sampling bug.
+
+_Versions:_ 26.2 formats each octave the same way (`NoiseUtils` is byte-identical in all three versions), but wraps them differently: per set, the first octave, the amplitudes (`%.2f`) and every level index, lowest frequency first, with `null` for a zero amplitude; the normal noise lists `first`, then `second`.
+
+## 26.2
+
+From the 26.2 bytecode (`net.minecraft.world.level.levelgen.synth`). 26.2 has the 1.18–1.21 noise: `ImprovedNoise`, the octave set `PerlinNoise`, `NormalNoise`, `SimplexNoise` and `BlendedNoise`. Every step is `f64`, samples included, and nothing is narrowed to `f32`. Construction draws, seeding and the gradient table are 26.3's. `Mth.smoothstep` and `Mth.lerp3` are the `double` overloads: `smoothstep(t) = ((t·t)·t) · ((t·((t·6.0) − 15.0)) + 10.0)`, and `lerp3` as in [Perlin](#perlin-perlinnoise-gradientnoise).
+
+### 26.2 improved noise (`ImprovedNoise`)
+
+Perlin and smeared Perlin in one class. **Construction** is [Perlin's](#perlin-perlinnoise-gradientnoise), with the same draws and table: `xo`, `yo`, `zo`, then `j = nextInt(256 − i)` and a swap of `p[i]` and `p[i + j]`. `p(i) = p[i & 255] & 255`.
+
+**`noise(x, y, z, yScale, yMax)`** doesn't wrap; callers do:
+
+1. `xx = x + xo` (likewise `y`, `z`); `xi = Mth.floor(xx)`; `xf = xx − (double) xi`, kept in `f64`.
+2. `fudge` is 0 if `yScale == 0`. Otherwise (NaN counts as non-zero) `r = yMax` if `yMax ≥ 0 && yMax < yf`, else `yf`; `fudge = (double) Mth.floor(r / yScale + 1.0000000116860974E-7) · yScale`.
+3. Perlin's corner hashes. Each corner's value is `gradDot(h, xf − dx, (yf − fudge) − dy, zf − dz)`, with `gradDot = ((double) gx·x + (double) gy·y) + (double) gz·z` in `f64`.
+4. `smoothstep` of `xf`, `yf` (without the fudge) and `zf`, then `lerp3`, in `f64`.
+
+`noise(x, y, z)` is `noise(x, y, z, 0.0, 0.0)`: plain Perlin. `noiseWithDerivative` has no worldgen caller and isn't described.
+
+### 26.2 octave set (`PerlinNoise`)
+
+An octave set has a `firstOctave`, a list of `n` `f64` `amplitudes` and `n` levels: level `i` is octave `firstOctave + i`, lowest frequency first, and is empty when `amplitudes[i]` is zero (`-0.0` included; NaN counts as non-zero). Zero entries still count in `n`.
+
+**Construction** (`new` initialization, used by `NormalNoise.create`): `factory = source.forkPositional()`; for each `i` in `0..n` with a non-zero amplitude, level `i` is `ImprovedNoise(factory.fromHashOf("octave_" + (firstOctave + i)))`, the octave in signed decimal. There is no check against positive octaves.
+
+**Legacy construction** (for the Nether biome noises and `BlendedNoise`): steps 1–3 of [the Nether biome noises](#the-nether-biome-noises), with `amps` = `amplitudes`, `zero = −firstOctave` and `ImprovedNoise` for `PerlinNoise`. It also fails if the number of levels built differs from the number of non-zero amplitudes.
+
+**Factors**: `inF0 = Math.pow(2.0, (double)(−zero))`, i.e. `2^firstOctave`; `valF0 = Math.pow(2.0, (double)(n − 1)) / (Math.pow(2.0, (double) n) − 1.0)`.
+
+**`wrap(d)`** is `d − (double) Mth.lfloor(d / 3.3554432E7 + 0.5) · 3.3554432E7`, with no fast path. It returns `d` itself wherever 26.3's fast path does, so it equals 26.3's `wrap` for every input.
+
+**`getValue(x, y, z, yScale, yMax)`**:
+
+```text
+sum = 0.0; inF = inF0; valF = valF0                       // f64
+for i in 0..n:
+    if level i exists:
+        v = level.noise(wrap(x·inF), wrap(y·inF), wrap(z·inF), yScale·inF, yMax·inF)
+        sum = sum + (amplitudes[i] · v) · valF
+    inF = inF · 2.0
+    valF = valF / 2.0
+return sum
+```
+
+`getValue(x, y, z)` passes `yScale = yMax = 0`. `getOctaveNoise(i)` is level `n − 1 − i`, so 0 is the highest frequency. `maxValue` is the same sum with `2.0` for each noise value (`edgeValue(2.0)`); it serves density-function ranges only, not sampling (not confirmed in the bytecode).
+
+### 26.2 normal noise (`NormalNoise`)
+
+**Parameters** (`worldgen/noise/*.json`, codec `NormalNoise$NoiseParameters`): `firstOctave` (required `int`) and `amplitudes` (required list of `double`), with no range checks.
+
+**Creation**: `create` builds `first`, then `second`, each a new-initialization octave set from the same `firstOctave` and `amplitudes`; each calls `forkPositional()` on the source in turn, so the octave seeds are 26.3's. `createLegacyNetherBiome` builds both with legacy construction from the same source.
+
+**Value factor**, in the constructor:
+
+```text
+lo = Integer.MAX_VALUE; hi = Integer.MIN_VALUE
+for each index i with amplitudes[i] != 0.0: lo = min(lo, i); hi = max(hi, i)
+k = hi − lo                                               // wrapping int
+valueFactor = 0.16666666666666666 / (0.1 · (1.0 + 1.0 / (double)(k + 1)))
+```
+
+The factor depends only on the span of non-zero indices, not on the amplitudes' sizes. With every amplitude zero, `k = MIN_VALUE − MAX_VALUE = 1` (wrapping), so the factor is `0.16666666666666666 / 0.15000000000000002`; the noise is 0 anyway, with no levels. The amplitudes weight octaves only in the octave sets' sums. It equals 26.3's [legacy normalization](#legacy-normalization) with `base_amplitude` 1 (`0.5 · 0.3333333333333333` is `0.16666666666666666`), but 26.3 folds it into `f32` amplitudes, so even `legacy` isn't bit-identical.
+
+**`getValue(x, y, z)`**:
+
+```text
+a = first.getValue(x, y, z)
+b = second.getValue(x · 1.0181268882175227, y · 1.0181268882175227, z · 1.0181268882175227)
+return (a + b) · valueFactor                              // f64
+```
+
+So each octave's weight is `amplitudes[i] · valF0 / 2^i`, applied inside its set, and the two sets are summed separately: no interleaving and no per-layer amplitude. `maxValue = (first.maxValue + second.maxValue) · valueFactor`.
+
+### 26.2 simplex (`SimplexNoise`)
+
+**Construction**: `xo`, `yo`, `zo` = `nextDouble() · 256.0`, then the permutation as Perlin's. These are the draws of 26.3's simplex with offset scale 256 (`int[512] p`, of which only `p[0..256]` is used).
+
+**2D `getValue(x, y)`** is 26.3's [2D `get`](#simplex-simplexnoise) operation by operation, except that it **doesn't add** `xo` and `yo` (26.3's End noise is made with zero offsets to match), and it returns the `f64` `70.0 · ((n0 + n1) + n2)`, not narrowed. 26.3's `x + 0.0` turns a `−0.0` input into `+0.0`, which can only change the sign of an exactly zero result.
+
+The End's islands use it through `DensityFunctions$EndIslandDensityFunction`, which compares the `f64` sample against `(double) −0.9f` ([density-functions.md](density-functions.md#end_outer_islands)).
+
+### 26.2 blended noise (`BlendedNoise`)
+
+26.2's [old blended noise](density-functions.md#old_blended_noise), in `f64`.
+
+**Construction** from a source `r`: `minLimit` = `PerlinNoise.createLegacyForBlendedNoise(r, −15..0)`, then `maxLimit` the same, then `main` with `−7..0`. Each is a legacy-constructed octave set with every amplitude 1, so octave 0 is built first, then −1 down to −15 (or −7), none skipped. 26.3 draws in the same order (not confirmed in the bytecode: inferred from the same call order). The source is 26.3's: `LegacyRandomSource(seed)` when `legacy_random_source` is true, else `factory.fromHashOf("minecraft:terrain")`.
+
+Fields: `xzMul = 684.412 · xz_scale`, `yMul = 684.412 · y_scale`, and `xz_factor`, `y_factor`, `smear_scale_multiplier` from data.
+
+**`compute`** at block `(bx, by, bz)`, with `octave(set, i)` = `set.getOctaveNoise(i)` and `wrap` the octave set's:
+
+```text
+x = (double) bx · xzMul; y = (double) by · yMul; z = (double) bz · xzMul
+mx = x / xz_factor; my = y / y_factor; mz = z / xz_factor
+smear = yMul · smear_scale_multiplier
+mainSmear = smear / y_factor
+main = 0; f = 1.0
+for i in 0..8:
+    if octave(main, i) exists:
+        main = main + octave(main, i).noise(wrap(mx·f), wrap(my·f), wrap(mz·f), mainSmear·f, my·f) / f
+    f = f / 2.0
+t = (main / 10.0 + 1.0) / 2.0
+min = 0; max = 0; f = 1.0
+for i in 0..16:
+    wx = wrap(x·f); wy = wrap(y·f); wz = wrap(z·f)
+    if octave(minLimit, i) exists: min = min + octave(minLimit, i).noise(wx, wy, wz, smear·f, y·f) / f
+    if octave(maxLimit, i) exists: max = max + octave(maxLimit, i).noise(wx, wy, wz, smear·f, y·f) / f
+    f = f / 2.0
+return Mth.clampedLerp(t, min / 512.0, max / 512.0) / 128.0
+```
+
+`Mth.clampedLerp(t, a, b)` is `a` if `t < 0`, `b` if `t > 1`, else `a + t·(b − a)`. The game skips the `min` sum when `t ≥ 1` and the `max` sum when `t ≤ 0` (NaN skips neither); `clampedLerp` ignores the skipped side, so computing both is exact. The smear's `yMax` is the unwrapped `y·f` (`my·f` for `main`).
 
 ## Testing
 

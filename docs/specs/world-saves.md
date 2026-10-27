@@ -1,6 +1,6 @@
 # World saves
 
-Status: stable. Implemented in `spyglass-world` (reading) and `spyglass` (assessment, `inspect_save`), for saves of any version; answers need a bundle with the save's data version, and the Default preset.
+Status: stable. Implemented in `spyglass-world` (reading) and `spyglass` (assessment, `inspect_save`), for saves of any version; answers need a bundle with the save's data version, and the Default preset. 26.2 and 26.4-snapshot-5 differences are drafted in _Versions_ notes from the bytecode and not yet checked against the oracle.
 
 spyglass reads a save to answer for it: its seed, version, generators, data packs, spawn and single player. It never writes to a save. Answers are only as exact as the world allows, so the assessment lists everything that makes them inexact or impossible ([warnings](#warnings)).
 
@@ -67,6 +67,17 @@ A vanilla dedicated server opening a save that enables a pack it doesn't have lo
 - A length longer than the location's sectors is malformed, as `RegionFile` treats it.
 
 The scan reads every chunk, without building its tree (`nbt::read_root_int`). The largest save checked (344,000 chunks, 4.7 GB) takes about 8 seconds.
+
+## Chunk biomes
+
+spyglass doesn't read chunk biomes. A chunk's `sections` list (`SerializableChunkData`) has one compound per section, keyed by `Y`, and up to 26.3 its `biomes` is a paletted container of quart biomes, 4 × 4 × 4 per section: the biome source's answers, as spyglass's quart lookup gives them.
+
+_Versions:_ 26.4-snapshot-5 stores a biome per block. A section's `biomes` is a 16 × 16 × 16 container (`PalettedContainerFactory.biomeContainerCodec`), and a section may also have `noise_biomes`, the 4 × 4 × 4 quart container (`noiseBiomeContainerCodec`), written only while the chunk still carries its quart biomes (`NoiseBiomeChunk`):
+
+- Quart biomes are filled at the new `NOISE_BIOMES` chunk status, as 26.3 fills a chunk's biomes. The game drops them at `FEATURES`, so only proto chunks saved before that have `noise_biomes`.
+- Block biomes are filled at the new `BIOMES` status by `CachedChunkBiomeResolver`: `BiomeManager`'s zoom (the fiddled nearest of eight quarts, seeded with `BiomeManager.obfuscateSeed(seed)`) over the quart biomes of the chunk and its neighbours. So each stored block biome is 26.3's `BiomeManager.getBiome(x, y, z)` for the same world. The zoom's arithmetic matches `BiomeManager`'s; that a neighbour's quart biomes are always still there when it runs is inferred, not confirmed in the bytecode.
+
+For reading 26.4 saves, the data version tells the shapes apart: `biomes` holds quarts before 26.4 and blocks from it. A finished chunk's block biomes can't be turned back into quarts exactly, so comparing them with spyglass's quart answers needs `BiomeManager`'s zoom applied to those answers; where `noise_biomes` is present, it compares directly.
 
 ## Limits
 

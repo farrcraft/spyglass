@@ -2,7 +2,7 @@
 
 - Status: In progress
 - Depends on: [07](completed/07-terrain-and-validity.md)
-- Plans: [m08-dimensions](../plans/completed/m08-dimensions.md) (completed); [m08-versions](../plans/m08-versions.md) (draft)
+- Plans: [m08-dimensions](../plans/completed/m08-dimensions.md) (completed); [m08-versions](../plans/m08-versions.md) (in progress)
 
 ## Goal
 

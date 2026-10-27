@@ -31,3 +31,6 @@ Start from [template.md](template.md). Files are named `NNNN-kebab-case-title.md
 | [0023](0023-dimensions-in-the-public-api.md)                  | Dimensions in the public API                                          | Accepted                                                             |
 | [0024](0024-dimensions-in-the-search-language.md)             | Dimensions in the search language                                     | Superseded by [0025](0025-inferring-dimensions-in-search-queries.md) |
 | [0025](0025-inferring-dimensions-in-search-queries.md)        | Inferring dimensions in search queries                                | Accepted                                                             |
+| [0026](0026-how-game-versions-coexist.md)                     | How game versions coexist                                             | Proposed                                                             |
+| [0027](0027-oracle-harness-across-versions.md)                | The oracle harness across versions                                    | Proposed                                                             |
+| [0028](0028-supported-versions-and-ci.md)                     | Supported versions, snapshots and CI                                  | Proposed                                                             |

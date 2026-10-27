@@ -270,7 +270,7 @@ Specs and ADRs that govern this: [noise.md](../../specs/noise.md), [rng.md](../.
 
 Agreed on 2026-10-26:
 
-- **Two plans:** this one for the dimensions, and m08-versions, written once 26.4 nears release, for versions, the guide and CI.
+- **Two plans:** this one for the dimensions, and m08-versions for versions, the guide and CI. (This plan first said m08-versions would wait until 26.4 neared release. That wasn't the user's decision, and on 2026-10-26 it was planned at once, with 26.4 tracked through its snapshots: [m08-versions](../m08-versions.md).)
 - **Versions:** both 26.4 (on release, tracked through its snapshots) and 26.2 are to be supported. That's m08-versions' scope. 26.2 brings the older noise and density formats, so it's the larger part.
 - **CI:** GitHub Actions, downloading the server jar from Mojang during each run, with nothing game-derived committed or kept (ADR 0008). An ADR in m08-versions.
 

@@ -6,4 +6,4 @@ Code must not reference plans. Anything durable a plan produces belongs in a spe
 
 ## Active
 
-None. m08-versions, for milestone [08](../roadmap/08-dimensions-and-versions.md), is to be written once 26.4 nears release.
+- [m08-versions](m08-versions.md) (draft): 26.2, 26.3 and 26.4 (through its snapshots) side by side, CI, and the guide for adding a version, for milestone [08](../roadmap/08-dimensions-and-versions.md).

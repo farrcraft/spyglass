@@ -96,7 +96,7 @@ Specs and ADRs that govern this: [density-functions.md](../specs/density-functio
 - [x] Find why the isolated column went from 243 µs (milestone 07's close, 0ef3687) to 393 µs: bench both commits on the same machine in one sitting, then bisect if it's real. Fix it if it's a mistake rather than a cost of supporting versions. Mostly the bench's noise; the real regression is codegen, not code (see the notes). Fixed by measuring with a `dist` profile (fat LTO, one codegen unit), decided 2026-10-27.
 - [x] Bench lines before, for every supported version: the bench's terrain lines, plus `structure_layout`, confirmed search and region lines, recorded in the notes. Three rounds per version under `dist`; ranges in the notes.
 - [ ] A profile of an isolated column, a nearby column, a 40 × 25 region and a village layout, for 26.3 and 26.2, split into tree-walking, allocation, memo, noise, `find_top_surface`, aquifer and the rest. Done for both families (notes), with timing spans behind a `timing` feature and the `density_timing` example, since this machine has no profiler that runs unelevated.
-- [ ] Prototype the hottest part of the breakdown, to check the design reaches 150 µs before building all of it.
+- [x] Prototype the hottest part of the breakdown, to check the design reaches 150 µs before building all of it. Two prototypes (notes): a vectorized noise kernel (no), and the point path's split inside `find_top_surface`. Projection: about 200 to 220 µs from removing the interpreter's overhead; 150 µs would need more (see phase 4).
 - [ ] ADR: the flattened evaluation. Covers the program form, the runners, buffers, which kernels are SIMD and how (auto-vectorization, `std::arch` with runtime detection, or a crate), the families, and what happens to the interpreter.
 
 ### Phase 2: the program, 26.3's family
@@ -106,6 +106,8 @@ Specs and ADRs that govern this: [density-functions.md](../specs/density-functio
 - [ ] Differential tests against the interpreter on every bundle's functions, points and volumes.
 - [ ] Switch the climate router, terrain, spawn and corner constraints to the program. `oracle-test` passes for 26.3, both 26.4 snapshots and the test pack.
 
+- [ ] Measure every line against the before lines, then decide the isolated column's target with the user (agreed 2026-10-27: decided here, not before).
+
 ### Phase 3: kernels
 
 - [ ] Noise octaves (`ImprovedNoise`, `SimplexNoise`, the blended noise) over buffers, bit-exact per lane; SIMD where the profile says it pays.
@@ -114,9 +116,10 @@ Specs and ADRs that govern this: [density-functions.md](../specs/density-functio
 
 ### Phase 4: surface levels and the aquifer
 
-- [ ] `find_top_surface` batched across the aquifer's 49 samples.
+- [ ] `find_top_surface` batched across the aquifer's 49 samples, with the point path's arithmetic.
+- [ ] Prototype a per-seed cache of y-independent values at quart positions, shared between the volume path's cell corners and `find_top_surface`'s points, and across columns. First show the two paths give the same bits for those nodes; then measure nearby columns, regions, layouts and the isolated column.
 - [ ] Whatever else the profile shows in the aquifer's scan.
-- [ ] The isolated column at or under 150 µs (26.3). Exit criterion 2.
+- [ ] The isolated column at or under the target set after phase 2 (26.3). Exit criterion 2.
 
 ### Phase 5: 26.2's family
 
@@ -151,7 +154,8 @@ Agreed on 2026-10-27: the interpreter stays as a test reference, 26.2's target i
 - **How SIMD is done.** Researched on 2026-10-27 (see [SIMD options](#simd-options)). The lead candidate is `fearless_simd`, unless the profile shows the column's time is mostly tree-walking and allocation. In that case, auto-vectorized loops with `multiversion` may be enough and add no SIMD API.
 - **The interpreter survives as a test reference** (behind `cfg(test)` or a test-only feature) after the switch, for the differential tests. It never evaluates outside tests.
 - **Measurements use the `dist` profile:** release with fat LTO and one codegen unit, so speed depends on the code, not on how crates are split (see the notes). `cargo xtask bench`, the exit criterion and binaries for users use it; tests stay on release.
-- **A target for 26.2:** its isolated column within 2× of 26.3's. The milestone asks that every family be covered but sets no number.
+- **A target for 26.2:** its isolated column within 2× of 26.3's.
+- **The isolated column's target is decided after phase 2** (2026-10-27), with the flattened program measured, since phase 1's projection is 200 to 220 µs against the milestone's 150 µs. The milestone asks that every family be covered but sets no number.
 
 ### SIMD options
 
@@ -191,6 +195,11 @@ Sources:
 - crates.io metadata for each crate, fetched 2026-10-27.
 
 ## Notes
+
+- 2026-10-27: **The point path's split inside `find_top_surface`.** A point evaluation of its density visits about 40 nodes: about 6 shifted-noise samples, 2 shift samples, 2 splines, and arithmetic nodes and constants. A constant costs about 30 ns per visit, which is all tree-walking and memo overhead. So perhaps 0.2 to 0.4 µs of each 1.24 µs point evaluation is overhead a flattened program removes; the rest is noise and spline arithmetic. Batching the 49 positions can't skip evaluations: each needs one, with the point path's arithmetic.
+  - **Projection for 26.3's isolated column** (about 266 µs now): about −20 µs from a flattened point program, about −25 µs from the volume path without memo copies and per-node allocations, little from batching or SIMD noise. That gives about 200 to 220 µs, 2.3 to 2.5 times faster than the game, but not 150 µs.
+  - **What could go further**: the `find_top_surface` positions are on the quart grid that `final_density`'s cell corners use, and the y-independent work (continents, erosion and ridges noise, the shaping splines) at those positions could be computed once per seed and shared between both paths and across columns. Unproven: it needs the two paths to give the same bits for those nodes. It helps nearby columns, regions and layouts more than isolated columns. Phase 4 prototypes it.
+  - **Decided with the user**: build phase 2, measure, and settle the target then.
 
 - 2026-10-27: **Prototype: a batched noise kernel doesn't pay.** 26.3's per-octave volume loop (`PerlinNoise::add_to_volume`), rewritten to compute 8 y positions' fractions first and then their smoothsteps and `lerp3`s in a fixed-width loop the compiler can vectorize, with the same operations in the same order. Bit-identical over 106,112 values (four scales, three volume shapes, 16 noises). Against the current loop:
 

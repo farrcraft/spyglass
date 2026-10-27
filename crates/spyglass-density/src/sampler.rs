@@ -1029,6 +1029,8 @@ impl Sampler {
 
     /// The value at `pos`, remembered in its slot.
     pub(crate) fn eval(&self, memo: &mut Memo, pos: Pos) -> f32 {
+        #[cfg(feature = "timing")]
+        let _t = crate::timing::detail(self.node.point_kind());
         if self.slot == NO_SLOT {
             return self.node.compute(memo, pos);
         }
@@ -1065,7 +1067,7 @@ impl Sampler {
 }
 
 impl Node {
-    /// The node's type, for [`timing`](crate::timing).
+    /// The node's type, for [`timing`](crate::timing) on the volume path.
     #[cfg(feature = "timing")]
     pub(crate) fn kind(&self) -> &'static str {
         match self {
@@ -1109,6 +1111,53 @@ impl Node {
             Node::DistanceToPoint { .. } => "volume: DistanceToPoint",
             Node::EndIslands(..) => "volume: EndIslands",
             Node::DomainWarp { .. } => "volume: DomainWarp",
+        }
+    }
+
+    /// The node's type, for [`timing`](crate::timing) on the point path.
+    #[cfg(feature = "timing")]
+    pub(crate) fn point_kind(&self) -> &'static str {
+        match self {
+            Node::Constant(..) => "point: Constant",
+            Node::Noise { .. } => "point: Noise",
+            Node::NoiseShiftedXz { .. } => "point: NoiseShiftedXz",
+            Node::NoiseShiftedXyz { .. } => "point: NoiseShiftedXyz",
+            Node::SmearedNoise { .. } => "point: SmearedNoise",
+            Node::ShiftA(..) => "point: ShiftA",
+            Node::ShiftB(..) => "point: ShiftB",
+            Node::Shift(..) => "point: Shift",
+            Node::Add(..) => "point: Add",
+            Node::Sub(..) => "point: Sub",
+            Node::Mul(..) => "point: Mul",
+            Node::MulConst(..) => "point: MulConst",
+            Node::Div(..) => "point: Div",
+            Node::ConstDiv(..) => "point: ConstDiv",
+            Node::Min(..) => "point: Min",
+            Node::MinConst(..) => "point: MinConst",
+            Node::Max(..) => "point: Max",
+            Node::MaxConst(..) => "point: MaxConst",
+            Node::Unary(..) => "point: Unary",
+            Node::Round(..) => "point: Round",
+            Node::RoundInteger(..) => "point: RoundInteger",
+            Node::Clamp(..) => "point: Clamp",
+            Node::MathClamp(..) => "point: MathClamp",
+            Node::Pow(..) => "point: Pow",
+            Node::PowConstBase(..) => "point: PowConstBase",
+            Node::PowConstExponent(..) => "point: PowConstExponent",
+            Node::Lerp { .. } => "point: Lerp",
+            Node::RangeChoice { .. } => "point: RangeChoice",
+            Node::IntervalSelect { .. } => "point: IntervalSelect",
+            Node::Slice { .. } => "point: Slice",
+            Node::Interpolated { .. } => "point: Interpolated",
+            Node::Upscale(..) => "point: Upscale",
+            Node::UpscaleNearest { .. } => "point: UpscaleNearest",
+            Node::FindTopSurface { .. } => "point: FindTopSurface",
+            Node::Gradient { .. } => "point: Gradient",
+            Node::GradientRepeat { .. } => "point: GradientRepeat",
+            Node::Spline(..) => "point: Spline",
+            Node::DistanceToPoint { .. } => "point: DistanceToPoint",
+            Node::EndIslands(..) => "point: EndIslands",
+            Node::DomainWarp { .. } => "point: DomainWarp",
         }
     }
 

@@ -1,6 +1,6 @@
 # Noise
 
-Status: stable. Implemented in `spyglass-noise` for 26.3; checked against the game by the oracle's [probe files](oracle.md#probe-files). 26.4-snapshot-5 is implemented and checked against the oracle; 26.2's differences are drafted in _Versions_ notes from the bytecode and not yet checked.
+Status: stable. Implemented in `spyglass-noise` for 26.3; checked against the game by the oracle's [probe files](oracle.md#probe-files). 26.4-snapshot-5 is implemented and checked against the oracle; 26.2's noise ([26.2](#262)) is implemented in `spyglass_noise::v1_21` and checked against its probe files; the rest of 26.2 is drafted in _Versions_ notes from the bytecode.
 
 26.3 reworked noise since 1.21. `ImprovedNoise` is gone, samples are `float`, and the noise JSON has a new shape, so ports of older versions don't apply. Ported from the 26.3 bytecode (`net.minecraft.world.level.levelgen.synth`). Coordinates are `f64`; samples are `f32`. The type of each step below is part of the spec.
 
@@ -148,7 +148,7 @@ An octave set has a `firstOctave`, a list of `n` `f64` `amplitudes` and `n` leve
 
 **Factors**: `inF0 = Math.pow(2.0, (double)(−zero))`, i.e. `2^firstOctave`; `valF0 = Math.pow(2.0, (double)(n − 1)) / (Math.pow(2.0, (double) n) − 1.0)`.
 
-**`wrap(d)`** is `d − (double) Mth.lfloor(d / 3.3554432E7 + 0.5) · 3.3554432E7`, with no fast path. It returns `d` itself wherever 26.3's fast path does, so it equals 26.3's `wrap` for every input.
+**`wrap(d)`** is `d − (double) Mth.lfloor(d / 3.3554432E7 + 0.5) · 3.3554432E7`, with no fast path. It returns `d` itself wherever 26.3's fast path does. Far out the two differ: `lfloor` saturates where 26.3 floors in `f64`, so once `|d / 2^25 + 0.5|` reaches 2^63 (`|d|` about 2^88) 26.2 subtracts `±2^63 · 2^25` instead, and it keeps `±∞` where 26.3 gives NaN. No worldgen coordinate comes near.
 
 **`getValue(x, y, z, yScale, yMax)`**:
 
@@ -163,11 +163,11 @@ for i in 0..n:
 return sum
 ```
 
-`getValue(x, y, z)` passes `yScale = yMax = 0`. `getOctaveNoise(i)` is level `n − 1 − i`, so 0 is the highest frequency. `maxValue` is the same sum with `2.0` for each noise value (`edgeValue(2.0)`); it serves density-function ranges only, not sampling (not confirmed in the bytecode).
+`getValue(x, y, z)` passes `yScale = yMax = 0`. `getOctaveNoise(i)` is level `n − 1 − i`, so 0 is the highest frequency. `maxValue` is the same sum with `2.0` for each noise value (`edgeValue(2.0)`); the constructor computes it, and it serves density-function ranges, not sampling. `maxBrokenValue(y)` is `edgeValue(y + 2.0)`, where `edgeValue(m)` sums `(amplitudes[i] · m) · valF` over the non-empty levels with `valF` halving per level, empty ones included.
 
 ### 26.2 normal noise (`NormalNoise`)
 
-**Parameters** (`worldgen/noise/*.json`, codec `NormalNoise$NoiseParameters`): `firstOctave` (required `int`) and `amplitudes` (required list of `double`), with no range checks.
+**Parameters** (`worldgen/noise/*.json`, codec `NormalNoise$NoiseParameters`): `firstOctave` (required `int`) and `amplitudes` (required list of `double`), with no range checks. A file with `firstOctave` and no `base_octave` is this form; anything else is read as 26.3's. Parameters in this form only bind to 26.2's noise: 26.3's normal noise refuses them.
 
 **Creation**: `create` builds `first`, then `second`, each a new-initialization octave set from the same `firstOctave` and `amplitudes`; each calls `forkPositional()` on the source in turn, so the octave seeds are 26.3's. `createLegacyNetherBiome` builds both with legacy construction from the same source.
 
@@ -181,6 +181,8 @@ valueFactor = 0.16666666666666666 / (0.1 · (1.0 + 1.0 / (double)(k + 1)))
 ```
 
 The factor depends only on the span of non-zero indices, not on the amplitudes' sizes. With every amplitude zero, `k = MIN_VALUE − MAX_VALUE = 1` (wrapping), so the factor is `0.16666666666666666 / 0.15000000000000002`; the noise is 0 anyway, with no levels. The amplitudes weight octaves only in the octave sets' sums. It equals 26.3's [legacy normalization](#legacy-normalization) with `base_amplitude` 1 (`0.5 · 0.3333333333333333` is `0.16666666666666666`), but 26.3 folds it into `f32` amplitudes, so even `legacy` isn't bit-identical.
+
+26.3's data carries these weights over: for every noise in both versions' data, `base_octave` is `firstOctave`, the modifiers are the amplitudes, and the stored `base_amplitude` makes 26.3's standard normalized layer weight (`normalizationFactor · octave amplitude`, before narrowing) equal 26.2's `valueFactor · amplitudes[i] · valF0 / 2^i` to within rounding. The ignored test `spyglass-noise/tests/versions.rs` checks it on the two bundles: 63 noises, within 5·10⁻¹⁶ relative, every weight the same `f32`. The values still differ, since 26.2 never narrows.
 
 **`getValue(x, y, z)`**:
 
@@ -197,6 +199,16 @@ So each octave's weight is `amplitudes[i] · valF0 / 2^i`, applied inside its se
 **Construction**: `xo`, `yo`, `zo` = `nextDouble() · 256.0`, then the permutation as Perlin's. These are the draws of 26.3's simplex with offset scale 256 (`int[512] p`, of which only `p[0..256]` is used).
 
 **2D `getValue(x, y)`** is 26.3's [2D `get`](#simplex-simplexnoise) operation by operation, except that it **doesn't add** `xo` and `yo` (26.3's End noise is made with zero offsets to match), and it returns the `f64` `70.0 · ((n0 + n1) + n2)`, not narrowed. 26.3's `x + 0.0` turns a `−0.0` input into `+0.0`, which can only change the sign of an exactly zero result.
+
+**3D `getValue(x, y, z)`** doesn't add the offsets either, and is all `f64`, with the constants `F3 = 0.3333333333333333` and `G3 = 0.16666666666666666` as the bytecode loads them:
+
+1. `s = ((x + y) + z) · F3`; `i`, `j`, `k` = `Mth.floor` of `x + s`, `y + s`, `z + s`; `t = (double)((i + j) + k) · G3`, the sums in wrapping `i32`; `x0 = x − ((double)i − t)`, likewise `y0`, `z0`.
+2. The middle corners `(i1, j1, k1)` and `(i2, j2, k2)`: if `x0 ≥ y0`, then `(1,0,0, 1,1,0)` if `y0 ≥ z0`, else `(1,0,0, 1,0,1)` if `x0 ≥ z0`, else `(0,0,1, 1,0,1)`; otherwise `(0,0,1, 0,1,1)` if `y0 < z0`, else `(0,1,0, 0,1,1)` if `x0 < z0`, else `(0,1,0, 1,1,0)`. Every comparison is false for NaN.
+3. `x1 = (x0 − i1) + G3`, `x2 = (x0 − i2) + F3`, `x3 = (x0 − 1.0) + 0.5`, likewise y and z.
+4. With `ii = i & 255` (likewise `jj`, `kk`), corner `c`'s gradient is `p(ii + di + p(jj + dj + p(kk + dk))) % 12` for its offsets `(di, dj, dk)`: `(0,0,0)`, the two middle corners, `(1,1,1)`.
+5. The result is `32.0 · (((n0 + n1) + n2) + n3)`, each corner with base 0.6.
+
+No worldgen in spyglass's scope calls it; it's ported for completeness and checked by the probe.
 
 The End's islands use it through `DensityFunctions$EndIslandDensityFunction`, which compares the `f64` sample against `(double) −0.9f` ([density-functions.md](density-functions.md#end_outer_islands)).
 
@@ -230,8 +242,10 @@ for i in 0..16:
 return Mth.clampedLerp(t, min / 512.0, max / 512.0) / 128.0
 ```
 
-`Mth.clampedLerp(t, a, b)` is `a` if `t < 0`, `b` if `t > 1`, else `a + t·(b − a)`. The game skips the `min` sum when `t ≥ 1` and the `max` sum when `t ≤ 0` (NaN skips neither); `clampedLerp` ignores the skipped side, so computing both is exact. The smear's `yMax` is the unwrapped `y·f` (`my·f` for `main`).
+`Mth.clampedLerp(t, a, b)` is `a` if `t < 0`, `b` if `t > 1`, else `a + t·(b − a)`. The game skips the `min` sum when `t ≥ 1` and the `max` sum when `t ≤ 0` (NaN skips neither). A port must skip too: `clampedLerp` ignores the skipped side except at the ends, but at `t = 1` exactly it lerps, reading the skipped `min` as 0 (`0 + 1·(b − 0)` is `b`, where `a + 1·(b − a)` can round off it), and at `t = 0` a skipped `max` can change the sign of a zero. The smear's `yMax` is the unwrapped `y·f` (`my·f` for `main`).
 
 ## Testing
 
 Committed unit tests cover `wrap`, the permutation, octave layout, the compensated sum, smeared Perlin's fudge and random use, and the `Mth` helpers ([ADR 0008](../adr/0008-game-derived-test-values-stay-local.md)). The ignored test `spyglass-noise/tests/probe.rs` reads each climate noise's parameters from the bundle, rebuilds it for every golden seed, and compares every `noise.json` sample bit for bit, plus the parity descriptions. Smeared Perlin is checked through old blended noise, in the density probe.
+
+26.2's primitives (`spyglass_noise::v1_21`) have hand-worked unit tests: `ImprovedNoise` on an identity permutation, smeared and not; octave-set construction (new and legacy draws), weights and `edgeValue`; the value factor for amplitude lists with leading, trailing, inner and all zeros; simplex in 2D and 3D; and blended noise's draws and formula. The same probe test reads 26.2's `noise.json`, whose cases name each primitive (`improved_noise`, `perlin_noise` with kinds `new` and `legacy`, `normal_noise` with kinds `create` and `legacy_nether_biome`, `simplex_noise`, `blended_noise`) and hold `f64` values; the bundle's noise form picks the normal noise family.

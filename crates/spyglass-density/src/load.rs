@@ -10,7 +10,7 @@ use spyglass_data::codec::{
     At, LoadErrorKind, LoadResult, double, field, float, full_id, int, int_field, out_of_range,
 };
 use spyglass_data::versions::Behavior;
-use spyglass_noise::{NormalNoiseParameters, Normalization};
+use spyglass_noise::{NormalNoiseParameters, Normalization, Parameters, v1_21};
 
 use crate::function::{
     Axis, Binary, BlendedNoise, DensityFunction, Df, DistanceMetric, Gradient, Points, Round,
@@ -584,11 +584,36 @@ fn parse_gradient(obj: &Map<String, Value>, at: &At<'_>) -> LoadResult<Gradient>
     Ok(gradient)
 }
 
-/// `NormalNoise.Parameters.CODEC`, with its defaults and `validate`.
+/// A noise, in either form (ADR 0026): 26.2's `{"firstOctave", "amplitudes"}` when it has
+/// `firstOctave` and no `base_octave`, else 26.3's (and 26.4's) `{"base_octave", ...}`.
 fn parse_noise(json: &Value, at: &At<'_>) -> LoadResult<NormalNoiseParameters> {
     let obj = json
         .as_object()
         .ok_or_else(|| at.error(LoadErrorKind::Shape("a noise object")))?;
+    if obj.contains_key("firstOctave") && !obj.contains_key("base_octave") {
+        parse_noise_v1_21(obj, at).map(NormalNoiseParameters::V1_21)
+    } else {
+        parse_noise_v26_3(obj, at).map(NormalNoiseParameters::V26_3)
+    }
+}
+
+/// 26.2's `NormalNoise.NoiseParameters.CODEC`: `firstOctave` (`Codec.INT`) and `amplitudes`
+/// (`Codec.DOUBLE.listOf()`), both required, with no range checks.
+fn parse_noise_v1_21(obj: &Map<String, Value>, at: &At<'_>) -> LoadResult<v1_21::NoiseParameters> {
+    let first_octave = int(field(obj, "firstOctave", at)?, &at.child("firstOctave"))?;
+    let list_at = at.child("amplitudes");
+    let amplitudes = field(obj, "amplitudes", at)?
+        .as_array()
+        .ok_or_else(|| list_at.error(LoadErrorKind::Shape("a list of numbers")))?
+        .iter()
+        .enumerate()
+        .map(|(i, a)| double(a, &list_at.child(&format!("[{i}]"))))
+        .collect::<LoadResult<_>>()?;
+    Ok(v1_21::NoiseParameters::new(first_octave, amplitudes))
+}
+
+/// `NormalNoise.Parameters.CODEC` (26.3 on), with its defaults and `validate`.
+fn parse_noise_v26_3(obj: &Map<String, Value>, at: &At<'_>) -> LoadResult<Parameters> {
     let ranged_int = |name: &'static str, min: i32, max: i32| -> LoadResult<Option<i32>> {
         obj.get(name)
             .map(|v| {
@@ -603,7 +628,7 @@ fn parse_noise(json: &Value, at: &At<'_>) -> LoadResult<NormalNoiseParameters> {
     };
     let base_octave = ranged_int("base_octave", -32, 32)?
         .ok_or_else(|| at.error(LoadErrorKind::Missing("base_octave")))?;
-    let mut p = NormalNoiseParameters::new(base_octave);
+    let mut p = Parameters::new(base_octave);
     if let Some(n) = ranged_int("octave_count", 1, 32)? {
         p.octave_count = n;
     }

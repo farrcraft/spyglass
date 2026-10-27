@@ -34,6 +34,10 @@ pub enum NoiseError {
     /// (`LegacyFbmInitializer`'s "Positive octaves are temporarily disabled").
     #[error("{}", self.reason())]
     PositiveOctaves,
+    /// 1.21-family parameters (`firstOctave` and `amplitudes`, as 26.2 has them) given to 26.3's
+    /// normal noise, which would sample them wrong.
+    #[error("{}", self.reason())]
+    Family,
 }
 
 impl NoiseError {
@@ -51,6 +55,10 @@ impl NoiseError {
             NoiseError::PositiveOctaves => {
                 "the legacy Nether biome noise can't have octaves above frequency 1"
             }
+            NoiseError::Family => {
+                "this is a 26.2 (1.21-family) noise, with firstOctave and amplitudes; 26.3's \
+                 noise can't sample it, and the 1.21-family density evaluator must"
+            }
         }
     }
 }
@@ -67,10 +75,33 @@ pub enum Normalization {
     Legacy,
 }
 
-/// `NormalNoise.Parameters`, as a `worldgen/noise/*.json` file gives them. Parsing JSON happens
-/// above this crate.
+/// A `worldgen/noise/*.json` entry, in the form its version's data has (ADR 0026). Each form
+/// belongs to one noise family, and only that family's noise samples it.
 #[derive(Debug, Clone, PartialEq)]
-pub struct NormalNoiseParameters {
+pub enum NormalNoiseParameters {
+    /// `{"base_octave", "octave_count", …}`, from 26.3 on (26.3, 26.4): [`NormalNoise`].
+    V26_3(Parameters),
+    /// `{"firstOctave", "amplitudes"}`, the 1.21 family (26.2):
+    /// [`v1_21::NormalNoise`](crate::v1_21::NormalNoise).
+    V1_21(crate::v1_21::NoiseParameters),
+}
+
+impl From<Parameters> for NormalNoiseParameters {
+    fn from(p: Parameters) -> Self {
+        NormalNoiseParameters::V26_3(p)
+    }
+}
+
+impl From<crate::v1_21::NoiseParameters> for NormalNoiseParameters {
+    fn from(p: crate::v1_21::NoiseParameters) -> Self {
+        NormalNoiseParameters::V1_21(p)
+    }
+}
+
+/// `NormalNoise.Parameters` (26.3 on), as a `worldgen/noise/*.json` file gives them. Parsing
+/// JSON happens above this crate.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Parameters {
     /// `base_amplitude`, default 1.0.
     pub base_amplitude: f64,
     /// `base_octave`: the first octave's frequency is `2^base_octave`.
@@ -84,10 +115,10 @@ pub struct NormalNoiseParameters {
     pub amplitude_modifiers: Vec<f64>,
 }
 
-impl NormalNoiseParameters {
+impl Parameters {
     /// Parameters with the codec's defaults for everything but `base_octave`.
     pub fn new(base_octave: i32) -> Self {
-        NormalNoiseParameters {
+        Parameters {
             base_amplitude: 1.0,
             base_octave,
             octave_count: 1,
@@ -126,7 +157,24 @@ pub struct NormalNoise {
 
 impl NormalNoise {
     /// `NormalNoise(Parameters)`.
+    ///
+    /// # Errors
+    ///
+    /// [`NoiseError::Family`] for 1.21-family parameters, which this noise can't sample; the
+    /// others for parameters outside the codec's ranges.
     pub fn new(parameters: &NormalNoiseParameters) -> Result<Self, NoiseError> {
+        match parameters {
+            NormalNoiseParameters::V26_3(p) => Self::from_parameters(p),
+            NormalNoiseParameters::V1_21(_) => Err(NoiseError::Family),
+        }
+    }
+
+    /// `NormalNoise(Parameters)`, for 26.3-form parameters.
+    ///
+    /// # Errors
+    ///
+    /// For parameters outside the codec's ranges.
+    pub fn from_parameters(parameters: &Parameters) -> Result<Self, NoiseError> {
         if !(-32..=32).contains(&parameters.base_octave) {
             return Err(NoiseError::BaseOctave);
         }
@@ -296,7 +344,7 @@ fn parity_normalization_factor(base_amplitude: f64, modifiers: &[f64]) -> f64 {
 }
 
 /// `NormalNoise.buildOctaves`.
-fn build_octaves(p: &NormalNoiseParameters) -> Vec<OctaveInfo> {
+fn build_octaves(p: &Parameters) -> Vec<OctaveInfo> {
     let mut frequency = exp2i(p.base_octave);
     let mut amplitude = p.base_amplitude;
     if p.normalize != Normalization::Disabled {
@@ -371,10 +419,10 @@ mod tests {
 
     #[test]
     fn octaves_skip_zero_modifiers() {
-        let mut p = NormalNoiseParameters::new(-10);
+        let mut p = Parameters::new(-10);
         p.octave_count = 6;
         p.amplitude_modifiers = vec![1.5, 0.0, 1.0, 0.0, 0.0, 0.0];
-        let noise = NormalNoise::new(&p).unwrap();
+        let noise = NormalNoise::from_parameters(&p).unwrap();
         let indices: Vec<_> = noise.octaves().iter().map(|o| o.octave_index).collect();
         assert_eq!(indices, [-10, -8]);
         assert_eq!(noise.octaves()[0].frequency, 1.0 / 1024.0);
@@ -394,16 +442,16 @@ mod tests {
     fn legacy_normalization_uses_the_parity_factor() {
         // Octaves 1 and 2 of three non-zero: lo 1, hi 2, so the deviation is
         // 0.1 · (1 + 1/3), and the factor 2 · 0.5 · (1/3) / that.
-        let mut p = NormalNoiseParameters::new(-4);
+        let mut p = Parameters::new(-4);
         p.octave_count = 3;
         p.base_amplitude = 2.0;
         p.amplitude_modifiers = vec![0.0, 1.0, 0.5];
         p.normalize = Normalization::Legacy;
-        let legacy = NormalNoise::new(&p).unwrap();
+        let legacy = NormalNoise::from_parameters(&p).unwrap();
         let parity = 2.0 * 0.5 * TARGET_DEVIATION / (0.1 * (1.0 + 1.0 / 2.0));
         assert_eq!(legacy.normalization_factor(), parity);
         p.normalize = Normalization::Enabled;
-        let enabled = NormalNoise::new(&p).unwrap();
+        let enabled = NormalNoise::from_parameters(&p).unwrap();
         let sum = enabled.amplitude_sum * (parity / enabled.normalization_factor());
         assert_eq!(legacy.amplitude_sum, sum);
         assert_eq!(legacy.octaves(), enabled.octaves());
@@ -413,10 +461,10 @@ mod tests {
     fn the_legacy_nether_biome_stack() {
         use spyglass_rng::LegacyRandomSource;
         // 26.3's nether/temperature: base octave -7, two octaves.
-        let mut p = NormalNoiseParameters::new(-7);
+        let mut p = Parameters::new(-7);
         p.octave_count = 2;
         p.base_amplitude = 0.949_473_105_442_798_1;
-        let noise = NormalNoise::new(&p).unwrap();
+        let noise = NormalNoise::from_parameters(&p).unwrap();
         let stack = noise
             .create_for_legacy_nether_biome(&mut LegacyRandomSource::new(5))
             .unwrap();
@@ -448,10 +496,10 @@ mod tests {
     fn legacy_nether_biome_layouts_it_cant_build_are_errors() {
         use spyglass_rng::LegacyRandomSource;
         let error = |base_octave, modifiers: Vec<f64>| {
-            let mut p = NormalNoiseParameters::new(base_octave);
+            let mut p = Parameters::new(base_octave);
             p.octave_count = modifiers.len() as i32;
             p.amplitude_modifiers = modifiers;
-            NormalNoise::new(&p)
+            NormalNoise::from_parameters(&p)
                 .unwrap()
                 .create_for_legacy_nether_biome(&mut LegacyRandomSource::new(0))
                 .unwrap_err()
@@ -463,10 +511,10 @@ mod tests {
 
     #[test]
     fn parameters_outside_the_codec_are_errors() {
-        let error = |f: fn(&mut NormalNoiseParameters)| {
-            let mut p = NormalNoiseParameters::new(0);
+        let error = |f: fn(&mut Parameters)| {
+            let mut p = Parameters::new(0);
             f(&mut p);
-            NormalNoise::new(&p).unwrap_err()
+            NormalNoise::from_parameters(&p).unwrap_err()
         };
         assert_eq!(error(|p| p.base_octave = -2000), NoiseError::BaseOctave);
         assert_eq!(error(|p| p.octave_count = 0), NoiseError::OctaveCount);
@@ -477,6 +525,20 @@ mod tests {
                 p.amplitude_modifiers = vec![1.0];
             }),
             NoiseError::AmplitudeModifiers
+        );
+    }
+
+    #[test]
+    fn each_family_samples_only_its_own_parameters() {
+        let p = Parameters::new(-3);
+        assert_eq!(
+            NormalNoise::new(&p.clone().into()),
+            NormalNoise::from_parameters(&p)
+        );
+        let v1_21 = crate::v1_21::NoiseParameters::new(-3, vec![1.0]);
+        assert_eq!(
+            NormalNoise::new(&v1_21.into()).unwrap_err(),
+            NoiseError::Family
         );
     }
 }

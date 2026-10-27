@@ -10,7 +10,7 @@ use spyglass_data::versions::Behavior;
 use spyglass_density::{
     Binary, Binder, ClimateRouter, DensityFunction, Loader, Resources, Sampler, Volume,
 };
-use spyglass_noise::Normalization;
+use spyglass_noise::{NormalNoiseParameters, Normalization, v1_21};
 
 /// Resources from `registry/id` keys.
 type Map = HashMap<String, Value>;
@@ -242,7 +242,11 @@ fn noise_parameters_have_the_codec_defaults() {
         ),
     ]);
     let mut loader = Loader::new(&map);
-    let plain = loader.noise("minecraft:plain").unwrap();
+    let mut v26_3 = |id| match loader.noise(id).unwrap() {
+        NormalNoiseParameters::V26_3(p) => p,
+        other => panic!("{id}: {other:?}"),
+    };
+    let plain = v26_3("minecraft:plain");
     assert_eq!(
         (
             plain.base_amplitude,
@@ -252,15 +256,80 @@ fn noise_parameters_have_the_codec_defaults() {
         ),
         (1.0, 1, Normalization::Enabled, 0)
     );
-    let full = loader.noise("full").unwrap();
+    let full = v26_3("full");
     assert_eq!(full.normalize, Normalization::Disabled);
     assert_eq!(full.amplitude_modifiers, [1.0, 0.5]);
-    assert_eq!(
-        loader.noise("legacy").unwrap().normalize,
-        Normalization::Legacy
-    );
+    assert_eq!(v26_3("legacy").normalize, Normalization::Legacy);
     let err = loader.noise("bad").unwrap_err();
     assert!(matches!(*err.kind, LoadErrorKind::Invalid(_)), "{err}");
+}
+
+#[test]
+fn noise_parameters_in_the_26_2_form() {
+    let map = resources(vec![
+        (
+            "worldgen/noise/minecraft:old",
+            json!({"firstOctave": -9, "amplitudes": [1, 0, 1.5, 0]}),
+        ),
+        // No range checks in 26.2's codec.
+        (
+            "worldgen/noise/minecraft:wide",
+            json!({"firstOctave": 4000, "amplitudes": []}),
+        ),
+        // Both forms' keys: base_octave decides.
+        (
+            "worldgen/noise/minecraft:both",
+            json!({"firstOctave": -9, "amplitudes": [1], "base_octave": -2}),
+        ),
+        (
+            "worldgen/noise/minecraft:no_amplitudes",
+            json!({"firstOctave": -9}),
+        ),
+        (
+            "worldgen/noise/minecraft:bad_amplitude",
+            json!({"firstOctave": -9, "amplitudes": [1, "x"]}),
+        ),
+    ]);
+    let mut loader = Loader::new(&map);
+    assert_eq!(
+        loader.noise("old").unwrap(),
+        NormalNoiseParameters::V1_21(v1_21::NoiseParameters::new(-9, vec![1.0, 0.0, 1.5, 0.0]))
+    );
+    assert_eq!(
+        loader.noise("wide").unwrap(),
+        NormalNoiseParameters::V1_21(v1_21::NoiseParameters::new(4000, vec![]))
+    );
+    assert!(matches!(
+        loader.noise("both").unwrap(),
+        NormalNoiseParameters::V26_3(p) if p.base_octave == -2
+    ));
+    let err = loader.noise("no_amplitudes").unwrap_err();
+    assert!(
+        matches!(*err.kind, LoadErrorKind::Missing("amplitudes")),
+        "{err}"
+    );
+    let err = loader.noise("bad_amplitude").unwrap_err();
+    assert!(err.to_string().contains("amplitudes[1]"), "{err}");
+}
+
+/// Until the 1.21-family evaluator binds them, a 26.2 noise in a 26.3 density function is an
+/// error that says so, never 26.3's answer for 26.2's data.
+#[test]
+fn a_26_2_noise_doesnt_bind_into_the_26_3_evaluator() {
+    let map = resources(vec![
+        (
+            "worldgen/noise/minecraft:old".to_string(),
+            json!({"firstOctave": -4, "amplitudes": [1, 1]}),
+        ),
+        df(
+            "minecraft:f",
+            json!({"type": "noise", "noise": "old", "xz_scale": 1, "y_scale": 1}),
+        ),
+    ]);
+    let mut loader = Loader::new(&map);
+    let f = loader.function("f").unwrap();
+    let err = Binder::new(loader.noises(), 0).bind(&f).unwrap_err();
+    assert!(err.to_string().contains("1.21-family"), "{err}");
 }
 
 #[test]
@@ -938,7 +1007,7 @@ fn end_islands_near_the_origin() {
 
 #[test]
 fn legacy_binding_uses_legacy_sources() {
-    use spyglass_noise::{NormalNoise, NormalNoiseParameters};
+    use spyglass_noise::{NormalNoise, Parameters};
     use spyglass_rng::{LegacyRandomSource, PositionalRandomFactory, RandomSource};
     let noise = json!({"base_octave": -7, "octave_count": 2, "base_amplitude": 0.9});
     let map = resources(vec![
@@ -958,10 +1027,10 @@ fn legacy_binding_uses_legacy_sources() {
     ]);
     let mut loader = Loader::new(&map);
     let (a, t) = (loader.function("a").unwrap(), loader.function("t").unwrap());
-    let mut p = NormalNoiseParameters::new(-7);
+    let mut p = Parameters::new(-7);
     p.octave_count = 2;
     p.base_amplitude = 0.9;
-    let normal = NormalNoise::new(&p).unwrap();
+    let normal = NormalNoise::from_parameters(&p).unwrap();
     let seed = 42;
     let mut legacy = Binder::with_legacy_random(loader.noises(), seed, true);
     // An ordinary noise: NormalNoise.create from the legacy factory's fromHashOf(id).

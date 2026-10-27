@@ -6,6 +6,11 @@
 //! -constants` disassembles the classes under [`PORTED`], and each class's text is normalized so
 //! only real changes differ: constant-pool indices, bytecode offsets, branch targets and lambda
 //! numbers go. The normalized text is kept in `target/version-diff/<version>/` to read or diff.
+//!
+//! It also lists the codec forms the new version declares that its own data doesn't use: type ids
+//! a codec registers and fields a codec reads, found by the string constant before each
+//! `register` and `fieldOf` call. A version can ship a form ahead of the data that uses it, and
+//! spyglass supports the forms a version accepts, not only the ones its data shows (ADR 0026).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -32,8 +37,21 @@ const PORTED: &[&str] = &[
 /// Classes per `javap` run.
 const BATCH: usize = 200;
 
-/// The changes from `old` to `new` (version ids, e.g. `26.3`) in the classes under [`PORTED`].
-pub fn report(old: &str, new: &str) -> Result<String> {
+/// How many lines before a codec call its name's string constant may be: a default value or the
+/// codec itself sits between them.
+const NAME_WINDOW: usize = 6;
+
+/// The type ids and field names a bundle's data uses, to compare codec forms against.
+pub struct DataNames {
+    /// Type ids without their namespace: `domain_warp`.
+    pub types: BTreeSet<String>,
+    /// Object keys anywhere in the data.
+    pub keys: BTreeSet<String>,
+}
+
+/// The changes from `old` to `new` (version ids, e.g. `26.3`) in the classes under [`PORTED`],
+/// and the codec forms `new` declares that `used`, its data, doesn't use.
+pub fn report(old: &str, new: &str, used: &DataNames) -> Result<String> {
     let jdk = java::discover(None)
         .into_iter()
         .filter(|j| j.is_jdk)
@@ -82,8 +100,127 @@ pub fn report(old: &str, new: &str) -> Result<String> {
             }
         }
     }
+    out.push_str(&unused_report(old, new, &before, &after, used)?);
     let _ = writeln!(out, "\nnormalized disassembly: {}", dump_dir("").display());
     Ok(out)
+}
+
+/// The codec forms `new`'s classes declare that its data doesn't use: those `old` lacked are
+/// printed, and every one is written to `target/version-diff/<new>-unused.txt`.
+fn unused_report(
+    old: &str,
+    new: &str,
+    before: &BTreeMap<String, String>,
+    after: &BTreeMap<String, String>,
+    used: &DataNames,
+) -> Result<String> {
+    let old_forms: BTreeSet<Form> = before.values().flat_map(|b| codec_forms(b)).collect();
+    let mut unused: BTreeMap<Form, Vec<&str>> = BTreeMap::new();
+    for (class, body) in after {
+        for form in codec_forms(body) {
+            if !form.used_by(used) {
+                unused.entry(form).or_default().push(short(class));
+            }
+        }
+    }
+    let file = dump_dir(&format!("{new}-unused.txt"));
+    let mut all = String::new();
+    for (form, classes) in &unused {
+        let _ = writeln!(all, "{form}  ({})", classes.join(", "));
+    }
+    fs::write(&file, all)?;
+    let fresh: Vec<_> = unused
+        .iter()
+        .filter(|(form, _)| !old_forms.contains(*form))
+        .collect();
+    let mut out = format!(
+        "\ncodec forms {new} declares that its data doesn't use: {}, {} new since {old}\n",
+        unused.len(),
+        fresh.len()
+    );
+    for (form, classes) in fresh {
+        let _ = writeln!(out, "  {form}  ({})", classes.join(", "));
+    }
+    let _ = writeln!(out, "  all of them: {}", file.display());
+    Ok(out)
+}
+
+/// A class name without its package: `net.minecraft.a.B$C` → `B$C`.
+fn short(class: &str) -> &str {
+    class.rsplit('.').next().unwrap_or(class)
+}
+
+/// A form a class's codecs accept: a type id it registers, or a field it reads.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum Form {
+    Type(String),
+    Field(String),
+}
+
+impl Form {
+    fn used_by(&self, data: &DataNames) -> bool {
+        match self {
+            Form::Type(id) => data.types.contains(id.rsplit(':').next().unwrap_or(id)),
+            Form::Field(name) => data.keys.contains(name),
+        }
+    }
+}
+
+impl std::fmt::Display for Form {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Form::Type(id) => write!(f, "type {id}"),
+            Form::Field(name) => write!(f, "field {name}"),
+        }
+    }
+}
+
+/// The codec forms in one class's normalized disassembly. A `fieldOf` call (or `optionalFieldOf`
+/// and the like) reads a field, and a `register` call with a codec between its id and the call
+/// registers a type; each is named by the nearest string constant before the call.
+fn codec_forms(body: &str) -> BTreeSet<Form> {
+    let lines: Vec<&str> = body.lines().collect();
+    let mut out = BTreeSet::new();
+    for (i, line) in lines.iter().enumerate() {
+        if !line.starts_with("invoke") {
+            continue;
+        }
+        let Some((method, signature)) = line
+            .split_once("Method ")
+            .and_then(|(_, m)| m.split_once(':'))
+        else {
+            continue;
+        };
+        let method = method.rsplit(['.', '/']).next().unwrap_or(method);
+        let field = method.ends_with("ieldOf");
+        if !field && method != "register" {
+            continue;
+        }
+        let start = i.saturating_sub(NAME_WINDOW);
+        let Some((at, name)) = (start..i)
+            .rev()
+            .find_map(|j| string_constant(lines[j]).map(|s| (j, s)))
+        else {
+            continue;
+        };
+        if field {
+            out.insert(Form::Field(name.to_string()));
+        } else if signature.contains("Ljava/lang/String;")
+            && (signature.contains("Codec;")
+                || lines[at + 1..i].iter().any(|l| l.contains("Codec;")))
+        {
+            out.insert(Form::Type(name.to_string()));
+        }
+    }
+    out
+}
+
+/// The string an `ldc` line loads.
+fn string_constant(line: &str) -> Option<&str> {
+    if !line.starts_with("ldc") {
+        return None;
+    }
+    line.split_once("// String ").map(|(_, s)| s)
 }
 
 fn dump_dir(version: &str) -> PathBuf {
@@ -332,6 +469,49 @@ mod tests {
         let names: Vec<&str> = classes.iter().map(|(n, _)| n.as_str()).collect();
         assert_eq!(names, ["a.A$B", "a.D"]);
         assert!(classes[0].1.contains("int x;"));
+    }
+
+    #[test]
+    fn finds_registered_types_and_fields() {
+        let body = "\
+ldc # // String domain_warp
+getstatic # // Field a/DomainWarpFunction.CODEC:Lcom/mojang/serialization/MapCodec;
+invokestatic # // Method register:(Lnet/minecraft/core/Registry;Ljava/lang/String;Lcom/mojang/serialization/MapCodec;)Lcom/mojang/serialization/MapCodec;
+ldc # // String the_end
+getstatic # // Field a/TheEndBiomeSource.CODEC:Lcom/mojang/serialization/MapCodec;
+invokestatic # // InterfaceMethod net/minecraft/core/Registry.register:(Lnet/minecraft/core/Registry;Ljava/lang/String;Ljava/lang/Object;)Ljava/lang/Object;
+ldc # // String plains
+invokestatic # // Method register:(Ljava/lang/String;)Lnet/minecraft/resources/ResourceKey;
+ldc_w # // String input
+invokeinterface # // InterfaceMethod com/mojang/serialization/Codec.fieldOf:(Ljava/lang/String;)Lcom/mojang/serialization/MapCodec;
+ldc # // String scale
+dconst_1
+invokestatic # // Method java/lang/Double.valueOf:(D)Ljava/lang/Double;
+invokevirtual # // Method com/mojang/serialization/codecs/PrimitiveCodec.optionalFieldOf:(Ljava/lang/String;Ljava/lang/Object;)Lcom/mojang/serialization/MapCodec;
+";
+        let forms: Vec<String> = codec_forms(body).iter().map(ToString::to_string).collect();
+        assert_eq!(
+            forms,
+            [
+                "type domain_warp",
+                "type the_end",
+                "field input",
+                "field scale"
+            ]
+        );
+    }
+
+    #[test]
+    fn forms_are_used_by_ids_without_namespace_and_by_keys() {
+        let data = DataNames {
+            types: ["upscale".to_string()].into(),
+            keys: ["input".to_string()].into(),
+        };
+        assert!(Form::Type("upscale".into()).used_by(&data));
+        assert!(Form::Type("minecraft:upscale".into()).used_by(&data));
+        assert!(!Form::Type("domain_warp".into()).used_by(&data));
+        assert!(Form::Field("input".into()).used_by(&data));
+        assert!(!Form::Field("corner_constraint".into()).used_by(&data));
     }
 
     #[test]

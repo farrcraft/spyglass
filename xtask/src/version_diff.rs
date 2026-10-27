@@ -6,6 +6,9 @@
 //! the new bundle that the old one never had is a form some loader may not accept yet, so it
 //! shows up here before any load fails. It also lists the behavior switches that differ between
 //! the two (ADR 0026), and, given one bundle, every switch and whether it's on for it.
+//!
+//! Every structure template carries the data version that saved it, so each version changes them
+//! all. A template whose only change is that `DataVersion` is counted apart from real changes.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -15,7 +18,10 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde_json::Value;
 use spyglass_data::bundle::{self, Manifest};
+use spyglass_data::nbt::{self, Tag};
 use spyglass_data::versions::SWITCHES;
+
+use crate::code_diff::DataNames;
 
 /// The JSON registries whose contents spyglass parses; their shapes are compared field by field.
 const READ: &[&str] = &[
@@ -71,7 +77,7 @@ pub fn run(args: &VersionDiff) -> Result<()> {
         println!();
         print!(
             "{}",
-            crate::code_diff::report(&old.manifest.version, &new.manifest.version)?
+            crate::code_diff::report(&old.manifest.version, &new.manifest.version, &new.names)?
         );
     }
     Ok(())
@@ -147,29 +153,48 @@ fn strip_ext(id: &str) -> &str {
 
 /// What `version-diff` compares in one bundle.
 struct Snapshot {
+    dir: PathBuf,
     manifest: Manifest,
-    /// Registry → id → file hash.
-    ids: BTreeMap<String, BTreeMap<String, String>>,
+    /// Registry → id → file.
+    ids: BTreeMap<String, BTreeMap<String, File>>,
     /// Registry → shape fact → (uses, first id with it).
     shapes: BTreeMap<String, BTreeMap<String, (usize, String)>>,
+    /// The type ids and keys in all the bundle's JSON, for `--code`'s unused codec forms.
+    names: DataNames,
+}
+
+/// One file of a bundle: its path in the bundle and its hash.
+struct File {
+    path: String,
+    hash: String,
 }
 
 impl Snapshot {
     fn read(dir: &Path) -> Result<Self> {
         let manifest = bundle::read_manifest(dir)
             .with_context(|| format!("reading the bundle at {}", dir.display()))?;
-        let mut ids: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
+        let mut ids: BTreeMap<String, BTreeMap<String, File>> = BTreeMap::new();
         let mut shapes: BTreeMap<String, BTreeMap<String, (usize, String)>> = BTreeMap::new();
+        let mut names = DataNames {
+            types: BTreeSet::new(),
+            keys: BTreeSet::new(),
+        };
         for (path, hash) in &manifest.files {
             let Some((registry, id)) = classify(path) else {
                 continue;
             };
-            if READ.contains(&registry.as_str()) && path.ends_with(".json") {
+            let value: Option<Value> = if path.ends_with(".json") {
                 let file = dir.join(path);
                 let text = fs::read_to_string(&file)
                     .with_context(|| format!("reading {}", file.display()))?;
-                let value: Value = serde_json::from_str(&text)
+                let value = serde_json::from_str(&text)
                     .with_context(|| format!("parsing {}", file.display()))?;
+                collect_names(&value, &mut names);
+                Some(value)
+            } else {
+                None
+            };
+            if let Some(value) = value.filter(|_| READ.contains(&registry.as_str())) {
                 let mut facts = BTreeSet::new();
                 walk(&value, "", &mut facts);
                 let registry_shapes = shapes.entry(registry.clone()).or_default();
@@ -180,13 +205,73 @@ impl Snapshot {
                         .0 += 1;
                 }
             }
-            ids.entry(registry).or_default().insert(id, hash.clone());
+            ids.entry(registry).or_default().insert(
+                id,
+                File {
+                    path: path.clone(),
+                    hash: hash.clone(),
+                },
+            );
         }
         Ok(Self {
+            dir: dir.to_path_buf(),
             manifest,
             ids,
             shapes,
+            names,
         })
+    }
+}
+
+/// Adds every type id (without its namespace) and every object key under `value` to `names`. A
+/// type id is the value of `type` or of a key ending `_type`, as pool elements' `element_type`.
+fn collect_names(value: &Value, names: &mut DataNames) {
+    match value {
+        Value::Object(map) => {
+            for (key, child) in map {
+                if (key == "type" || key.ends_with("_type"))
+                    && let Some(ty) = child.as_str()
+                {
+                    names
+                        .types
+                        .insert(ty.rsplit(':').next().unwrap_or(ty).to_string());
+                }
+                names.keys.insert(key.clone());
+                collect_names(child, names);
+            }
+        }
+        Value::Array(items) => items.iter().for_each(|item| collect_names(item, names)),
+        _ => {}
+    }
+}
+
+/// Whether two structure templates differ only in their root `DataVersion`. Unreadable files
+/// count as a real change.
+fn only_data_version(old: &Path, new: &Path) -> bool {
+    let read = |path: &Path| -> Option<Tag> {
+        let bytes = fs::read(path).ok()?;
+        let (_, tag) = if bytes.starts_with(&[0x1f, 0x8b]) {
+            nbt::read_compressed(&bytes).ok()?
+        } else {
+            nbt::read(&bytes).ok()?
+        };
+        match tag {
+            Tag::Compound(mut root) => {
+                root.remove("DataVersion");
+                Some(Tag::Compound(root))
+            }
+            other => Some(other),
+        }
+    };
+    matches!((read(old), read(new)), (Some(a), Some(b)) if a == b)
+}
+
+/// How many files changed, and how many more changed only in their `DataVersion`.
+fn changes(changed: usize, restamped: usize) -> String {
+    if restamped == 0 {
+        format!("{changed} changed")
+    } else {
+        format!("{changed} changed, {restamped} only in DataVersion")
     }
 }
 
@@ -301,10 +386,20 @@ behavior switches that change:
             .keys()
             .filter(|id| !after.contains_key(*id))
             .collect();
-        let changed = after
-            .iter()
-            .filter(|(id, hash)| before.get(*id).is_some_and(|h| h != *hash))
-            .count();
+        let (mut changed, mut restamped) = (0, 0);
+        for (id, file) in after {
+            let Some(was) = before.get(id).filter(|was| was.hash != file.hash) else {
+                continue;
+            };
+            if registry == "structure"
+                && only_data_version(&old.dir.join(&was.path), &new.dir.join(&file.path))
+            {
+                restamped += 1;
+            } else {
+                changed += 1;
+            }
+        }
+        let changed = changes(changed, restamped);
         let (shapes_before, shapes_after) = (
             old.shapes.get(registry).unwrap_or(&empty_shapes),
             new.shapes.get(registry).unwrap_or(&empty_shapes),
@@ -319,7 +414,7 @@ behavior switches that change:
             .collect();
         if added.is_empty() && removed.is_empty() && new_shapes.is_empty() && gone_shapes.is_empty()
         {
-            quiet.push(format!("{registry} ({changed} changed)"));
+            quiet.push(format!("{registry} ({changed})"));
             continue;
         }
         let read = if READ.contains(&registry.as_str()) || READ_OPAQUE.contains(&registry.as_str())
@@ -330,7 +425,7 @@ behavior switches that change:
         };
         let _ = writeln!(
             out,
-            "\n{registry}{read}: {} -> {} ids, {} added, {} removed, {changed} changed",
+            "\n{registry}{read}: {} -> {} ids, {} added, {} removed, {changed}",
             before.len(),
             after.len(),
             added.len(),
@@ -532,6 +627,54 @@ mod tests {
         assert!(
             text.contains("no ids or shapes changed: structure (1 changed)"),
             "{text}"
+        );
+    }
+
+    #[test]
+    fn templates_restamped_with_a_new_data_version_are_not_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let template = |name: &str, data_version: i32, size: i32| {
+            let root = Tag::Compound(
+                [
+                    ("DataVersion".to_string(), Tag::Int(data_version)),
+                    ("size".to_string(), Tag::List(vec![Tag::Int(size)])),
+                ]
+                .into(),
+            );
+            let path = dir.path().join(name);
+            fs::write(&path, nbt::write_compressed("", &root)).unwrap();
+            path
+        };
+        let old = template("old.nbt", 5125, 3);
+        let restamped = template("restamped.nbt", 5126, 3);
+        let resized = template("resized.nbt", 5126, 4);
+        assert!(only_data_version(&old, &restamped));
+        assert!(!only_data_version(&old, &resized));
+        assert!(!only_data_version(&old, &dir.path().join("missing.nbt")));
+        assert_eq!(changes(1, 0), "1 changed");
+        assert_eq!(changes(0, 1511), "0 changed, 1511 only in DataVersion");
+    }
+
+    #[test]
+    fn names_are_types_without_namespace_and_keys() {
+        let mut names = DataNames {
+            types: BTreeSet::new(),
+            keys: BTreeSet::new(),
+        };
+        collect_names(
+            &serde_json::from_str(
+                r#"{"type": "minecraft:add", "argument1": [{"type": "minecraft:upscale"}]}"#,
+            )
+            .unwrap(),
+            &mut names,
+        );
+        assert_eq!(
+            names.types,
+            ["add".to_string(), "upscale".to_string()].into()
+        );
+        assert_eq!(
+            names.keys,
+            ["argument1".to_string(), "type".to_string()].into()
         );
     }
 }

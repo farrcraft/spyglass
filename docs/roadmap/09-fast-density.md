@@ -2,7 +2,7 @@
 
 - Status: Planned
 - Depends on: [07](completed/07-terrain-and-validity.md)
-- Plans: none yet
+- Plans: [m09-fast-density](../plans/m09-fast-density.md) (draft)
 
 ## Goal
 

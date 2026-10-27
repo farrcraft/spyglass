@@ -17,10 +17,10 @@ env:
 jobs:
   check:
     name: cargo xtask check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: The viewer's system libraries
         run: |
           sudo apt-get update -qq
@@ -29,7 +29,7 @@ jobs:
       - name: The JDK major the latest release needs
         id: jdk
         run: echo "major=$(cargo xtask jdk-status | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
           java-version: ${{ steps.jdk.outputs.major }}
@@ -39,7 +39,7 @@ jobs:
 
   oracle:
     name: oracle ${{ matrix.version }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -51,13 +51,13 @@ jobs:
           - "26.4-snapshot-5"
           - "26.4-snapshot-6"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: The JDK major ${{ matrix.version }} needs
         id: jdk
         run: |
           echo "major=$(cargo xtask jdk-status --game-version '${{ matrix.version }}' | cut -d' ' -f1)" \
             >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
           java-version: ${{ steps.jdk.outputs.major }}

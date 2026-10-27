@@ -1,0 +1,10 @@
+# Keeps the workflow's actions current. They're pinned by commit SHA with the version in a
+# comment; Dependabot updates both. A release must be 7 days old before it's proposed.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7

@@ -44,7 +44,7 @@ fn save(dir: &Path, generator: Tag, structures: bool, packs: &[&str], modded: bo
             "Data",
             c([
                 ("LevelName", s("Fixture")),
-                ("DataVersion", Tag::Int(1)),
+                ("DataVersion", Tag::Int(5023)),
                 ("Version", c([("Name", s("test")), ("Id", Tag::Int(1))])),
                 ("WasModded", Tag::Byte(i8::from(modded))),
                 (
@@ -71,7 +71,7 @@ fn save(dir: &Path, generator: Tag, structures: bool, packs: &[&str], modded: bo
                     ),
                 ]),
             ),
-            ("DataVersion", Tag::Int(1)),
+            ("DataVersion", Tag::Int(5023)),
         ]),
     );
 }
@@ -154,7 +154,7 @@ fn no_bundles_folder_means_no_bundle() {
     assert!(matches!(
         report.warnings.as_slice(),
         [SaveWarning::NoBundle {
-            data_version: Some(1),
+            data_version: Some(5023),
             ..
         }]
     ));

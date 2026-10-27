@@ -122,7 +122,8 @@ pub struct Search {
     /// ties and platform-dependent results stay uncertain.
     #[arg(long)]
     pub confirm: bool,
-    /// Game version of the bundle to use, from `--bundles`. Defaults to the newest there.
+    /// Game version of the bundle to use, from `--bundles`. Defaults to the newest release there;
+    /// snapshots are used only when named.
     #[arg(long)]
     pub game_version: Option<String>,
     /// A bundle directory to use instead of choosing one from `--bundles`.
@@ -372,7 +373,8 @@ pub struct Common {
     /// is the player's, otherwise the Overworld.
     #[arg(long, value_parser = dimension)]
     pub dimension: Option<Dimension>,
-    /// Game version of the bundle to use, from `--bundles`. Defaults to the newest there.
+    /// Game version of the bundle to use, from `--bundles`. Defaults to the newest release there;
+    /// snapshots are used only when named.
     #[arg(long)]
     pub game_version: Option<String>,
     /// A bundle directory to use instead of choosing one from `--bundles`.

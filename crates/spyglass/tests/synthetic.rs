@@ -262,3 +262,39 @@ fn spawn_and_bundles() {
         Err(Error::NoBundle { .. })
     ));
 }
+
+/// With no version asked for, the newest release, never a newer snapshot (ADR 0028); bundles
+/// without a recorded kind go by their id.
+#[test]
+fn default_bundle_is_the_newest_release() {
+    let dir = tempfile::tempdir().unwrap();
+    let write = |name: &str, data_version: u32, kind: Option<&str>| {
+        let bundle = dir.path().join(name);
+        std::fs::create_dir_all(&bundle).unwrap();
+        let mut manifest = serde_json::json!({
+            "format": 1, "version": name, "data_version": data_version, "jar_sha1": "",
+            "java_version": "", "extractor": "", "files": {},
+        });
+        if let Some(kind) = kind {
+            manifest["kind"] = kind.into();
+        }
+        std::fs::write(bundle.join("bundle.json"), manifest.to_string()).unwrap();
+    };
+    write("26.4-snapshot-5", 5125, None);
+    write("26.4-snapshot-6", 5130, Some("snapshot"));
+    let only_snapshots = spyglass::find_bundle(dir.path(), None);
+    assert!(
+        matches!(&only_snapshots, Err(Error::NoRelease { snapshots, .. })
+            if snapshots == &["26.4-snapshot-6", "26.4-snapshot-5"]),
+        "{only_snapshots:?}"
+    );
+    write("26.2", 4903, Some("release"));
+    write("26.3", 5023, None);
+    let found = spyglass::find_bundle(dir.path(), None).unwrap();
+    assert_eq!(
+        (found.version.as_str(), found.kind),
+        ("26.3", spyglass::Kind::Release)
+    );
+    let named = spyglass::find_bundle(dir.path(), Some("26.4-snapshot-5")).unwrap();
+    assert_eq!(named.kind, spyglass::Kind::Snapshot);
+}

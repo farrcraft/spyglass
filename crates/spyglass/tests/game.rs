@@ -40,7 +40,7 @@ fn save(dir: &Path, nether: Option<Tag>) {
             "Data",
             c([
                 ("LevelName", s("Fixture")),
-                ("DataVersion", Tag::Int(1)),
+                ("DataVersion", Tag::Int(5023)),
                 ("DataPacks", c([("Enabled", Tag::List(vec![s("vanilla")]))])),
             ]),
         )]),

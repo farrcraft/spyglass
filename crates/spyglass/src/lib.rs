@@ -55,6 +55,7 @@ pub use search::{
     ConstraintResult, Evaluation, Feature, Outcome, RankedSeed, SearchHit, SearchOptions,
     SearchOutcome, SearchProgress, SearchQuery, SeedSource,
 };
+pub use spyglass_data::bundle::Kind;
 pub use spyglass_data::dimension::Dimension;
 pub use spyglass_structure::LOCATE_RADIUS;
 pub use spyglass_terrain::Heightmap;
@@ -112,6 +113,19 @@ pub enum Error {
         dir: PathBuf,
         /// The game version asked for, if any.
         version: Option<String>,
+    },
+    /// No version was asked for, and the bundles folder holds only snapshots, which are picked
+    /// only by name (ADR 0028).
+    #[error(
+        "no release bundle in {}; name a snapshot to use one: {}",
+        .dir.display(),
+        .snapshots.join(", ")
+    )]
+    NoRelease {
+        /// The bundles folder.
+        dir: PathBuf,
+        /// The snapshots there, newest first.
+        snapshots: Vec<String>,
     },
     /// Several launcher saves have the folder name given.
     #[error(
@@ -224,6 +238,8 @@ pub struct BundleInfo {
     pub version: String,
     /// The game's data version, which orders versions.
     pub data_version: u32,
+    /// Release or snapshot (ADR 0028).
+    pub kind: Kind,
     /// The bundle's directory.
     pub dir: PathBuf,
 }
@@ -247,6 +263,7 @@ pub fn bundles_in(dir: impl AsRef<Path>) -> Result<Vec<BundleInfo>> {
         .filter_map(|entry| {
             let manifest = spyglass_data::bundle::read_manifest(&entry.path()).ok()?;
             Some(BundleInfo {
+                kind: manifest.kind(),
                 version: manifest.version,
                 data_version: manifest.data_version,
                 dir: entry.path(),
@@ -262,12 +279,23 @@ pub fn bundles_in(dir: impl AsRef<Path>) -> Result<Vec<BundleInfo>> {
 }
 
 /// The bundle in `dir` (e.g. `bundles/`) for game version `version` (e.g. `26.3`), or the newest
-/// one if `version` is `None`.
+/// release if `version` is `None`. Snapshots are as supported as releases, but are only picked by
+/// name (ADR 0028).
 pub fn find_bundle(dir: impl AsRef<Path>, version: Option<&str>) -> Result<BundleInfo> {
     let dir = dir.as_ref();
-    bundles_in(dir)?
+    let found = bundles_in(dir)?;
+    if version.is_none() && !found.is_empty() && found.iter().all(|b| b.kind != Kind::Release) {
+        return Err(Error::NoRelease {
+            dir: dir.to_path_buf(),
+            snapshots: found.into_iter().map(|b| b.version).collect(),
+        });
+    }
+    found
         .into_iter()
-        .find(|b| version.is_none_or(|v| b.version == v))
+        .find(|b| match version {
+            Some(v) => b.version == v,
+            None => b.kind == Kind::Release,
+        })
         .ok_or_else(|| Error::NoBundle {
             dir: dir.to_path_buf(),
             version: version.map(str::to_string),

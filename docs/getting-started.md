@@ -238,19 +238,19 @@ cargo run --release -p spyglass-cli -- heights --seed 12345 --min 0,0 --max 15,1
 
 Or install it with `cargo install --path crates/spyglass-cli` and run `spyglass ...` directly.
 
-| Option                | Default       | What it does                                                                              |
-| --------------------- | ------------- | ----------------------------------------------------------------------------------------- |
-| `--seed <seed>`       | required      | A number, or text hashed as the world-creation screen does.                               |
-| `--world <save>`      | none          | A world save instead of `--seed`: its folder, or its folder name in a launcher's saves.   |
-| `--from <x,y,z>`      | `0,64,0`      | Where to search from, in blocks; `x,z` means y 64; `player` is `--world`'s single player. |
-| `--dimension <d>`     | Overworld     | `overworld`, `nether` or `end`. With `--from player`, the player's dimension by default.  |
-| `--radius <n>`        | as `/locate`  | Placement-cell rings (structures), blocks (biomes) or chunks (slime).                     |
-| `--unconfirmed`       | off           | Structures: don't decide candidates with the seed's terrain. Faster, but less certain.    |
-| `--bounds`            | off           | Structures: each certain jigsaw structure's bounds and piece count.                       |
-| `--game-version <id>` | newest bundle | Which bundle in `--bundles` to use.                                                       |
-| `--bundle <dir>`      | none          | Use this bundle directory instead.                                                        |
-| `--bundles <dir>`     | `bundles`     | Where bundles are.                                                                        |
-| `--json`              | off           | Print JSON for scripts ([specs/cli-json.md](specs/cli-json.md)).                          |
+| Option                | Default        | What it does                                                                              |
+| --------------------- | -------------- | ----------------------------------------------------------------------------------------- |
+| `--seed <seed>`       | required       | A number, or text hashed as the world-creation screen does.                               |
+| `--world <save>`      | none           | A world save instead of `--seed`: its folder, or its folder name in a launcher's saves.   |
+| `--from <x,y,z>`      | `0,64,0`       | Where to search from, in blocks; `x,z` means y 64; `player` is `--world`'s single player. |
+| `--dimension <d>`     | Overworld      | `overworld`, `nether` or `end`. With `--from player`, the player's dimension by default.  |
+| `--radius <n>`        | as `/locate`   | Placement-cell rings (structures), blocks (biomes) or chunks (slime).                     |
+| `--unconfirmed`       | off            | Structures: don't decide candidates with the seed's terrain. Faster, but less certain.    |
+| `--bounds`            | off            | Structures: each certain jigsaw structure's bounds and piece count.                       |
+| `--game-version <id>` | newest release | Which bundle in `--bundles` to use. Snapshots are used only when named.                   |
+| `--bundle <dir>`      | none           | Use this bundle directory instead.                                                        |
+| `--bundles <dir>`     | `bundles`      | Where bundles are.                                                                        |
+| `--json`              | off            | Print JSON for scripts ([specs/cli-json.md](specs/cli-json.md)).                          |
 
 Slime chunks and the world spawn are only in the Overworld. In the Nether, heights find the solid ceiling (about 128 everywhere), which is what the game's own structure checks see too.
 
@@ -335,7 +335,7 @@ Answers are listed in the game's search order, which isn't always nearest first.
 cargo run --release -p spyglass-viewer
 ```
 
-The viewer opens the newest bundle in `bundles/` (choose another folder from the side panel) and shows seed 0. Without a bundle it says how to extract one.
+The viewer opens the newest release in `bundles/` (or the newest snapshot if there's no release) (choose another folder from the side panel) and shows seed 0. Without a bundle it says how to extract one.
 
 - **Move around:** drag to pan, scroll to zoom around the pointer, or use the arrow keys and `+`/`-`. **Go to** takes `x z` or `x y z`. The status bar shows the block, chunk and biome under the pointer.
 - **Seed or save:** type a seed and press **Show**, or open a save from the launchers' list or any folder. A save opens on its player, in the player's dimension, with anything that makes its answers inexact listed.

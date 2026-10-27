@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use spyglass_data::bundle::Manifest;
+use spyglass_data::bundle::{Kind, Manifest};
 
 use crate::bundler::{Bundler, BundlerError};
 use crate::cache::{CacheError, JarCache};
@@ -85,6 +85,8 @@ pub struct Extracted {
 pub struct Server {
     /// The version id, e.g. `26.3`.
     pub version: String,
+    /// Release or snapshot, from the version manifest's `type`.
+    pub kind: Kind,
     /// The server jar's download: URL, size and SHA-1.
     pub download: Download,
     /// `javaVersion.majorVersion`.
@@ -111,6 +113,7 @@ pub fn resolve(version: &str) -> Result<Server, ExtractError> {
         .major_version;
     Ok(Server {
         version: json.id,
+        kind: Kind::from_manifest_type(&entry.kind),
         download,
         java_major,
     })
@@ -150,6 +153,7 @@ pub fn extract(
             game_jar: &game_jar,
             reports_dir: &reports_dir,
             version: &server.version,
+            kind: server.kind,
             jar_sha1: &server.download.sha1,
             java_version: &java.version,
         },

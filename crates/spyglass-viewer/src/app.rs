@@ -308,13 +308,15 @@ impl App {
         app
     }
 
-    /// Looks for bundles, and opens the remembered version or the newest.
+    /// Looks for bundles, and opens the remembered version, else the newest release (ADR 0028),
+    /// else the newest snapshot: the version picker shows which.
     fn scan(&mut self, ctx: &egui::Context) {
         self.bundles = spyglass::bundles_in(&self.settings.bundles).map_err(|e| e.to_string());
         let pick = self.bundles.as_ref().ok().and_then(|found| {
             found
                 .iter()
                 .find(|b| Some(&b.version) == self.settings.version.as_ref())
+                .or_else(|| found.iter().find(|b| b.kind == spyglass::Kind::Release))
                 .or(found.first())
                 .cloned()
         });

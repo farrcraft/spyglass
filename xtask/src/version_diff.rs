@@ -452,6 +452,7 @@ mod tests {
             format: bundle::FORMAT,
             version: version.into(),
             data_version,
+            kind: None,
             jar_sha1: "0".repeat(40),
             java_version: "25".into(),
             extractor: "0.0.0".into(),

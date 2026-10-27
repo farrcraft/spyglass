@@ -180,7 +180,7 @@ Specs and ADRs that govern this: [data-sources.md](../specs/data-sources.md), [b
 - [ ] A test that every supported bundle on the machine loads and binds in all three dimensions, so old dispatch arms keep working as new ones are added.
 - [ ] `spyglass-oracle` lists the versions with inputs. Every ignored comparison runs for each, and `oracle-test` reports per version.
 - [ ] The harness split into core and a 26.3 adapter, with no change in output: 26.3's goldens stay byte-identical.
-- [ ] Release-first defaults in `find_bundle`, the CLI and the viewer. Snapshots are chosen only by name. The CLI tests stop pinning 26.3.
+- [x] Release-first defaults in `find_bundle`, the CLI and the viewer. Snapshots are chosen only by name. The CLI tests stop pinning 26.3. `bundle.json` gains an optional `kind` (old bundles go by their id); a folder of only snapshots is `Error::NoRelease`, naming them; the viewer falls back to the newest snapshot, which its picker shows. `cli.rs` no longer pins; `world.rs` still does, since its saves are stamped with 26.3's data version and it reads 26.3's files. The synthetic fixture and test saves moved from data version 1 to 5023, so that every behavior switch is off for them.
 
 ### Phase 3: 26.4-snapshot-5, the first update
 

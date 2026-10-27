@@ -36,7 +36,10 @@ impl TestBundle {
         let manifest = Manifest {
             format: FORMAT,
             version: "test".into(),
-            data_version: 1,
+            // 26.3's, the version the synthetic files are shaped like, so every behavior switch
+            // is off (spyglass_data::versions).
+            data_version: 5023,
+            kind: None,
             jar_sha1: String::new(),
             java_version: String::new(),
             extractor: String::new(),

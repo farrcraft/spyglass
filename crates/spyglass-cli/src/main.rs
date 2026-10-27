@@ -124,7 +124,8 @@ fn open(common: &Common) -> Result<World> {
         .with_context(|| format!("loading {dimension} from the bundle in {}", dir.display()))
 }
 
-/// The bundle `--bundle` names, or the one for `--game-version` (or the newest) in `--bundles`.
+/// The bundle `--bundle` names, or the one for `--game-version` (or the newest release) in
+/// `--bundles`.
 fn bundle_dir(
     bundle: Option<&Path>,
     bundles: &Path,

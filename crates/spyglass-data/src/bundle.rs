@@ -54,10 +54,55 @@ pub enum BundleError {
     NotFound(String),
 }
 
+impl Manifest {
+    /// The version's kind: as recorded, or [`Kind::from_id`] for bundles that don't record it.
+    pub fn kind(&self) -> Kind {
+        self.kind.unwrap_or_else(|| Kind::from_id(&self.version))
+    }
+}
+
 fn io_err(path: &Path) -> impl FnOnce(io::Error) -> BundleError + '_ {
     move |source| BundleError::Io {
         path: path.to_path_buf(),
         source,
+    }
+}
+
+/// Whether a game version is a release or a snapshot (ADR 0028). Pre-releases and release
+/// candidates are snapshots, as the version manifest says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Kind {
+    /// A release, e.g. `26.3`.
+    Release,
+    /// A snapshot, pre-release or release candidate, e.g. `26.4-snapshot-5`.
+    Snapshot,
+}
+
+impl Kind {
+    /// The version manifest's `type`: `release` is a release, anything else (`snapshot`, and the
+    /// old `old_alpha` and `old_beta`) isn't.
+    pub fn from_manifest_type(kind: &str) -> Self {
+        if kind == "release" {
+            Kind::Release
+        } else {
+            Kind::Snapshot
+        }
+    }
+
+    /// A guess from the version id alone, for bundles that don't record their kind: ids with
+    /// `-snapshot-`, `-pre` or `-rc` are snapshots, as are the old `25w14a` form.
+    pub fn from_id(id: &str) -> Self {
+        let weekly = id.len() == 6
+            && id.is_ascii()
+            && id[..2].bytes().all(|b| b.is_ascii_digit())
+            && id.as_bytes()[2] == b'w'
+            && id[3..5].bytes().all(|b| b.is_ascii_digit());
+        if weekly || ["-snapshot-", "-pre", "-rc"].iter().any(|m| id.contains(m)) {
+            Kind::Snapshot
+        } else {
+            Kind::Release
+        }
     }
 }
 
@@ -70,6 +115,10 @@ pub struct Manifest {
     pub version: String,
     /// `world_version` from the game jar's `version.json`, e.g. 5023.
     pub data_version: u32,
+    /// Whether the version is a release or a snapshot, from the version manifest's `type`.
+    /// Bundles written before it was recorded have none; [`Manifest::kind`] then goes by the id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<Kind>,
     /// SHA-1 of the downloaded server jar, lower-case hex.
     pub jar_sha1: String,
     /// `JAVA_VERSION` of the runtime that ran the data generator.
@@ -303,6 +352,35 @@ fn walk(dir: &Path, prefix: &str, out: &mut Vec<String>) -> Result<(), BundleErr
 mod tests {
     use super::*;
 
+    #[test]
+    fn kinds() {
+        assert_eq!(Kind::from_manifest_type("release"), Kind::Release);
+        assert_eq!(Kind::from_manifest_type("snapshot"), Kind::Snapshot);
+        for id in ["26.3", "26.2", "1.21.4", "test"] {
+            assert_eq!(Kind::from_id(id), Kind::Release, "{id}");
+        }
+        for id in [
+            "26.4-snapshot-5",
+            "1.21.5-pre1",
+            "1.21.5-rc2",
+            "25w14a",
+            "26.4-pre-1",
+        ] {
+            assert_eq!(Kind::from_id(id), Kind::Snapshot, "{id}");
+        }
+        assert_eq!(Kind::from_id("ü5w14a"), Kind::Release);
+        let json = r#"{"format": 1, "version": "26.4-snapshot-5", "data_version": 5125,
+            "jar_sha1": "", "java_version": "", "extractor": "", "files": {}}"#;
+        let mut manifest: Manifest = serde_json::from_str(json).unwrap();
+        assert_eq!((manifest.kind, manifest.kind()), (None, Kind::Snapshot));
+        manifest.kind = Some(Kind::Release);
+        let written = serde_json::to_string(&manifest).unwrap();
+        assert!(
+            written.contains(r#""data_version":5125,"kind":"release""#),
+            "{written}"
+        );
+    }
+
     /// A bundle in `dir` holding `files`, with a manifest listing them, as the extractor writes.
     fn bundle(dir: &Path, files: &[(&str, &str)]) -> Bundle {
         let mut listed = BTreeMap::new();
@@ -316,6 +394,7 @@ mod tests {
             format: FORMAT,
             version: "26.3".into(),
             data_version: 5023,
+            kind: None,
             jar_sha1: String::new(),
             java_version: String::new(),
             extractor: String::new(),

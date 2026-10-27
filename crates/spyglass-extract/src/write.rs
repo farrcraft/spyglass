@@ -7,7 +7,7 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
-use spyglass_data::bundle::{FORMAT, MANIFEST, Manifest, sha1_hex};
+use spyglass_data::bundle::{FORMAT, Kind, MANIFEST, Manifest, sha1_hex};
 use zip::ZipArchive;
 use zip::result::ZipError;
 
@@ -74,6 +74,8 @@ pub struct Sources<'a> {
     pub reports_dir: &'a Path,
     /// Game version id. The game jar's `version.json` must agree.
     pub version: &'a str,
+    /// Release or snapshot, from the version manifest.
+    pub kind: Kind,
     /// SHA-1 of the server jar.
     pub jar_sha1: &'a str,
     /// `JAVA_VERSION` of the runtime that ran the data generator.
@@ -124,6 +126,7 @@ pub fn write(dest: &Path, sources: &Sources<'_>, replace: bool) -> Result<Manife
         format: FORMAT,
         version: sources.version.to_string(),
         data_version,
+        kind: Some(sources.kind),
         jar_sha1: sources.jar_sha1.to_ascii_lowercase(),
         java_version: sources.java_version.to_string(),
         extractor: env!("CARGO_PKG_VERSION").to_string(),
@@ -286,6 +289,7 @@ mod tests {
             game_jar,
             reports_dir,
             version: "26.3",
+            kind: Kind::Release,
             jar_sha1: "ABCDEF",
             java_version: "25.0.3",
         }

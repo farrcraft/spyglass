@@ -1,6 +1,7 @@
 //! Structure placement (`StructurePlacement`): which chunks a structure set may start in. Depends
-//! only on the seed, except for concentric rings, which also move towards preferred biomes.
-//! See `docs/specs/structure-placement.md`.
+//! only on the seed, except for concentric rings, which also move towards preferred biomes, and
+//! the dimension origin, which is where the spawn search ends. See
+//! `docs/specs/structure-placement.md`.
 
 use std::collections::HashSet;
 use std::f64::consts::PI;
@@ -12,7 +13,9 @@ use spyglass_rng::{LegacyRandomSource, RandomSource, worldgen};
 use crate::biomes::BiomeSet;
 use crate::load::StructureSets;
 
-/// A structure set's placement (`AbstractSpreadingStructurePlacement` and its subclasses).
+/// A structure set's placement (`AbstractSpreadingStructurePlacement` and its subclasses, or
+/// `DimensionOriginStructurePlacement`, which has none of these fields: no offset, frequency 1,
+/// salt 0 and no exclusion zone stand for it).
 #[derive(Debug, Clone)]
 pub struct Placement {
     /// `locate_offset`: added to a chunk's minimum block for locate results.
@@ -37,6 +40,10 @@ pub enum PlacementKind {
     RandomSpread(RandomSpread),
     /// `minecraft:concentric_rings`.
     ConcentricRings(ConcentricRings),
+    /// `minecraft:dimension_origin` (26.3 on): only the chunk `ChunkGenerator.getOrigin` gives,
+    /// the one the spawn search ends in ([`SpawnOrigin`](spyglass_biome::SpawnOrigin)). The
+    /// game's `/locate` never finds it.
+    DimensionOrigin,
 }
 
 /// `RandomSpreadStructurePlacement`: one candidate chunk per `spacing` × `spacing` cell.
@@ -355,7 +362,8 @@ impl StructureSets {
 
 impl SeedPlacements<'_> {
     /// Whether set `set`'s placement test and frequency pass at chunk `(x, z)`, before its
-    /// exclusion zone; `None` for concentric rings, whose positions need biomes.
+    /// exclusion zone; `None` for concentric rings, whose positions need biomes, and the
+    /// dimension origin, which needs the climate.
     pub fn placed(&self, set: usize, x: i32, z: i32) -> Option<bool> {
         let placement = &self.sets.sets()[set].placement;
         match &placement.kind {
@@ -363,12 +371,13 @@ impl SeedPlacements<'_> {
                 spread.potential_chunk(self.seed, placement.salt, x, z) == [x, z]
                     && frequent(placement, self.seed, x, z),
             ),
-            PlacementKind::ConcentricRings(_) => None,
+            PlacementKind::ConcentricRings(_) | PlacementKind::DimensionOrigin => None,
         }
     }
 
     /// `StructurePlacement.isStructureChunk`, if the lower 48 bits decide it: `None` for
-    /// concentric rings, and for an exclusion zone against them that the answer turns on.
+    /// concentric rings and the dimension origin, and for an exclusion zone against them that
+    /// the answer turns on.
     pub fn is_structure_chunk(&self, set: usize, x: i32, z: i32) -> Option<bool> {
         if !self.placed(set, x, z)? {
             return Some(false);
@@ -419,7 +428,7 @@ impl SeedPlacements<'_> {
 
     /// Every chunk in `min..=max` (chunk coordinates, inclusive) where set `set` may start as
     /// far as the lower 48 bits tell: certainly placed, or placed unless an undecided exclusion
-    /// zone says otherwise. `None` for concentric rings. A superset of
+    /// zone says otherwise. `None` for concentric rings and the dimension origin. A superset of
     /// [`Placements::structure_chunks_in`] for every seed with the same lower 48 bits.
     pub fn possible_chunks_in(
         &self,
@@ -459,6 +468,8 @@ pub struct Placements<'s> {
     biomes: Biomes<'s>,
     /// Ring points and their positions by set index, once generated.
     rings: Vec<OnceLock<Rings>>,
+    /// The dimension origin's chunk, once a dimension-origin set asks for it.
+    origin: OnceLock<[i32; 2]>,
 }
 
 /// One concentric-ring set's points, each with its position once settled.
@@ -478,6 +489,7 @@ impl StructureSets {
             seed_only: self.seed_placements(seed),
             biomes: biomes.clone(),
             rings: self.sets().iter().map(|_| OnceLock::new()).collect(),
+            origin: OnceLock::new(),
         }
     }
 }
@@ -550,6 +562,17 @@ impl Placements<'_> {
         )
     }
 
+    /// A dimension-origin set's chunk if it's in `min..=max`; `None` for other placement types.
+    fn origin_chunks_in(&self, set: usize, min: [i32; 2], max: [i32; 2]) -> Option<Vec<[i32; 2]>> {
+        let PlacementKind::DimensionOrigin = self.sets().sets()[set].placement.kind else {
+            return None;
+        };
+        let origin = *self
+            .origin
+            .get_or_init(|| self.sets().dimension_origin(self.seed()));
+        Some(Vec::from_iter(Some(origin).filter(|c| inside(c, min, max))))
+    }
+
     /// `StructurePlacement.isStructureChunk`: whether set `set` may start in chunk `(x, z)`:
     /// the placement test, then frequency, then the exclusion zone.
     pub fn is_structure_chunk(&self, set: usize, x: i32, z: i32) -> bool {
@@ -559,6 +582,7 @@ impl Placements<'_> {
         let placement = &self.sets().sets()[set].placement;
         let placed = self.seed_only.placed(set, x, z).unwrap_or_else(|| {
             self.ring_chunks_in(set, [x, z], [x, z])
+                .or_else(|| self.origin_chunks_in(set, [x, z], [x, z]))
                 .is_some_and(|chunks| !chunks.is_empty())
                 && frequent(placement, self.seed(), x, z)
         });
@@ -581,6 +605,7 @@ impl Placements<'_> {
             .seed_only
             .cell_chunks_in(set, min, max)
             .or_else(|| self.ring_chunks_in(set, min, max))
+            .or_else(|| self.origin_chunks_in(set, min, max))
             .unwrap_or_default();
         // Ring positions can repeat; keep each chunk's first.
         let mut seen = HashSet::new();

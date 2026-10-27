@@ -10,7 +10,7 @@ _Versions:_ 26.4-snapshot-5 computes the same quart biomes but stores a chunk's 
 
 `BiomeSource::load(bundle, preset, dimension)` follows the world preset, as a new world does:
 
-1. `worldgen/world_preset/<preset>`: `dimensions.<dimension>.generator` must have `type: minecraft:noise`, a `biome_source` of `type: minecraft:multi_noise` with a `preset` or of `type: minecraft:the_end` ([below](#the-ends-source)), and `settings` naming noise settings by id. Inline settings and inline biome lists aren't supported yet.
+1. `worldgen/world_preset/<preset>`: `dimensions.<dimension>.generator` must have `type: minecraft:noise`, a `biome_source` of `type: minecraft:multi_noise` with a `preset`, of `type: minecraft:the_end` ([below](#the-ends-source)) or of `type: minecraft:checkerboard` ([below](#checkerboard-source)), and `settings` naming noise settings by id. Inline settings and inline multi-noise parameter lists aren't supported yet.
 2. `worldgen/multi_noise_biome_source_parameter_list/<preset>` is `{"preset": <id>}`. The parameter list itself is built in code (`MultiNoiseBiomeSourceParameterList.Preset`), so spyglass reads the data generator's report for that id: `reports/biome_parameters/<namespace>/<path>.json` ([data-sources.md](data-sources.md#data-generator)).
 3. The climate router comes from the noise settings ([density-functions.md](density-functions.md#the-climate-sampler)).
 
@@ -28,6 +28,17 @@ For quart `(qx, qy, qz)`: `bx = qx << 2`, `bz = qz << 2`, section `sx = bx >> 4`
 `end/islands` doesn't depend on y, so neither does the End's biome.
 
 _Versions:_ in 26.2, `e` is `erosion.compute(new SinglePointContext(x, y, z))` at the same block, with the climate sampler's `erosion`: the `f64` value of the `f64` density evaluation, never narrowed (`ClimateSampler::v1_21`'s erosion function, not `sample`). The island test and thresholds are 26.3's, so the answer differs from narrowing only where a threshold falls between the `f64` value and its `f32` rounding. No golden End cell does: narrowing would also match all 42,598,400; a unit test covers the difference.
+
+## Checkerboard source
+
+From the 26.3 and 26.4-snapshot-6 bytecode (`CheckerboardColumnBiomeSource`). 26.2's is the same but for its signature: its `getNoiseBiome` also takes the climate sampler, unused. No vanilla preset uses it; a data pack can, for a dimension of the Default preset. Its fields:
+
+- `biomes` (`Biome.LIST_CODEC`): a list of biome ids, a single id, or `"#tag"`. A list keeps its order and its repeats (`HolderSet.direct`). A tag's biomes are in the order `TagLoader` builds them: entries in order, a nested tag's biomes in place, each biome kept at its first appearance (a `LinkedHashSet`), and an optional entry that doesn't exist skipped. Every biome must exist. An empty set is a load error in spyglass; the game would divide by zero at the first lookup.
+- `scale`: an int in 0..=62, default 2. `bitShift` is `scale + 2`.
+
+For quart `(qx, qy, qz)` the biome is `biomes[floorMod((qx >> bitShift) + (qz >> bitShift), size)]`, independent of y, with wrapping `int` addition. Java's `>>` on an `int` uses only the shift's low five bits, so a scale of 30 or more shifts by `scale + 2 − 32`: scale 62 shifts by 0, a stripe per quart. There are no ties.
+
+Checked by hand-worked tests from the bytecode, not by the oracle: the harness opens only the Default preset's dimensions, and the test pack can't replace one without changing every other comparison it makes.
 
 ## The Nether
 

@@ -27,6 +27,8 @@ Status: stable. Covers `/locate structure` and `/locate biome` in the Default wo
 
 The position reported is `getLocatePos`: the chunk's minimum block plus the set's `locate_offset`.
 
+The search handles only concentric rings and random spread. A target placed only by a [`dimension_origin`](structure-placement.md#dimension-origin) set is never found, though it generates, and a set of that type adds nothing to a mixed target's search.
+
 _Versions:_ `ChunkGenerator.findNearestMapStructure` and its search are the same in 26.2, 26.3 and 26.4-snapshot-5, and so is `StructureCheck.canCreateStructure`. Whether a chunk generates a target follows each version's rules in [structure-placement.md](structure-placement.md), whose _Versions_ notes say where they differ.
 
 **Search order.**

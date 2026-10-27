@@ -290,7 +290,9 @@ impl Starts<'_> {
             .iter()
             .filter_map(|&set| match sets.sets()[set].placement.kind {
                 PlacementKind::RandomSpread(spread) => Some((set, spread)),
-                PlacementKind::ConcentricRings(_) => None,
+                // findNearestMapStructure handles only these two: a dimension-origin set is
+                // never found.
+                PlacementKind::ConcentricRings(_) | PlacementKind::DimensionOrigin => None,
             })
             .collect();
         if spreads.is_empty() {

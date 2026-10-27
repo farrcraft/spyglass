@@ -6,4 +6,4 @@ Code must not reference plans. Anything durable a plan produces belongs in a spe
 
 ## Active
 
-- [m08-versions](m08-versions.md) (draft): 26.2, 26.3 and 26.4 (through its snapshots) side by side, CI, and the guide for adding a version, for milestone [08](../roadmap/08-dimensions-and-versions.md).
+None. Milestone [08](../roadmap/08-dimensions-and-versions.md)'s remaining follow-ups (the first CI run on GitHub, and each new 26.4 snapshot) need no plan of their own.

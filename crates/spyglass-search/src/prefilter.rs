@@ -113,7 +113,7 @@ fn spawn_anchored(place: &Place) -> bool {
 }
 
 /// The possible sets that can start one of `structures`, or `None` if one of them is on
-/// concentric rings, whose positions the lower 48 bits don't decide.
+/// concentric rings or at the dimension origin, whose positions the lower 48 bits don't decide.
 fn sets_of(sets: &StructureSets, structures: &[usize]) -> Option<Vec<usize>> {
     let mut out = Vec::new();
     for (i, set) in sets.sets().iter().enumerate() {
@@ -123,7 +123,7 @@ fn sets_of(sets: &StructureSets, structures: &[usize]) -> Option<Vec<usize>> {
                 .iter()
                 .any(|e| structures.contains(&e.structure))
         {
-            if let PlacementKind::ConcentricRings(_) = set.placement.kind {
+            if !matches!(set.placement.kind, PlacementKind::RandomSpread(_)) {
                 return None;
             }
             out.push(i);

@@ -27,8 +27,9 @@ _Versions:_ placement (random spread, concentric rings, salts, frequency reducer
   | `salt`                       | required    | an int                                     |
   | `exclusion_zone`             | none        | `{other_set, chunk_count}`, count 1..=16   |
 
-  _Versions:_ in 26.2, `StructurePlacement` is an abstract class that holds these fields and `isStructureChunk` itself. 26.3 makes it an interface and moves them, unchanged, into `AbstractSpreadingStructurePlacement`. 26.3 also adds the placement type `minecraft:dimension_origin` (`DimensionOriginStructurePlacement`), which no vanilla set uses in any of the three versions.
+  _Versions:_ in 26.2, `StructurePlacement` is an abstract class that holds these fields and `isStructureChunk` itself. 26.3 makes it an interface and moves them, unchanged, into `AbstractSpreadingStructurePlacement`. 26.3 also adds the placement type `minecraft:dimension_origin` (`DimensionOriginStructurePlacement`), which no vanilla set uses in any supported version ([below](#dimension-origin)).
 
+- **`minecraft:dimension_origin`** (26.3 on): no fields. Its codec is `MapCodec.unit`, so the fields above are neither required nor read, and other keys are ignored.
 - **`minecraft:random_spread`**: `spacing` and `separation` in 0..=4096, with spacing strictly greater ("Spacing has to be larger than separation"). `spread_type` is `linear` (the default) or `triangular`.
 - **`minecraft:concentric_rings`**: `distance` and `spread` in 0..=1023, `count` in 1..=4095, and `preferred_biomes`.
 - **Structure** (`Structure`): `type` and `biomes`, plus the jigsaw fields [below](#jigsaw-starts). The supported types are the 16 vanilla ones.
@@ -61,6 +62,12 @@ _Versions:_ placement (random spread, concentric rings, salts, frequency reducer
 **Exclusion zone** (`ChunkGeneratorStructureState.hasStructureChunkInRange`): the chunk is excluded if the other set's `isStructureChunk` holds anywhere within `chunk_count` chunks on both axes. This uses placement only, never biomes, and the other set needn't apply to the dimension.
 
 **Locate position** (`getLocatePos`): the chunk's minimum block x and z, at y 0, plus `locate_offset`.
+
+### Dimension origin
+
+From the 26.3 and 26.4-snapshot-6 bytecode (`DimensionOriginStructurePlacement`). `isStructureChunk(state, x, z)` is true only at `state.getDimensionOrigin()`. There's no frequency test, salt or exclusion zone. The origin is set by `ChunkGenerator.createState` from `getOrigin(randomState)`. For a noise generator, that's the chunk containing `NoiseSpawnFinder.findSpawnPosition` over the noise settings' spawn targets, or chunk (0, 0) if there are none. This is the chunk [spawn.md](spawn.md) computes as the spawn origin, so spyglass works it out once per seed, and only for a dimension that has such a set. Where that chunk is platform-dependent ([spawn.md](spawn.md)), so is the set's.
+
+`ChunkGenerator.findNearestMapStructure` handles only concentric rings and random spread, so `/locate` never finds a structure placed this way, and neither does spyglass's ([locate.md](locate.md)). The lower 48 bits don't decide it, so searches can't prefilter on it ([below](#the-lower-48-bits)).
 
 ### Concentric rings
 
@@ -269,7 +276,7 @@ So in 26.2 a feature element attaches only to a parent whose target is `minecraf
 
 Then, with `use_expansion_hack` and an origin box at most 16 high, the box's top is raised to `minY + max(e + 1, maxY − minY)`. `e` is the largest, over the candidate's jigsaws at the origin whose target is inside its origin box, of their pool's and its fallback's `getMaxSize` (the tallest non-empty element, unrotated; 0 for a missing pool), with aliases. The raised box is the one tested and kept.
 
-**Elements.** Every element but the empty one has a `projection`, `rigid` or `terrain_matching`; a list element's is its own. A single (or legacy single) element is its template's box and jigsaw blocks. A list element is the box around its elements' boxes, with its first element's jigsaw blocks. A feature element is one block, with one jigsaw at it: front down, top south, `rollable`, no name, pool and target `minecraft:empty`, no draws. The empty element has neither.
+**Elements.** Every element but the empty one has a `projection`, `rigid` or `terrain_matching`; a list element's is its own. A single or legacy single element may have `override_liquid_settings`, `apply_waterlogging` or `ignore_waterlogging`; any other value fails the pool's loading. Only `place` reads it, through `getSettings`, so it changes how blocks are written but no piece, box or draw, and spyglass checks it and ignores it. A single (or legacy single) element is its template's box and jigsaw blocks. A list element is the box around its elements' boxes, with its first element's jigsaw blocks. A feature element is one block, with one jigsaw at it: front down, top south, `rollable`, no name, pool and target `minecraft:empty`, no draws. The empty element has neither.
 
 ### Corner constraints
 

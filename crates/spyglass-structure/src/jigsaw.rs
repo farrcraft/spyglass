@@ -1103,6 +1103,7 @@ impl<'a> JigsawLoader<'a> {
                     .get("location")
                     .and_then(Value::as_str)
                     .ok_or_else(|| at.error(LoadErrorKind::Missing("location")))?;
+                check_liquid_settings(json, at)?;
                 PoolElement::Single(self.template(&full_id(location))?, projection)
             }
             "minecraft:list_pool_element" => {
@@ -1307,6 +1308,28 @@ pub(crate) fn height_provider(json: &Value, at: &At<'_>) -> LoadResult<HeightPro
     }
 }
 
+/// `SinglePoolElement.overrideLiquidSettingsCodec`, optional: how the element's blocks take
+/// waterlogging when placed. Only `place` reads it, so it changes no piece or bound, but a pool
+/// with another value doesn't load.
+fn check_liquid_settings(element: &Value, at: &At<'_>) -> LoadResult<()> {
+    match element.get("override_liquid_settings") {
+        None => Ok(()),
+        Some(v)
+            if matches!(
+                v.as_str(),
+                Some("apply_waterlogging" | "ignore_waterlogging")
+            ) =>
+        {
+            Ok(())
+        }
+        Some(_) => Err(at
+            .child("override_liquid_settings")
+            .error(LoadErrorKind::Shape(
+                "\"apply_waterlogging\" or \"ignore_waterlogging\"",
+            ))),
+    }
+}
+
 #[cfg(test)]
 impl Template {
     /// A hand-written template with one palette: jigsaw blocks as `(pos, front, top, data)`.
@@ -1340,6 +1363,23 @@ mod tests {
             size,
             palettes: vec![vec![]],
         }
+    }
+
+    #[test]
+    fn liquid_settings_are_the_games_two_or_absent() {
+        let at = At::root("minecraft:pool");
+        let check = |v: serde_json::Value| check_liquid_settings(&v, &at).is_ok();
+        assert!(check(serde_json::json!({})));
+        assert!(check(
+            serde_json::json!({"override_liquid_settings": "apply_waterlogging"})
+        ));
+        assert!(check(
+            serde_json::json!({"override_liquid_settings": "ignore_waterlogging"})
+        ));
+        assert!(!check(
+            serde_json::json!({"override_liquid_settings": "drown"})
+        ));
+        assert!(!check(serde_json::json!({"override_liquid_settings": 1})));
     }
 
     #[test]

@@ -1,0 +1,11 @@
+{
+  "placement": {
+    "type": "minecraft:dimension_origin"
+  },
+  "structures": [
+    {
+      "structure": "minecraft:igloo",
+      "weight": 1
+    }
+  ]
+}

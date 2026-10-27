@@ -17,3 +17,5 @@ Plans that have been fully implemented. See [development-process.md](../../devel
 | [m05-viewer](m05-viewer.md)                             | 05. Viewer MVP                             | 2026-10-25 |
 | [m06-seed-search](m06-seed-search.md)                   | 06. Seed search                            | 2026-10-25 |
 | [m07-terrain-and-validity](m07-terrain-and-validity.md) | 07. Terrain, structure validity, jigsaw    | 2026-10-26 |
+| [m08-dimensions](m08-dimensions.md)                     | 08. Nether, End and multiple versions      | 2026-10-26 |
+| [m08-versions](m08-versions.md)                         | 08. Nether, End and multiple versions      | 2026-10-27 |

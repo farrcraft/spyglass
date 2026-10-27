@@ -1,9 +1,9 @@
 # m08. More than one game version
 
-- Status: In progress
-- Milestone: [08. Nether, End and multiple versions](../roadmap/08-dimensions-and-versions.md)
+- Status: Completed
+- Milestone: [08. Nether, End and multiple versions](../../roadmap/08-dimensions-and-versions.md)
 - Started: 2026-10-26
-- Completed: not yet
+- Completed: 2026-10-27
 
 ## Goal
 
@@ -91,7 +91,7 @@ The alternatives the ADR weighs:
 
 ### The oracle across versions
 
-Also an ADR, extending [ADR 0004](../adr/0004-oracle-standalone-harness.md). The recommendation:
+Also an ADR, extending [ADR 0004](../../adr/0004-oracle-standalone-harness.md). The recommendation:
 
 - A version-independent core.
 - Small adapters for each range of game API the core calls. `xtask` picks the adapter by the jar's data version and compiles core plus adapter.
@@ -127,7 +127,7 @@ The pieces:
   - the time taken;
   - the oracle result.
 - **Cheap** means about a day or less, confined to loaders, switches, harness adapters and spec notes. Any other update gets a short retro in this plan's notes: what forced the work, and what change to the structure would have made it cheap. That change becomes a task here, or an ADR when it's a design change. The point is to learn, not to hit a number.
-- **Which versions are supported: all of them, permanently.** Snapshots are versions of their own, which people play and keep worlds in, not a step to throw away when the release ships. Every version added stays supported: its bundle, its oracle comparisons, its CI job and its cost-log row. New versions are added as they come out, from 26.2 and 26.4-snapshot-5 on; older ones, 26.4's first four snapshots included, can be added later by the guide. The policy is in [ADR 0028](../adr/0028-supported-versions-and-ci.md).
+- **Which versions are supported: all of them, permanently.** Snapshots are versions of their own, which people play and keep worlds in, not a step to throw away when the release ships. Every version added stays supported: its bundle, its oracle comparisons, its CI job and its cost-log row. New versions are added as they come out, from 26.2 and 26.4-snapshot-5 on; older ones, 26.4's first four snapshots included, can be added later by the guide. The policy is in [ADR 0028](../../adr/0028-supported-versions-and-ci.md).
 - **Switches and adapters hold data-version ranges**, not a starting version, because a later snapshot can revert a change.
 - **Defaults prefer releases.** The CLI and the viewer pick the newest _release_ bundle unless a snapshot is asked for by name, or a save's data version matches it. That fixes the trap that pinned the CLI tests. It decides only the default; snapshots are as supported as releases.
 
@@ -153,7 +153,7 @@ The guide is `docs/adding-a-version.md`. It covers:
 
 It's followed for 26.2 and for each snapshot. That's exit criterion 3.
 
-Specs and ADRs that govern this: [data-sources.md](../specs/data-sources.md), [bundle-format.md](../specs/bundle-format.md), [oracle.md](../specs/oracle.md), [noise.md](../specs/noise.md), [rng.md](../specs/rng.md), [density-functions.md](../specs/density-functions.md), [biome-lookup.md](../specs/biome-lookup.md), [terrain.md](../specs/terrain.md), [structure-placement.md](../specs/structure-placement.md), [spawn.md](../specs/spawn.md), [locate.md](../specs/locate.md), [ADR 0004](../adr/0004-oracle-standalone-harness.md), [ADR 0008](../adr/0008-game-derived-test-values-stay-local.md), [ADR 0010](../adr/0010-typed-loading-of-worldgen-json.md), [ADR 0016](../adr/0016-extractor-crate-and-read-only-data.md).
+Specs and ADRs that govern this: [data-sources.md](../../specs/data-sources.md), [bundle-format.md](../../specs/bundle-format.md), [oracle.md](../../specs/oracle.md), [noise.md](../../specs/noise.md), [rng.md](../../specs/rng.md), [density-functions.md](../../specs/density-functions.md), [biome-lookup.md](../../specs/biome-lookup.md), [terrain.md](../../specs/terrain.md), [structure-placement.md](../../specs/structure-placement.md), [spawn.md](../../specs/spawn.md), [locate.md](../../specs/locate.md), [ADR 0004](../../adr/0004-oracle-standalone-harness.md), [ADR 0008](../../adr/0008-game-derived-test-values-stay-local.md), [ADR 0010](../../adr/0010-typed-loading-of-worldgen-json.md), [ADR 0016](../../adr/0016-extractor-crate-and-read-only-data.md).
 
 ## Tasks
 
@@ -169,9 +169,9 @@ Specs and ADRs that govern this: [data-sources.md](../specs/data-sources.md), [b
 
 - [x] Where 26.4's default block comes from, now that `default_block` is gone: the material rule's last entry (see notes).
 - [x] `cargo xtask version-diff`, with tests on fixture bundles. Its report on 26.2 → 26.3 and 26.3 → 26.4-snapshot-5 must name every change listed above.
-- [x] ADR: how versions coexist (shape dispatch and behavior switches): [0026](../adr/0026-how-game-versions-coexist.md), accepted.
-- [x] ADR: the oracle harness across versions (core and adapters): [0027](../adr/0027-oracle-harness-across-versions.md), accepted.
-- [x] ADR: supported versions, snapshots, release-first defaults, and CI on GitHub Actions: [0028](../adr/0028-supported-versions-and-ci.md), accepted.
+- [x] ADR: how versions coexist (shape dispatch and behavior switches): [0026](../../adr/0026-how-game-versions-coexist.md), accepted.
+- [x] ADR: the oracle harness across versions (core and adapters): [0027](../../adr/0027-oracle-harness-across-versions.md), accepted.
+- [x] ADR: supported versions, snapshots, release-first defaults, and CI on GitHub Actions: [0028](../../adr/0028-supported-versions-and-ci.md), accepted.
 - [x] Timing: goldens and locate for one version on 4 cores, as CI will have.
 
 ### Phase 2: version-aware infrastructure
@@ -212,25 +212,25 @@ Specs and ADRs that govern this: [data-sources.md](../specs/data-sources.md), [b
 
 ### Phase 6: snapshots while the plan runs
 
-- [ ] Each 26.4 snapshot, pre-release and release candidate released before the plan completes, added for good: the loop, its bundle and goldens kept beside the earlier snapshots', every earlier version's comparisons still passing, a cost-log row, and a retro and follow-up task where it wasn't cheap. Snapshot 6 is likely on 2026-10-27.
-- [ ] 26.4-snapshot-6 (data version 5126, released 2026-10-27). Data: nothing spyglass reads changed (templates only in their `DataVersion`, biome feature order, block tags spyglass doesn't read). Bytecode: 20 ported classes changed, 11 added.
+- [x] Each 26.4 snapshot, pre-release and release candidate released before the plan completes, added for good: the loop, its bundle and goldens kept beside the earlier snapshots', every earlier version's comparisons still passing, a cost-log row, and a retro and follow-up task where it wasn't cheap. Snapshot 6 is likely on 2026-10-27. Snapshot 6 was the only one; later ones are a [follow-up](#follow-ups).
+- [x] 26.4-snapshot-6 (data version 5126, released 2026-10-27). Data: nothing spyglass reads changed (templates only in their `DataVersion`, biome feature order, block tags spyglass doesn't read). Bytecode: 20 ported classes changed, 11 added.
   - [x] Harness: `RandomState.create` split into `createForGenerator` (anchors from the level) and `createForTesting`. `GameApi.randomState` takes the level's height; the calls live in the 26.3 adapter's `RandomStates.java`, and `oracle/adapters/26.4-snapshot-6/` extends 26.4 with only that file.
   - [x] `planUpsample` tests a stepped volume's offset against the step, not the cell size: switch `upscale_offset_by_step`, with a hand-worked test (it only shows for steps that aren't powers of two).
   - [x] Goldens and `oracle-test` for 26.4-snapshot-6 (31 tests); every earlier version still passing.
-  - [x] Forms the vanilla data doesn't use yet, implemented and checked by the oracle through a test data pack (decided 2026-10-27, [ADR 0030](../adr/0030-a-test-pack-for-forms-vanilla-doesnt-use.md)):
+  - [x] Forms the vanilla data doesn't use yet, implemented and checked by the oracle through a test data pack (decided 2026-10-27, [ADR 0030](../../adr/0030-a-test-pack-for-forms-vanilla-doesnt-use.md)):
     - [x] `gradient` coordinates as vertical anchors, resolved against the level's heights when bound (`VerticalAnchor` moved down to `spyglass-data`; `Binder::with_anchors`, and the climate router, terrain, spawn targets and corner constraints bind with their dimension's heights).
     - [x] `domain_warp`: constant offsets, the flat-xz sampler and the general one, point and volume paths, with the game's `domainAxes` and its slicing of the warp's volume.
     - [x] `corner_constraint` on pool elements: density predicates at a piece's corners, rejecting starts (no stub) and children (after they take their space).
     - [x] `oracle/testpack/` and `cargo xtask oracle test-pack`: the harness's `--pack`, a merged bundle in `target/oracle/bundles/<version>+testpack/`, and `oracle-test` treating it as a version. 22 tests pass: 23,560 density cases, 1,544 constrained village starts assembled and 4,164 rejected.
   - [x] Cost and retro: see the notes. Logged in the guide's cost log when it exists (phase 8).
   - [x] From the retro: `version-diff` ignores a template change that's only its `DataVersion`, and `--code` lists codec types and fields a version registers that its data doesn't use, so a snapshot's unused forms show up in the report. Templates that differ only in their root `DataVersion` are counted apart ("1511 only in DataVersion"). `--code` finds each `register` and `fieldOf` call's string constant in the disassembly, compares against every type id and key in the new bundle's JSON, prints the forms new since the old version and writes all of them to `target/version-diff/<version>-unused.txt`. On snapshot 5 → 6 it names exactly `domain_warp`, its `offset_*` fields and `corner_constraint` with its predicate's fields; anchor coordinates show only as the added `GradientFunction$Coordinate$YAnchor` class, since they reuse `VerticalAnchor`'s fields.
-- [ ] Older forms the vanilla data doesn't use, found by that list, that spyglass doesn't load yet: the `dimension_origin` placement type (26.3 on), `override_liquid_settings` on single pool elements, and the `checkerboard` biome source. Each with test-pack cases, as for snapshot 6's forms, or a recorded reason not to.
+- [x] Older forms the vanilla data doesn't use, found by that list, that spyglass doesn't load yet: the `dimension_origin` placement type (26.3 on), `override_liquid_settings` on single pool elements, and the `checkerboard` biome source. Each with test-pack cases, as for snapshot 6's forms, or a recorded reason not to. `dimension_origin`: a placement kind whose only chunk is the spawn origin's (`StructureSets` keeps the spawn targets when a set needs them), which `/locate` never finds, as in the game; in the test pack as igloos, and every golden seed's origin chunk matches. `override_liquid_settings` already loaded (unread fields are ignored); now a value other than the game's two is an error, and the test pack's village uses one, with layouts unchanged. `checkerboard`: a biome-source kind with the tag order `TagLoader` gives and Java's five-bit shift; hand-worked tests only, since the harness opens only the Default preset (recorded in biome-lookup.md).
 
 ### Phase 7: CI
 
 - [x] `cargo xtask ci --game-version <v>`, the steps a CI job runs, passing locally for each supported version. Extract (replacing the bundle), `oracle golden`, `oracle locate`, `oracle test-pack` where the pack loads (`oracle/testpack/data-versions`, `5126..`; `test-pack` now refuses other versions), then `oracle-test` for the version and its `+testpack`, where a comparison missing an input the job made is an error, not a skip. Passing on this machine (16 cores): 26.2 in 29.8 min, 26.3 in 8.9, 26.4-snapshot-5 in 8.9, 26.4-snapshot-6 in 12.1 with the test pack.
 - [x] The GitHub Actions workflow: the version matrix and `cargo xtask check`. `.github/workflows/ci.yml`: a `check` job (the viewer's system libraries, the JDK `jdk-status` names, `scripts/setup.sh --oracle`, `cargo xtask check`) and an `oracle` job per version (the JDK, `cargo xtask ci`). Not yet run anywhere: GitHub needs the repository.
-- [ ] A first green run on GitHub. Blocked until the repository is published there, which is the user's decision. Exit criterion 2 waits for it.
+- [ ] A first green run on GitHub. Blocked until the repository is published there, which is the user's decision. Exit criterion 2 waits for it. Moved to a [follow-up](#follow-ups) (2026-10-27).
 
 ### Phase 8: the guide and close-out
 
@@ -238,7 +238,7 @@ Specs and ADRs that govern this: [data-sources.md](../specs/data-sources.md), [b
 - [x] Specs' status lines and _Versions_ notes for every supported version. Status lines in `rng.md`, `noise.md`, `biome-lookup.md`, `locate.md`, `spawn.md` and `terrain.md` now say 26.2 and the 26.4 snapshots are checked; `world-saves.md` still says its notes are unchecked, which is true (saves aren't compared per version).
 - [x] `data-sources.md`, `oracle.md`, README (supported versions), architecture.md. Also the docs index and getting-started.
 - [x] Bench lines per version. `cargo xtask bench <version>` now takes a version and defaults to the newest release, not `bundles/26.3`; lines in the notes.
-- [ ] `cargo xtask check` and `cargo xtask oracle-test` for every version. Move this plan to `completed/`, and milestone 08 too once CI has run.
+- [x] `cargo xtask check` and `cargo xtask oracle-test` for every version. Move this plan to `completed/`, and milestone 08 too once CI has run. The plan is closed; the milestone stays open for its follow-ups.
 
 ## Verification
 
@@ -273,9 +273,16 @@ Agreed on 2026-10-26:
 - **Support is permanent, and every snapshot is a version** (2026-10-26). Once a version is supported it stays supported, snapshots included: people play specific snapshots and keep worlds in them. Nothing is dropped when a newer snapshot or the release lands.
 - **CI:** GitHub Actions, downloading the server jar from Mojang during each run, with nothing game-derived committed or kept (agreed with m08-dimensions).
 
-Accepted on 2026-10-26: [ADR 0026](../adr/0026-how-game-versions-coexist.md) (how versions coexist), [ADR 0027](../adr/0027-oracle-harness-across-versions.md) (the harness across versions) and [ADR 0028](../adr/0028-supported-versions-and-ci.md) (supported versions and CI).
+Accepted on 2026-10-26: [ADR 0026](../../adr/0026-how-game-versions-coexist.md) (how versions coexist), [ADR 0027](../../adr/0027-oracle-harness-across-versions.md) (the harness across versions) and [ADR 0028](../../adr/0028-supported-versions-and-ci.md) (supported versions and CI).
 
 Open for the user: publishing the repository on GitHub, which exit criterion 2 needs.
+
+## Follow-ups
+
+Agreed on 2026-10-27 when closing the plan: two items continue outside it, under [milestone 08](../../roadmap/08-dimensions-and-versions.md), which stays in progress until both are done.
+
+- **The first green CI run on GitHub** (exit criterion 2), once the repository is published there. The workflow and `cargo xtask ci` are ready and pass locally for every version.
+- **Each new 26.4 snapshot**, pre-release, release candidate and the release, added by [the guide](../../adding-a-version.md) with a cost-log row. The first, likely 26.4-snapshot-7 on 2026-11-03, is the first addition made from the guide as written (exit criterion 3).
 
 ## Notes
 

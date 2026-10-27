@@ -3,7 +3,8 @@
 use std::collections::HashMap;
 
 use serde_json::{Map, Value};
-use spyglass_biome::{BiomeNames, BiomeSource};
+use spyglass_biome::{BiomeNames, BiomeSource, SpawnTargets};
+use spyglass_data::anchor::AnchorHeights;
 use spyglass_data::bundle::Bundle;
 use spyglass_data::codec::{
     self, At, LoadErrorKind, LoadResult, field, full_id, id, int_field, int_in, object,
@@ -141,6 +142,8 @@ pub struct StructureSets {
     /// The noises the start pools' corner constraints use.
     corner_noises: HashMap<String, NormalNoiseParameters>,
     monument_surroundings: BiomeSet,
+    /// The dimension's spawn targets, if a set is placed at the dimension origin.
+    spawn: Option<SpawnTargets>,
 }
 
 impl StructureSets {
@@ -168,8 +171,12 @@ impl StructureSets {
         dimension: &str,
         biomes: &BiomeNames,
     ) -> LoadResult<Self> {
-        let (heights, sea_level, legacy_random_source) =
-            dimension_heights(bundle, preset, dimension)?;
+        let DimensionSettings {
+            heights,
+            sea_level,
+            legacy_random_source,
+            noise_settings,
+        } = dimension_heights(bundle, preset, dimension)?;
         let ids = bundle.registry_ids(STRUCTURE_SET);
         let index: HashMap<String, usize> = ids
             .iter()
@@ -196,7 +203,24 @@ impl StructureSets {
         let monument_surroundings = loader
             .tags
             .optional_tag("minecraft:required_ocean_monument_surrounding")?;
+        // The spawn search, only if a set is placed by it. Binding fails the same way for every
+        // seed, so check it once here.
+        let spawn = if sets
+            .iter()
+            .any(|s| matches!(s.placement.kind, PlacementKind::DimensionOrigin))
+        {
+            let targets =
+                SpawnTargets::load(bundle, &noise_settings)?.within_level(AnchorHeights {
+                    min_y: heights.level_min_y,
+                    height: heights.level_height,
+                });
+            targets.with_seed(0)?;
+            Some(targets)
+        } else {
+            None
+        };
         let sets = StructureSets {
+            spawn,
             sets,
             corner_noises: loader.jigsaw.noises().clone(),
             structures: loader.structures,
@@ -227,6 +251,21 @@ impl StructureSets {
     /// Every set, sorted by id.
     pub fn sets(&self) -> &[StructureSet] {
         &self.sets
+    }
+
+    /// `ChunkGenerator.getOrigin` for `seed`: the chunk the spawn search ends in, or (0, 0)
+    /// without spawn targets ([`SpawnSearch::origin`](spyglass_biome::SpawnSearch::origin)).
+    /// Only called for a set placed at the dimension origin, which loaded the targets.
+    pub(crate) fn dimension_origin(&self, seed: i64) -> [i32; 2] {
+        let targets = self
+            .spawn
+            .as_ref()
+            .expect("spawn targets, loaded for a dimension-origin set");
+        targets
+            .with_seed(seed)
+            .expect("spawn targets that bound at load")
+            .origin()
+            .chunk
     }
 
     /// Every structure a set names, in the order first named.
@@ -286,7 +325,7 @@ fn dimension_heights(
     bundle: &Bundle,
     preset: &str,
     dimension: &str,
-) -> LoadResult<(GenerationHeights, i32, bool)> {
+) -> LoadResult<DimensionSettings> {
     let read = |registry: &str, id: &str| {
         bundle
             .resource(registry, id)
@@ -338,8 +377,8 @@ fn dimension_heights(
                 .error(LoadErrorKind::Shape("true or false"))
         })?,
     };
-    Ok((
-        GenerationHeights {
+    Ok(DimensionSettings {
+        heights: GenerationHeights {
             min_y: level_min_y.max(gen_min_y),
             height: level_height.min(gen_height),
             level_min_y,
@@ -347,7 +386,17 @@ fn dimension_heights(
         },
         sea_level,
         legacy_random_source,
-    ))
+        noise_settings: settings_id,
+    })
+}
+
+/// What [`dimension_heights`] reads from a dimension's type and noise settings.
+struct DimensionSettings {
+    heights: GenerationHeights,
+    sea_level: i32,
+    legacy_random_source: bool,
+    /// The noise settings' id.
+    noise_settings: String,
 }
 
 struct SetLoader<'a> {
@@ -452,6 +501,18 @@ impl SetLoader<'_> {
         let obj = object(json, at)?;
         let kind_name = id_field(obj, "type", at)?;
         let kind = match full_id(kind_name).as_str() {
+            // DimensionOriginStructurePlacement.CODEC is MapCodec.unit: no fields, and any
+            // others are ignored, the spreading placements' too.
+            "minecraft:dimension_origin" => {
+                return Ok(Placement {
+                    locate_offset: [0; 3],
+                    frequency_reduction: FrequencyReduction::Default,
+                    frequency: 1.0,
+                    salt: 0,
+                    exclusion_zone: None,
+                    kind: PlacementKind::DimensionOrigin,
+                });
+            }
             // RandomSpreadStructurePlacement.CODEC: spacing and separation in 0..=4096, spacing
             // strictly larger; spread_type defaults to linear.
             "minecraft:random_spread" => {

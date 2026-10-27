@@ -30,6 +30,7 @@
           "processors": []
         },
         "projection": "rigid",
+        "override_liquid_settings": "ignore_waterlogging",
         "corner_constraint": [
           {
             "density_function": "spyglass_test:corner_density",

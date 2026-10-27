@@ -1,6 +1,6 @@
 //! A dimension's biome source, loaded from a world preset: multi-noise (`MultiNoiseBiomeSource`,
-//! the Overworld's and the Nether's) or the End's (`TheEndBiomeSource`); and its lookups for one
-//! seed.
+//! the Overworld's and the Nether's), the End's (`TheEndBiomeSource`) or a checkerboard
+//! (`CheckerboardColumnBiomeSource`, which no vanilla preset uses); and its lookups for one seed.
 
 use std::collections::BTreeMap;
 
@@ -17,6 +17,8 @@ use crate::search::{Lookup, SearchTree};
 const WORLD_PRESET: &str = "worldgen/world_preset";
 const DIMENSION_TYPE: &str = "dimension_type";
 const PARAMETER_LIST: &str = "worldgen/multi_noise_biome_source_parameter_list";
+const BIOME: &str = "worldgen/biome";
+const BIOME_TAG: &str = "tags/worldgen/biome";
 
 /// The most tied cells [`Biomes::find_biome_horizontal`] replays every combination of; beyond
 /// it, a result is reported as tie-dependent without checking.
@@ -50,6 +52,14 @@ enum Kind {
     },
     /// `TheEndBiomeSource`: the main island, then thresholds on erosion.
     TheEnd,
+    /// `CheckerboardColumnBiomeSource`: diagonal stripes of `biomes`, in order, each
+    /// `2^shift` quarts wide.
+    Checkerboard {
+        /// The holder set's biomes in order, repeats kept.
+        biomes: Vec<BiomeId>,
+        /// `bitShift`: `scale + 2`.
+        shift: u32,
+    },
 }
 
 impl BiomeSource {
@@ -60,8 +70,8 @@ impl BiomeSource {
 
     /// The biome source of `dimension` in world preset `preset`. The dimension's generator must
     /// be `minecraft:noise`, with a `minecraft:multi_noise` biome source that names a parameter
-    /// list preset or a `minecraft:the_end` biome source; its noise settings must be a
-    /// reference.
+    /// list preset, a `minecraft:the_end` or a `minecraft:checkerboard` biome source; its noise
+    /// settings must be a reference.
     pub fn load(bundle: &Bundle, preset: &str, dimension: &str) -> Result<Self, LoadError> {
         let error = |resource: &str, path: &str, kind| LoadError::new(resource, path, kind);
         let json = bundle
@@ -127,6 +137,62 @@ impl BiomeSource {
                     noise_settings: full_id(settings),
                 });
             }
+            // CheckerboardColumnBiomeSource.CODEC: `biomes` (Biome.LIST_CODEC) and `scale`, an
+            // int in 0..=62, default 2.
+            "minecraft:checkerboard" => {
+                let source_at = format!("{at}.biome_source");
+                let source = &generator["biome_source"];
+                let listed = checkerboard_biomes(
+                    bundle,
+                    source.get("biomes").ok_or_else(|| {
+                        error(preset, &source_at, LoadErrorKind::Missing("biomes"))
+                    })?,
+                    preset,
+                    &format!("{source_at}.biomes"),
+                )?;
+                if listed.is_empty() {
+                    // getNoiseBiome's floorMod would divide by zero.
+                    return Err(error(
+                        preset,
+                        &format!("{source_at}.biomes"),
+                        LoadErrorKind::Invalid("an empty biome list"),
+                    ));
+                }
+                let scale = match source.get("scale") {
+                    None => 2,
+                    Some(v) => v.as_i64().filter(|s| (0..=62).contains(s)).ok_or_else(|| {
+                        error(
+                            preset,
+                            &format!("{source_at}.scale"),
+                            LoadErrorKind::OutOfRange {
+                                value: v.to_string(),
+                                min: "0".into(),
+                                max: "62".into(),
+                            },
+                        )
+                    })?,
+                };
+                let mut names: Vec<String> = Vec::new();
+                let biomes = listed
+                    .into_iter()
+                    .map(|name| {
+                        let i = names.iter().position(|n| *n == name).unwrap_or_else(|| {
+                            names.push(name);
+                            names.len() - 1
+                        });
+                        BiomeId(i as u16)
+                    })
+                    .collect();
+                return Ok(BiomeSource {
+                    router: router()?,
+                    kind: Kind::Checkerboard {
+                        biomes,
+                        shift: scale as u32 + 2,
+                    },
+                    names: BiomeNames::new(names),
+                    noise_settings: full_id(settings),
+                });
+            }
             _ => return Err(unsupported("biome_source.type", source_type)),
         }
         let list_preset = id("biome_source.preset")?;
@@ -173,11 +239,11 @@ impl BiomeSource {
         &self.names
     }
 
-    /// The parameter list of a multi-noise source; `None` for the End's.
+    /// The parameter list of a multi-noise source; `None` for the others.
     pub fn parameters(&self) -> Option<&ParameterList> {
         match &self.kind {
             Kind::MultiNoise { parameters, .. } => Some(parameters),
-            Kind::TheEnd => None,
+            Kind::TheEnd | Kind::Checkerboard { .. } => None,
         }
     }
 
@@ -192,7 +258,7 @@ impl BiomeSource {
     pub fn tree(&self) -> Option<&SearchTree> {
         match &self.kind {
             Kind::MultiNoise { tree, .. } => Some(tree),
-            Kind::TheEnd => None,
+            Kind::TheEnd | Kind::Checkerboard { .. } => None,
         }
     }
 
@@ -233,6 +299,9 @@ impl Biomes<'_> {
         match &self.source.kind {
             Kind::MultiNoise { tree, .. } => tree.lookup_with(&self.climate_at(qx, qy, qz), hits),
             Kind::TheEnd => Lookup::Unique(self.end_biome(qx, qy, qz)),
+            Kind::Checkerboard { biomes, shift } => {
+                Lookup::Unique(checkerboard_biome(biomes, *shift, qx, qz))
+            }
         }
     }
 
@@ -583,6 +652,140 @@ impl BiomeRegion {
     }
 }
 
+/// `CheckerboardColumnBiomeSource.getNoiseBiome`:
+/// `biomes.get(floorMod((qx >> shift) + (qz >> shift), size))`, independent of y. Java's `ishr`
+/// uses the low five bits of the shift, as `wrapping_shr` does, so a scale of 30 to 62 shifts
+/// by `scale + 2 - 32`.
+fn checkerboard_biome(biomes: &[BiomeId], shift: u32, qx: i32, qz: i32) -> BiomeId {
+    let stripe = qx.wrapping_shr(shift).wrapping_add(qz.wrapping_shr(shift));
+    biomes[stripe.rem_euclid(biomes.len() as i32) as usize]
+}
+
+/// `Biome.LIST_CODEC` (`RegistryCodecs.homogeneousList`), in the order the game holds it: a
+/// list of ids as written, repeats included (`HolderSet.direct`); a single id; or `"#tag"`,
+/// whose entries are expanded in order with nested tags in place and each biome kept at its
+/// first appearance (`TagLoader`'s `LinkedHashSet`). Every biome must exist; an optional tag
+/// entry (`"required": false`) that doesn't is skipped.
+fn checkerboard_biomes<R: Resources + ?Sized>(
+    resources: &R,
+    json: &Value,
+    resource: &str,
+    path: &str,
+) -> Result<Vec<String>, LoadError> {
+    let biome = |id: &str, path: &str| -> Result<String, LoadError> {
+        let id = full_id(id);
+        resources
+            .resource(BIOME, &id)
+            .map_err(|_| {
+                LoadError::new(
+                    resource,
+                    path,
+                    LoadErrorKind::Unsupported {
+                        what: "biome",
+                        name: id.clone(),
+                    },
+                )
+            })
+            .map(|_| id)
+    };
+    match json {
+        Value::String(s) => match s.strip_prefix('#') {
+            Some(tag) => {
+                let mut out = Vec::new();
+                tag_biomes(resources, tag, &mut Vec::new(), &mut out)?;
+                Ok(out)
+            }
+            None => Ok(vec![biome(s, path)?]),
+        },
+        Value::Array(items) => items
+            .iter()
+            .enumerate()
+            .map(|(i, item)| {
+                let path = format!("{path}[{i}]");
+                let id = item.as_str().ok_or_else(|| {
+                    LoadError::new(resource, &path, LoadErrorKind::Shape("a biome id"))
+                })?;
+                biome(id, &path)
+            })
+            .collect(),
+        _ => Err(LoadError::new(
+            resource,
+            path,
+            LoadErrorKind::Shape("a biome tag, id or list of ids"),
+        )),
+    }
+}
+
+/// Appends biome tag `tag`'s biomes to `out` in the game's order, skipping those already there.
+/// `loading` holds the tags being expanded, to report a cycle.
+fn tag_biomes<R: Resources + ?Sized>(
+    resources: &R,
+    tag: &str,
+    loading: &mut Vec<String>,
+    out: &mut Vec<String>,
+) -> Result<(), LoadError> {
+    let tag = full_id(tag);
+    let resource = format!("#{tag}");
+    if loading.contains(&tag) {
+        let mut cycle = loading.clone();
+        cycle.push(tag);
+        return Err(LoadError::new(&resource, "", LoadErrorKind::Cycle(cycle)));
+    }
+    let json = resources
+        .resource(BIOME_TAG, &tag)
+        .map_err(|e| LoadError::new(&resource, "", e.into()))?;
+    let values = json
+        .get("values")
+        .and_then(Value::as_array)
+        .ok_or_else(|| LoadError::new(&resource, "", LoadErrorKind::Missing("values")))?;
+    loading.push(tag.clone());
+    for (i, entry) in values.iter().enumerate() {
+        let path = format!("values[{i}]");
+        let error = |kind| LoadError::new(&resource, &path, kind);
+        // TagEntry.CODEC: an id or `#tag`, or {"id": ..., "required": bool}.
+        let (id, required) = match entry {
+            Value::String(s) => (s.as_str(), true),
+            Value::Object(obj) => (
+                obj.get("id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| error(LoadErrorKind::Missing("id")))?,
+                match obj.get("required") {
+                    None => true,
+                    Some(v) => v
+                        .as_bool()
+                        .ok_or_else(|| error(LoadErrorKind::Shape("a boolean")))?,
+                },
+            ),
+            _ => return Err(error(LoadErrorKind::Shape("a tag entry"))),
+        };
+        match id.strip_prefix('#') {
+            Some(nested) => {
+                if !required && resources.resource(BIOME_TAG, &full_id(nested)).is_err() {
+                    continue;
+                }
+                tag_biomes(resources, nested, loading, out)?;
+            }
+            None => {
+                let id = full_id(id);
+                if resources.resource(BIOME, &id).is_err() {
+                    if required {
+                        return Err(error(LoadErrorKind::Unsupported {
+                            what: "biome",
+                            name: id,
+                        }));
+                    }
+                    continue;
+                }
+                if !out.contains(&id) {
+                    out.push(id);
+                }
+            }
+        }
+    }
+    loading.pop();
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -625,6 +828,73 @@ mod tests {
             names: BiomeNames::new(END_BIOMES.map(str::to_string).to_vec()),
             noise_settings: "minecraft:end".to_string(),
         }
+    }
+
+    #[test]
+    fn checkerboard_stripes_follow_the_bytecode() {
+        let b = [BiomeId(0), BiomeId(1), BiomeId(2)];
+        // Scale 2: bitShift 4, so stripes 16 quarts wide, (qx >> 4) + (qz >> 4) mod 3.
+        assert_eq!(checkerboard_biome(&b, 4, 0, 0), BiomeId(0));
+        assert_eq!(checkerboard_biome(&b, 4, 15, 15), BiomeId(0));
+        assert_eq!(checkerboard_biome(&b, 4, 16, 0), BiomeId(1));
+        assert_eq!(checkerboard_biome(&b, 4, 16, 16), BiomeId(2));
+        assert_eq!(checkerboard_biome(&b, 4, 32, 16), BiomeId(0));
+        // floorMod, not %: -1 >> 4 is -1, and floorMod(-1, 3) is 2.
+        assert_eq!(checkerboard_biome(&b, 4, -1, 0), BiomeId(2));
+        assert_eq!(checkerboard_biome(&b, 4, -17, 0), BiomeId(1));
+        assert_eq!(checkerboard_biome(&b, 4, -17, -1), BiomeId(0));
+        // Scale 62: bitShift 64, and ishr shifts by 64 & 31 = 0, so every quart is a stripe.
+        assert_eq!(checkerboard_biome(&b, 64, 1, 0), BiomeId(1));
+        assert_eq!(checkerboard_biome(&b, 64, 1, 1), BiomeId(2));
+        // Scale 29: bitShift 31, the last that shifts as written: two stripes, by sign.
+        assert_eq!(checkerboard_biome(&b, 31, i32::MAX, 0), BiomeId(0));
+        assert_eq!(checkerboard_biome(&b, 31, i32::MIN, 0), BiomeId(2));
+        // The sum wraps: (MAX >> 0) + (MAX >> 0) is -2, and floorMod(-2, 3) is 1.
+        assert_eq!(checkerboard_biome(&b, 32, i32::MAX, i32::MAX), BiomeId(1));
+    }
+
+    #[test]
+    fn checkerboard_biomes_keep_the_games_order() {
+        let biome = |id: &str| (format!("worldgen/biome/minecraft:{id}"), json!({}));
+        let tag = |id: &str, values: Value| {
+            (
+                format!("tags/worldgen/biome/minecraft:{id}"),
+                json!({ "values": values }),
+            )
+        };
+        let resources: HashMap<String, Value> = HashMap::from([
+            biome("plains"),
+            biome("desert"),
+            biome("forest"),
+            tag("warm", json!(["minecraft:desert", "minecraft:plains"])),
+            tag(
+                "mixed",
+                json!([
+                    "minecraft:forest",
+                    "#minecraft:warm",
+                    "minecraft:plains",
+                    {"id": "minecraft:not_there", "required": false},
+                    {"id": "#minecraft:no_tag", "required": false},
+                ]),
+            ),
+            tag("loop", json!(["#minecraft:loop"])),
+        ]);
+        let read = |v: Value| checkerboard_biomes(&resources, &v, "test", "biomes");
+        let names = |v: Value| read(v).unwrap();
+        // A tag: nested tags in place, each biome at its first appearance.
+        assert_eq!(
+            names(json!("#minecraft:mixed")),
+            ["minecraft:forest", "minecraft:desert", "minecraft:plains"]
+        );
+        // A direct list keeps repeats; a single id is a list of one.
+        assert_eq!(
+            names(json!(["plains", "minecraft:plains", "desert"])),
+            ["minecraft:plains", "minecraft:plains", "minecraft:desert"]
+        );
+        assert_eq!(names(json!("forest")), ["minecraft:forest"]);
+        assert!(read(json!(["minecraft:not_there"])).is_err());
+        assert!(read(json!("#minecraft:loop")).is_err());
+        assert!(read(json!(3)).is_err());
     }
 
     #[test]

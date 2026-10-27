@@ -410,7 +410,13 @@ fn build(common: &Common) -> Result<Harness> {
         })?;
     let bin = jdk.home.join("bin");
     let classes = work.join("classes");
-    compile(&bin, major, &server.sha1, &jars, &classes)?;
+    let game_jar = jars
+        .iter()
+        .find(|p| p.components().any(|c| c.as_os_str() == "versions"))
+        .context("the bundler has no game jar under versions/")?;
+    let data_version = spyglass_extract::write::game_version(game_jar)?.world_version;
+    let adapter = adapter(data_version)?;
+    compile(&bin, major, &server.sha1, &jars, &adapter, &classes)?;
 
     let classpath = std::env::join_paths(std::iter::once(classes).chain(jars))?;
     Ok(Harness {
@@ -443,21 +449,73 @@ fn unpack(jar: &Path, sha1: &str, dest: &Path) -> Result<Vec<PathBuf>> {
     Ok(jars)
 }
 
-/// Compiles `oracle/src` into `classes` unless the sources, jar and JDK are unchanged since the
-/// last build.
+/// The adapter in `oracle/adapters/` whose data-version ranges hold `data_version` (ADR 0027).
+/// Each adapter lists its ranges in a `data-versions` file, one `from..` or `from..until` per
+/// line (`until` exclusive), with `#` comments.
+fn adapter(data_version: u32) -> Result<PathBuf> {
+    let dir = repo_root().join("oracle").join("adapters");
+    let mut found = Vec::new();
+    for entry in fs::read_dir(&dir).with_context(|| format!("reading {}", dir.display()))? {
+        let path = entry?.path();
+        let ranges = path.join("data-versions");
+        if !ranges.is_file() {
+            continue;
+        }
+        let text = fs::read_to_string(&ranges)?;
+        for line in text
+            .lines()
+            .map(|l| l.split('#').next().unwrap_or("").trim())
+        {
+            if line.is_empty() {
+                continue;
+            }
+            let (from, until) = line
+                .split_once("..")
+                .with_context(|| format!("{}: {line:?} isn't from..[until]", ranges.display()))?;
+            let from: u32 = from.trim().parse()?;
+            let until: Option<u32> = match until.trim() {
+                "" => None,
+                n => Some(n.parse()?),
+            };
+            if data_version >= from && until.is_none_or(|u| data_version < u) {
+                found.push(path.clone());
+                break;
+            }
+        }
+    }
+    match found.as_slice() {
+        [one] => Ok(one.clone()),
+        [] => bail!(
+            "no oracle adapter covers data version {data_version}; add one to {} (ADR 0027)",
+            dir.display()
+        ),
+        many => bail!(
+            "several oracle adapters cover data version {data_version}: {}",
+            many.iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
+}
+
+/// Compiles `oracle/src` with `adapter` into `classes` unless the sources, adapter, jar and JDK
+/// are unchanged since the last build.
 fn compile(
     jdk_bin: &Path,
     major: u32,
     jar_sha1: &str,
     jars: &[PathBuf],
+    adapter: &Path,
     classes: &Path,
 ) -> Result<()> {
-    let src = repo_root().join("oracle").join("src");
+    let oracle = repo_root().join("oracle");
     let mut sources = Vec::new();
-    collect_java(&src, &mut sources)?;
+    collect_java(&oracle.join("src"), &mut sources)?;
+    collect_java(adapter, &mut sources)?;
     sources.sort();
     if sources.is_empty() {
-        bail!("no Java sources under {}", src.display());
+        bail!("no Java sources under {}", oracle.display());
     }
 
     let mut fingerprint = format!("jar {jar_sha1}\njdk {}\n", jdk_bin.display());
@@ -465,7 +523,7 @@ fn compile(
         writeln!(
             fingerprint,
             "{} {}",
-            source.strip_prefix(&src)?.display(),
+            source.strip_prefix(&oracle)?.display(),
             cache::sha1_hex(source)?
         )?;
     }

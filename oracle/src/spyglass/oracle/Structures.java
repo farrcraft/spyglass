@@ -2,13 +2,10 @@ package spyglass.oracle;
 
 import java.io.IOException;
 import java.io.StringWriter;
-import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
-import java.util.function.Predicate;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
@@ -17,13 +14,11 @@ import com.google.gson.stream.JsonWriter;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
-import net.minecraft.core.QuartPos;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.util.datafix.DataFixers;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.LevelHeightAccessor;
-import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.Climate;
 import net.minecraft.world.level.chunk.ChunkGenerator;
 import net.minecraft.world.level.chunk.ChunkGeneratorStructureState;
@@ -32,7 +27,6 @@ import net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator;
 import net.minecraft.world.level.levelgen.RandomState;
 import net.minecraft.world.level.levelgen.WorldgenRandom;
 import net.minecraft.world.level.levelgen.LegacyRandomSource;
-import net.minecraft.world.level.levelgen.densityfunction.SamplerContext;
 import net.minecraft.world.level.levelgen.structure.Structure;
 import net.minecraft.world.level.levelgen.structure.StructureSet;
 import net.minecraft.world.level.levelgen.structure.placement.ConcentricRingsStructurePlacement;
@@ -62,18 +56,6 @@ final class Structures {
             new Region("border-pos", 1_874_968, 1_874_968, 1_874_999, 1_874_999),
             new Region("border-neg", -1_875_000, -1_875_000, -1_874_969, -1_874_969));
 
-    private static final Method FIND_GENERATION_POINT;
-
-    static {
-        try {
-            FIND_GENERATION_POINT =
-                    Structure.class.getDeclaredMethod("findGenerationPoint", Structure.GenerationContext.class);
-            FIND_GENERATION_POINT.setAccessible(true);
-        } catch (NoSuchMethodException e) {
-            throw new ExceptionInInitializerError(e);
-        }
-    }
-
     private Structures() {}
 
     static int run(Game game, Path outDir, String dimension, List<String> seeds) throws Exception {
@@ -98,9 +80,7 @@ final class Structures {
         if (!(stem.generator() instanceof NoiseBasedChunkGenerator generator)) {
             throw new IllegalArgumentException(dimension + " doesn't use a noise-based generator");
         }
-        // As ServerChunkCache and ChunkMap create them.
-        RandomState random = RandomState.create(game.access.lookupOrThrow(Registries.NOISE), seed,
-                generator.generatorSettings().value());
+        RandomState random = GameApi.get().randomState(game, generator, seed);
         ChunkGeneratorStructureState state =
                 generator.createState(game.access.lookupOrThrow(Registries.STRUCTURE_SET), random, seed);
         state.ensureStructuresGenerated();
@@ -190,7 +170,7 @@ final class Structures {
             StructureTemplateManager templates, LevelHeightAccessor height,
             ResourceKey<net.minecraft.world.level.Level> level, long seed, StructureSet set, ChunkPos chunk)
             throws ReflectiveOperationException {
-        Climate.Sampler sampler = random.createClimateSampler(SamplerContext.builder().enableCaches().build());
+        Climate.Sampler sampler = GameApi.get().structureSampler(random);
         var out = new JsonArray();
         List<StructureSet.StructureSelectionEntry> entries = set.structures();
         if (entries.size() == 1) {
@@ -231,30 +211,19 @@ final class Structures {
             ResourceKey<net.minecraft.world.level.Level> level, long seed,
             StructureSet.StructureSelectionEntry entry, ChunkPos chunk) throws ReflectiveOperationException {
         Holder<Structure> holder = entry.structure();
-        Structure structure = holder.value();
-        Predicate<Holder<Biome>> valid = structure.biomes()::contains;
         var t = new JsonObject();
         t.addProperty("structure", holder.unwrapKey().orElseThrow().identifier().toString());
-
-        // findGenerationPoint on its own context, then the biome check on the stub.
-        var context = new Structure.GenerationContext(game.access, generator, generator.getBiomeSource(), sampler,
-                random, templates, seed, chunk, height, valid);
-        @SuppressWarnings("unchecked")
-        var stub = (Optional<Structure.GenerationStub>) FIND_GENERATION_POINT.invoke(structure, context);
-        if (stub.isPresent()) {
-            BlockPos pos = stub.get().position();
+        var tried = GameApi.get().tryStructure(game, generator, random, sampler, templates, height, level, seed,
+                holder, chunk);
+        if (tried.stub() != null) {
+            BlockPos pos = tried.stub();
             t.add("stub", triple(pos.getX(), pos.getY(), pos.getZ()));
-            Holder<Biome> biome = context.biomeResolver().getNoiseBiome(QuartPos.fromBlock(pos.getX()),
-                    QuartPos.fromBlock(pos.getY()), QuartPos.fromBlock(pos.getZ()));
-            t.addProperty("biome", biome.unwrapKey().orElseThrow().identifier().toString());
-            t.addProperty("valid_biome", context.isValidBiome(stub.get()));
+            t.addProperty("biome", tried.biome().unwrapKey().orElseThrow().identifier().toString());
+            t.addProperty("valid_biome", tried.validBiome());
         }
-
-        // What the game itself does: ChunkGenerator.tryGenerateStructure.
-        var start = structure.generate(holder, level, game.access, generator, generator.getBiomeSource(), sampler,
-                random, templates, seed, chunk, 0, height, valid);
-        t.addProperty("start", start.isValid());
-        if (start.isValid()) {
+        var start = tried.start();
+        t.addProperty("start", start != null);
+        if (start != null) {
             // Before any piece is placed, which moves some pieces' boxes.
             t.add("bounds", box(start.getBoundingBox()));
             var pieces = new JsonArray();

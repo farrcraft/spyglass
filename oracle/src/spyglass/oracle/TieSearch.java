@@ -222,7 +222,7 @@ final class TieSearch {
         best = Long.MAX_VALUE;
         hitCount = 0;
         for (int i = 0; i < order.length; i++) {
-            offer(i, points[order[i]].fitness(t));
+            offer(i, GameApi.get().fitness(points[order[i]], t));
         }
         return distinctValues();
     }

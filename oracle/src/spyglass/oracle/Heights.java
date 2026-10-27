@@ -16,9 +16,8 @@ import com.google.gson.JsonObject;
 import com.google.gson.stream.JsonWriter;
 
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.core.registries.Registries;
 import net.minecraft.world.level.LevelHeightAccessor;
-import net.minecraft.world.level.NoiseColumn;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.dimension.LevelStem;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator;
@@ -93,9 +92,8 @@ final class Heights {
         if (!(stem.generator() instanceof NoiseBasedChunkGenerator generator)) {
             throw new IllegalArgumentException(dimension + " doesn't use a noise-based generator");
         }
-        // As ServerChunkCache and ChunkMap create them.
-        RandomState random = RandomState.create(game.access.lookupOrThrow(Registries.NOISE), seed,
-                generator.generatorSettings().value());
+        var api = GameApi.get();
+        RandomState random = api.randomState(game, generator, seed);
         var type = stem.type().value();
         LevelHeightAccessor height = LevelHeightAccessor.create(type.minY(), type.height());
 
@@ -120,7 +118,7 @@ final class Heights {
                 var values = new JsonArray();
                 for (int z = r.minZ(); z < r.minZ() + r.size(); z++) {
                     for (int x = r.minX(); x < r.minX() + r.size(); x++) {
-                        values.add(generator.getBaseHeight(x, z, heightmap, height, random));
+                        values.add(api.baseHeight(generator, x, z, heightmap, height, random));
                     }
                 }
                 o.add(heightmap.getSerializationKey(), values);
@@ -131,14 +129,13 @@ final class Heights {
 
         var columns = new JsonArray();
         for (int[] c : columns()) {
-            NoiseColumn column = generator.getBaseColumn(c[0], c[1], height, random);
+            BlockState[] column = api.baseColumn(generator, c[0], c[1], height, random);
             // Runs of one block, bottom up.
             var runs = new JsonArray();
             String last = null;
             int count = 0;
             for (int y = type.minY(); y < type.minY() + type.height(); y++) {
-                String id = BuiltInRegistries.BLOCK.getKey(column.getBlock(y).getBlock())
-                        .toString();
+                String id = BuiltInRegistries.BLOCK.getKey(column[y - type.minY()].getBlock()).toString();
                 if (id.equals(last)) {
                     count++;
                     continue;

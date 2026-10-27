@@ -8,19 +8,13 @@ import java.util.Map;
 
 import net.minecraft.core.Holder;
 import net.minecraft.core.QuartPos;
-import net.minecraft.core.registries.Registries;
 import net.minecraft.world.level.biome.Biome;
-import net.minecraft.world.level.biome.BiomeResolver;
 import net.minecraft.world.level.biome.BiomeSource;
 import net.minecraft.world.level.biome.Climate;
 import net.minecraft.world.level.biome.MultiNoiseBiomeSource;
 import net.minecraft.world.level.dimension.LevelStem;
 import net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator;
 import net.minecraft.world.level.levelgen.RandomState;
-import net.minecraft.world.level.levelgen.densityfunction.DensityBuffer;
-import net.minecraft.world.level.levelgen.densityfunction.DensitySampler;
-import net.minecraft.world.level.levelgen.densityfunction.DensityVolume;
-import net.minecraft.world.level.levelgen.densityfunction.SamplerContext;
 
 /**
  * Biomes for one seed and dimension, a chunk at a time, through the path chunk generation uses
@@ -65,9 +59,7 @@ final class BiomeSampler {
         // ChunkAccess.getMinY / getHeight come from the dimension type.
         this.quartMinY = QuartPos.fromBlock(stem.type().value().minY());
         this.quartHeight = QuartPos.fromBlock(stem.type().value().height());
-        // ServerChunkCache creates the RandomState this way via ChunkMap.
-        this.random = RandomState.create(game.access.lookupOrThrow(Registries.NOISE), seed,
-                generator.generatorSettings().value());
+        this.random = GameApi.get().randomState(game, generator, seed);
         this.source = generator.getBiomeSource();
         if (source instanceof MultiNoiseBiomeSource m) {
             this.multiNoise = m;
@@ -109,34 +101,19 @@ final class BiomeSampler {
 
     /** Every cell of chunk ({@code cx}, {@code cz}), full height, y outermost then z then x. */
     void sampleChunk(int cx, int cz, Sink sink) {
-        // ChunkGenerator.doCreateBiomes: a cached sampler on a pooled buffer arena per chunk.
-        var pool = random.acquireDensityBufferPool();
-        try {
-            var context = SamplerContext.builder().enableCaches().useBufferArena(pool).build();
-            Climate.Sampler sampler = random.createClimateSampler(context);
-            int qx0 = QuartPos.fromBlock(cx * 16);
-            int qz0 = QuartPos.fromBlock(cz * 16);
-            int size = QuartPos.fromBlock(16);
-            BiomeResolver resolver = source.createResolverForChunk(sampler, qx0, quartMinY, qz0, size, quartHeight, size);
+        int qx0 = QuartPos.fromBlock(cx * 16);
+        int qz0 = QuartPos.fromBlock(cz * 16);
+        int size = QuartPos.fromBlock(16);
+        try (var chunk = GameApi.get().chunkBiomes(random, source, qx0, quartMinY, qz0, size, quartHeight,
+                multiNoise != null)) {
             if (multiNoise == null) {
-                forEachCell(qx0, qz0, size, (qx, qy, qz) -> sink.cell(qx, qy, qz, resolver.getNoiseBiome(qx, qy, qz), null));
+                forEachCell(qx0, qz0, size, (qx, qy, qz) -> sink.cell(qx, qy, qz, chunk.biome(qx, qy, qz), null));
                 return;
             }
-
-            // MultiNoiseBiomeSource.createResolverForChunk, keeping the targets.
-            var volume = new DensityVolume(size, quartHeight, size, QuartPos.toBlock(qx0), QuartPos.toBlock(quartMinY),
-                    QuartPos.toBlock(qz0), 4, 4, 4);
-            DensityBuffer t = sampled(sampler.temperature(), volume);
-            DensityBuffer h = sampled(sampler.humidity(), volume);
-            DensityBuffer c = sampled(sampler.continentalness(), volume);
-            DensityBuffer e = sampled(sampler.erosion(), volume);
-            DensityBuffer d = sampled(sampler.depth(), volume);
-            DensityBuffer w = sampled(sampler.weirdness(), volume);
             forEachCell(qx0, qz0, size, (qx, qy, qz) -> {
-                int i = volume.indexUnchecked(qx - qx0, qy - quartMinY, qz - qz0);
-                var target = Climate.target(t.get(i), h.get(i), c.get(i), e.get(i), d.get(i), w.get(i));
+                var target = chunk.target(qx, qy, qz);
                 int[] tied = ties.search(target);
-                Holder<Biome> game = resolver.getNoiseBiome(qx, qy, qz);
+                Holder<Biome> game = chunk.biome(qx, qy, qz);
                 Holder<Biome> copy = multiNoise.getNoiseBiome(target);
                 check(tied, game, "createResolverForChunk", qx, qy, qz);
                 check(tied, copy, "getNoiseBiome(target)", qx, qy, qz);
@@ -151,8 +128,6 @@ final class BiomeSampler {
                 }
                 sink.cell(qx, qy, qz, game, tied.length > 1 ? holders(tied) : null);
             });
-        } finally {
-            random.releaseDensityBufferPool(pool);
         }
     }
 
@@ -169,12 +144,6 @@ final class BiomeSampler {
                 }
             }
         }
-    }
-
-    private static DensityBuffer sampled(DensitySampler.Bound sampler, DensityVolume volume) {
-        DensityBuffer buffer = DensityBuffer.createUnpooled(volume.size());
-        sampler.sampleVolume(buffer, volume);
-        return buffer;
     }
 
     private void check(int[] tied, Holder<Biome> biome, String path, int qx, int qy, int qz) {

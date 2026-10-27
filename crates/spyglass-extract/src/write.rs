@@ -83,10 +83,29 @@ pub struct Sources<'a> {
 }
 
 /// The parts of the game jar's `version.json` that a bundle records.
-#[derive(Deserialize)]
-struct GameVersion {
-    id: String,
-    world_version: u32,
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct GameVersion {
+    /// The version id, e.g. `26.3`.
+    pub id: String,
+    /// The data version, e.g. 5023.
+    pub world_version: u32,
+}
+
+/// The game jar's `version.json`.
+pub fn game_version(game_jar: &Path) -> Result<GameVersion, WriteError> {
+    let file = File::open(game_jar).map_err(io_err(game_jar))?;
+    read_game_version(&mut ZipArchive::new(file)?)
+}
+
+fn read_game_version(jar: &mut ZipArchive<File>) -> Result<GameVersion, WriteError> {
+    let mut text = String::new();
+    jar.by_name("version.json")?
+        .read_to_string(&mut text)
+        .map_err(io_err(Path::new("version.json")))?;
+    serde_json::from_str(&text).map_err(|source| WriteError::Json {
+        path: "version.json".into(),
+        source,
+    })
 }
 
 /// Writes a bundle to `dest` and returns its manifest.
@@ -171,16 +190,7 @@ fn copy_jar(
     let file = File::open(sources.game_jar).map_err(io_err(sources.game_jar))?;
     let mut jar = ZipArchive::new(file)?;
 
-    let version: GameVersion = {
-        let mut text = String::new();
-        jar.by_name("version.json")?
-            .read_to_string(&mut text)
-            .map_err(io_err(Path::new("version.json")))?;
-        serde_json::from_str(&text).map_err(|source| WriteError::Json {
-            path: "version.json".into(),
-            source,
-        })?
-    };
+    let version = read_game_version(&mut jar)?;
     if version.id != sources.version {
         return Err(WriteError::Layout(format!(
             "the game jar is version {:?}, not {:?}",

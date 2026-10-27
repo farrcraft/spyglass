@@ -177,9 +177,9 @@ Specs and ADRs that govern this: [data-sources.md](../specs/data-sources.md), [b
 ### Phase 2: version-aware infrastructure
 
 - [x] The behavior switch table, each switch holding the data-version ranges it applies to, printed by `version-diff` for any bundle. `spyglass_data::versions`: five switches so far (four for 26.4, one for 26.2), each named in its spec note.
-- [ ] A test that every supported bundle on the machine loads and binds in all three dimensions, so old dispatch arms keep working as new ones are added.
-- [ ] `spyglass-oracle` lists the versions with inputs. Every ignored comparison runs for each, and `oracle-test` reports per version.
-- [ ] The harness split into core and a 26.3 adapter, with no change in output: 26.3's goldens stay byte-identical.
+- [ ] A test that every supported bundle on the machine loads and binds in all three dimensions, so old dispatch arms keep working as new ones are added. Moved to phase 3: it would fail by design until 26.4 loads, and `oracle-test` now runs `each_dimension_opens` for every version, which covers most of it.
+- [x] `spyglass-oracle` lists the versions with inputs. Every ignored comparison runs for each, and `oracle-test` reports per version. 36 tests for 26.3, all passing; 26.2 and 26.4-snapshot-5 fail to load, as expected until phases 3 to 5.
+- [x] The harness split into core and a 26.3 adapter, with no change in output: 26.3's goldens stay byte-identical. `GameApi` in the core; `oracle/adapters/26.3/` (`Adapter`, `ProbeWorldgen`) chosen by its `data-versions`. Against the other jars every compile error is now in the adapter: 9 for 26.4-snapshot-5, about 90 for 26.2.
 - [x] Release-first defaults in `find_bundle`, the CLI and the viewer. Snapshots are chosen only by name. The CLI tests stop pinning 26.3. `bundle.json` gains an optional `kind` (old bundles go by their id); a folder of only snapshots is `Error::NoRelease`, naming them; the viewer falls back to the newest snapshot, which its picker shows. `cli.rs` no longer pins; `world.rs` still does, since its saves are stamped with 26.3's data version and it reads 26.3's files. The synthetic fixture and test saves moved from data version 1 to 5023, so that every behavior switch is off for them.
 
 ### Phase 3: 26.4-snapshot-5, the first update

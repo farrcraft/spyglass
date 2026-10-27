@@ -1,0 +1,3 @@
+# The data versions this adapter covers (ADR 0027): one `from..` or `from..until` per line,
+# `until` exclusive. 26.2 is 4903; 26.3 (5023) has its own.
+4903..5023

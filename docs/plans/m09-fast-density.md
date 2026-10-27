@@ -97,7 +97,7 @@ Specs and ADRs that govern this: [density-functions.md](../specs/density-functio
 - [x] Bench lines before, for every supported version: the bench's terrain lines, plus `structure_layout`, confirmed search and region lines, recorded in the notes. Three rounds per version under `dist`; ranges in the notes.
 - [ ] A profile of an isolated column, a nearby column, a 40 × 25 region and a village layout, for 26.3 and 26.2, split into tree-walking, allocation, memo, noise, `find_top_surface`, aquifer and the rest. Done for both families (notes), with timing spans behind a `timing` feature and the `density_timing` example, since this machine has no profiler that runs unelevated.
 - [x] Prototype the hottest part of the breakdown, to check the design reaches 150 µs before building all of it. Two prototypes (notes): a vectorized noise kernel (no), and the point path's split inside `find_top_surface`. Projection: about 200 to 220 µs from removing the interpreter's overhead; 150 µs would need more (see phase 4).
-- [ ] ADR: the flattened evaluation. Covers the program form, the runners, buffers, which kernels are SIMD and how (auto-vectorization, `std::arch` with runtime detection, or a crate), the families, and what happens to the interpreter.
+- [x] ADR: the flattened evaluation. Covers the program form, the runners, buffers, which kernels are SIMD and how (auto-vectorization, `std::arch` with runtime detection, or a crate), the families, and what happens to the interpreter. [ADR 0031](../adr/0031-flattened-density-evaluation.md), accepted: no SIMD dependency for now.
 
 ### Phase 2: the program, 26.3's family
 
@@ -143,7 +143,7 @@ Specs and ADRs that govern this: [density-functions.md](../specs/density-functio
 
 ## Durable outputs
 
-- [ ] ADR: the flattened density evaluation.
+- [x] ADR: the flattened density evaluation ([0031](../adr/0031-flattened-density-evaluation.md)).
 - [ ] `docs/specs/density-functions.md`, `docs/specs/noise.md`, `docs/specs/terrain.md`: where evaluation order or sharing is observable.
 - [ ] `docs/architecture.md`: the density row.
 

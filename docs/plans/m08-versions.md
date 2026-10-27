@@ -169,9 +169,9 @@ Specs and ADRs that govern this: [data-sources.md](../specs/data-sources.md), [b
 
 - [x] Where 26.4's default block comes from, now that `default_block` is gone: the material rule's last entry (see notes).
 - [x] `cargo xtask version-diff`, with tests on fixture bundles. Its report on 26.2 → 26.3 and 26.3 → 26.4-snapshot-5 must name every change listed above.
-- [x] ADR: how versions coexist (shape dispatch and behavior switches): [0026](../adr/0026-how-game-versions-coexist.md), proposed.
-- [x] ADR: the oracle harness across versions (core and adapters): [0027](../adr/0027-oracle-harness-across-versions.md), proposed.
-- [x] ADR: supported versions, snapshots, release-first defaults, and CI on GitHub Actions: [0028](../adr/0028-supported-versions-and-ci.md), proposed.
+- [x] ADR: how versions coexist (shape dispatch and behavior switches): [0026](../adr/0026-how-game-versions-coexist.md), accepted.
+- [x] ADR: the oracle harness across versions (core and adapters): [0027](../adr/0027-oracle-harness-across-versions.md), accepted.
+- [x] ADR: supported versions, snapshots, release-first defaults, and CI on GitHub Actions: [0028](../adr/0028-supported-versions-and-ci.md), accepted.
 - [x] Timing: goldens and locate for one version on 4 cores, as CI will have.
 
 ### Phase 2: version-aware infrastructure
@@ -259,7 +259,7 @@ Agreed on 2026-10-26:
 - **Support is permanent, and every snapshot is a version** (2026-10-26). Once a version is supported it stays supported, snapshots included: people play specific snapshots and keep worlds in them. Nothing is dropped when a newer snapshot or the release lands.
 - **CI:** GitHub Actions, downloading the server jar from Mojang during each run, with nothing game-derived committed or kept (agreed with m08-dimensions).
 
-To be decided in phase 1's ADRs, with the recommendations above: how versions coexist, the harness's adapters, and supported versions with release-first defaults.
+Accepted on 2026-10-26: [ADR 0026](../adr/0026-how-game-versions-coexist.md) (how versions coexist), [ADR 0027](../adr/0027-oracle-harness-across-versions.md) (the harness across versions) and [ADR 0028](../adr/0028-supported-versions-and-ci.md) (supported versions and CI).
 
 Open for the user: publishing the repository on GitHub, which exit criterion 2 needs.
 

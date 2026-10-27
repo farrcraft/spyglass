@@ -1,6 +1,6 @@
 # 0026. How game versions coexist
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-26
 
 ## Context

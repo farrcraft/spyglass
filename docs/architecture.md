@@ -2,7 +2,7 @@
 
 ## Code vs data
 
-spyglass separates what the game _does_ (algorithms, written in Rust) from the _parameters_ it does it with (extracted per version from the game jar). Algorithms change rarely between versions; parameters change constantly.
+spyglass separates what the game _does_ (algorithms, written in Rust) from the _parameters_ it does it with (extracted per version from the game jar). Algorithms change rarely between versions; parameters change constantly. Several versions are supported side by side, permanently, snapshots included ([ADR 0028](adr/0028-supported-versions-and-ci.md)). Loaders read each version's form of the data by its shape, behavior the data doesn't show is a named switch in `spyglass_data::versions`, and a version whose algorithms differ throughout (26.2's `f64` density evaluation) is a separate evaluator family ([ADR 0026](adr/0026-how-game-versions-coexist.md)).
 
 | Layer      | Code (Rust)                                                             | Data (extracted per version)                                    |
 | ---------- | ----------------------------------------------------------------------- | --------------------------------------------------------------- |

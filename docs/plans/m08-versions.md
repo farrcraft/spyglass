@@ -74,7 +74,7 @@ These come from the code at 8bea3c9, the 26.2 (data version 4903), 26.3 (5023) a
 
 To be decided in an ADR in phase 1. The recommendation:
 
-- **One code path per algorithm.** Versions differ at load time, not in copies of code.
+- **One code path per algorithm, with one exception.** Versions differ at load time, not in copies of code. The exception, from the phase 1 survey: 26.2's density evaluation is a different algorithm family (all `f64`, no volume arithmetic, caches and interpolation only in `NoiseChunk`), so it gets an evaluator of its own beside 26.3's, sharing the RNG, the noise primitives where they agree, the loaders and everything above density. Smaller differences inside a family stay switches.
 - **Loaders read every supported version's data, dispatching on the data's own shape**: type ids and field names. Most format changes say which form they are (`argument1` or `left`, `cache_2d` or `cache`, `firstOctave` or `base_octave`). A form from no supported version is still an error that names the file and JSON path.
 - **Behavior the data doesn't reveal is a named switch.** Switches live in one table, keyed by data version. An example: `SimplexNoise` returns `f32` from data version N.
   - Code reads switches, never data versions.
@@ -170,7 +170,7 @@ Specs and ADRs that govern this: [data-sources.md](../specs/data-sources.md), [b
 
   Each difference is drafted as a _Versions_ note in its spec.
 
-- [ ] Where 26.4's default block comes from, now that `default_block` is gone.
+- [x] Where 26.4's default block comes from, now that `default_block` is gone: the material rule's last entry (see notes).
 - [x] `cargo xtask version-diff`, with tests on fixture bundles. Its report on 26.2 → 26.3 and 26.3 → 26.4-snapshot-5 must name every change listed above.
 - [ ] ADR: how versions coexist (shape dispatch and behavior switches).
 - [ ] ADR: the oracle harness across versions (core and adapters).
@@ -187,23 +187,27 @@ Specs and ADRs that govern this: [data-sources.md](../specs/data-sources.md), [b
 ### Phase 3: 26.4-snapshot-5, the first update
 
 - [ ] A harness adapter for 26.4 (the nine compile errors); goldens for 26.4-snapshot-5.
-- [ ] `upscale`, with per-axis cell sizes and modes. 26.3's `interpolated` loads as the same thing with linear modes, so there's one implementation.
-- [ ] The default block from wherever 26.4 keeps it.
+- [ ] `upscale`, with per-axis cell sizes and modes, on both paths. It isn't bit-identical to 26.3's `interpolated` (weights, axis order, per-block y), so both stay, chosen by type id.
+- [ ] Half-open climate parameters (`max` scores 1) for biome fitness, box distances and spawn, as a switch.
+- [ ] Heights from solid blocks only for every heightmap but the world-surface ones, as a switch; the ruined portal and mineshaft call sites follow.
+- [ ] NaN spline coordinates return NaN, and `Math.clamp`'s signed zero, as switches if a test can tell them apart.
+- [ ] No default block in 26.4: solid cells take the material rule's block, and the overworld rules end in stone.
 - [ ] `ice_caves` in the palette.
 - [ ] `oracle-test` passes for 26.3 and 26.4-snapshot-5. Cost logged; a retro if it wasn't cheap.
 
 ### Phase 4: 26.2's formats and behavior
 
-- [ ] Noises from `firstOctave` and `amplitudes`. The amplitude formula is checked against every `base_amplitude` 26.3 stores for the same noise.
-- [ ] Density functions: `argument1`/`argument2`, `cache_2d`, `flat_cache`, `cache_once`, `shifted_noise`, `y_clamped_gradient`, `end_islands` and the older `interpolated`.
-- [ ] 26.2's noise-settings keys, and its aquifer from the router's fields.
-- [ ] The behavior switches phase 1 finds, each with a hand-worked test and its spec note.
+- [ ] Noises from `firstOctave` and `amplitudes`: `NormalNoise`'s value factor from the amplitude list, `f64` `SimplexNoise`, and the `f64` 1.21 `BlendedNoise`.
+- [ ] The 1.21-family evaluator: every 26.2 density type (`argument1`/`argument2`, `cache_2d`, `flat_cache`, `cache_once`, `shifted_noise`, `y_clamped_gradient`, `end_islands` with its central island, `old_blended_noise`, splines on narrowed coordinates), all in `f64`, with `NoiseChunk`'s caches and `lerp3` interpolation and its `flat_cache` window.
+- [ ] Climate sampling in `f64` narrowed to `f32`, the End source on it, and the spawn targets as parameter points.
+- [ ] 26.2's noise-settings keys (`default_block` and `default_fluid` as block states, `size_horizontal`/`size_vertical`, `aquifers_enabled`, `ore_veins_enabled`), its 15-field router, and its aquifer from the router's fields with the exclusion test in code.
+- [ ] Ore veins in block columns.
 - [ ] A 26.2 harness adapter. The 26.2 probe passes bit for bit in all three dimensions.
 
 ### Phase 5: 26.2 end to end
 
 - [ ] Goldens for 26.2 in all three dimensions. Biome, height, structure, spawn and `/locate` comparisons pass, confirmed included.
-- [ ] Anything left: structures, templates or tags that 26.2 loads differently. None is expected beyond data.
+- [ ] Templates' `Name`/`Properties` palettes, feature pool elements' `minecraft:bottom` jigsaws, and 26.2's heightmap predicates without the `blocks_motion_in_heightmap` tag.
 - [ ] Cost logged for 26.2, the first full version added by the guide.
 
 ### Phase 6: snapshots while the plan runs
@@ -253,6 +257,7 @@ Specs and ADRs that govern this: [data-sources.md](../specs/data-sources.md), [b
 Agreed on 2026-10-26:
 
 - **Both versions now.** 26.2 and 26.4 are planned together, with 26.4 tracked through its snapshots instead of waiting for its release. Rework from snapshot changes should be cheap. When it isn't, that's evidence for improving how spyglass handles versions, and the plan acts on it.
+- **26.2 stays in this plan** (2026-10-26, after the phase 1 survey showed it needs an `f64` evaluator family of its own). The ADR on how versions coexist records the second family.
 - **CI:** GitHub Actions, downloading the server jar from Mojang during each run, with nothing game-derived committed or kept (agreed with m08-dimensions).
 
 To be decided in phase 1's ADRs, with the recommendations above: how versions coexist, the harness's adapters, and supported versions with release-first defaults.

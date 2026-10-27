@@ -1,8 +1,10 @@
 //! Times the public API's main operations, for comparing changes: `cargo xtask bench`, or
-//! `cargo run --release -p spyglass --example bench -- [bundle dir]`. Needs a bundle (default
-//! `bundles/26.3`). Each line is the median of several runs.
+//! `cargo run --release -p spyglass --example bench -- [bundle dir or version]`. Needs a bundle:
+//! a directory, a version in `bundles/`, or by default the newest release there. Each line is
+//! the median of several runs.
 
 use std::hint::black_box;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use spyglass::{Dimension, Game, World};
@@ -16,9 +18,11 @@ const SEEDS: [i64; 5] = [
 ];
 
 fn main() -> spyglass::Result<()> {
-    let dir = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "bundles/26.3".to_string());
+    let dir: PathBuf = match std::env::args().nth(1) {
+        Some(arg) if Path::new(&arg).join("bundle.json").is_file() => arg.into(),
+        version => spyglass::find_bundle("bundles", version.as_deref())?.dir,
+    };
+    println!("bundle: {}", dir.display());
     report("World::open", 3, || {
         black_box(World::open(&dir).unwrap());
     });

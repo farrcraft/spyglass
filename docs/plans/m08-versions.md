@@ -177,7 +177,7 @@ Specs and ADRs that govern this: [data-sources.md](../specs/data-sources.md), [b
 ### Phase 2: version-aware infrastructure
 
 - [x] The behavior switch table, each switch holding the data-version ranges it applies to, printed by `version-diff` for any bundle. `spyglass_data::versions`: five switches so far (four for 26.4, one for 26.2), each named in its spec note.
-- [ ] A test that every supported bundle on the machine loads and binds in all three dimensions, so old dispatch arms keep working as new ones are added. Moved to phase 3: it would fail by design until 26.4 loads, and `oracle-test` now runs `each_dimension_opens` for every version, which covers most of it.
+- [x] A test that every supported bundle on the machine loads and binds in all three dimensions, so old dispatch arms keep working as new ones are added. Moved to phase 3: it would fail by design until 26.4 loads, and `oracle-test` now runs `each_dimension_opens` for every version, which covers most of it. Done by that: `each_dimension_opens` and `every_bundled_density_function_loads` run for every bundle on the machine under `oracle-test`, and for every supported version in CI under `cargo xtask ci`.
 - [x] `spyglass-oracle` lists the versions with inputs. Every ignored comparison runs for each, and `oracle-test` reports per version. 36 tests for 26.3, all passing; 26.2 and 26.4-snapshot-5 fail to load, as expected until phases 3 to 5.
 - [x] The harness split into core and a 26.3 adapter, with no change in output: 26.3's goldens stay byte-identical. `GameApi` in the core; `oracle/adapters/26.3/` (`Adapter`, `ProbeWorldgen`) chosen by its `data-versions`. Against the other jars every compile error is now in the adapter: 9 for 26.4-snapshot-5, about 90 for 26.2.
 - [x] Release-first defaults in `find_bundle`, the CLI and the viewer. Snapshots are chosen only by name. The CLI tests stop pinning 26.3. `bundle.json` gains an optional `kind` (old bundles go by their id); a folder of only snapshots is `Error::NoRelease`, naming them; the viewer falls back to the newest snapshot, which its picker shows. `cli.rs` no longer pins; `world.rs` still does, since its saves are stamped with 26.3's data version and it reads 26.3's files. The synthetic fixture and test saves moved from data version 1 to 5023, so that every behavior switch is off for them.
@@ -208,7 +208,7 @@ Specs and ADRs that govern this: [data-sources.md](../specs/data-sources.md), [b
 
 - [x] Goldens for 26.2 in all three dimensions. Biome, height, structure, spawn and `/locate` comparisons pass, confirmed included. `oracle-test --game-version 26.2` passes. `/locate` for `#minecraft:abandoned_camp`, a 26.3 tag, is rejected by both the game and spyglass, and the comparison now checks that they reject the same targets.
 - [x] Templates' `Name`/`Properties` palettes, feature pool elements' `minecraft:bottom` jigsaws, and 26.2's heightmap predicates without the `blocks_motion_in_heightmap` tag. Loaders and switches done (`feature_jigsaw_named_bottom`, `heightmap_blocks_motion`, which supports the three vanilla default blocks and refuses others); checked against the game with phase 5's goldens.
-- [ ] Cost logged for 26.2, the first full version added by the guide.
+- [x] Cost logged for 26.2, the first full version added by the guide. In the guide's cost log, with 26.4-snapshot-5 and 26.4-snapshot-6.
 
 ### Phase 6: snapshots while the plan runs
 
@@ -234,10 +234,10 @@ Specs and ADRs that govern this: [data-sources.md](../specs/data-sources.md), [b
 
 ### Phase 8: the guide and close-out
 
-- [ ] `docs/adding-a-version.md`, followed for 26.2 and the snapshots, with the cost log. Exit criterion 3.
-- [ ] Specs' status lines and _Versions_ notes for every supported version.
-- [ ] `data-sources.md`, `oracle.md`, README (supported versions), architecture.md.
-- [ ] Bench lines per version.
+- [x] `docs/adding-a-version.md`, followed for 26.2 and the snapshots, with the cost log. Exit criterion 3. Written from those three additions: the loop, reading `version-diff`, where each kind of change is fixed, switches, dispatch arms, adapters, the test pack, pinned tests, finishing, and the cost log with a row for each. The first version added from the guide as written will be the next snapshot (26.4-snapshot-7, likely 2026-11-03); its row should say what the guide got wrong.
+- [x] Specs' status lines and _Versions_ notes for every supported version. Status lines in `rng.md`, `noise.md`, `biome-lookup.md`, `locate.md`, `spawn.md` and `terrain.md` now say 26.2 and the 26.4 snapshots are checked; `world-saves.md` still says its notes are unchecked, which is true (saves aren't compared per version).
+- [x] `data-sources.md`, `oracle.md`, README (supported versions), architecture.md. Also the docs index and getting-started.
+- [x] Bench lines per version. `cargo xtask bench <version>` now takes a version and defaults to the newest release, not `bundles/26.3`; lines in the notes.
 - [ ] `cargo xtask check` and `cargo xtask oracle-test` for every version. Move this plan to `completed/`, and milestone 08 too once CI has run.
 
 ## Verification
@@ -258,11 +258,11 @@ Specs and ADRs that govern this: [data-sources.md](../specs/data-sources.md), [b
 
 ## Durable outputs
 
-- [ ] ADRs: how versions coexist; the harness across versions; supported versions, snapshots and CI.
-- [ ] `docs/adding-a-version.md`, with the cost log.
-- [ ] _Versions_ notes in `noise.md`, `rng.md`, `density-functions.md`, `biome-lookup.md`, `terrain.md`, `structure-placement.md`, `spawn.md` and `locate.md`.
-- [ ] `docs/specs/data-sources.md`, `docs/specs/oracle.md`, `docs/specs/bundle-format.md` (if the bundle changes)
-- [ ] `README.md`, `docs/architecture.md`, `docs/getting-started.md`
+- [x] ADRs: how versions coexist; the harness across versions; supported versions, snapshots and CI. 0026, 0027, 0028, and 0029, 0030 besides.
+- [x] `docs/adding-a-version.md`, with the cost log.
+- [x] _Versions_ notes in `noise.md`, `rng.md`, `density-functions.md`, `biome-lookup.md`, `terrain.md`, `structure-placement.md`, `spawn.md` and `locate.md`.
+- [x] `docs/specs/data-sources.md`, `docs/specs/oracle.md`, `docs/specs/bundle-format.md` (if the bundle changes)
+- [x] `README.md`, `docs/architecture.md`, `docs/getting-started.md`
 
 ## Decisions
 
@@ -297,3 +297,4 @@ Open for the user: publishing the repository on GitHub, which exit criterion 2 n
 - 2026-10-27: 26.4-snapshot-6 (data version 5126) out today, added. The data diff said nothing spyglass reads changed: 1,511 templates differ only in their `DataVersion`, 57 biomes in feature order, 9 block tags spyglass doesn't read. `version-diff --code` found 20 changed and 11 new ported classes. The harness failed to compile at `RandomState.create`, split into `createForGenerator` (anchors from the level) and `createForTesting`: a 26.4-snapshot-6 adapter of one file (`RandomStates.java`, moved out of the 26.3 adapter so it can be replaced alone). One change can alter vanilla results: `planUpsample` tests a stepped volume's offset against the step (switch `upscale_offset_by_step`). With those, all 31 comparisons passed in about 40 minutes of work. The rest of the bytecode change is forms the vanilla data doesn't use: `domain_warp`, anchor gradient coordinates and `corner_constraint`; carvers and trunk placers, which spyglass doesn't port, changed too.
 - **Retro, 26.4-snapshot-6 (cheap for vanilla, not for the unused forms).** Vanilla parity cost an adapter file and a switch, the "cheap" budget, which the harness split and `version-diff --code` bought. Supporting the three unused forms, as ADR 0026 asks, took most of a day: a new density type with three samplers and two paths, the game's `domainAxes`, anchor heights through every binder, a density sampler in jigsaw assembly and the structure check, and the test pack to check them (ADR 0030). What forced it: the game shipped new data forms ahead of using them, and only the bytecode showed them. What would have made it cheaper: seeing them in the report at once (`--code` listed the classes, but not "new codec types and fields"), and a data-pack-shaped way to check unused forms, which now exists. Follow-up task above. One trap worth recording: a concurrent `oracle-test` run recompiles whatever is in the tree, so edits during a regression run invalidate it.
 - 2026-10-27: `cargo xtask ci` passes for all four versions. 26.2's job is three times the others' because of heights: the game writes 26.2's height goldens in 11 minutes against 26.3's 2.5 (its per-cell `NoiseChunk` path), and 26.2's comparisons take about 11 minutes against 3. Locate is 1 to 4 minutes per version. On a 4-vCPU runner expect 26.2 to be the longest job, likely past ADR 0028's 15 to 20 minute estimate but within its one-hour matrix budget, since jobs run in parallel.
+- 2026-10-27: Bench per version (`cargo xtask bench <version>`, this machine). 26.3, 26.4-snapshot-5 and 26.4-snapshot-6 are within noise of each other. 26.2 is several times slower throughout: one-thread witch-hut search 403 seeds/s against 2,866 for 26.3; `locate_structure #village` 605 ms against 72; `height_at` on a bound session 3.1 ms against 0.39; `biome_at` over 256 × 256 quarts 694 ms against 321; a 1024² render 14.4 s against 3.5. That's its `f64` family with none of the newer evaluator's volume paths and caches, and a `NoiseChunk` per column. Correct, but a follow-up for milestone 09 (fast density): the 1.21 family needs the same treatment.

@@ -27,7 +27,7 @@ struct Cli {
 enum Cmd {
     /// Time the public API's main operations in a release build (`crates/spyglass/examples/bench.rs`).
     Bench {
-        /// The bundle to use [default: bundles/26.3].
+        /// The bundle to use: a directory or a version in `bundles/` [default: the newest release].
         bundle: Option<PathBuf>,
     },
     /// Run every check in .pre-commit-config.yaml against the whole repo, as CI does.

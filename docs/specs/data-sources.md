@@ -9,7 +9,7 @@ Everything spyglass knows about a game version comes from Mojang's own distribut
 1. **Version manifest:** `https://piston-meta.mojang.com/mc/game/version_manifest_v2.json` lists releases and snapshots with links to server jars and official mappings.
 2. **Jar data:** since 1.18 most worldgen lives in JSON under `data/minecraft/worldgen/` (noise settings, density functions, noise parameters, structure sets, biome tags).
 3. **Data generator:** `java -DbundlerMainClass=net.minecraft.data.Main -jar server.jar --reports --output <dir>` dumps reports, including the biome parameter lists that are built in code. See [Data generator](#data-generator).
-4. **Readable code:** decompile with Vineflower. From 26.x the server jar ships unobfuscated (confirmed for 26.3: real class names, and no `server_mappings` in the version JSON), so no mappings step is needed. Older versions need the official mappings.
+4. **Readable code:** decompile with Vineflower. From 26.x the server jar ships unobfuscated (confirmed for 26.2, 26.3 and the 26.4 snapshots: real class names, which the oracle's adapters compile against; 26.3's version JSON has no `server_mappings`), so no mappings step is needed. Older versions need the official mappings.
 
 ## Server jar
 

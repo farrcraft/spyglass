@@ -1,6 +1,6 @@
 # Biome lookup
 
-Status: stable. Covers the Default world preset's three dimensions, implemented in `spyglass-biome` for 26.3 and checked cell by cell against the oracle's [golden biome files](oracle.md#golden-biome-files). 26.4-snapshot-5 and 26.2 are implemented and checked against the oracle; their differences are in _Versions_ notes.
+Status: stable. Covers the Default world preset's three dimensions, implemented in `spyglass-biome` for 26.3 and checked cell by cell against the oracle's [golden biome files](oracle.md#golden-biome-files). 26.2 and the 26.4 snapshots are implemented and checked against the oracle; their differences are in _Versions_ notes.
 
 A multi-noise biome source (`MultiNoiseBiomeSource`) picks a biome at quart (1:4) resolution: it samples six climate values, quantizes them, and finds the nearest parameter point in the dimension's parameter list. Classes are in `net.minecraft.world.level.biome` unless stated otherwise.
 

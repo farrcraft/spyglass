@@ -1,6 +1,6 @@
 # Random sources
 
-Status: stable. Implemented in `spyglass-rng` for 26.3; checked against the game by the oracle's [probe files](oracle.md#probe-files). It holds unchanged for 26.2 and 26.4-snapshot-5, compared in the bytecode and not yet checked against the oracle.
+Status: stable. Implemented in `spyglass-rng` for 26.3; checked against the game by the oracle's [probe files](oracle.md#probe-files). It holds unchanged for 26.2 and the 26.4 snapshots, and is checked against each one's probe files.
 
 _Versions:_ every random-source class (`LegacyRandomSource`, `XoroshiroRandomSource`, `Xoroshiro128PlusPlus`, `RandomSupport`, `MarsagliaPolarGaussian`, `WorldgenRandom`, the positional factories and their interfaces) and `Mth.getSeed` are byte-identical in 26.2, 26.3 and 26.4-snapshot-5, and `RandomState` makes its positional factory the same way in all three.
 

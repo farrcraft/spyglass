@@ -4,6 +4,7 @@
 | ------------------------------------------------ | ----------------------------------------------------------------------- |
 | [getting-started.md](getting-started.md)         | Installing Rust, building, testing, running.                            |
 | [architecture.md](architecture.md)               | The code-vs-data split, crate layers and how they depend on each other. |
+| [adding-a-version.md](adding-a-version.md)       | Adding a game version, and what each one has cost.                      |
 | [development-process.md](development-process.md) | How milestones become plans and code, and where each kind of doc lives. |
 | [roadmap/](roadmap/README.md)                    | Milestones (one file each), stretch goals and what is out of scope.     |
 | [plans/](plans/README.md)                        | Implementation plans for milestones.                                    |

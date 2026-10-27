@@ -1,6 +1,6 @@
 # Locate queries
 
-Status: stable. Covers `/locate structure` and `/locate biome` in the Default world preset's three dimensions, implemented in `spyglass-structure` and `spyglass-biome` and exposed by the `spyglass` crate ([ADR 0014](../adr/0014-public-api-world-and-session.md)). Checked against the real game's `/locate` ([ADR 0015](../adr/0015-locate-checks-on-a-real-server.md)) for 26.3. 26.4-snapshot-5 is implemented and checked against the oracle; 26.2's differences are drafted in _Versions_ notes from the bytecode and not yet checked.
+Status: stable. Covers `/locate structure` and `/locate biome` in the Default world preset's three dimensions, implemented in `spyglass-structure` and `spyglass-biome` and exposed by the `spyglass` crate ([ADR 0014](../adr/0014-public-api-world-and-session.md)). Checked against the real game's `/locate` ([ADR 0015](../adr/0015-locate-checks-on-a-real-server.md)) for 26.3, 26.2 and the 26.4 snapshots; their differences are in _Versions_ notes. Targets a version doesn't have, such as 26.3's `#minecraft:abandoned_camp` in 26.2, are rejected by both.
 
 `/locate` doesn't return the nearest structure or biome. It returns the first one its search order finds, so spyglass ports the search order and the distance measure exactly. Where spyglass can't decide whether the game generates a structure in a chunk, it returns every place the game's answer may be, in search order, each labelled `certain` or not. [Confirmed](#confirmed-mode), terrain decides nearly every chunk.
 

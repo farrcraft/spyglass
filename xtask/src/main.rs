@@ -12,6 +12,7 @@ mod linux_check;
 mod locate;
 mod oracle;
 mod oracle_test;
+mod version_diff;
 
 #[derive(Parser)]
 #[command(about = "spyglass project commands")]
@@ -61,6 +62,9 @@ enum Cmd {
         #[command(subcommand)]
         cmd: oracle::OracleCmd,
     },
+    /// Report what changed between two bundles in the data spyglass reads: ids added and
+    /// removed, files changed, and new or gone JSON shapes (types, fields, value kinds).
+    VersionDiff(version_diff::VersionDiff),
 }
 
 fn main() -> ExitCode {
@@ -74,6 +78,7 @@ fn main() -> ExitCode {
         Cmd::Msrv { print } => msrv(print),
         Cmd::Oracle { cmd } => oracle::run(cmd),
         Cmd::OracleTest => oracle_test::run(),
+        Cmd::VersionDiff(args) => version_diff::run(&args),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

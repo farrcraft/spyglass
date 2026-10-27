@@ -4909,8 +4909,10 @@ dependencies = [
  "anyhow",
  "clap",
  "serde_json",
+ "spyglass-data",
  "spyglass-extract",
  "spyglass-world",
+ "tempfile",
 ]
 
 [[package]]

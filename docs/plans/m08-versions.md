@@ -1,8 +1,8 @@
 # m08. More than one game version
 
-- Status: Draft
+- Status: In progress
 - Milestone: [08. Nether, End and multiple versions](../roadmap/08-dimensions-and-versions.md)
-- Started: not yet
+- Started: 2026-10-26
 - Completed: not yet
 
 ## Goal
@@ -171,7 +171,7 @@ Specs and ADRs that govern this: [data-sources.md](../specs/data-sources.md), [b
   Each difference is drafted as a _Versions_ note in its spec.
 
 - [ ] Where 26.4's default block comes from, now that `default_block` is gone.
-- [ ] `cargo xtask version-diff`, with tests on fixture bundles. Its report on 26.2 → 26.3 and 26.3 → 26.4-snapshot-5 must name every change listed above.
+- [x] `cargo xtask version-diff`, with tests on fixture bundles. Its report on 26.2 → 26.3 and 26.3 → 26.4-snapshot-5 must name every change listed above.
 - [ ] ADR: how versions coexist (shape dispatch and behavior switches).
 - [ ] ADR: the oracle harness across versions (core and adapters).
 - [ ] ADR: supported versions, snapshots, release-first defaults, and CI on GitHub Actions.
@@ -262,3 +262,4 @@ Open for the user: publishing the repository on GitHub, which exit criterion 2 n
 ## Notes
 
 - 2026-10-26: Drafted from the 26.2, 26.3 and 26.4-snapshot-5 bundles, a diff of their formats, opening each in spyglass, and compiling the oracle harness against each jar.
+- 2026-10-26: `cargo xtask version-diff` added. Its reports name every data change above, and more the survey missed: 26.2's `default_block` and `default_fluid` are block-state objects where 26.3 has strings, 26.2's `spawn_target` has another shape, every structure template changed between each pair of versions (1,212 and 1,511 files), and 26.3's heightmap tag `blocks_motion_in_heightmap` doesn't exist in 26.2. A first pass over the bytecode found the 26.3 → 26.4-snapshot-5 change isn't as small as the data suggests: 61 ported classes differ, and at least two changes alter results with no sign in the data (`Mth.sin` rounds its table index and is symmetric for negative arguments; `Climate.Parameter`'s distance adds 1).

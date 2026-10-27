@@ -95,7 +95,7 @@ Specs and ADRs that govern this: [density-functions.md](../specs/density-functio
 
 - [x] Find why the isolated column went from 243 µs (milestone 07's close, 0ef3687) to 393 µs: bench both commits on the same machine in one sitting, then bisect if it's real. Fix it if it's a mistake rather than a cost of supporting versions. Mostly the bench's noise; the real regression is codegen, not code (see the notes). Fixed by measuring with a `dist` profile (fat LTO, one codegen unit), decided 2026-10-27.
 - [x] Bench lines before, for every supported version: the bench's terrain lines, plus `structure_layout`, confirmed search and region lines, recorded in the notes. Three rounds per version under `dist`; ranges in the notes.
-- [ ] A profile of an isolated column, a nearby column, a 40 × 25 region and a village layout, for 26.3 and 26.2, split into tree-walking, allocation, memo, noise, `find_top_surface`, aquifer and the rest. 26.3 done (notes), with timing spans behind a `timing` feature and the `density_timing` example, since this machine has no profiler that runs unelevated. 26.2's evaluator isn't instrumented yet.
+- [ ] A profile of an isolated column, a nearby column, a 40 × 25 region and a village layout, for 26.3 and 26.2, split into tree-walking, allocation, memo, noise, `find_top_surface`, aquifer and the rest. Done for both families (notes), with timing spans behind a `timing` feature and the `density_timing` example, since this machine has no profiler that runs unelevated.
 - [ ] Prototype the hottest part of the breakdown, to check the design reaches 150 µs before building all of it.
 - [ ] ADR: the flattened evaluation. Covers the program form, the runners, buffers, which kernels are SIMD and how (auto-vectorization, `std::arch` with runtime detection, or a crate), the families, and what happens to the interpreter.
 
@@ -191,6 +191,21 @@ Sources:
 - crates.io metadata for each crate, fetched 2026-10-27.
 
 ## Notes
+
+- 2026-10-27: **Where 26.2's time goes** (coarse spans in its `NoiseChunk`).
+
+  | Scenario                     | Total         | Biggest cost                                                                          |
+  | ---------------------------- | ------------- | ------------------------------------------------------------------------------------- |
+  | Isolated column, bound       | 1.9 to 2.4 ms | 78% in 126 single-point router computes for the aquifer, about 12 µs each             |
+  | Nearby column, bound         | 490 µs        | 59% in cell corners (`fillSlice`, 733 per column), 29% in point computes              |
+  | 40 × 25 region               | 73 ms         | per-block interpolation and corners (timing's own cost is 21 ms of it: 316,000 spans) |
+  | Village layout, same session | 67 ms         | 70% in cell corners                                                                   |
+
+  What they show:
+
+  - **An aquifer point compute is 8 times 26.3's**: about 12 µs against 1.5 µs. It runs a router entry through the wrapped graph at a single point, with no memo, so shared subgraphs are recomputed. The isolated column's surface levels and barrier and fluid-level samples go this way.
+  - **Corners are the volume work.** Each `fillSlice` corner is a point evaluation of `final_density`'s inputs, about 0.4 µs. A program that evaluates corners over a cell's slice at once, as 26.3's volume path does, is the family's counterpart to 26.3's volume runner.
+  - **For the 2× target** (26.2's isolated column at most twice 26.3's, so about 300 µs or less), the aquifer's point computes must mostly go: batched over the 49 surface-level positions, and with shared subgraphs computed once.
 
 - 2026-10-27: **Where 26.3's time goes** (`cargo run --profile dist -p spyglass --features timing --example density_timing -- 26.3`). Coarse spans cost about 2% and give the split between stages; a span per node shows the split inside volumes but slows everything (and with about 100,000 spans per village layout, distorts it). Run-to-run noise on this machine is large, so these are shares, consistent across runs:
 

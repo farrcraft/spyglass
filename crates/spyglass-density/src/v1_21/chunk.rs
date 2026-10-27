@@ -144,6 +144,8 @@ impl NoiseChunk {
     ///
     /// If the block isn't in one of the chunk's cells.
     pub fn interpolated_density(&self, x: i32, y: i32, z: i32) -> f64 {
+        #[cfg(feature = "timing")]
+        let _t = crate::timing::span("26.2: interpolated density");
         let (cx, cy, cz, ix, iy, iz) = self.cell_of(x, y, z);
         let own = Own::Cell {
             cx,
@@ -181,6 +183,8 @@ impl NoiseChunk {
     /// aquifer samples it: `interpolated` is its raw input, and `flat_cache` its quart corner's
     /// value inside the chunk's window.
     pub fn compute(&self, entry: RouterEntry, x: i32, y: i32, z: i32) -> f64 {
+        #[cfg(feature = "timing")]
+        let _t = crate::timing::span("26.2: point compute (aquifer, climate)");
         self.graph.entries[entry as usize].eval(&self.ctx(x, y, z, Own::Foreign))
     }
 
@@ -195,6 +199,8 @@ impl NoiseChunk {
     /// `preliminarySurfaceLevel(x, z)`: `Mth.floor` of `preliminary_surface_level` at
     /// `SinglePointContext(x & ~3, 0, z & ~3)` (quart-aligned), remembered per position.
     pub fn preliminary_surface_level(&self, x: i32, z: i32) -> i32 {
+        #[cfg(feature = "timing")]
+        let _t = crate::timing::span("26.2: preliminary surface level");
         let (x, z) = ((x >> 2) << 2, (z >> 2) << 2);
         if let Some(level) = self.surface_levels.borrow().get(&(x, z)) {
             return *level;
@@ -269,6 +275,8 @@ impl NoiseChunk {
         let ny = self.cell_count_y as usize + 1;
         let table = self.table(slot, n * n * ny);
         *table[(cx * n + cz) * ny + cy].get_or_init(|| {
+            #[cfg(feature = "timing")]
+            let _t = crate::timing::span("26.2: cell corner (fillSlice)");
             let x = self
                 .first_cell_x
                 .wrapping_add(cx as i32)

@@ -114,7 +114,7 @@ fn scenario(name: &str, n: u32, mut op: impl FnMut()) {
     );
     for (span, t) in totals {
         let share = per(t.exclusive) / wall * 100.0;
-        if share < 0.5 {
+        if share < 0.5 && per(t.inclusive) / wall < 0.05 {
             continue;
         }
         println!(

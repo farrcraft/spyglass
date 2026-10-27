@@ -3,6 +3,9 @@
 //!
 //! Golden files are generated locally by `cargo xtask oracle golden` into `oracle-out/` and never
 //! committed. The format and the comparison rule are specified in `docs/specs/oracle.md`.
+//!
+//! The comparisons with the game each check one game version, [`version`], and find its bundle and
+//! outputs with [`bundle_dir`] and [`out_dir`].
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -271,9 +274,55 @@ impl<'a> Reader<'a> {
     }
 }
 
-/// `oracle-out/` at the repo root, where `cargo xtask oracle golden` writes.
+/// The repo root.
+fn repo_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+/// `oracle-out/` at the repo root, where `cargo xtask oracle golden` writes, one subdirectory per
+/// game version.
 pub fn default_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../oracle-out")
+    repo_root().join("oracle-out")
+}
+
+/// The environment variable naming the game version the comparisons with the game check.
+/// `cargo xtask oracle-test` sets it once per version (docs/specs/oracle.md, "Running the
+/// comparisons").
+pub const VERSION_VAR: &str = "SPYGLASS_ORACLE_VERSION";
+
+/// The game version the comparisons with the game check: [`VERSION_VAR`] if set, else the newest
+/// release with a bundle in `bundles/`.
+///
+/// # Panics
+///
+/// If [`VERSION_VAR`] isn't set and `bundles/` has no release bundle.
+pub fn version() -> String {
+    if let Ok(version) = std::env::var(VERSION_VAR)
+        && !version.is_empty()
+    {
+        return version;
+    }
+    fs::read_dir(repo_root().join("bundles"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| spyglass_data::bundle::read_manifest(&entry.path()).ok())
+        .filter(|m| m.kind() == spyglass_data::bundle::Kind::Release)
+        .max_by_key(|m| m.data_version)
+        .map(|m| m.version)
+        .unwrap_or_else(|| {
+            panic!("no release bundle in bundles/; extract one or set {VERSION_VAR}")
+        })
+}
+
+/// `bundles/<version>` at the repo root, for [`version`].
+pub fn bundle_dir() -> PathBuf {
+    repo_root().join("bundles").join(version())
+}
+
+/// `oracle-out/<version>` at the repo root, for [`version`]: the oracle's outputs to compare with.
+pub fn out_dir() -> PathBuf {
+    default_dir().join(version())
 }
 
 /// Every golden biome file for a game version and dimension (e.g. `overworld`), sorted. Empty if
@@ -379,27 +428,25 @@ mod tests {
         ));
     }
 
-    /// Checks every generated golden file: it parses, and writing it back gives the same bytes.
-    /// Needs `cargo xtask oracle golden` first; run with `cargo test -- --ignored`.
+    /// Checks every generated golden file for [`version`]: it parses, and writing it back gives the
+    /// same bytes. Needs `cargo xtask oracle golden` first; run with `cargo test -- --ignored`.
     #[test]
     #[ignore = "needs golden files from cargo xtask oracle golden"]
     fn golden_files_round_trip() {
         let root = default_dir();
-        let versions: Vec<_> = fs::read_dir(&root)
-            .expect("no oracle-out/; run cargo xtask oracle golden")
-            .flatten()
-            .map(|e| e.file_name().to_string_lossy().into_owned())
-            .collect();
+        let version = version();
         let mut checked = 0;
-        for version in versions {
-            for path in biome_files(&root, &version, "overworld") {
-                let bytes = fs::read(&path).unwrap();
-                let grid = BiomeGrid::parse(&bytes).unwrap_or_else(|e| panic!("{path:?}: {e}"));
-                assert_eq!(grid.to_bytes(), bytes, "{path:?}");
-                assert_eq!(grid.header.version, version);
-                checked += 1;
-            }
+        for path in biome_files(&root, &version, "overworld") {
+            let bytes = fs::read(&path).unwrap();
+            let grid = BiomeGrid::parse(&bytes).unwrap_or_else(|e| panic!("{path:?}: {e}"));
+            assert_eq!(grid.to_bytes(), bytes, "{path:?}");
+            assert_eq!(grid.header.version, version);
+            checked += 1;
         }
-        assert!(checked > 0, "no golden files found under {root:?}");
+        assert!(
+            checked > 0,
+            "no golden files under {:?}; run cargo xtask oracle golden",
+            out_dir()
+        );
     }
 }

@@ -6,7 +6,7 @@
 use spyglass::{Dimension, World};
 
 fn bundle() -> std::path::PathBuf {
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../bundles/26.3")
+    spyglass_oracle::bundle_dir()
 }
 
 #[test]
@@ -19,7 +19,7 @@ fn dimensions_have_ids() {
 }
 
 #[test]
-#[ignore = "needs a bundle: spyglass-extract 26.3"]
+#[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
 fn each_dimension_opens() {
     let nether = World::open_dimension(bundle(), Dimension::Nether).unwrap();
     assert_eq!(nether.dimension(), "minecraft:the_nether");
@@ -61,10 +61,10 @@ fn each_dimension_opens() {
 }
 
 #[test]
-#[ignore = "needs a bundle: spyglass-extract 26.3"]
+#[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
 fn a_game_spans_the_dimensions() {
     let game = spyglass::Game::open(bundle()).unwrap();
-    assert_eq!(game.version(), "26.3");
+    assert_eq!(game.version(), spyglass_oracle::version());
     let (o, n) = (Dimension::Overworld, Dimension::Nether);
     assert_eq!(game.convert([-1001, 800], o, n).unwrap(), [-126, 100]);
     assert!(game.convert([0, 0], o, Dimension::End).is_err());

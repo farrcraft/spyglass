@@ -12,21 +12,13 @@ use serde_json::Value;
 use spyglass_data::bundle::Bundle;
 use spyglass_terrain::{Block, Heightmap, Terrain, TerrainSettings};
 
-fn root() -> PathBuf {
-    spyglass_oracle::default_dir()
-}
-
+/// The height files for the version under test, in `oracle-out/<version>/heights/<dimension>/`.
 fn height_files() -> Vec<PathBuf> {
-    let mut out: Vec<PathBuf> = fs::read_dir(root())
+    let dir = spyglass_oracle::out_dir().join("heights");
+    let mut out: Vec<PathBuf> = ["overworld", "the_nether", "the_end"]
         .into_iter()
+        .flat_map(|d| fs::read_dir(dir.join(d)))
         .flatten()
-        .flatten()
-        .flat_map(|v| {
-            ["overworld", "the_nether", "the_end"]
-                .into_iter()
-                .flat_map(move |d| fs::read_dir(v.path().join("heights").join(d)))
-                .flatten()
-        })
         .flatten()
         .map(|e| e.path())
         .filter(|p| p.extension().is_some_and(|e| e == "json"))
@@ -53,7 +45,8 @@ fn check(path: &Path) -> (Vec<String>, usize) {
     let file: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
     let version = file["version"].as_str().unwrap();
     let seed = file["seed"].as_i64().unwrap();
-    let bundle = Bundle::open(root().join("../bundles").join(version))
+    assert_eq!(version, spyglass_oracle::version(), "{}", path.display());
+    let bundle = Bundle::open(spyglass_oracle::bundle_dir())
         .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {version}"));
     // The Default preset's noise settings for the file's dimension; its type has the
     // dimension's id.
@@ -155,7 +148,8 @@ fn every_height_matches_the_game() {
     let files = height_files();
     assert!(
         !files.is_empty(),
-        "no height files; run cargo xtask oracle heights"
+        "no height files for {}; run cargo xtask oracle heights",
+        spyglass_oracle::version()
     );
     let mut failures = Vec::new();
     let mut checked = 0;

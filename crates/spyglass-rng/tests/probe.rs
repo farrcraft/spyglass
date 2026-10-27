@@ -3,7 +3,7 @@
 //! Needs `cargo xtask oracle probe` first (docs/specs/oracle.md, "Probe files"). Run with
 //! `cargo test -p spyglass-rng -- --ignored`.
 
-use spyglass_oracle::probe::{Case, ProbeFile, probe_files};
+use spyglass_oracle::probe::{Case, ProbeFile, probe_file};
 use spyglass_rng::support::{
     mix_stafford13, seed_from_hash_of, upgrade_seed_to_128bit, upgrade_seed_to_128bit_unmixed,
 };
@@ -121,31 +121,25 @@ fn actual(case: &Case) -> Values {
 #[test]
 #[ignore = "needs the oracle's probe files: cargo xtask oracle probe"]
 fn every_random_source_value_matches_the_game() {
-    let files = probe_files(&spyglass_oracle::default_dir(), "rng.json");
-    assert!(
-        !files.is_empty(),
-        "no probe files; run cargo xtask oracle probe"
-    );
-    for path in files {
-        let file = ProbeFile::read(&path).unwrap();
-        let mut failures = Vec::new();
-        for case in &file.cases {
-            let (want, got) = (expected(case), actual(case));
-            if want != got {
-                failures.push(format!(
-                    "{}\n    game:     {want:?}\n    spyglass: {got:?}",
-                    case.label()
-                ));
-            }
+    let path = probe_file("rng.json");
+    let file = ProbeFile::read(&path).unwrap();
+    let mut failures = Vec::new();
+    for case in &file.cases {
+        let (want, got) = (expected(case), actual(case));
+        if want != got {
+            failures.push(format!(
+                "{}\n    game:     {want:?}\n    spyglass: {got:?}",
+                case.label()
+            ));
         }
-        assert!(
-            failures.is_empty(),
-            "{}: {} of {} cases differ:\n{}",
-            path.display(),
-            failures.len(),
-            file.cases.len(),
-            failures[..failures.len().min(20)].join("\n")
-        );
-        println!("{}: all {} cases match", path.display(), file.cases.len());
     }
+    assert!(
+        failures.is_empty(),
+        "{}: {} of {} cases differ:\n{}",
+        path.display(),
+        failures.len(),
+        file.cases.len(),
+        failures[..failures.len().min(20)].join("\n")
+    );
+    println!("{}: all {} cases match", path.display(), file.cases.len());
 }

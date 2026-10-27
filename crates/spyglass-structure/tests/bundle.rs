@@ -1,7 +1,8 @@
 //! Loading every structure set from a real bundle, and computing stronghold rings.
 //!
-//! Needs a bundle in `bundles/26.3/`. Run with
-//! `cargo test --release -p spyglass-structure -- --ignored`.
+//! Needs a bundle in `bundles/<version>/` for `spyglass_oracle::version`
+//! (`SPYGLASS_ORACLE_VERSION`, else the newest release); one test needs `bundles/26.3/`, whose
+//! structure sets it lists. Run with `cargo test --release -p spyglass-structure -- --ignored`.
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -10,15 +11,19 @@ use spyglass_biome::BiomeSource;
 use spyglass_data::bundle::Bundle;
 use spyglass_structure::{PlacementKind, Starts, StructureSets};
 
+/// The bundle for the version under test.
 fn bundle() -> Bundle {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../bundles/26.3");
-    Bundle::open(&dir).unwrap_or_else(|e| panic!("{e}; run spyglass-extract 26.3"))
+    let version = spyglass_oracle::version();
+    Bundle::open(spyglass_oracle::bundle_dir())
+        .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {version}"))
 }
 
+/// Expects 26.3's structure sets exactly, so it checks 26.3 whatever the version under test.
 #[test]
 #[ignore = "needs bundles/26.3"]
 fn loads_every_overworld_structure_set() {
-    let bundle = bundle();
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../bundles/26.3");
+    let bundle = Bundle::open(&dir).unwrap_or_else(|e| panic!("{e}; run spyglass-extract 26.3"));
     let source = BiomeSource::overworld(&bundle).unwrap();
     let sets = StructureSets::overworld(&bundle, &source).unwrap_or_else(|e| panic!("{e}"));
     let possible: Vec<&str> = sets
@@ -46,7 +51,7 @@ fn loads_every_overworld_structure_set() {
 }
 
 #[test]
-#[ignore = "needs bundles/26.3"]
+#[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
 fn computes_stronghold_rings() {
     let bundle = bundle();
     let source = BiomeSource::overworld(&bundle).unwrap();
@@ -71,7 +76,7 @@ fn computes_stronghold_rings() {
 }
 
 #[test]
-#[ignore = "needs bundles/26.3"]
+#[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
 fn selects_starts_near_the_origin() {
     let bundle = bundle();
     let source = BiomeSource::overworld(&bundle).unwrap();
@@ -94,7 +99,7 @@ fn selects_starts_near_the_origin() {
 }
 
 #[test]
-#[ignore = "needs bundles/26.3"]
+#[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
 fn seed_placements_decide_random_spread_from_48_bits() {
     let bundle = bundle();
     let source = BiomeSource::overworld(&bundle).unwrap();
@@ -125,7 +130,7 @@ fn seed_placements_decide_random_spread_from_48_bits() {
 }
 
 #[test]
-#[ignore = "needs bundles/26.3"]
+#[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
 fn ring_chunks_in_a_box_settle_only_what_they_need() {
     let bundle = bundle();
     let source = BiomeSource::overworld(&bundle).unwrap();

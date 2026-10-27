@@ -182,16 +182,18 @@ impl Case {
     }
 }
 
-/// Every probe file with this name (`rng.json`, `noise.json`) under `root`, one per game version,
-/// sorted.
-pub fn probe_files(root: &Path, name: &str) -> Vec<PathBuf> {
-    let mut out: Vec<PathBuf> = fs::read_dir(root)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|entry| entry.path().join("probe").join(name))
-        .filter(|path| path.is_file())
-        .collect();
-    out.sort();
-    out
+/// The probe file with this name (`rng.json`, `noise.json`) for [`crate::version`], in
+/// [`crate::out_dir`].
+///
+/// # Panics
+///
+/// If it hasn't been generated.
+pub fn probe_file(name: &str) -> PathBuf {
+    let path = crate::out_dir().join("probe").join(name);
+    assert!(
+        path.is_file(),
+        "no {}; run cargo xtask oracle probe",
+        path.display()
+    );
+    path
 }

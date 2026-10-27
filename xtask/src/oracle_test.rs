@@ -1,11 +1,16 @@
 //! `cargo xtask oracle-test`: the ignored tests that compare spyglass with the game, in a release
-//! build, each run only when its local inputs exist (ADR 0008). See docs/specs/oracle.md.
+//! build, each run only when its local inputs exist (ADR 0008), once per game version with a
+//! bundle. See docs/specs/oracle.md.
 
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 
 use crate::{command, repo_root};
+
+/// The environment variable that tells the tests which game version to check
+/// (`spyglass_oracle::VERSION_VAR`).
+const VERSION_VAR: &str = "SPYGLASS_ORACLE_VERSION";
 
 /// What a test reads: a bundle, or one of the oracle's outputs under `oracle-out/<version>/`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -20,24 +25,24 @@ enum Input {
 }
 
 impl Input {
-    /// Whether some version has it.
-    fn exists(self, root: &Path) -> bool {
-        let (base, sub) = match self {
-            Input::Bundle => ("bundles", None),
-            Input::Probe => ("oracle-out", Some("probe")),
-            Input::Biomes => ("oracle-out", Some("biomes")),
-            Input::Structures => ("oracle-out", Some("structures")),
-            Input::Spawn => ("oracle-out", Some("spawn")),
-            Input::Locate => ("oracle-out", Some("locate")),
-            Input::Heights => ("oracle-out", Some("heights")),
+    /// Whether `version` has it.
+    fn exists(self, root: &Path, version: &str) -> bool {
+        let sub = match self {
+            Input::Bundle => {
+                return root
+                    .join("bundles")
+                    .join(version)
+                    .join("bundle.json")
+                    .is_file();
+            }
+            Input::Probe => "probe",
+            Input::Biomes => "biomes",
+            Input::Structures => "structures",
+            Input::Spawn => "spawn",
+            Input::Locate => "locate",
+            Input::Heights => "heights",
         };
-        let Ok(versions) = std::fs::read_dir(root.join(base)) else {
-            return false;
-        };
-        versions.flatten().any(|v| match sub {
-            Some(sub) => v.path().join(sub).is_dir(),
-            None => v.path().join("bundle.json").is_file(),
-        })
+        root.join("oracle-out").join(version).join(sub).is_dir()
     }
 
     /// The command that makes it.
@@ -182,12 +187,19 @@ const TESTS: &[(&str, &str, &[Input])] = &[
         "search::tests::the_fast_path_agrees_with_evaluate_on_the_real_world",
         &[Input::Bundle],
     ),
+    (
+        "spyglass",
+        "search::tests::the_fast_path_agrees_across_dimensions_on_the_real_game",
+        &[Input::Bundle],
+    ),
     ("spyglass", "each_dimension_opens", &[Input::Bundle]),
+    ("spyglass", "a_game_spans_the_dimensions", &[Input::Bundle]),
     ("spyglass-cli", "structures", &[Input::Bundle]),
     ("spyglass-cli", "jigsaw_bounds", &[Input::Bundle]),
     ("spyglass-cli", "biomes", &[Input::Bundle]),
     ("spyglass-cli", "slime_and_spawn", &[Input::Bundle]),
     ("spyglass-cli", "a_default_world", &[Input::Bundle]),
+    ("spyglass-cli", "a_player_in_the_nether", &[Input::Bundle]),
     (
         "spyglass-cli",
         "worlds_spyglass_cant_predict",
@@ -196,12 +208,84 @@ const TESTS: &[(&str, &str, &[Input])] = &[
     ("spyglass-cli", "a_preset_world_is_named", &[Input::Bundle]),
 ];
 
-pub fn run() -> Result<()> {
+/// Tests whose expected values are one version's, with that version: they run only for it.
+const PINNED: &[(&str, &str)] = &[
+    ("loads_every_overworld_structure_set", "26.3"),
+    ("a_default_world", "26.3"),
+    ("a_player_in_the_nether", "26.3"),
+    ("worlds_spyglass_cant_predict", "26.3"),
+    ("a_preset_world_is_named", "26.3"),
+];
+
+/// How one version's run went.
+enum Outcome {
+    Passed(usize),
+    Failed,
+    NoInputs,
+}
+
+/// Runs the tests for `version` (every version with a bundle, oldest first, if `None`), then
+/// reports per version. A failing version doesn't stop the others.
+pub fn run(version: Option<&str>) -> Result<()> {
     let root = repo_root();
+    let versions = match version {
+        Some(v) => vec![v.to_string()],
+        None => bundled_versions(root),
+    };
+    if versions.is_empty() {
+        bail!("no bundle in bundles/; see docs/getting-started.md#6-the-oracle");
+    }
+    let mut outcomes = Vec::new();
+    for version in &versions {
+        println!("== {version}");
+        let outcome = run_version(root, version)?;
+        outcomes.push((version, outcome));
+    }
+    println!("oracle tests by version:");
+    for (version, outcome) in &outcomes {
+        match outcome {
+            Outcome::Passed(n) => println!("  {version}: passed ({n} tests)"),
+            Outcome::Failed => println!("  {version}: failed"),
+            Outcome::NoInputs => println!("  {version}: skipped (no inputs)"),
+        }
+    }
+    if outcomes.iter().any(|(_, o)| matches!(o, Outcome::Failed)) {
+        bail!("oracle tests failed");
+    }
+    if outcomes.iter().all(|(_, o)| matches!(o, Outcome::NoInputs)) {
+        bail!("no oracle test has its inputs; see docs/getting-started.md#6-the-oracle");
+    }
+    Ok(())
+}
+
+/// The game versions with a bundle in `bundles/`, oldest data version first.
+fn bundled_versions(root: &Path) -> Vec<String> {
+    let mut found: Vec<(u32, String)> = std::fs::read_dir(root.join("bundles"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| spyglass_data::bundle::read_manifest(&e.path()).ok())
+        .map(|m| (m.data_version, m.version))
+        .collect();
+    found.sort();
+    found.into_iter().map(|(_, v)| v).collect()
+}
+
+/// Runs the tests whose inputs `version` has, in one cargo invocation.
+fn run_version(root: &Path, version: &str) -> Result<Outcome> {
     let mut packages = Vec::new();
     let mut names = Vec::new();
     for &(package, name, inputs) in TESTS {
-        let missing: Vec<Input> = inputs.iter().copied().filter(|i| !i.exists(root)).collect();
+        if let Some(&(_, pinned)) = PINNED.iter().find(|(n, _)| *n == name)
+            && pinned != version
+        {
+            continue;
+        }
+        let missing: Vec<Input> = inputs
+            .iter()
+            .copied()
+            .filter(|i| !i.exists(root, version))
+            .collect();
         if missing.is_empty() {
             if !packages.contains(&package) {
                 packages.push(package);
@@ -213,17 +297,23 @@ pub fn run() -> Result<()> {
         }
     }
     if names.is_empty() {
-        bail!("no oracle test has its inputs; see docs/getting-started.md#6-the-oracle");
+        return Ok(Outcome::NoInputs);
     }
-    println!("running {} of {} oracle tests", names.len(), TESTS.len());
+    println!(
+        "running {} of {} oracle tests for {version}",
+        names.len(),
+        TESTS.len()
+    );
     let mut cmd = command("cargo");
-    cmd.args(["test", "--release"]);
+    cmd.env(VERSION_VAR, version)
+        .args(["test", "--release", "--no-fail-fast"]);
     for p in &packages {
         cmd.args(["-p", p]);
     }
     cmd.args(["--", "--ignored", "--exact"]).args(&names);
-    if !cmd.status().context("failed to run cargo")?.success() {
-        bail!("oracle tests failed");
-    }
-    Ok(())
+    Ok(if cmd.status().context("failed to run cargo")?.success() {
+        Outcome::Passed(names.len())
+    } else {
+        Outcome::Failed
+    })
 }

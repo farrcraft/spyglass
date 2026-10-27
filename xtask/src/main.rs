@@ -55,8 +55,13 @@ enum Cmd {
         print: bool,
     },
     /// Run the ignored tests that compare spyglass with the game, in release, for which this
-    /// machine has the bundles and oracle outputs. Run it before completing a plan.
-    OracleTest,
+    /// machine has the bundles and oracle outputs, once per game version with a bundle. Run it
+    /// before completing a plan.
+    OracleTest {
+        /// Check only this game version.
+        #[arg(long)]
+        game_version: Option<String>,
+    },
     /// Build and run the oracle harness: the real game's answers, for golden files.
     Oracle {
         #[command(subcommand)]
@@ -77,7 +82,7 @@ fn main() -> ExitCode {
         Cmd::LinuxCheck(args) => linux_check::run(&args),
         Cmd::Msrv { print } => msrv(print),
         Cmd::Oracle { cmd } => oracle::run(cmd),
-        Cmd::OracleTest => oracle_test::run(),
+        Cmd::OracleTest { game_version } => oracle_test::run(game_version.as_deref()),
         Cmd::VersionDiff(args) => version_diff::run(&args),
     };
     match result {

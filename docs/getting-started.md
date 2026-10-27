@@ -161,7 +161,7 @@ cargo xtask oracle golden --game-version 26.3    # or for a specific version
 cargo xtask oracle check-save "<path to a world>" # check the harness against a save made in that version
 ```
 
-The first run downloads the server jar (about 60 MB) and compiles the harness. Startup takes about 10 seconds; the full golden set about a minute more on a few cores. Golden-file tests are `#[ignore]`d, since the files are local. `cargo xtask oracle-test` runs every one whose files and bundle exist, in a release build, and says which it skipped; or run a crate's with `cargo test -- --ignored`, as below.
+The first run downloads the server jar (about 60 MB) and compiles the harness. Startup takes about 10 seconds; the full golden set about a minute more on a few cores. Golden-file tests are `#[ignore]`d, since the files are local. `cargo xtask oracle-test` runs every one whose files and bundle exist, in a release build, once per game version in `bundles/` (or `--game-version 26.3` for one), and says which it skipped and how each version went; or run a crate's with `cargo test -- --ignored`, as below, which checks the newest release in `bundles/`, or the version in `SPYGLASS_ORACLE_VERSION`.
 
 `cargo xtask oracle probe` (also part of `golden`) writes the game's raw random-source, noise and density-function values into `oracle-out/<version>/probe/`. The RNG, noise and density crates check against them, and the noise and density tests also need a bundle for the same version ([Game data](#8-game-data)):
 

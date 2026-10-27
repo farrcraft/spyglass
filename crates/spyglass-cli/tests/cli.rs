@@ -1,6 +1,6 @@
 //! The `spyglass` binary end to end: each command in both output modes. Tests that need a bundle
-//! are ignored without one (`spyglass-extract 26.3`); run them with
-//! `cargo test -p spyglass-cli -- --ignored`.
+//! are ignored; they use the one for `spyglass_oracle::version` (`SPYGLASS_ORACLE_VERSION`, else
+//! the newest release in `bundles/`). Run them with `cargo test -p spyglass-cli -- --ignored`.
 
 use std::path::PathBuf;
 use std::process::{Command, Output};
@@ -19,6 +19,14 @@ fn spyglass(args: &[&str]) -> Output {
     command.output().unwrap()
 }
 
+/// [`spyglass`] on the bundle for the version under test.
+fn game(args: &[&str]) -> Output {
+    let version = spyglass_oracle::version();
+    let mut args = args.to_vec();
+    args.extend(["--game-version", &version]);
+    spyglass(&args)
+}
+
 fn text(out: &Output) -> String {
     assert!(
         out.status.success(),
@@ -31,7 +39,7 @@ fn text(out: &Output) -> String {
 fn json(args: &[&str]) -> Value {
     let mut args = args.to_vec();
     args.push("--json");
-    let value: Value = serde_json::from_str(&text(&spyglass(&args))).unwrap();
+    let value: Value = serde_json::from_str(&text(&game(&args))).unwrap();
     assert_eq!(value["format"], 1);
     assert_eq!(value["dimension"], "minecraft:overworld");
     assert!(value["version"].is_string());
@@ -51,7 +59,7 @@ fn bad_arguments_fail_before_loading() {
 }
 
 #[test]
-#[ignore = "needs a bundle: spyglass-extract 26.3"]
+#[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
 fn structures() {
     let v = json(&[
         "locate",
@@ -85,7 +93,7 @@ fn structures() {
     assert_eq!(v["certain_answer"], 0);
     assert_eq!(v["hits"].as_array().unwrap().len(), 1);
 
-    let out = text(&spyglass(&[
+    let out = text(&game(&[
         "locate",
         "structure",
         "minecraft:monument",
@@ -102,13 +110,13 @@ fn structures() {
     assert_eq!(v["certain_answer"], 0);
     assert_eq!(v["hits"][0]["bounds"], Value::Null);
 
-    let out = spyglass(&["locate", "structure", "minecraft:nothing", "--seed", "1"]);
+    let out = game(&["locate", "structure", "minecraft:nothing", "--seed", "1"]);
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("unknown structure"));
 }
 
 #[test]
-#[ignore = "needs a bundle: spyglass-extract 26.3"]
+#[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
 fn jigsaw_bounds() {
     let args = [
         "locate",
@@ -126,13 +134,13 @@ fn jigsaw_bounds() {
     for d in 0..3 {
         assert!(bounds["min"][d].as_i64().unwrap() <= bounds["max"][d].as_i64().unwrap());
     }
-    let out = text(&spyglass(&args));
+    let out = text(&game(&args));
     assert!(out.contains(" pieces"), "{out}");
     assert!(out.contains("bounds "), "{out}");
 }
 
 #[test]
-#[ignore = "needs a bundle: spyglass-extract 26.3"]
+#[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
 fn biomes() {
     let v = json(&[
         "locate",
@@ -152,7 +160,7 @@ fn biomes() {
     // A biome the Overworld can't have: found nowhere, not an error.
     let v = json(&["locate", "biome", "minecraft:nether_wastes", "--seed", "0"]);
     assert!(v["hits"].as_array().unwrap().is_empty());
-    let out = text(&spyglass(&[
+    let out = text(&game(&[
         "locate",
         "biome",
         "minecraft:nether_wastes",
@@ -163,7 +171,7 @@ fn biomes() {
 }
 
 #[test]
-#[ignore = "needs a bundle: spyglass-extract 26.3"]
+#[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
 fn slime_and_spawn() {
     let v = json(&["locate", "slime", "--seed", "0", "--radius", "3"]);
     let chunks = v["chunks"].as_array().unwrap();
@@ -171,14 +179,12 @@ fn slime_and_spawn() {
         let [x, z] = [c[0].as_i64().unwrap(), c[1].as_i64().unwrap()];
         x.abs() <= 3 && z.abs() <= 3
     }));
-    let out = text(&spyglass(&[
-        "locate", "slime", "--seed", "0", "--radius", "3",
-    ]));
+    let out = text(&game(&["locate", "slime", "--seed", "0", "--radius", "3"]));
     assert!(out.starts_with("Slime chunks within 3 chunks of chunk 0 0"));
 
     let v = json(&["locate", "spawn", "--seed", "0"]);
     assert!(v["chunk"][0].is_i64());
     assert_eq!(v["platform_dependent"], false);
-    let out = text(&spyglass(&["locate", "spawn", "--seed", "0"]));
+    let out = text(&game(&["locate", "spawn", "--seed", "0"]));
     assert!(out.contains("the spawn search starts in chunk"));
 }

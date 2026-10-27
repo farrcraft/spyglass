@@ -1,15 +1,15 @@
 //! Every noise sample in the oracle's probe files, reproduced bit for bit, with the game's parity
 //! descriptions as a structural check.
 //!
-//! Needs `cargo xtask oracle probe` and a bundle for the same version
-//! (`spyglass-extract <version>`). Run with `cargo test -p spyglass-noise -- --ignored`.
+//! Needs `cargo xtask oracle probe` and a bundle for the version under test
+//! (`spyglass_oracle::version`). Run with `cargo test -p spyglass-noise -- --ignored`.
 
 use std::collections::HashMap;
 use std::path::Path;
 
 use serde_json::Value;
 use spyglass_noise::{NoiseStack, NormalNoise, NormalNoiseParameters, PerlinNoise};
-use spyglass_oracle::probe::{Case, ProbeFile, probe_files};
+use spyglass_oracle::probe::{Case, ProbeFile, probe_file};
 use spyglass_rng::{PositionalRandomFactory, RandomSource, XoroshiroRandomSource};
 
 /// A noise's parameters from `bundles/<version>/data/<ns>/worldgen/noise/<path>.json`. Only
@@ -114,92 +114,86 @@ fn stack_sample(case: &Case, stack: &NoiseStack) -> Option<String> {
 #[test]
 #[ignore = "needs the oracle's probe files and a bundle: cargo xtask oracle probe"]
 fn every_noise_sample_matches_the_game() {
-    let root = spyglass_oracle::default_dir();
-    let files = probe_files(&root, "noise.json");
+    let path = probe_file("noise.json");
+    let file = ProbeFile::read(&path).unwrap();
+    let bundle = spyglass_oracle::bundle_dir();
     assert!(
-        !files.is_empty(),
-        "no probe files; run cargo xtask oracle probe"
+        bundle.join("bundle.json").is_file(),
+        "no bundle at {}; run spyglass-extract {}",
+        bundle.display(),
+        file.version
     );
-    for path in files {
-        let file = ProbeFile::read(&path).unwrap();
-        let bundle = root.join("../bundles").join(&file.version);
-        assert!(
-            bundle.join("bundle.json").is_file(),
-            "no bundle at {}; run spyglass-extract {}",
-            bundle.display(),
-            file.version
-        );
 
-        let mut perlins: HashMap<i64, PerlinNoise> = HashMap::new();
-        let mut normals: HashMap<(i64, String), (NoiseStack, NormalNoise)> = HashMap::new();
-        let mut failures = Vec::new();
-        for case in &file.cases {
-            let seed = case.seed.expect("noise cases have a seed");
-            let perlin = || PerlinNoise::new(&mut XoroshiroRandomSource::new(seed));
-            let failure = match case.test.as_str() {
-                "perlin_parity" => {
+    let mut perlins: HashMap<i64, PerlinNoise> = HashMap::new();
+    let mut normals: HashMap<(i64, String), (NoiseStack, NormalNoise)> = HashMap::new();
+    let mut failures = Vec::new();
+    for case in &file.cases {
+        let seed = case.seed.expect("noise cases have a seed");
+        let perlin = || PerlinNoise::new(&mut XoroshiroRandomSource::new(seed));
+        let failure = match case.test.as_str() {
+            "perlin_parity" => {
+                let groups = parity_groups(case.text());
+                check_parity(
+                    &case.label(),
+                    groups[0],
+                    perlins.entry(seed).or_insert_with(perlin),
+                )
+            }
+            "perlin" => {
+                let noise = perlins.entry(seed).or_insert_with(perlin);
+                match case.method.as_deref() {
+                    Some("get_3d") => sample(case, |p| noise.get(p[0], p[1], p[2])),
+                    Some("get_2d") => sample(case, |p| noise.get_2d(p[0], p[1])),
+                    other => panic!("{}: unknown method {other:?}", case.label()),
+                }
+            }
+            "normal_noise" | "normal_noise_parity" => {
+                let id = case.name.clone().expect("a noise id");
+                let (stack, _) = normals.entry((seed, id.clone())).or_insert_with(|| {
+                    let normal = NormalNoise::new(&parameters(&bundle, &id)).unwrap();
+                    // RandomState's factory for a Xoroshiro world, then the noise's own
+                    // source, as Noises.instantiate does.
+                    let factory = XoroshiroRandomSource::new(seed).fork_positional();
+                    let stack = normal.create(&mut factory.from_hash_of(&id));
+                    (stack, normal)
+                });
+                if case.test == "normal_noise" {
+                    stack_sample(case, stack)
+                } else {
+                    // The text lists the first stack's octaves, then the second's; the
+                    // stack interleaves them.
                     let groups = parity_groups(case.text());
-                    check_parity(
-                        &case.label(),
-                        groups[0],
-                        perlins.entry(seed).or_insert_with(perlin),
-                    )
-                }
-                "perlin" => {
-                    let noise = perlins.entry(seed).or_insert_with(perlin);
-                    match case.method.as_deref() {
-                        Some("get_3d") => sample(case, |p| noise.get(p[0], p[1], p[2])),
-                        Some("get_2d") => sample(case, |p| noise.get_2d(p[0], p[1])),
-                        other => panic!("{}: unknown method {other:?}", case.label()),
-                    }
-                }
-                "normal_noise" | "normal_noise_parity" => {
-                    let id = case.name.clone().expect("a noise id");
-                    let (stack, _) = normals.entry((seed, id.clone())).or_insert_with(|| {
-                        let normal = NormalNoise::new(&parameters(&bundle, &id)).unwrap();
-                        // RandomState's factory for a Xoroshiro world, then the noise's own
-                        // source, as Noises.instantiate does.
-                        let factory = XoroshiroRandomSource::new(seed).fork_positional();
-                        let stack = normal.create(&mut factory.from_hash_of(&id));
-                        (stack, normal)
-                    });
-                    if case.test == "normal_noise" {
-                        stack_sample(case, stack)
+                    let layers = stack.layers();
+                    let ordered = layers
+                        .iter()
+                        .step_by(2)
+                        .chain(layers.iter().skip(1).step_by(2));
+                    if groups.len() != layers.len() {
+                        Some(format!(
+                            "{}: {} octaves in the game, {} in spyglass",
+                            case.label(),
+                            groups.len(),
+                            layers.len()
+                        ))
                     } else {
-                        // The text lists the first stack's octaves, then the second's; the
-                        // stack interleaves them.
-                        let groups = parity_groups(case.text());
-                        let layers = stack.layers();
-                        let ordered = layers
+                        groups
                             .iter()
-                            .step_by(2)
-                            .chain(layers.iter().skip(1).step_by(2));
-                        if groups.len() != layers.len() {
-                            Some(format!(
-                                "{}: {} octaves in the game, {} in spyglass",
-                                case.label(),
-                                groups.len(),
-                                layers.len()
-                            ))
-                        } else {
-                            groups.iter().zip(ordered).find_map(|(g, layer)| {
-                                check_parity(&case.label(), *g, &layer.noise)
-                            })
-                        }
+                            .zip(ordered)
+                            .find_map(|(g, layer)| check_parity(&case.label(), *g, &layer.noise))
                     }
                 }
-                other => panic!("{}: unknown noise test {other}", case.label()),
-            };
-            failures.extend(failure);
-        }
-        assert!(
-            failures.is_empty(),
-            "{}: {} of {} cases differ:\n{}",
-            path.display(),
-            failures.len(),
-            file.cases.len(),
-            failures[..failures.len().min(20)].join("\n")
-        );
-        println!("{}: all {} cases match", path.display(), file.cases.len());
+            }
+            other => panic!("{}: unknown noise test {other}", case.label()),
+        };
+        failures.extend(failure);
     }
+    assert!(
+        failures.is_empty(),
+        "{}: {} of {} cases differ:\n{}",
+        path.display(),
+        failures.len(),
+        file.cases.len(),
+        failures[..failures.len().min(20)].join("\n")
+    );
+    println!("{}: all {} cases match", path.display(), file.cases.len());
 }

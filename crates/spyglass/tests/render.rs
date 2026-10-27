@@ -376,9 +376,9 @@ fn rendering_is_deterministic_and_writes_png() {
 }
 
 #[test]
-#[ignore = "needs a bundle: spyglass-extract 26.3"]
+#[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
 fn the_real_world_renders_the_same_in_tiles() {
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../bundles/26.3");
+    let dir = spyglass_oracle::bundle_dir();
     let world = World::open(dir).unwrap();
     let session = world.session(-4_893_098_694_207_956_070).unwrap();
     for scale in [1, 4, 16, 64] {

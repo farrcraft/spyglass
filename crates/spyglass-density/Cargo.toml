@@ -10,6 +10,10 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+# Coarse timing of evaluation by node kind (`timing`), for finding where the time goes.
+timing = []
+
 [dependencies]
 serde_json.workspace = true
 spyglass-data.workspace = true

@@ -94,8 +94,8 @@ Specs and ADRs that govern this: [density-functions.md](../specs/density-functio
 ### Phase 1: measure and decide
 
 - [x] Find why the isolated column went from 243 µs (milestone 07's close, 0ef3687) to 393 µs: bench both commits on the same machine in one sitting, then bisect if it's real. Fix it if it's a mistake rather than a cost of supporting versions. Mostly the bench's noise; the real regression is codegen, not code (see the notes). Fixed by measuring with a `dist` profile (fat LTO, one codegen unit), decided 2026-10-27.
-- [ ] Bench lines before, for every supported version: the bench's terrain lines, plus `structure_layout`, confirmed search and region lines, recorded in the notes.
-- [ ] A profile of an isolated column, a nearby column, a 40 × 25 region and a village layout, for 26.3 and 26.2, split into tree-walking, allocation, memo, noise, `find_top_surface`, aquifer and the rest.
+- [x] Bench lines before, for every supported version: the bench's terrain lines, plus `structure_layout`, confirmed search and region lines, recorded in the notes. Three rounds per version under `dist`; ranges in the notes.
+- [ ] A profile of an isolated column, a nearby column, a 40 × 25 region and a village layout, for 26.3 and 26.2, split into tree-walking, allocation, memo, noise, `find_top_surface`, aquifer and the rest. 26.3 done (notes), with timing spans behind a `timing` feature and the `density_timing` example, since this machine has no profiler that runs unelevated. 26.2's evaluator isn't instrumented yet.
 - [ ] Prototype the hottest part of the breakdown, to check the design reaches 150 µs before building all of it.
 - [ ] ADR: the flattened evaluation. Covers the program form, the runners, buffers, which kernels are SIMD and how (auto-vectorization, `std::arch` with runtime detection, or a crate), the families, and what happens to the interpreter.
 
@@ -191,6 +191,38 @@ Sources:
 - crates.io metadata for each crate, fetched 2026-10-27.
 
 ## Notes
+
+- 2026-10-27: **Where 26.3's time goes** (`cargo run --profile dist -p spyglass --features timing --example density_timing -- 26.3`). Coarse spans cost about 2% and give the split between stages; a span per node shows the split inside volumes but slows everything (and with about 100,000 spans per village layout, distorts it). Run-to-run noise on this machine is large, so these are shares, consistent across runs:
+
+  | Scenario (coarse)               | Density volumes | `find_top_surface`'s point samples | Rest |
+  | ------------------------------- | --------------- | ---------------------------------- | ---- |
+  | Isolated column, bound (266 µs) | 66%             | 29% (62 point evaluations)         | 5%   |
+  | Nearby column, bound (216 µs)   | 84%             | 9%                                 | 7%   |
+  | 40 × 25 region                  | 81%             | 5%                                 | 14%  |
+  | Village layout, same session    | 75%             | under 1%                           | 25%  |
+
+  What the per-node spans and the totals show:
+
+  - **Inside volumes, noise is about half.** Plain noise and the smeared (blended) noise together are 45 to 57% of exclusive time in nearby columns, regions and layouts. Splines are 3 to 8%, and each arithmetic node type is a few percent.
+  - **The interpreter's own cost is 10 to 20%.** Memo stores, which copy each shared node's whole volume, are 5 to 15%, highest in regions; per-call allocation and setup a few percent more.
+  - **What it takes to reach 150 µs from about 270 µs (−45%).** Batching `find_top_surface`'s point samples into volumes (up to −29% of an isolated column), noise kernels about twice as fast (about −25%), and the flattened program without per-node copies and allocations (about −10%). Flattening alone falls short, so the noise kernels are needed. That settles the SIMD question towards `fearless_simd` over plain auto-vectorization, to be confirmed by phase 1's prototype.
+  - **Cold village layouts** (a new session each time) measured between 110 and 307 ms across passes. The noise drowns the split between density and the rest, which needs the per-seed state that a new session builds. Measure again with a quieter machine before drawing conclusions.
+
+- 2026-10-27: **Bench lines before** (`dist`, three rounds per version; ranges). 26.4-snapshot-6's rounds ran while the machine was busier, so its ranges are wide.
+
+  | Line                                     | 26.2             | 26.3               | 26.4-snapshot-5    | 26.4-snapshot-6    |
+  | ---------------------------------------- | ---------------- | ------------------ | ------------------ | ------------------ |
+  | `height_at` one column, bound            | 2.0 ms           | 296 to 313 µs      | 254 to 399 µs      | 233 to 403 µs      |
+  | `height_at` one nearby column, bound     | 506 to 600 µs    | 197 to 230 µs      | 194 to 305 µs      | 191 to 289 µs      |
+  | `height_at` one column, new session      | 1 to 2 ms        | 598 to 692 µs      | 728 to 923 µs      | 698 to 964 µs      |
+  | `heights_in` 40 × 25 columns             | 67 to 74 ms      | 20 to 22 ms        | 26 to 35 ms        | 24 to 32 ms        |
+  | `height_map` 256², scale 1               | 4.4 to 5.5 s     | 1.4 to 1.5 s       | 1.6 to 2.5 s       | 1.3 to 2.8 s       |
+  | `height_map` 256², scale 4               | 28 to 36 s       | 10.8 to 11.8 s     | 13.0 to 15.8 s     | 11.3 to 28.0 s     |
+  | `structure_layout` village_plains, bound | 111 to 169 ms    | 80 to 85 ms        | 73 to 91 ms        | 83 to 116 ms       |
+  | witch huts confirmed, 1 thread           | 400 to 473/s     | 3,204 to 3,312/s   | 2,166 to 3,316/s   | 2,324 to 4,052/s   |
+  | witch huts confirmed, all threads        | 3,984 to 4,234/s | 26,824 to 28,201/s | 15,878 to 27,602/s | 17,074 to 30,264/s |
+  | `biome_at` 256² quarts                   | 676 to 754 ms    | 194 to 233 ms      | 194 to 216 ms      | 162 to 341 ms      |
+  | `render` 1024² at scale 16               | 12.3 to 13.2 s   | 3.2 to 3.7 s       | 3.1 to 5.3 s       | 2.4 to 7.0 s       |
 
 - 2026-10-27: **The 243 → 393 µs question.** Timed with a throwaway program (400 isolated columns, 400 nearby, 30 village layouts per run), alternating builds over several rounds, since this machine (Balanced power plan, a browser open) drifts by tens of percent between runs.
   - **The isolated column barely moved.** Medians of 246 to 278 µs at 0ef3687 against 268 to 277 µs at HEAD, and minimums of 186 against 208 µs. The bench's 393 µs was its 20-sample median of a quantity that varies by ±30%. The target needs about 1.8× from today's typical column, not 2.6×.

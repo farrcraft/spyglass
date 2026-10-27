@@ -184,12 +184,22 @@ impl Terrain {
             return None;
         }
         let column = Volume::blocks([1, self.height, 1], [x, self.min_y, z]);
+        #[cfg(feature = "timing")]
+        let t = spyglass_density::timing::span("column: final_density");
         let density = bound.final_density.sample_volume(&column);
+        #[cfg(feature = "timing")]
+        drop(t);
+        #[cfg(feature = "timing")]
+        let t = spyglass_density::timing::span("column: aquifer setup");
         let mut aquifer = Self::aquifer(bound, levels, &column);
+        #[cfg(feature = "timing")]
+        drop(t);
         let blocks = blocks.map(|b| {
             *b = vec![Block::Air; self.height as usize];
             &mut b[..]
         });
+        #[cfg(feature = "timing")]
+        let _t = spyglass_density::timing::span("column: scan");
         self.scan_with(x, z, self.min_y, &density, aquifer.as_mut(), stop, blocks)
     }
 

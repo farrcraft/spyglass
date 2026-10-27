@@ -10,6 +10,14 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+# Coarse timing of terrain (`spyglass::timing`), for the `density_timing` example.
+timing = ["spyglass-terrain/timing"]
+
+[[example]]
+name = "density_timing"
+required-features = ["timing"]
+
 [dependencies]
 spyglass-biome.workspace = true
 spyglass-data.workspace = true

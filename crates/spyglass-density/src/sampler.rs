@@ -1019,6 +1019,8 @@ impl Sampler {
     /// bottom, or several functions bound by one [`Binder`] at the same position, computes each
     /// shared or y-independent node once.
     pub fn sample(&self, x: i32, y: i32, z: i32) -> f32 {
+        #[cfg(feature = "timing")]
+        let _t = crate::timing::span("point: sample");
         MEMO.with_borrow_mut(|memo| {
             memo.begin(self.binder, x, y, z);
             self.eval(memo, Pos::new(x, y, z))
@@ -1052,6 +1054,8 @@ impl Sampler {
     /// The value at another position than the one being evaluated, for samplers that move their
     /// inputs (slices, `find_top_surface`).
     pub(crate) fn eval_at(&self, memo: &mut Memo, x: i32, y: i32, z: i32) -> f32 {
+        #[cfg(feature = "timing")]
+        let _t = crate::timing::span("point: moved (slice, find_top_surface)");
         let place = memo.place();
         memo.begin(self.binder, x, y, z);
         let value = self.eval(memo, Pos::new(x, y, z));
@@ -1061,6 +1065,53 @@ impl Sampler {
 }
 
 impl Node {
+    /// The node's type, for [`timing`](crate::timing).
+    #[cfg(feature = "timing")]
+    pub(crate) fn kind(&self) -> &'static str {
+        match self {
+            Node::Constant(..) => "volume: Constant",
+            Node::Noise { .. } => "volume: Noise",
+            Node::NoiseShiftedXz { .. } => "volume: NoiseShiftedXz",
+            Node::NoiseShiftedXyz { .. } => "volume: NoiseShiftedXyz",
+            Node::SmearedNoise { .. } => "volume: SmearedNoise",
+            Node::ShiftA(..) => "volume: ShiftA",
+            Node::ShiftB(..) => "volume: ShiftB",
+            Node::Shift(..) => "volume: Shift",
+            Node::Add(..) => "volume: Add",
+            Node::Sub(..) => "volume: Sub",
+            Node::Mul(..) => "volume: Mul",
+            Node::MulConst(..) => "volume: MulConst",
+            Node::Div(..) => "volume: Div",
+            Node::ConstDiv(..) => "volume: ConstDiv",
+            Node::Min(..) => "volume: Min",
+            Node::MinConst(..) => "volume: MinConst",
+            Node::Max(..) => "volume: Max",
+            Node::MaxConst(..) => "volume: MaxConst",
+            Node::Unary(..) => "volume: Unary",
+            Node::Round(..) => "volume: Round",
+            Node::RoundInteger(..) => "volume: RoundInteger",
+            Node::Clamp(..) => "volume: Clamp",
+            Node::MathClamp(..) => "volume: MathClamp",
+            Node::Pow(..) => "volume: Pow",
+            Node::PowConstBase(..) => "volume: PowConstBase",
+            Node::PowConstExponent(..) => "volume: PowConstExponent",
+            Node::Lerp { .. } => "volume: Lerp",
+            Node::RangeChoice { .. } => "volume: RangeChoice",
+            Node::IntervalSelect { .. } => "volume: IntervalSelect",
+            Node::Slice { .. } => "volume: Slice",
+            Node::Interpolated { .. } => "volume: Interpolated",
+            Node::Upscale(..) => "volume: Upscale",
+            Node::UpscaleNearest { .. } => "volume: UpscaleNearest",
+            Node::FindTopSurface { .. } => "volume: FindTopSurface",
+            Node::Gradient { .. } => "volume: Gradient",
+            Node::GradientRepeat { .. } => "volume: GradientRepeat",
+            Node::Spline(..) => "volume: Spline",
+            Node::DistanceToPoint { .. } => "volume: DistanceToPoint",
+            Node::EndIslands(..) => "volume: EndIslands",
+            Node::DomainWarp { .. } => "volume: DomainWarp",
+        }
+    }
+
     /// The node's value at `pos`, its children's through `memo`.
     pub(crate) fn compute(&self, memo: &mut Memo, pos: Pos) -> f32 {
         let Pos {

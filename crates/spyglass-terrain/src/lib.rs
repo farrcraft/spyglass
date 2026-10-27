@@ -16,3 +16,5 @@ pub use aquifer::{
 };
 pub use column::{BlockColumn, Heightmap, Terrain};
 pub use settings::{BoundTerrain, TerrainSettings};
+#[cfg(feature = "timing")]
+pub use spyglass_density::timing;

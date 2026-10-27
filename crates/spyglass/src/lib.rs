@@ -60,6 +60,9 @@ pub use spyglass_data::bundle::Kind;
 pub use spyglass_data::dimension::Dimension;
 pub use spyglass_structure::LOCATE_RADIUS;
 pub use spyglass_terrain::Heightmap;
+/// Coarse timing of terrain, for finding where the time goes; not a stable interface.
+#[cfg(feature = "timing")]
+pub use spyglass_terrain::timing;
 
 /// A search query's syntax tree, from [`SearchQuery::query`] (`docs/specs/search.md`).
 pub mod query {

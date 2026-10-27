@@ -43,6 +43,8 @@ impl Sampler {
 
     /// [`sample_volume`](Self::sample_volume), with the point memo already borrowed.
     pub(crate) fn volume_in(&self, memo: &mut Memo, volume: &Volume) -> Vec<f32> {
+        #[cfg(feature = "timing")]
+        let _t = crate::timing::span("volume: call");
         let mut fill = Fill {
             point: memo,
             cells: Vec::new(),
@@ -59,6 +61,8 @@ impl Sampler {
             && let Some(Some((v, values))) = f.cells.get(slot)
             && v == volume
         {
+            #[cfg(feature = "timing")]
+            let _t = crate::timing::detail("volume: memo hit");
             out.copy_from_slice(values);
             return;
         }
@@ -71,10 +75,16 @@ impl Sampler {
             };
             let mut values = vec![0.0; flat.len()];
             self.fill(f, &flat, &mut values);
+            #[cfg(feature = "timing")]
+            let _t = crate::timing::detail("volume: spread y");
             spread_y(&values, volume, out);
         } else {
+            #[cfg(feature = "timing")]
+            let _t = crate::timing::detail(self.node.kind());
             self.node.fill(f, volume, out);
         }
+        #[cfg(feature = "timing")]
+        let _t = crate::timing::detail("volume: memo store");
         if self.slot != NO_SLOT {
             if f.cells.len() <= slot {
                 f.cells.resize_with(slot + 1, || None);

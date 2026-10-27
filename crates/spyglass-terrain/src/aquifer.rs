@@ -374,7 +374,11 @@ impl<'s> Aquifer<'s> {
                 return levels.into_iter().max().unwrap_or(i32::MIN);
             }
         }
+        #[cfg(feature = "timing")]
+        let t = spyglass_density::timing::span("aquifer: surface levels");
         let values = samplers.surface_level.sample_volume(&volume);
+        #[cfg(feature = "timing")]
+        drop(t);
         let mut highest = i32::MIN;
         for iz in 0..volume.size[2] {
             for ix in 0..volume.size[0] {

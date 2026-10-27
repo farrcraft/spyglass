@@ -49,6 +49,11 @@ pub struct VersionDiff {
     old: String,
     /// The newer bundle: a directory, or a version under `bundles/`.
     new: Option<String>,
+    /// Also compare the bytecode of the game classes spyglass ports, which shows algorithm
+    /// changes the data can't. Needs both versions' jars unpacked by `cargo xtask oracle build`
+    /// and a JDK.
+    #[arg(long)]
+    code: bool,
 }
 
 pub fn run(args: &VersionDiff) -> Result<()> {
@@ -62,6 +67,13 @@ pub fn run(args: &VersionDiff) -> Result<()> {
     let old = Snapshot::read(&resolve(&args.old))?;
     let new = Snapshot::read(&resolve(new))?;
     print!("{}", report(&old, &new));
+    if args.code {
+        println!();
+        print!(
+            "{}",
+            crate::code_diff::report(&old.manifest.version, &new.manifest.version)?
+        );
+    }
     Ok(())
 }
 

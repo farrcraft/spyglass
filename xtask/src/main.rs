@@ -8,6 +8,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use spyglass_extract::{java, manifest};
 
+mod code_diff;
 mod linux_check;
 mod locate;
 mod oracle;

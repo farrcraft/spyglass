@@ -110,7 +110,7 @@ Tests follow the same idea:
 The loop for each snapshot:
 
 1. Extract the snapshot.
-2. Run `cargo xtask version-diff`.
+2. Run `cargo xtask version-diff --code` (after `cargo xtask oracle build` for the new jar): data and bytecode.
 3. Compile the harness.
 4. Fix what changed.
 5. Regenerate the goldens.
@@ -193,7 +193,7 @@ Specs and ADRs that govern this: [data-sources.md](../specs/data-sources.md), [b
 - [x] `ice_caves` in the palette.
 - [x] `oracle-test` passes for 26.3 (36 tests) and 26.4-snapshot-5 (31; the other five are pinned to 26.3). Cost logged; a retro if it wasn't cheap: see the notes.
 
-- [ ] From the 26.4 retro: `cargo xtask version-diff --code <old> <new>`, the class-level bytecode diff (javap, normalized) of the classes spyglass ports, so an update's algorithm changes show up as fast as its data changes.
+- [x] From the 26.4 retro: `cargo xtask version-diff --code <old> <new>`, the class-level bytecode diff (javap, normalized) of the classes spyglass ports, so an update's algorithm changes show up as fast as its data changes.
 
 ### Phase 4: 26.2's formats and behavior
 
@@ -278,5 +278,5 @@ Open for the user: publishing the repository on GitHub, which exit criterion 2 n
   - **Loader-only for 26.2:** template palettes use `Name`/`Properties`; feature pool elements' jigsaws are named `minecraft:bottom` (same results with vanilla data); `spawn_target` is full parameter points.
 - 2026-10-26: Phase 1 done but for accepting the three ADRs. The survey is drafted into the specs as _Versions_ notes (inline where a version differs at a point, a `26.2` section where it differs throughout: noise, density functions, terrain, spawn), each spec's status line saying they're unchecked against the oracle. ADRs 0026 to 0028 are proposed. Open points the notes flag as inferred: 26.2's chunk-path climate sampler against its point path, how often 26.2's quantized deep-dark test flips a column, and 26.4's per-block biomes needing every neighbour's quart biomes.
 - 2026-10-26: Support is permanent, snapshots included: snapshots are versions people play, not steps to discard on release. ADR 0028 now says so, ADR 0026's switches and ADR 0027's adapters hold data-version ranges (a snapshot can revert a change), and nothing is ever removed. Phase 6 keeps every snapshot it adds.
-- 2026-10-26: Phase 3 done. 26.4-snapshot-5 passes every oracle comparison, 26.3 is unchanged (its goldens regenerate byte-identical through both harness reworks). Ties nearly vanish in 26.4: 1,008 tied cells against 60,361, because half-open ranges no longer share their boundary values. Open: 26.4 changed `DensityVolume.maxBlock` to `min + (size - 1)·step`; the terrain crate's aquifer still uses 26.3's form, which no 26.4 comparison caught, so either it doesn't matter for the regions the aquifer sees or no case exercises it. To check before the guide's first snapshot row.
+- 2026-10-26: Phase 3 done. 26.4-snapshot-5 passes every oracle comparison, 26.3 is unchanged (its goldens regenerate byte-identical through both harness reworks). Ties nearly vanish in 26.4: 1,008 tied cells against 60,361, because half-open ranges no longer share their boundary values. Open: 26.4 changed `DensityVolume.maxBlock` to `min + (size - 1)·step`; the terrain crate's aquifer still uses 26.3's form, which no 26.4 comparison caught, so either it doesn't matter for the regions the aquifer sees or no case exercises it. Checked: every region the aquifer gets is a block volume (step 1, from `Volume::blocks`), where both forms are `min + size - 1`, so it can't differ.
 - **Retro, 26.4-snapshot-5 (not cheap).** About a working day of agent and author time, well over the "loaders, switches, adapters, spec notes" budget: a new density type with two evaluation paths (`upscale`, ~1,500 lines with tests), a new harness mechanism (ADR 0029), and four switches. What forced it: the snapshot changed algorithms, not just data, in four places, and the harness was written against one version's API. What would have made it cheaper: the harness split (now done, so the next snapshot should cost a `Calls.java`), and `version-diff` reporting bytecode changes in ported classes as well as data, since the data diff alone said "small" for an update that wasn't. Follow-up task below.

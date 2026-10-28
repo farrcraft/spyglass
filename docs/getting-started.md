@@ -219,16 +219,18 @@ cargo run -p spyglass-extract -- 26.3     # or: latest, latest-snapshot
 cargo run -p spyglass-extract -- verify bundles/26.3
 ```
 
-The extractor downloads the server jar (about 60 MB, once, into your per-user cache) and checks its SHA-1. It copies the worldgen JSON out of the jar and runs the game's data generator for the biome parameter lists that only exist in code, then writes `bundles/<version>/` with a `bundle.json` listing every file's hash. That takes about 10 seconds. `verify` rechecks a bundle against its `bundle.json`.
+The extractor downloads the server jar (about 60 MB, once, into your per-user cache) and checks its SHA-1. It copies the worldgen JSON out of the jar and runs the game's data generator for the biome parameter lists that only exist in code, then writes `<version>/` in the bundles folder with a `bundle.json` listing every file's hash. That takes about 10 seconds. `verify` rechecks a bundle against its `bundle.json`.
 
 | Option              | Default                    | What it does                                          |
 | ------------------- | -------------------------- | ----------------------------------------------------- |
-| `--out <dir>`       | `bundles`                  | Where bundles go; each in its own `<version>` folder. |
+| `--out <dir>`       | the bundles folder         | Where bundles go; each in its own `<version>` folder. |
 | `--force`           | off                        | Replace an existing bundle.                           |
 | `--java <path>`     | search                     | A Java home or executable to try first.               |
 | `--cache-dir <dir>` | your per-user cache folder | Where server jars are kept.                           |
 
 If no matching Java is found, the error lists every place that was searched. Install a runtime of the right major version, or point `--java` at one. Jars and bundles stay on your machine: the cache is outside the repo, and `bundles/` is gitignored.
+
+The bundles folder is `bundles/` when you run from the repo's root, since it exists there. Elsewhere it's `SPYGLASS_BUNDLES` if set, or else a folder in your per-user data folder; `--help` shows which ([bundle-format.md](specs/bundle-format.md#where-bundles-are)). The extractor, the `spyglass` command and the viewer all pick it the same way.
 
 ## 9. The `spyglass` command
 
@@ -257,7 +259,7 @@ Or install it with `cargo install --path crates/spyglass-cli` and run `spyglass 
 | `--bounds`            | off            | Structures: each certain jigsaw structure's bounds and piece count.                       |
 | `--game-version <id>` | newest release | Which bundle in `--bundles` to use. Snapshots are used only when named.                   |
 | `--bundle <dir>`      | none           | Use this bundle directory instead.                                                        |
-| `--bundles <dir>`     | `bundles`      | Where bundles are.                                                                        |
+| `--bundles <dir>`     | bundles folder | Where bundles are ([§8](#8-game-data)).                                                   |
 | `--json`              | off            | Print JSON for scripts ([specs/cli-json.md](specs/cli-json.md)).                          |
 
 Slime chunks and the world spawn are only in the Overworld. In the Nether, heights find the solid ceiling (about 128 everywhere), which is what the game's own structure checks see too.
@@ -343,7 +345,7 @@ Answers are listed in the game's search order, which isn't always nearest first.
 cargo run --release -p spyglass-viewer
 ```
 
-The viewer opens the newest release in `bundles/` (or the newest snapshot if there's no release) (choose another folder from the side panel) and shows seed 0. Without a bundle it says how to extract one.
+The viewer opens the newest release in the bundles folder (or the newest snapshot if there's no release) (choose another folder from the side panel) and shows seed 0. Without a bundle it says how to extract one.
 
 - **Move around:** drag to pan, scroll to zoom around the pointer, or use the arrow keys and `+`/`-`. **Go to** takes `x z` or `x y z`. The status bar shows the block, chunk and biome under the pointer.
 - **Seed or save:** type a seed and press **Show**, or open a save from the launchers' list or any folder. A save opens on its player, in the player's dimension, with anything that makes its answers inexact listed.

@@ -301,6 +301,7 @@ fn doctor(game_version: &str, explicit_java: Option<&Path>) -> Result<()> {
     rust_checks(&mut r, setup);
     hook_checks(&mut r, setup);
     java_checks(&mut r, game_version, explicit_java);
+    bundles_check(&mut r);
     docker_check(&mut r);
     println!();
     if r.failures > 0 {
@@ -308,6 +309,33 @@ fn doctor(game_version: &str, explicit_java: Option<&Path>) -> Result<()> {
     }
     println!("Ready.");
     Ok(())
+}
+
+/// The bundles folder the front ends use by default from here (ADR 0039), and what's in it.
+fn bundles_check(r: &mut Report) {
+    let dir = spyglass_data::bundle::default_bundles_dir();
+    let versions: Vec<String> = std::fs::read_dir(&dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| spyglass_data::bundle::read_manifest(&entry.path()).ok())
+        .map(|manifest| manifest.version)
+        .collect();
+    let detail = match versions.as_slice() {
+        [] => format!("{}, with no bundles", dir.display()),
+        found => format!("{} ({})", dir.display(), found.join(", ")),
+    };
+    let status = if versions.is_empty() {
+        Status::Warn
+    } else {
+        Status::Ok
+    };
+    r.line(
+        status,
+        "bundles",
+        &detail,
+        Some("cargo run -p spyglass-extract"),
+    );
 }
 
 /// The toolchain, its components, the cargo tools the hooks need, and the MSRV toolchain.

@@ -22,8 +22,9 @@ struct Args {
     /// Java home or executable to try first.
     #[arg(long)]
     java: Option<PathBuf>,
-    /// Bundles directory; the bundle is written to `<OUT>/<version>`.
-    #[arg(long, default_value = "bundles")]
+    /// Bundles directory; the bundle is written to `<OUT>/<version>`. `SPYGLASS_BUNDLES` sets the
+    /// default.
+    #[arg(long, default_value_os_t = bundle::default_bundles_dir())]
     out: PathBuf,
     /// Replace an existing bundle.
     #[arg(long)]

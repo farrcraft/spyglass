@@ -3515,6 +3515,7 @@ dependencies = [
 name = "spyglass-data"
 version = "0.0.0"
 dependencies = [
+ "directories",
  "flate2",
  "serde",
  "serde_json",

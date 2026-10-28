@@ -110,7 +110,7 @@ Every action is pinned by commit SHA, as `ci.yml` does. The workflow only calls 
 ## Tasks
 
 - [x] ADRs 0037, 0038 and 0039, accepted before the code that depends on them.
-- [ ] `default_bundles_dir()` in `spyglass-data`, re-exported. CLI, extractor and viewer use it. Tests for each step of the order, using `SPYGLASS_BUNDLES` and a temp folder. bundle-format.md updated.
+- [x] `default_bundles_dir()` in `spyglass-data`, re-exported. CLI, extractor and viewer use it. Tests for each step of the order, using `SPYGLASS_BUNDLES` and a temp folder. bundle-format.md updated.
 - [ ] `versions::CHECKED` and its sync test against `ci.yml`. The unchecked-version warning in the API, CLI (text and `--json`), viewer and extractor. Tests with a bundle whose data version is changed in a temp copy.
 - [ ] Version strings with commit and date in all three binaries, and the checked versions in `spyglass --version`.
 - [ ] Workspace version `0.1.0`, `CHANGELOG.md` with `Unreleased` filled in from milestones 01 to 10.
@@ -135,7 +135,7 @@ Every action is pinned by commit SHA, as `ci.yml` does. The workflow only calls 
 ## Durable outputs
 
 - [x] ADRs 0037, 0038, 0039.
-- [ ] [bundle-format.md](../specs/bundle-format.md): the default bundles folder.
+- [x] [bundle-format.md](../specs/bundle-format.md): the default bundles folder.
 - [ ] A spec section on checked versions and the warning, in [bundle-format.md](../specs/bundle-format.md) or a new `versions.md`.
 - [ ] `docs/releasing.md`.
 - [ ] `CHANGELOG.md`.
@@ -143,6 +143,7 @@ Every action is pinned by commit SHA, as `ci.yml` does. The workflow only calls 
 
 ## Notes
 
+- 2026-10-28: the per-user folder is `ProjectDirs::data_local_dir()`, not `data_dir()`: on Windows that's `%LOCALAPPDATA%`, not the roaming profile, which shouldn't carry hundreds of megabytes of bundles. The two are the same elsewhere. The test drives the choice through a private function that takes what it found, since setting an environment variable in a test is `unsafe` in edition 2024 and the workspace forbids `unsafe`. `doctor` reports the folder too.
 - 2026-10-28: drafted. Open decisions for the owner:
   - the target list, in particular whether Intel macOS and ARM Linux (`ubuntu-24.04-arm`, free for public repositories) are worth their jobs;
   - unsigned binaries for now;

@@ -3,6 +3,7 @@
 //! `docs/specs/bundle-format.md` and ADR 0006.
 
 use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
@@ -15,6 +16,37 @@ pub const FORMAT: u32 = 1;
 
 /// The manifest's file name, at the bundle root.
 pub const MANIFEST: &str = "bundle.json";
+
+/// The environment variable that names the bundles folder, ahead of every other default.
+pub const BUNDLES_ENV: &str = "SPYGLASS_BUNDLES";
+
+/// The bundles folder to use when none is given (ADR 0039, `docs/specs/bundle-format.md`):
+/// [`BUNDLES_ENV`] if it's set, else `bundles` in the working directory if that exists, else
+/// `bundles` in the per-user data folder. Without a per-user folder (no home directory), it's
+/// `bundles` in the working directory.
+pub fn default_bundles_dir() -> PathBuf {
+    choose_bundles_dir(
+        std::env::var_os(BUNDLES_ENV),
+        Path::new("bundles").is_dir(),
+        directories::ProjectDirs::from("", "", "spyglass")
+            .map(|d| d.data_local_dir().to_path_buf()),
+    )
+}
+
+/// [`default_bundles_dir`]'s choice, given what it found.
+fn choose_bundles_dir(
+    env: Option<OsString>,
+    local_exists: bool,
+    data_dir: Option<PathBuf>,
+) -> PathBuf {
+    if let Some(dir) = env.filter(|dir| !dir.is_empty()) {
+        return dir.into();
+    }
+    match data_dir {
+        Some(data) if !local_exists => data.join("bundles"),
+        _ => PathBuf::from("bundles"),
+    }
+}
 
 /// Why a bundle couldn't be read.
 #[derive(Debug, thiserror::Error)]
@@ -351,6 +383,38 @@ fn walk(dir: &Path, prefix: &str, out: &mut Vec<String>) -> Result<(), BundleErr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bundles_dir_order() {
+        let data = Some(PathBuf::from("/home/me/.local/share/spyglass"));
+        let user = PathBuf::from("/home/me/.local/share/spyglass/bundles");
+        let env = Some(OsString::from("/srv/bundles"));
+        // The variable wins over both others.
+        assert_eq!(
+            choose_bundles_dir(env.clone(), true, data.clone()),
+            PathBuf::from("/srv/bundles")
+        );
+        assert_eq!(
+            choose_bundles_dir(env, false, None),
+            PathBuf::from("/srv/bundles")
+        );
+        // An empty variable counts as unset.
+        assert_eq!(
+            choose_bundles_dir(Some(OsString::new()), false, data.clone()),
+            user
+        );
+        // A clone's `bundles/` wins over the per-user folder.
+        assert_eq!(
+            choose_bundles_dir(None, true, data.clone()),
+            PathBuf::from("bundles")
+        );
+        assert_eq!(choose_bundles_dir(None, false, data), user);
+        // No per-user folder: the working directory's, even though it doesn't exist.
+        assert_eq!(
+            choose_bundles_dir(None, false, None),
+            PathBuf::from("bundles")
+        );
+    }
 
     #[test]
     fn kinds() {

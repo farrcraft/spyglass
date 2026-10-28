@@ -84,7 +84,7 @@ struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Settings {
-            bundles: PathBuf::from("bundles"),
+            bundles: spyglass::default_bundles_dir(),
             version: None,
             seed: "0".to_string(),
             dimension: Dimension::Overworld.id().to_string(),

@@ -2,11 +2,21 @@
 
 Status: stable. The format is decided in [ADR 0006](../adr/0006-bundle-format-raw-json-tree.md).
 
-A version bundle holds every worldgen parameter spyglass needs for one game version. `spyglass-extract` builds it locally from the user's own server jar ([data-sources.md](data-sources.md)). Bundles are never committed: they live in `/bundles`, which is gitignored.
+A version bundle holds every worldgen parameter spyglass needs for one game version. `spyglass-extract` builds it locally from the user's own server jar ([data-sources.md](data-sources.md)). Bundles are never committed. In a clone they live in `/bundles`, which is gitignored.
+
+## Where bundles are
+
+Bundles sit side by side in a bundles folder, one directory per version. When no folder is given (`--bundles`, the extractor's `--out`, or the viewer's choice), `spyglass_data::bundle::default_bundles_dir()` picks it, so every front end agrees ([ADR 0039](../adr/0039-where-installed-binaries-find-bundles.md)):
+
+1. `SPYGLASS_BUNDLES`, if it's set and not empty.
+2. `bundles` in the working directory, if it exists. A clone run from its root uses its own `bundles/`.
+3. `bundles` in the per-user local data folder: `%LOCALAPPDATA%\spyglass\data\bundles` on Windows, `~/Library/Application Support/spyglass/bundles` on macOS, and `$XDG_DATA_HOME/spyglass/bundles` (by default `~/.local/share/spyglass/bundles`) on Linux.
+
+If there's no per-user folder (no home directory), it's `bundles` in the working directory. The command-line tools show the folder chosen as the default in their `--help`.
 
 ## Layout
 
-A bundle is a directory, by default `bundles/<version id>/`:
+A bundle is a directory, `<bundles folder>/<version id>/`:
 
 | Path                                  | From                                                                         | 26.3 files |
 | ------------------------------------- | ---------------------------------------------------------------------------- | ---------- |

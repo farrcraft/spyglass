@@ -84,8 +84,8 @@ enum Cmd {
         #[command(subcommand)]
         cmd: oracle::OracleCmd,
     },
-    /// Prepare a release on a `release/v<version>` branch: set the version, date the changelog,
-    /// run every check and commit, for a pull request. Never pushes (docs/releasing.md).
+    /// Prepare a release: run every check, then on a `release/v<version>` branch set the version,
+    /// date the changelog and commit, for a pull request. Never pushes (docs/releasing.md).
     Release(release::Release),
     /// Tag a merged release: the commit on origin/main that set the version. Never pushes.
     ReleaseTag(release::ReleaseTag),

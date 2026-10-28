@@ -2,9 +2,9 @@
 //! through a pull request like any change (docs/adr/0040-releases-go-through-a-pull-request.md).
 //! docs/releasing.md has the whole process.
 //!
-//! `release` makes a `release/v<version>` branch from `main`, sets the workspace version, turns
-//! the changelog's Unreleased section into the release's with the game versions this build was
-//! checked against, runs every check and commits. A pre-release (`0.1.0-rc.1`) leaves the
+//! `release` runs every check on `main`, then makes a `release/v<version>` branch, sets the
+//! workspace version, turns the changelog's Unreleased section into the release's with the game
+//! versions this build was checked against, and commits. A pre-release (`0.1.0-rc.1`) leaves the
 //! changelog alone: its notes are Unreleased. Once the pull request is merged, `release-tag` tags
 //! the merged release commit on `main`. Neither pushes.
 
@@ -83,6 +83,15 @@ pub fn run(args: &Release) -> Result<()> {
         unreleased(&changelog).is_some_and(|text| !text.trim().is_empty()),
         "CHANGELOG.md's Unreleased section is empty; a release needs something in it"
     );
+
+    // Before the version changes: a new version makes every workspace crate stale, xtask among
+    // them, and a hook rebuilding the running xtask.exe fails on Windows. What changes after is
+    // only the version and the changelog, which the commit's hooks and the pull request's CI check.
+    println!("Running every check on main, as CI does...");
+    if let Err(err) = crate::check() {
+        bail!("{err:#}\nNothing has changed. Fix main through a pull request, then try again.");
+    }
+
     git(&["switch", "--quiet", "--create", &branch])?;
     if version.pre.is_none() {
         let checked: Vec<&str> = CHECKED.iter().map(|c| c.id).collect();
@@ -101,21 +110,19 @@ pub fn run(args: &Release) -> Result<()> {
         .status()?;
     ensure!(status.success(), "cargo update --workspace failed");
 
-    println!("Running every check, as CI does...");
-    if let Err(err) = crate::check() {
-        bail!(
-            "{err:#}\nThe version and changelog changes are left uncommitted on {branch}. Fix the \
-             checks and commit there, or start again: `git checkout . && git switch main && \
-             git branch -D {branch}`."
-        );
-    }
-    git(&[
+    if let Err(err) = git(&[
         "commit",
         "--all",
         "--quiet",
         "-m",
         &format!("Release {version}"),
-    ])?;
+    ]) {
+        bail!(
+            "{err:#}\nThe version and changelog changes are left uncommitted on {branch}. Fix what \
+             the commit's hooks found and commit there, or start again: `git checkout . && git \
+             switch main && git branch -D {branch}`."
+        );
+    }
     println!(
         "Committed `Release {version}` on {branch}. Nothing is pushed. Next:\n\n    \
          git push --set-upstream origin {branch}\n    \

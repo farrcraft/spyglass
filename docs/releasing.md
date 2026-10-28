@@ -41,14 +41,17 @@ It refuses before changing anything if:
 - the version isn't after the current one;
 - Unreleased is empty.
 
-Otherwise, on a new branch `release/v0.2.0`, it:
+Otherwise it:
 
-1. sets the workspace version and refreshes `Cargo.lock`;
-2. turns Unreleased into `## [0.2.0] - <today>` with the game versions this build was checked against, opens a new empty Unreleased, and updates the links at the end of the changelog;
-3. runs `cargo xtask check`, every hook on every file, which takes several minutes;
-4. commits `Release 0.2.0`.
+1. runs `cargo xtask check` on `main`, every hook on every file, which takes several minutes. If a check fails, nothing has changed: fix `main` through a pull request first.
+2. makes the branch `release/v0.2.0`;
+3. sets the workspace version and refreshes `Cargo.lock`;
+4. turns Unreleased into `## [0.2.0] - <today>` with the game versions this build was checked against, opens a new empty Unreleased, and updates the links at the end of the changelog;
+5. commits `Release 0.2.0`. The commit's hooks check the changed files.
 
-If a check fails, the changes are left uncommitted on the branch. Fix them and commit there, or start again with `git checkout . && git switch main && git branch -D release/v0.2.0`.
+The checks run before the version changes. A new version makes every workspace crate stale, and on Windows a check can't rebuild the `xtask` that's running it. The pull request's CI checks the release commit itself.
+
+If the commit's hooks fail, the changes are left uncommitted on the branch. Fix them and commit there, or start again with `git checkout . && git switch main && git branch -D release/v0.2.0`.
 
 Nothing is pushed. Read the commit, then push the branch and open the pull request:
 

@@ -76,7 +76,7 @@ pub enum OracleCmd {
         /// never opens the save itself.
         #[arg(long)]
         world: Vec<PathBuf>,
-        /// Accept the Minecraft EULA (https://aka.ms/MinecraftEULA) for the server this runs,
+        /// Accept the Minecraft EULA (<https://aka.ms/MinecraftEULA>) for the server this runs,
         /// as `SPYGLASS_ACCEPT_EULA=1` does.
         #[arg(long)]
         accept_eula: bool,

@@ -359,7 +359,9 @@ fn server_dir(harness: &Harness, name: &str, source: &Source<'_>) -> Result<Path
     // Accepted by whoever ran this: `require_eula` checked before any server started.
     fs::write(dir.join("eula.txt"), "eula=true\n")?;
     // The world is the default level-name, "world". Port 0 binds any free port. Pausing when
-    // empty would stop the tick loop that runs console commands.
+    // empty would stop the tick loop that runs console commands. A `/locate` runs inside one
+    // tick, and on a slow machine an old version's can pass the watchdog's default 60 s, which
+    // stops the server; -1 turns the watchdog off.
     let seed = match source {
         Source::Seed(seed) => format!("level-seed={seed}\n"),
         Source::Save(save) => {
@@ -374,6 +376,7 @@ fn server_dir(harness: &Harness, name: &str, source: &Source<'_>) -> Result<Path
              server-port=0\n\
              online-mode=false\n\
              pause-when-empty-seconds=-1\n\
+             max-tick-time=-1\n\
              sync-chunk-writes=false\n\
              spawn-protection=0\n"
         ),
@@ -386,6 +389,8 @@ struct Server {
     child: KillOnDrop,
     lines: mpsc::Receiver<String>,
     deadline: Instant,
+    /// The server's folder, for its log.
+    dir: PathBuf,
 }
 
 impl Server {
@@ -423,16 +428,21 @@ impl Server {
             child,
             lines,
             deadline: Instant::now() + TIMEOUT,
+            dir: dir.to_path_buf(),
         })
     }
 
     /// The next output line, or an error naming `what` was awaited if the server stopped or
-    /// the deadline passed.
+    /// the deadline passed. The error ends with the server's own log, which says why it stopped.
     fn next(&self, what: &str) -> Result<String> {
         let left = self.deadline.saturating_duration_since(Instant::now());
-        self.lines
-            .recv_timeout(left)
-            .with_context(|| format!("the server stopped or timed out waiting for {what}"))
+        self.lines.recv_timeout(left).with_context(|| {
+            let log =
+                fs::read_to_string(self.dir.join("logs").join("latest.log")).unwrap_or_default();
+            let lines: Vec<&str> = log.lines().collect();
+            let tail = lines[lines.len().saturating_sub(20)..].join("\n");
+            format!("the server stopped or timed out waiting for {what}; its log ends:\n{tail}")
+        })
     }
 }
 

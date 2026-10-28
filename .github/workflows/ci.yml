@@ -72,6 +72,16 @@ jobs:
             ~/.cargo/.crates.toml
             ~/.cargo/.crates2.json
           key: cargo-tools-${{ runner.os }}-${{ hashFiles('scripts/setup.ps1') }}
+      # setup.ps1 ends with doctor, which fails without the Java the latest release needs. The
+      # runner's default is older.
+      - name: The JDK major the latest release needs
+        id: jdk
+        shell: bash
+        run: echo "major=$(cargo xtask jdk-status | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: ${{ steps.jdk.outputs.major }}
       - name: Setup
         shell: pwsh
         run: |

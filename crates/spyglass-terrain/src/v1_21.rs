@@ -4,7 +4,7 @@
 //! `docs/specs/terrain.md#262-terrain`.
 
 use std::collections::BTreeMap;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use spyglass_data::codec::LoadError;
 use spyglass_density::v1_21::{
@@ -111,6 +111,8 @@ pub(crate) struct ChunkTerrain {
     ore_random: Option<XoroshiroPositionalRandomFactory>,
     /// Surface levels for the seed, shared by every column's aquifer.
     levels: SurfaceLevels,
+    /// Cell corners for the seed, shared by every column's `NoiseChunk` and by clones.
+    corners: Arc<CornerStore>,
 }
 
 impl Clone for ChunkTerrain {
@@ -118,6 +120,7 @@ impl Clone for ChunkTerrain {
         ChunkTerrain {
             state: self.state.clone(),
             levels: self.levels.clone(),
+            corners: self.corners.clone(),
             ..*self
         }
     }
@@ -153,6 +156,7 @@ impl ChunkTerrain {
                 .then(|| factory("minecraft:aquifer")),
             ore_random: router.ore_veins_enabled().then(|| factory("minecraft:ore")),
             levels: SurfaceLevels::default(),
+            corners: Arc::default(),
         })
     }
 
@@ -175,12 +179,11 @@ impl ChunkTerrain {
     /// `visit(index, y, block)` is called with each block until it returns true, which ends
     /// that column. Without `veins`, the veinifier isn't asked: callers that only test whether a
     /// block counts for a heightmap pass false when a vein block counts as the default block
-    /// does. Corners come from and go to `corners`, which other cells of the same call share.
+    /// does.
     fn scan_cell(
         &self,
         columns: &[Column],
         veins: bool,
-        corners: Option<&Rc<CornerStore>>,
         mut visit: impl FnMut(usize, i32, Block) -> bool,
     ) {
         let Some(&(x, z, _)) = columns.first() else {
@@ -190,11 +193,8 @@ impl ChunkTerrain {
         if height <= 0 {
             return;
         }
-        let mut chunk =
-            NoiseChunk::for_column(&self.state, x, z, self.level_min_y, self.level_height);
-        if let Some(corners) = corners {
-            chunk = chunk.sharing_corners(corners.clone());
-        }
+        let chunk = NoiseChunk::for_column(&self.state, x, z, self.level_min_y, self.level_height)
+            .sharing_corners(self.corners.clone());
         // The aquifer of the chunk holding the cell's corner (SectionPos.blockToSectionCoord).
         let width = self.noise.cell_width();
         let corner = [x, z].map(|v| v.div_euclid(width).wrapping_mul(width) >> 4);
@@ -239,8 +239,8 @@ impl ChunkTerrain {
 
     /// [`scan_cell`](Self::scan_cell) for every column of `columns`, grouped by cell, cell by
     /// cell. The answers are each column's own: columns of one cell share its `NoiseChunk`, as
-    /// `iterateNoiseColumn` would make the same one for each, and cells share their corners
-    /// ([`CornerStore`]).
+    /// `iterateNoiseColumn` would make the same one for each, and every cell shares the seed's
+    /// corners ([`CornerStore`]).
     pub(crate) fn scan(
         &self,
         columns: impl IntoIterator<Item = Column>,
@@ -253,18 +253,8 @@ impl ChunkTerrain {
             let key = (column.1.div_euclid(width), column.0.div_euclid(width));
             cells.entry(key).or_default().push(column);
         }
-        // More than one cell: a store over their box, so they share their corners.
-        let corners = (cells.len() > 1).then(|| {
-            let (mut min, mut max) = ([i32::MAX; 2], [i32::MIN; 2]);
-            for &(cz, cx) in cells.keys() {
-                min = [min[0].min(cx), min[1].min(cz)];
-                max = [max[0].max(cx), max[1].max(cz)];
-            }
-            let size = [0, 1].map(|a| (i64::from(max[a]) - i64::from(min[a]) + 1) as usize);
-            Rc::new(CornerStore::new(min, size))
-        });
         for columns in cells.values() {
-            self.scan_cell(columns, veins, corners.as_ref(), &mut visit);
+            self.scan_cell(columns, veins, &mut visit);
         }
     }
 

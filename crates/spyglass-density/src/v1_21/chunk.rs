@@ -19,8 +19,7 @@
 
 use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::HashMap;
-use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use spyglass_noise::mth;
 
@@ -59,59 +58,40 @@ pub struct NoiseChunk {
     /// Whether the chunk evaluates the bound functions themselves, not their program: the
     /// reference the program is tested against.
     reference: bool,
-    /// Corner values shared with other chunks of the same state ([`CornerStore`]).
-    shared_corners: Option<Rc<CornerStore>>,
+    /// Corner values shared with other chunks of the same state ([`CornerStore`]), and the
+    /// columns of it this chunk has fetched, by slot and corner column.
+    shared_corners: Option<Arc<CornerStore>>,
+    /// By slot, then corner column (`cx · n + cz`).
+    fetched_columns: RefCell<Vec<Option<CornerColumn>>>,
 }
 
-/// Interpolator and `cache_once` corners shared by the `NoiseChunk`s of one random state over a
-/// box of cells, by marker slot and corner. A corner's value depends only on its block: a corner
-/// is always inside its chunk's `flat_cache` window, on a quart, so the window's extent doesn't
-/// reach it. So neighboring cells, each a one-cell `NoiseChunk` as the game makes for a base
-/// column, can share the corners between them.
-#[derive(Debug)]
-pub struct CornerStore {
-    /// The first cell's x and z (`floorDiv(block, cellWidth)`).
-    first_cell: [i32; 2],
-    /// Corners along x and z: one more than the cells.
-    corners: [usize; 2],
-    /// Each marker slot's corners, made on first use and sized by the first chunk.
-    slots: RefCell<Vec<Option<Corners>>>,
-}
+/// Interpolator and `cache_once` corners shared by every `NoiseChunk` of one random state, by
+/// marker slot and corner column, kept across queries. A corner's value depends only on its
+/// block: a corner is always inside its chunk's `flat_cache` window, on a quart, so the window's
+/// extent doesn't reach it. So the one-cell `NoiseChunk`s the game makes for each base column
+/// can share the corners between them. Cleared when it holds [`MAX_CORNER_COLUMNS`], so it
+/// can't grow without bound.
+#[derive(Debug, Default)]
+pub struct CornerStore(Mutex<HashMap<(u32, i32, i32), CornerColumn>>);
 
-/// One marker slot's corner values, each computed once.
-type Corners = Rc<[OnceCell<f64>]>;
+/// One marker slot's corners up one corner column, each computed once.
+type CornerColumn = Arc<[OnceLock<f64>]>;
+
+/// How many corner columns a [`CornerStore`] holds before it's cleared: about 15 MB.
+const MAX_CORNER_COLUMNS: usize = 16_384;
 
 impl CornerStore {
-    /// A store for the cells from `first_cell` (x and z), `cells` of them along each.
-    pub fn new(first_cell: [i32; 2], cells: [usize; 2]) -> Self {
-        CornerStore {
-            first_cell,
-            corners: cells.map(|c| c + 1),
-            slots: RefCell::new(Vec::new()),
+    /// Slot `slot`'s corner column at cell `(x, z)`, `height` corners up.
+    fn column(&self, slot: u32, [x, z]: [i32; 2], height: usize) -> CornerColumn {
+        // A panic while holding the lock leaves only whole entries behind.
+        let mut columns = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if columns.len() >= MAX_CORNER_COLUMNS {
+            columns.clear();
         }
-    }
-
-    /// The cell for `slot` at absolute corner `(x, cy, z)` (cells along x and z, `cy` above the
-    /// chunk's lowest), if the box holds it, with `ny` corners up the column.
-    fn cell(&self, slot: u32, [x, z]: [i32; 2], cy: usize, ny: usize) -> Option<(Corners, usize)> {
-        let dx = usize::try_from(x.wrapping_sub(self.first_cell[0])).ok()?;
-        let dz = usize::try_from(z.wrapping_sub(self.first_cell[1])).ok()?;
-        if dx >= self.corners[0] || dz >= self.corners[1] {
-            return None;
-        }
-        let mut slots = self.slots.borrow_mut();
-        let slot = slot as usize;
-        if slots.len() <= slot {
-            slots.resize(slot + 1, None);
-        }
-        let table = slots[slot]
-            .get_or_insert_with(|| {
-                (0..self.corners[0] * self.corners[1] * ny)
-                    .map(|_| OnceCell::new())
-                    .collect()
-            })
-            .clone();
-        Some((table, (dx * self.corners[1] + dz) * ny + cy))
+        columns
+            .entry((slot, x, z))
+            .or_insert_with(|| (0..height).map(|_| OnceLock::new()).collect())
+            .clone()
     }
 }
 
@@ -151,12 +131,13 @@ impl NoiseChunk {
             columns: RefCell::new(HashMap::new()),
             reference: false,
             shared_corners: None,
+            fetched_columns: RefCell::new(Vec::new()),
         }
     }
 
     /// The same chunk, taking corners from `store` and adding its own, so chunks of one random
     /// state compute each corner once.
-    pub fn sharing_corners(mut self, store: Rc<CornerStore>) -> Self {
+    pub fn sharing_corners(mut self, store: Arc<CornerStore>) -> Self {
         self.shared_corners = Some(store);
         self
     }
@@ -442,18 +423,25 @@ impl NoiseChunk {
             let stamp = self.corner_stamps + index as u64;
             input(&self.ctx_stamped(x, y, z, Own::Corner { cx, cy, cz }, stamp))
         };
-        let cell = [
-            self.first_cell_x.wrapping_add(cx as i32),
-            self.first_cell_z.wrapping_add(cz as i32),
-        ];
-        match self
-            .shared_corners
-            .as_ref()
-            .and_then(|s| s.cell(slot, cell, cy, ny))
-        {
-            Some((table, i)) => *table[i].get_or_init(compute),
-            None => *self.table(slot, n * n * ny)[index].get_or_init(compute),
+        let Some(store) = &self.shared_corners else {
+            return *self.table(slot, n * n * ny)[index].get_or_init(compute);
+        };
+        let at = slot as usize * n * n + cx * n + cz;
+        let mut fetched = self.fetched_columns.borrow_mut();
+        if fetched.len() <= at {
+            fetched.resize(at + 1, None);
         }
+        let column = fetched[at]
+            .get_or_insert_with(|| {
+                let cell = [
+                    self.first_cell_x.wrapping_add(cx as i32),
+                    self.first_cell_z.wrapping_add(cz as i32),
+                ];
+                store.column(slot, cell, ny)
+            })
+            .clone();
+        drop(fetched);
+        *column[cy].get_or_init(compute)
     }
 
     /// A marker of this chunk's wrapped graph, evaluated at `ctx`.

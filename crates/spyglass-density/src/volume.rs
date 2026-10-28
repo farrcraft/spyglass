@@ -16,7 +16,7 @@
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use spyglass_noise::{Volume, mth};
 
@@ -287,11 +287,12 @@ impl Node {
                 cell_y,
                 inv_xz,
                 inv_y,
+                corners,
             } => interpolate(
                 f,
                 volume,
                 out,
-                input,
+                (input, corners),
                 [*cell_xz, *cell_y],
                 [*inv_xz, *inv_y],
             ),
@@ -364,6 +365,73 @@ impl BoundSpline {
                 v.coordinates(out);
             }
         }
+    }
+}
+
+/// An interpolator's or upscaler's input values at its corners, for one seed, kept across
+/// queries by corner column (x and z, and the column's y positions). A column's values are the
+/// input's own wherever they were computed, when the input is [position-only](Sampler): so
+/// columns asked again, by a neighboring column's cell or a later query, aren't recomputed.
+/// Only small corner volumes, a few columns' worth, are kept; larger ones share their corners
+/// within the query already. Cleared when it holds [`MAX_KEPT_COLUMNS`].
+#[derive(Debug, Default)]
+pub(crate) struct CornerCache(Mutex<HashMap<CornerColumn, Arc<[f32]>>>);
+
+/// A corner column: block x and z, the lowest y, the y step and how many positions.
+type CornerColumn = (i32, i32, i32, i32, i32);
+
+/// The most corner columns a volume can have and be kept.
+const MAX_CACHED_VOLUME_COLUMNS: i32 = 16;
+
+/// How many corner columns a [`CornerCache`] holds before it's cleared.
+const MAX_KEPT_COLUMNS: usize = 4096;
+
+impl CornerCache {
+    /// `input` over `corners`, from the columns kept if every one is, else computed (and kept).
+    fn values(&self, f: &mut Fill, input: &Sampler, corners: &Volume) -> Vec<f32> {
+        let [sx, sy, sz] = corners.size;
+        if !input.position_only || sx * sz > MAX_CACHED_VOLUME_COLUMNS {
+            return input.values(f, corners);
+        }
+        let key = |ix: i32, iz: i32| {
+            (
+                corners.block_x(ix),
+                corners.block_z(iz),
+                corners.min[1],
+                corners.step[1],
+                sy,
+            )
+        };
+        let height = sy as usize;
+        {
+            // A panic while holding the lock leaves only whole entries behind.
+            let kept = self.0.lock().unwrap_or_else(|e| e.into_inner());
+            let mut out = Vec::with_capacity(corners.len());
+            'columns: for iz in 0..sz {
+                for ix in 0..sx {
+                    match kept.get(&key(ix, iz)) {
+                        Some(column) => out.extend_from_slice(column),
+                        None => break 'columns,
+                    }
+                }
+            }
+            if out.len() == corners.len() {
+                return out;
+            }
+        }
+        let values = input.values(f, corners);
+        let mut kept = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if kept.len() + (sx * sz) as usize > MAX_KEPT_COLUMNS {
+            kept.clear();
+        }
+        for iz in 0..sz {
+            for ix in 0..sx {
+                // Index order is y fastest, then x, then z, so a column is contiguous.
+                let first = (iz * sx + ix) as usize * height;
+                kept.insert(key(ix, iz), values[first..first + height].into());
+            }
+        }
+        values
     }
 }
 
@@ -550,7 +618,7 @@ fn interpolate(
     f: &mut Fill,
     volume: &Volume,
     out: &mut [f32],
-    input: &Sampler,
+    (input, cache): (&Sampler, &CornerCache),
     [cxz, cy]: [i32; 2],
     inv: [f32; 2],
 ) {
@@ -564,7 +632,7 @@ fn interpolate(
         return;
     }
     if volume.step == [1, 1, 1] {
-        interpolate_blocks(f, volume, out, input, cell, inv);
+        interpolate_blocks(f, volume, out, (input, cache), cell, inv);
         return;
     }
     // sampleWithNonBlockStep: every block the volume spans, then each position's.
@@ -573,7 +641,7 @@ fn interpolate(
         volume.min,
     );
     let mut all = vec![0.0; blocks.len()];
-    interpolate_blocks(f, &blocks, &mut all, input, cell, inv);
+    interpolate_blocks(f, &blocks, &mut all, (input, cache), cell, inv);
     for_each_index(volume, |i, [ix, iy, iz]| {
         out[i] = all[blocks.index(
             ix * volume.step[0],
@@ -588,7 +656,7 @@ fn interpolate_blocks(
     f: &mut Fill,
     volume: &Volume,
     out: &mut [f32],
-    input: &Sampler,
+    (input, cache): (&Sampler, &CornerCache),
     cell: [i32; 3],
     [inv_xz, inv_y]: [f32; 2],
 ) {
@@ -608,7 +676,7 @@ fn interpolate_blocks(
         std::array::from_fn(|a| first[a].wrapping_mul(cell[a])),
         cell,
     );
-    let c = input.values(f, &corners);
+    let c = cache.values(f, input, &corners);
     let at = |x, y, z| c[corners.index(x, y, z)];
     for iz in 0..cells[2] {
         let iz1 = (iz + 1).min(corners.size[2] - 1);
@@ -741,7 +809,7 @@ fn sample_and_upscale(
         plans.map(|p| p.sample_min),
         plans.map(|p| p.sample_step),
     );
-    let samples = u.input.values(f, &corners);
+    let samples = u.corners.values(f, &u.input, &corners);
     let (modes, cells) = (plans.map(|p| p.mode), plans.map(|p| p.cell));
     if modes == u.upscaler.modes && cells == u.upscaler.cells {
         u.upscaler.upscale(&plans, out, volume, &samples, &corners);

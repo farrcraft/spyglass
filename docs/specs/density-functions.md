@@ -350,6 +350,8 @@ Evaluation remembers values per thread, so work isn't repeated:
 
 Each `Binder` numbers its nodes' slots, and the memo is stamped with the binder, the column and the y it was filled at, so values never leak between seeds, columns or heights. Samplers that evaluate their input somewhere else (`slice`, `find_top_surface`) move the memo there and back, so their input's values carry that position's stamps. Remembering changes when a floating-point operation runs, never which ones run or their order, so the results are the same bits. Tests compare remembered values with fresh ones down and up columns, and between two seeds' samplers alternating at one position.
 
+**Corners across queries.** An `interpolated` or `upscale` keeps its input's values at its corners per seed, by corner column, for corner volumes a few columns wide (a column's or a structure piece's), so a neighboring column or a later query reuses them. That's exact when the input is position-only: its value over a volume, at each position, depends only on the position. A `domain_warp` isn't (whether it samples at points or over a box depends on the volume), and `interpolated` and `upscale` inside it are counted out, conservatively: an interpolated block accumulates its y steps from where the volume starts. Everything else is position-only if its inputs are; `find_top_surface` if its upper bound is, since its density is sampled at points. The interpolated blocks themselves aren't kept, for the same accumulation.
+
 `Sampler::depends_on_y` says whether a bound function's value can depend on y.
 
 What depends on y:

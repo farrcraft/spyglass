@@ -35,7 +35,7 @@ use crate::function::{
 use crate::interval::{Interval, IntervalError};
 use crate::java;
 use crate::range;
-use crate::volume::Upscaler;
+use crate::volume::{CornerCache, Upscaler};
 
 /// A density function bound to a seed's noises, ready to evaluate.
 #[derive(Debug, Clone)]
@@ -43,6 +43,9 @@ pub struct Sampler {
     pub(crate) node: Arc<Node>,
     /// Whether the value can depend on y; see [`Sampler::depends_on_y`].
     pub(crate) depends_on_y: bool,
+    /// Whether its value over a volume, at each position, depends only on the position, not on
+    /// the volume's extent, so values from different volumes can be shared.
+    pub(crate) position_only: bool,
     /// The [`Binder`] that made it, which numbered its slots.
     binder: u64,
     /// Where its value is remembered, or [`NO_SLOT`] for constants.
@@ -148,13 +151,15 @@ pub(crate) enum Node {
         coordinate: i32,
         input: Sampler,
     },
-    /// `InterpolatedFunction.Sampler`, with the reciprocals of its cell sizes.
+    /// `InterpolatedFunction.Sampler`, with the reciprocals of its cell sizes, and its input's
+    /// corner values for the seed.
     Interpolated {
         input: Sampler,
         cell_xz: i32,
         cell_y: i32,
         inv_xz: f32,
         inv_y: f32,
+        corners: CornerCache,
     },
     /// `UpscaleFunction.Sampler`.
     Upscale(Box<BoundUpscale>),
@@ -226,6 +231,8 @@ pub(crate) struct BoundUpscale {
     pub(crate) upscaler: Upscaler,
     /// Switch `upscale_offset_by_step`.
     pub(crate) offset_by_step: bool,
+    /// The input's sample values for the seed.
+    pub(crate) corners: CornerCache,
 }
 
 #[derive(Debug)]
@@ -391,6 +398,7 @@ impl<'n> Binder<'n> {
         };
         Sampler {
             depends_on_y: node.depends_on_y(),
+            position_only: node.position_only(),
             node: Arc::new(node),
             binder: self.id,
             slot,
@@ -589,6 +597,7 @@ impl<'n> Binder<'n> {
                 cell_y: *cell_size_y,
                 inv_xz: 1.0 / *cell_size_xz as f32,
                 inv_y: 1.0 / *cell_size_y as f32,
+                corners: CornerCache::default(),
             },
             // UpscaleFunction.compileSampler: all three axes nearest is NearestNeighborSampler,
             // anything else the general sampler, with an upscaler for the axes as given.
@@ -613,6 +622,7 @@ impl<'n> Binder<'n> {
                         axes,
                         upscaler,
                         offset_by_step: *offset_by_step,
+                        corners: CornerCache::default(),
                     }))
                 }
             }
@@ -1487,6 +1497,73 @@ impl Node {
     /// from `nextDouble() * 256`, never `-0.0`. With a y scale of 0, `y * 0.0` is `+0.0` or `-0.0`
     /// depending on the sign of y, and adding the offset makes the two the same. So a noise with
     /// a y scale of 0 and a y-independent y shift doesn't depend on y.
+    /// Whether the node's value over a volume, at each position, depends only on the position.
+    /// A domain warp's doesn't (whether it samples at points or over a box depends on the
+    /// volume), and interpolation and upscaling are counted out too, conservatively: an
+    /// interpolated block accumulates from where the volume starts.
+    fn position_only(&self) -> bool {
+        match self {
+            Node::DomainWarp { .. }
+            | Node::Interpolated { .. }
+            | Node::Upscale(_)
+            | Node::UpscaleNearest { .. } => false,
+            Node::Constant(_)
+            | Node::Noise { .. }
+            | Node::SmearedNoise { .. }
+            | Node::ShiftA(_)
+            | Node::ShiftB(_)
+            | Node::Shift(_)
+            | Node::Gradient { .. }
+            | Node::GradientRepeat { .. }
+            | Node::DistanceToPoint { .. }
+            | Node::EndIslands(_) => true,
+            Node::NoiseShiftedXz { sx, sz, .. } => sx.position_only && sz.position_only,
+            Node::NoiseShiftedXyz { sx, sy, sz, .. } => {
+                sx.position_only && sy.position_only && sz.position_only
+            }
+            Node::Add(a, b)
+            | Node::Sub(a, b)
+            | Node::Mul(a, b)
+            | Node::Div(a, b)
+            | Node::Min(a, b, _)
+            | Node::Max(a, b, _)
+            | Node::Round(_, a, b)
+            | Node::Pow(a, b) => a.position_only && b.position_only,
+            Node::MulConst(a, _)
+            | Node::ConstDiv(_, a)
+            | Node::MinConst(a, _)
+            | Node::MaxConst(a, _)
+            | Node::Unary(_, a)
+            | Node::RoundInteger(_, a)
+            | Node::Clamp(a, _, _)
+            | Node::MathClamp(a, _, _)
+            | Node::PowConstBase(_, a)
+            | Node::PowConstExponent(a, _) => a.position_only,
+            Node::Lerp {
+                alpha,
+                first,
+                second,
+            } => alpha.position_only && first.position_only && second.position_only,
+            Node::RangeChoice {
+                input,
+                when_in_range,
+                when_out_of_range,
+                ..
+            } => {
+                input.position_only
+                    && when_in_range.position_only
+                    && when_out_of_range.position_only
+            }
+            Node::IntervalSelect {
+                input, samplers, ..
+            } => input.position_only && samplers.iter().all(|s| s.position_only),
+            Node::Slice { input, .. } => input.position_only,
+            // The density is sampled at points; the upper bound over the volume, flattened.
+            Node::FindTopSurface { upper_bound, .. } => upper_bound.position_only,
+            Node::Spline(spline) => spline.position_only(),
+        }
+    }
+
     fn depends_on_y(&self) -> bool {
         match self {
             Node::Constant(_) | Node::ShiftA(_) | Node::ShiftB(_) => false,
@@ -1650,6 +1727,15 @@ pub(crate) fn java_pow(base: f64, exponent: f64) -> f32 {
 }
 
 impl BoundSpline {
+    fn position_only(&self) -> bool {
+        match self {
+            BoundSpline::Constant(_) => true,
+            BoundSpline::Multipoint {
+                coordinate, values, ..
+            } => coordinate.position_only && values.iter().all(BoundSpline::position_only),
+        }
+    }
+
     fn depends_on_y(&self) -> bool {
         match self {
             BoundSpline::Constant(_) => false,

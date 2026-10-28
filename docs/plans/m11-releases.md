@@ -117,7 +117,7 @@ Every action is pinned by commit SHA, as `ci.yml` does. The workflow only calls 
 - [x] `cargo xtask dist`: build, archive, allowlist, path scan. Unit tests for archive determinism (same inputs, same bytes) and the allowlist.
 - [x] `cargo-about` config, its license list kept equal to `deny.toml` by a test, `THIRD-PARTY-LICENSES.html` in the archive. Setup scripts (`--release-tools` / `-ReleaseTools`, the pair kept in step) and `doctor`.
 - [x] `GETTING-STARTED.txt` for the archive, written for someone with no Rust and no clone.
-- [ ] `cargo xtask release <version>`.
+- [x] `cargo xtask release <version>`.
 - [ ] `ci.yml` gains `workflow_call`. `release.yml` with verify, ci, build, smoke and publish. The release notes' relative links are made absolute to the tag (`https://github.com/farrcraft/spyglass/blob/vX.Y.Z/...`), since they don't resolve on the release page.
 - [ ] A dry run: push a `v0.1.0-rc.1` tag to a fork, or run the workflow by `workflow_dispatch` with publishing off. Fix what it finds.
 - [ ] A reproducibility check: build the same tag twice and compare hashes. Record the result in ADR 0038. Windows done (identical, see the notes); Linux and macOS in the workflow's dry run.
@@ -143,6 +143,7 @@ Every action is pinned by commit SHA, as `ci.yml` does. The workflow only calls 
 
 ## Notes
 
+- 2026-10-28: `cargo xtask release` takes pre-releases too (`0.1.0-rc.1`), for the workflow's dry run: they set the version and tag but leave the changelog alone, so their notes are Unreleased. The changelog gets Keep a Changelog's link definitions at the end, and markdownlint's MD024 is now `siblings_only`, since every release repeats headings like "Added" and "Game versions". The command refuses before changing anything if the version isn't after the current one, the tree is dirty, the branch isn't `main`, the tag exists or Unreleased is empty; if the checks fail after it has changed the version and changelog, it leaves them uncommitted and says so.
 - 2026-10-28: `cargo xtask dist` works on Windows. What it took:
   - cargo-about 0.9.3's binary needs `--features cli`, and it refuses to write to a pipe from PowerShell, so dist has it write to a file with `-o`.
   - The MSVC linker writes the PDB's absolute path into each exe; `/PDBALTPATH:%_PDB%` leaves only its file name. The leak scan would have caught it.

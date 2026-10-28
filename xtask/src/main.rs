@@ -17,6 +17,7 @@ mod linux_check;
 mod locate;
 mod oracle;
 mod oracle_test;
+mod release;
 mod version_diff;
 
 #[derive(Parser)]
@@ -82,6 +83,9 @@ enum Cmd {
         #[command(subcommand)]
         cmd: oracle::OracleCmd,
     },
+    /// Prepare a release: set the version, date the changelog, run every check, then commit and
+    /// tag. Never pushes (docs/adr/0037-versions-and-releases.md).
+    Release(release::Release),
     /// Report what changed between two bundles in the data spyglass reads: ids added and
     /// removed, files changed, and new or gone JSON shapes (types, fields, value kinds).
     VersionDiff(version_diff::VersionDiff),
@@ -102,6 +106,7 @@ fn main() -> ExitCode {
         Cmd::Msrv { print } => msrv(print),
         Cmd::Oracle { cmd } => oracle::run(cmd),
         Cmd::OracleTest { game_version } => oracle_test::run(game_version.as_deref()),
+        Cmd::Release(args) => release::run(&args),
         Cmd::VersionDiff(args) => version_diff::run(&args),
     };
     match result {

@@ -1,0 +1,302 @@
+//! `cargo xtask release <version>`: the release commit and tag, made locally and never pushed
+//! (docs/adr/0037-versions-and-releases.md).
+//!
+//! It sets the workspace version, turns the changelog's Unreleased section into the release's,
+//! with the game versions this build was checked against, runs every check, then commits and
+//! tags. A pre-release (`0.1.0-rc.1`) leaves the changelog alone: its notes are Unreleased.
+
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use anyhow::{Context, Result, bail, ensure};
+use spyglass_data::versions::CHECKED;
+
+use crate::{command, dist::civil_date, repo_root, toml_string};
+
+/// Where the changelog's links point.
+const REPO: &str = "https://github.com/farrcraft/spyglass";
+
+#[derive(clap::Args)]
+pub struct Release {
+    /// The version to release, e.g. `0.1.0`, or a pre-release such as `0.1.0-rc.1`.
+    version: String,
+}
+
+pub fn run(args: &Release) -> Result<()> {
+    let version = Version::parse(&args.version)?;
+    let current = toml_string("Cargo.toml", &["workspace", "package", "version"])?;
+    let current = Version::parse(&current)?;
+    ensure!(
+        version.core > current.core || (version.core == current.core && current.pre.is_some()),
+        "{version} isn't after the current version, {current}"
+    );
+    let git = |args: &[&str]| -> Result<String> {
+        let out = command("git")
+            .args(args)
+            .output()
+            .context("failed to run git")?;
+        ensure!(out.status.success(), "git {} failed", args.join(" "));
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    };
+    ensure!(
+        git(&["status", "--porcelain"])?.is_empty(),
+        "the tree has uncommitted changes"
+    );
+    ensure!(
+        git(&["rev-parse", "--abbrev-ref", "HEAD"])? == "main",
+        "releases are made on main"
+    );
+    let tag = format!("v{version}");
+    ensure!(
+        git(&["tag", "--list", &tag])?.is_empty(),
+        "the tag {tag} already exists"
+    );
+
+    let changelog_path = repo_root().join("CHANGELOG.md");
+    let changelog = std::fs::read_to_string(&changelog_path)?.replace("\r\n", "\n");
+    ensure!(
+        unreleased(&changelog).is_some_and(|text| !text.trim().is_empty()),
+        "CHANGELOG.md's Unreleased section is empty; a release needs something in it"
+    );
+    if version.pre.is_none() {
+        let checked: Vec<&str> = CHECKED.iter().map(|c| c.id).collect();
+        let released = release_changelog(&changelog, &version.to_string(), &today(), &checked)?;
+        std::fs::write(&changelog_path, released)?;
+    }
+    let manifest_path = repo_root().join("Cargo.toml");
+    let manifest = std::fs::read_to_string(&manifest_path)?;
+    std::fs::write(
+        &manifest_path,
+        set_version(&manifest, &version.to_string())?,
+    )?;
+    // Only the workspace's own entries change in Cargo.lock.
+    let status = command("cargo")
+        .args(["update", "--workspace", "--quiet"])
+        .status()?;
+    ensure!(status.success(), "cargo update --workspace failed");
+
+    println!("Running every check, as CI does...");
+    if let Err(err) = crate::check() {
+        bail!(
+            "{err:#}\nThe version and changelog changes are left uncommitted; fix the checks and \
+             run this again after `git checkout .`, or commit and tag by hand."
+        );
+    }
+    git(&[
+        "commit",
+        "--all",
+        "--quiet",
+        "-m",
+        &format!("Release {version}"),
+    ])?;
+    git(&[
+        "tag",
+        "--annotate",
+        &tag,
+        "-m",
+        &format!("spyglass {version}"),
+    ])?;
+    println!(
+        "Committed and tagged {tag}. Nothing is pushed. To release:\n\n    \
+         git push --atomic origin main {tag}\n\n\
+         The release workflow then builds a draft release to publish."
+    );
+    Ok(())
+}
+
+/// A SemVer version: major, minor and patch, and an optional pre-release.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Version {
+    core: (u64, u64, u64),
+    pre: Option<String>,
+}
+
+impl Version {
+    fn parse(text: &str) -> Result<Self> {
+        let (core, pre) = match text.split_once('-') {
+            Some((core, pre)) => (core, Some(pre.to_string())),
+            None => (text, None),
+        };
+        let parts: Vec<u64> = core
+            .split('.')
+            .map(str::parse)
+            .collect::<Result<_, _>>()
+            .with_context(|| format!("{text:?} isn't a version like 0.1.0"))?;
+        let [major, minor, patch] = parts[..] else {
+            bail!("{text:?} isn't a version like 0.1.0");
+        };
+        ensure!(
+            pre.as_deref()
+                .is_none_or(|pre| !pre.is_empty()
+                    && pre.chars().all(|c| c.is_ascii_alphanumeric() || c == '.')),
+            "{text:?} has a pre-release that isn't letters, digits and dots"
+        );
+        Ok(Version {
+            core: (major, minor, patch),
+            pre,
+        })
+    }
+}
+
+impl std::fmt::Display for Version {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (major, minor, patch) = self.core;
+        write!(f, "{major}.{minor}.{patch}")?;
+        if let Some(pre) = &self.pre {
+            write!(f, "-{pre}")?;
+        }
+        Ok(())
+    }
+}
+
+/// Today's date (UTC), `YYYY-MM-DD`.
+fn today() -> String {
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let (year, month, day) = civil_date(seconds / 86_400);
+    format!("{year}-{month:02}-{day:02}")
+}
+
+const UNRELEASED: &str = "## [Unreleased]\n";
+
+/// The text of the changelog's Unreleased section, after its heading and before the next.
+pub fn unreleased(changelog: &str) -> Option<&str> {
+    let start = changelog.find(UNRELEASED)? + UNRELEASED.len();
+    let rest = &changelog[start..];
+    let end = rest
+        .find("\n## ")
+        .or_else(|| rest.find("\n["))
+        .unwrap_or(rest.len());
+    Some(&rest[..end])
+}
+
+/// The changelog with Unreleased become `version`'s section, dated `date` and listing the game
+/// versions `checked`, a new empty Unreleased above it, and the link definitions at the end
+/// updated.
+fn release_changelog(
+    changelog: &str,
+    version: &str,
+    date: &str,
+    checked: &[&str],
+) -> Result<String> {
+    let previous = changelog
+        .lines()
+        .filter_map(|line| line.strip_prefix("## ["))
+        .filter_map(|line| line.split_once(']').map(|(v, _)| v))
+        .find(|v| *v != "Unreleased")
+        .map(str::to_string);
+    let heading = format!(
+        "{UNRELEASED}\n## [{version}] - {date}\n\n### Game versions\n\nChecked against the game for {}.\n",
+        checked.join(", ")
+    );
+    ensure!(
+        changelog.contains(UNRELEASED),
+        "CHANGELOG.md has no Unreleased section"
+    );
+    let body = changelog.replacen(UNRELEASED, &heading, 1);
+    // Link definitions: everything from the first `[Unreleased]: ` on is rewritten.
+    let body = match body.find("\n[Unreleased]: ") {
+        Some(at) => body[..=at].to_string(),
+        None => format!("{}\n", body.trim_end()),
+    };
+    let mut links = format!("\n[Unreleased]: {REPO}/compare/v{version}...HEAD\n");
+    links.push_str(&match &previous {
+        Some(previous) => format!("[{version}]: {REPO}/compare/v{previous}...v{version}\n"),
+        None => format!("[{version}]: {REPO}/releases/tag/v{version}\n"),
+    });
+    // Older releases' definitions, after the old `[Unreleased]: `, stay as they were.
+    if let Some(at) = changelog.find("\n[Unreleased]: ") {
+        for line in changelog[at + 1..].lines().skip(1) {
+            links.push_str(line);
+            links.push('\n');
+        }
+    }
+    Ok(format!("{body}{links}"))
+}
+
+/// `Cargo.toml` with `[workspace.package]`'s version set to `version`.
+fn set_version(manifest: &str, version: &str) -> Result<String> {
+    let mut out = String::with_capacity(manifest.len());
+    let mut in_package = false;
+    let mut done = false;
+    for line in manifest.split_inclusive('\n') {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_package = trimmed == "[workspace.package]";
+        }
+        if in_package && !done && trimmed.starts_with("version = ") {
+            let ending = if line.ends_with("\r\n") { "\r\n" } else { "\n" };
+            out.push_str(&format!("version = \"{version}\"{ending}"));
+            done = true;
+        } else {
+            out.push_str(line);
+        }
+    }
+    ensure!(done, "no version in Cargo.toml's [workspace.package]");
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const FIRST: &str = "# Changelog\n\nIntro.\n\n## [Unreleased]\n\nThe first release.\n\n### Added\n\n- Everything.\n";
+
+    #[test]
+    fn versions() {
+        let v = Version::parse("0.1.0").unwrap();
+        assert_eq!((v.core, v.pre.as_deref()), ((0, 1, 0), None));
+        let rc = Version::parse("0.1.0-rc.1").unwrap();
+        assert_eq!((rc.core, rc.pre.as_deref()), ((0, 1, 0), Some("rc.1")));
+        assert_eq!(rc.to_string(), "0.1.0-rc.1");
+        for bad in ["0.1", "0.1.0.0", "v0.1.0", "0.1.x", "0.1.0-", "0.1.0-rc 1"] {
+            assert!(Version::parse(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_first_release() {
+        assert_eq!(
+            unreleased(FIRST).unwrap().trim(),
+            "The first release.\n\n### Added\n\n- Everything."
+        );
+        let out = release_changelog(FIRST, "0.1.0", "2026-11-02", &["26.2", "26.3"]).unwrap();
+        assert_eq!(
+            out,
+            "# Changelog\n\nIntro.\n\n## [Unreleased]\n\n## [0.1.0] - 2026-11-02\n\n\
+             ### Game versions\n\nChecked against the game for 26.2, 26.3.\n\n\
+             The first release.\n\n### Added\n\n- Everything.\n\n\
+             [Unreleased]: https://github.com/farrcraft/spyglass/compare/v0.1.0...HEAD\n\
+             [0.1.0]: https://github.com/farrcraft/spyglass/releases/tag/v0.1.0\n"
+        );
+        assert_eq!(unreleased(&out).unwrap().trim(), "");
+    }
+
+    #[test]
+    fn a_later_release() {
+        let first = release_changelog(FIRST, "0.1.0", "2026-11-02", &["26.3"]).unwrap();
+        let next = first.replacen(UNRELEASED, "## [Unreleased]\n\n### Fixed\n\n- A bug.\n", 1);
+        let out = release_changelog(&next, "0.2.0", "2026-12-01", &["26.3", "26.4"]).unwrap();
+        assert!(out.contains("## [0.2.0] - 2026-12-01\n\n### Game versions\n\nChecked against the game for 26.3, 26.4.\n\n### Fixed\n\n- A bug.\n\n## [0.1.0] - 2026-11-02"), "{out}");
+        assert!(
+            out.ends_with(
+                "[Unreleased]: https://github.com/farrcraft/spyglass/compare/v0.2.0...HEAD\n\
+             [0.2.0]: https://github.com/farrcraft/spyglass/compare/v0.1.0...v0.2.0\n\
+             [0.1.0]: https://github.com/farrcraft/spyglass/releases/tag/v0.1.0\n"
+            ),
+            "{out}"
+        );
+        assert_eq!(unreleased(&next).unwrap().trim(), "### Fixed\n\n- A bug.");
+    }
+
+    #[test]
+    fn the_workspace_version_alone_changes() {
+        let manifest = "[workspace]\nmembers = []\n\n[workspace.package]\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace.dependencies]\nfoo = { version = \"1.0\" }\n";
+        let out = set_version(manifest, "0.1.0").unwrap();
+        assert_eq!(
+            out,
+            manifest.replace("version = \"0.0.0\"", "version = \"0.1.0\"")
+        );
+        assert!(set_version("[package]\nversion = \"1\"\n", "0.1.0").is_err());
+    }
+}

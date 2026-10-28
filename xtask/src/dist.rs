@@ -367,7 +367,7 @@ pub fn zip(root: &str, entries: &[Entry], epoch: u64) -> Result<Vec<u8>> {
 
 /// The UTC date `days` days after 1970-01-01, as (year, month, day). Howard Hinnant's
 /// `civil_from_days`.
-fn civil_date(days: u64) -> (u64, u8, u8) {
+pub fn civil_date(days: u64) -> (u64, u8, u8) {
     let z = days + 719_468;
     let era = z / 146_097;
     let doe = z % 146_097;

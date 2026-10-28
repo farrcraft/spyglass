@@ -103,9 +103,9 @@ Specs and ADRs that govern this: [density-functions.md](../specs/density-functio
 
 Reordered on 2026-10-27, with the user: 26.2 first, since its point evaluations have no memo and its gains are several-fold, against about 8 to 10% for 26.3's (see the notes).
 
-- [ ] 26.2's evaluator on the program, with `NoiseChunk`'s caches and interpolation as operations, and its single-point evaluations sharing subgraphs. First step done: a per-context memo for shared functions, shared corner and point stamps, and a per-column memo for columnar functions (e657cae, f61f361). The program itself is next.
+- [ ] 26.2's evaluator on the program, with `NoiseChunk`'s caches and interpolation as operations, and its single-point evaluations sharing subgraphs. Done for the chunk graph: a per-context memo for shared functions, shared corner and point stamps, and a per-column memo for columnar functions (e657cae, f61f361), then the compiled program (ad0eea6). The plain router and climate functions still evaluate as bound functions; they're off the hot path.
 - [ ] Columns without a `NoiseChunk` each, where the spec shows the answers are unchanged.
-- [ ] Differential tests against the interpreter on 26.2's functions, points and cells; `oracle-test` for 26.2.
+- [x] Differential tests against the interpreter on 26.2's functions, points and cells; `oracle-test` for 26.2. `the_program_matches_the_functions`: 1.38 million values in three dimensions, every router entry at points and positioned, the full density through cells, surface levels; in `oracle-test`'s list. 26.2 passes (32 tests).
 - [ ] Measure 26.2's lines against its before lines and its target (within 2× of 26.3's isolated column).
 
 ### Phase 3: kernels
@@ -198,6 +198,8 @@ Sources:
 - crates.io metadata for each crate, fetched 2026-10-27.
 
 ## Notes
+
+- 2026-10-27: **26.2's program** (`dist`, coarse timing, three rounds): isolated column 602 to 620 µs (about 640 before it, 1.9 to 2.4 ms before the memo), region 68 to 73 ms (about 75), warm village layout about 47 ms (about 50), nearby column about the same. Less than the 100 µs estimated: once shared work is remembered, most of what's left is real noise and arithmetic, not per-node overhead. 26.2's isolated column is now 2.3 to 2.4 times 26.3's in the same build, against a target of 2 times (about 500 to 530 µs). The rest is split between cell corners and the aquifer's walks.
 
 - 2026-10-27: **26.2 after its memo** (`dist`, coarse timing, quiet machine, three rounds): isolated column 635 to 646 µs (1.9 to 2.4 ms before), nearby column 344 to 351 µs (490), warm village layout about 50 ms (67), region about 75 ms (73, unchanged). oracle-test passes for 26.2 after each step.
   - **What did it.** A function the binder sees bound twice is remembered per evaluation context. Corners of a `NoiseChunk` keep a stamp each, so the functions interpolated at a corner share their common work. Single-point computes at one block share a stamp. Columnar functions (no y, and only `cache_2d` or `flat_cache` markers) are remembered per column, which matches the game: its `cache_2d` returns the value for the last column asked, and the aquifer's `find_top_surface` walks (7 or 8 steps each) were recomputing it at every step.

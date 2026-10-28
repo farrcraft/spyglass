@@ -67,8 +67,8 @@ pub use spyglass_terrain::timing;
 /// A search query's syntax tree, from [`SearchQuery::query`] (`docs/specs/search.md`).
 pub mod query {
     pub use spyglass_search::{
-        Anchor, Constraint, Count, DEFAULT_STEP, DEFAULT_Y, Importance, Kind, MAX_COORDINATE,
-        MAX_PLACE_SIDE, MAX_SAMPLES, Place, Query, Region, Sampling,
+        Anchor, Constraint, Count, DEFAULT_STEP, DEFAULT_Y, Importance, Kind as ConstraintKind,
+        MAX_COORDINATE, MAX_PLACE_SIDE, MAX_SAMPLES, Place, Query, Region, Sampling,
     };
 }
 
@@ -618,6 +618,7 @@ pub struct Session<'w> {
 
 /// The biome at a position.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct BiomeAt {
     /// The biome, e.g. `minecraft:plains`. Where the cell is tied, the first of the tie.
     pub biome: String,
@@ -628,6 +629,7 @@ pub struct BiomeAt {
 
 /// A structure start, or a chunk where one may be.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct StructureStart {
     /// The structure set, e.g. `minecraft:villages`.
     pub set: String,
@@ -705,6 +707,7 @@ pub struct StructureLayout {
 
 /// A hit in [`Session::locate_structure`]'s answer.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct LocatedStructure {
     /// Where.
     pub start: StructureStart,
@@ -716,6 +719,7 @@ pub struct LocatedStructure {
 
 /// The answer to [`Session::locate_structure`].
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct StructureLocate {
     /// Every place the game's answer may be, in its search order; each search path ends at
     /// its first certain hit.
@@ -731,6 +735,7 @@ pub struct StructureLocate {
 
 /// A hit in [`Session::locate_biome`]'s answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct LocatedBiome {
     /// The block position the game would report.
     pub position: [i32; 3],
@@ -745,6 +750,7 @@ pub struct LocatedBiome {
 
 /// The answer to [`Session::locate_biome`].
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct BiomeLocate {
     /// Every place the game's answer may be, in its search order, ending at the first
     /// certain one. Empty if nothing matches within the radius.
@@ -753,6 +759,7 @@ pub struct BiomeLocate {
 
 /// The world spawn's starting point.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct SpawnOrigin {
     /// The chunk the game's spawn search starts from (`ChunkGenerator.getOrigin`). The final
     /// spawn is in the 11 × 11 chunks around it, decided by terrain spyglass doesn't compute

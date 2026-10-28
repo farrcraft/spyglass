@@ -3,7 +3,7 @@
 use spyglass_rng::RandomSource;
 
 use crate::mth;
-use crate::perlin::GRADIENT;
+use crate::simplex::corner;
 
 /// `SimplexNoise.F3` and `G3` as the bytecode loads them: `1/3` and `1/6`.
 const F3: f64 = 0.333_333_333_333_333_3;
@@ -23,12 +23,10 @@ impl SimplexNoise {
     /// [`SimplexNoise::new(random, false)`](crate::SimplexNoise::new).
     pub fn new(random: &mut impl RandomSource) -> Self {
         let offset = std::array::from_fn(|_| random.next_double() * 256.0);
-        let mut perms: [u8; 256] = std::array::from_fn(|i| i as u8);
-        for i in 0..256 {
-            let j = random.next_int_bounded(256 - i as i32) as usize;
-            perms.swap(i, i + j);
+        SimplexNoise {
+            perms: crate::perlin::permutation(random),
+            offset,
         }
-        SimplexNoise { perms, offset }
     }
 
     /// `xo`, `yo` and `zo`, which neither `getValue` adds.
@@ -125,24 +123,6 @@ impl SimplexNoise {
             offset: [0.0; 3],
         }
     }
-}
-
-/// `SimplexNoise.getCornerNoise3D`.
-fn corner(g: i32, x: f64, y: f64, z: f64, base: f64) -> f64 {
-    let t = ((base - x * x) - y * y) - z * z;
-    // dcmpg/ifge: NaN goes on to the else branch.
-    if t < 0.0 {
-        0.0
-    } else {
-        let t = t * t;
-        (t * t) * dot(g, x, y, z)
-    }
-}
-
-/// `SimplexNoise.dot(int[], double, double, double)`.
-fn dot(g: i32, x: f64, y: f64, z: f64) -> f64 {
-    let [gx, gy, gz] = GRADIENT[g as usize];
-    (f64::from(gx) * x + f64::from(gy) * y) + f64::from(gz) * z
 }
 
 #[cfg(test)]

@@ -35,6 +35,7 @@ impl SaveLocation {
 
 /// What a world save says about itself.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct SaveInfo {
     /// The save's directory.
     pub dir: PathBuf,
@@ -235,6 +236,7 @@ impl fmt::Display for SaveWarning {
 
 /// A save and what spyglass makes of it.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct SaveReport {
     /// What the save says.
     pub save: SaveInfo,

@@ -44,10 +44,13 @@ impl Query {
     }
 
     /// Forgets the dimension written on constraint `index`, as the canonical text does when
-    /// it's the one inferred (`docs/specs/search.md#dimensions`). Panics if there's no such
+    /// it's the one inferred (`docs/specs/search.md#dimensions`). False if there's no such
     /// constraint.
-    pub fn forget_dimension(&mut self, index: usize) {
-        self.constraints[index].dimension = None;
+    pub fn forget_dimension(&mut self, index: usize) -> bool {
+        self.constraints
+            .get_mut(index)
+            .map(|c| c.dimension = None)
+            .is_some()
     }
 }
 

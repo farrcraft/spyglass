@@ -16,12 +16,11 @@ pub struct Interval {
 /// Where the game throws `IllegalArgumentException` or `IllegalStateException`, which would stop
 /// it compiling the function.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("{}", self.reason())]
 pub enum IntervalError {
     /// `Interval.of` with NaN bounds or `max < min`.
-    #[error("a density function's range has NaN or reversed bounds")]
     Bounds,
     /// `Interval.mapMonotonic` produced NaN.
-    #[error("a density function's range maps to NaN")]
     MonotonicNaN,
 }
 

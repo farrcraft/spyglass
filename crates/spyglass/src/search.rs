@@ -58,10 +58,16 @@ impl SearchQuery {
         &self.query
     }
 
-    /// The dimension constraint `index` counts in (`docs/specs/search.md#dimensions`). Panics
-    /// if there's no such constraint.
-    pub fn dimension(&self, index: usize) -> Dimension {
-        self.resolved[index].dimension
+    /// The dimension constraint `index` counts in (`docs/specs/search.md#dimensions`), if
+    /// there's such a constraint.
+    pub fn dimension(&self, index: usize) -> Option<Dimension> {
+        self.resolved.get(index).map(|r| r.dimension)
+    }
+
+    /// The first constraint's dimension. Every query has a constraint: parsing one without is
+    /// an error.
+    pub fn first_dimension(&self) -> Dimension {
+        self.resolved[0].dimension
     }
 }
 
@@ -449,6 +455,7 @@ impl Default for SearchOptions {
 
 /// A reported seed with its evaluation.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct SearchHit {
     /// Its index in the source.
     pub index: u64,
@@ -462,6 +469,7 @@ pub struct SearchHit {
 
 /// How a search ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct SearchOutcome {
     /// The counts and the ranked seeds when it stopped.
     pub progress: SearchProgress,
@@ -887,7 +895,7 @@ mod tests {
             .iter()
             .map(|q| game.search_query(q).unwrap_or_else(|e| panic!("{q}: {e}")))
             .collect();
-        let d = |q: &SearchQuery, i| q.dimension(i);
+        let d = |q: &SearchQuery, i| q.dimension(i).unwrap();
         assert_eq!(d(&queries[0], 1), Dimension::Nether);
         assert_eq!(d(&queries[1], 1), Dimension::Overworld);
         assert_eq!(d(&queries[2], 0), Dimension::End);

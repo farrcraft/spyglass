@@ -178,11 +178,10 @@ mod tests {
 
     #[test]
     fn the_nearest_marker_within_reach_is_picked() {
-        let spawn = SpawnOrigin {
-            chunk: [0, 0],
-            position: None,
-            platform_dependent: false,
-        };
+        // Any spawn will do; a hand-written world has one.
+        let fixture = spyglass_oracle::fixtures::structured_overworld(false);
+        let world = spyglass::World::open(fixture.path()).unwrap();
+        let spawn = world.session(0).unwrap().spawn_origin();
         let near = [(Pos2::new(10.0, 10.0), Picked::Spawn(&spawn))];
         assert!(pick(Pos2::new(13.0, 14.0), near).is_some());
         let far = [(Pos2::new(10.0, 10.0), Picked::Spawn(&spawn))];

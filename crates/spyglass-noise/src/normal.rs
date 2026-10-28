@@ -279,6 +279,47 @@ impl NormalNoise {
     }
 }
 
+/// The legacy initialization's octaves (`PerlinNoise(RandomSource, Pair, boolean)` with
+/// `useNewFactory` false), the same in 26.2 and 26.3 for each version's noise type: the octave
+/// at frequency 1 first, kept if it exists with a non-zero amplitude; then each level from the
+/// one below it down to 0, made with `make` if it exists with a non-zero amplitude, else skipped
+/// by 262 draws (`skipOctave`).
+///
+/// # Errors
+///
+/// [`NoiseError::LegacyOctaves`] if the number of levels made isn't the number of non-zero
+/// amplitudes (an octave above frequency 1 was asked for), checked first, then
+/// [`NoiseError::PositiveOctaves`] if the last level is above frequency 1.
+pub(crate) fn legacy_levels<R: RandomSource, N: Clone>(
+    random: &mut R,
+    first_octave: i32,
+    amplitudes: &[f64],
+    mut make: impl FnMut(&mut R) -> N,
+) -> Result<Vec<Option<N>>, NoiseError> {
+    let n = amplitudes.len() as i32;
+    let zero = first_octave.wrapping_neg();
+    let mut levels: Vec<Option<N>> = vec![None; amplitudes.len()];
+    let at_zero = make(random);
+    if (0..n).contains(&zero) && amplitudes[zero as usize] != 0.0 {
+        levels[zero as usize] = Some(at_zero);
+    }
+    for i in (0..zero).rev() {
+        if i < n && amplitudes[i as usize] != 0.0 {
+            levels[i as usize] = Some(make(random));
+        } else {
+            random.consume_count(262);
+        }
+    }
+    let made = levels.iter().filter(|l| l.is_some()).count();
+    if made != amplitudes.iter().filter(|&&a| a != 0.0).count() {
+        return Err(NoiseError::LegacyOctaves);
+    }
+    if zero < n - 1 {
+        return Err(NoiseError::PositiveOctaves);
+    }
+    Ok(levels)
+}
+
 /// `LegacyFbmInitializer.createForLegacyNetherBiome`: the layers of one legacy stack, lowest
 /// frequency first. The octave at frequency 1 is always built first, kept only if it's in the
 /// stack; then octaves from the one below it down to the first, each built if its modifier
@@ -290,25 +331,7 @@ fn legacy_fbm<R: RandomSource>(
 ) -> Result<Vec<Layer>, NoiseError> {
     let n = modifiers.len() as i32;
     let zero = first_octave.wrapping_neg();
-    let mut levels: Vec<Option<PerlinNoise>> = vec![None; modifiers.len()];
-    let at_zero = PerlinNoise::new(random);
-    if (0..n).contains(&zero) && modifiers[zero as usize] != 0.0 {
-        levels[zero as usize] = Some(at_zero);
-    }
-    for i in (0..zero).rev() {
-        if i < n && modifiers[i as usize] != 0.0 {
-            levels[i as usize] = Some(PerlinNoise::new(random));
-        } else {
-            random.consume_count(262);
-        }
-    }
-    let made = levels.iter().filter(|l| l.is_some()).count();
-    if made != modifiers.iter().filter(|&&m| m != 0.0).count() {
-        return Err(NoiseError::LegacyOctaves);
-    }
-    if zero < n - 1 {
-        return Err(NoiseError::PositiveOctaves);
-    }
+    let levels = legacy_levels(random, first_octave, modifiers, PerlinNoise::new)?;
     // Math.pow(2, -zero) and pow(2, n - 1) / (pow(2, n) - 1), exact for these integers.
     let mut frequency = exp2i(zero.wrapping_neg());
     let mut value = exp2i(n - 1) / (exp2i(n) - 1.0);
@@ -427,6 +450,36 @@ mod tests {
         assert_eq!(indices, [-10, -8]);
         assert_eq!(noise.octaves()[0].frequency, 1.0 / 1024.0);
         assert_eq!(noise.octaves()[1].frequency, 1.0 / 256.0);
+    }
+
+    #[test]
+    fn create_alternates_the_two_factories_octaves() {
+        let mut p = Parameters::new(-10);
+        p.octave_count = 6;
+        p.amplitude_modifiers = vec![1.5, 0.0, 1.0, 0.0, 0.0, 0.0];
+        let noise = NormalNoise::from_parameters(&p).unwrap();
+        let stack = noise.create(&mut spyglass_rng::XoroshiroRandomSource::new(42));
+        // From create's definition: two positional factories forked in turn; per octave a noise
+        // from each, seeded by "octave_<index>", the second at INPUT_FACTOR times the
+        // frequency, both with the amplitude narrowed to f32 once.
+        assert_eq!(INPUT_FACTOR, 1.018_126_888_217_522_7);
+        let mut random = spyglass_rng::XoroshiroRandomSource::new(42);
+        let (first, second) = (random.fork_positional(), random.fork_positional());
+        let layers = stack.layers();
+        assert_eq!(layers.len(), 2 * noise.octaves().len());
+        for (k, octave) in noise.octaves().iter().enumerate() {
+            let seed = format!("octave_{}", octave.octave_index);
+            let amplitude = (noise.normalization_factor * octave.amplitude) as f32;
+            for (layer, factory, frequency) in [
+                (&layers[2 * k], &first, octave.frequency),
+                (&layers[2 * k + 1], &second, octave.frequency * INPUT_FACTOR),
+            ] {
+                let expected = PerlinNoise::new(&mut factory.from_hash_of(&seed));
+                assert_eq!(layer.noise.offset(), expected.offset(), "{seed}");
+                assert_eq!(layer.frequency, frequency, "{seed}");
+                assert_eq!(layer.amplitude.to_bits(), amplitude.to_bits(), "{seed}");
+            }
+        }
     }
 
     #[test]

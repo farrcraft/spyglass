@@ -71,11 +71,11 @@ impl Sampler {
         }
         if !self.depends_on_y && volume.size[1] > 1 {
             // SliceFunction.YSampler at 0, as SLICE_UNIFORM_AXES wraps such nodes.
-            let flat = Volume {
-                size: [volume.size[0], 1, volume.size[2]],
-                min: [volume.min[0], 0, volume.min[2]],
-                step: volume.step,
-            };
+            let flat = Volume::new(
+                [volume.size[0], 1, volume.size[2]],
+                [volume.min[0], 0, volume.min[2]],
+                volume.step,
+            );
             let mut values = vec![0.0; flat.len()];
             self.fill(f, &flat, &mut values);
             #[cfg(feature = "timing")]
@@ -176,11 +176,11 @@ impl Node {
             // ShiftB's sampler: the noise at (z, x, 0) over a volume with x and z swapped, with
             // the 4 folded into every layer's weight, then copied up each column.
             Node::ShiftB(noise) => {
-                let swapped = Volume {
-                    size: [volume.size[2], volume.size[0], 1],
-                    min: [volume.min[2], volume.min[0], 0],
-                    step: [volume.step[2], volume.step[0], 1],
-                };
+                let swapped = Volume::new(
+                    [volume.size[2], volume.size[0], 1],
+                    [volume.min[2], volume.min[0], 0],
+                    [volume.step[2], volume.step[0], 1],
+                );
                 let mut values = vec![0.0; swapped.len()];
                 noise.add_to_volume(&mut values, &swapped, 0.25, 0.25, 4.0);
                 let flat: Vec<f32> = (0..volume.size[2])
@@ -309,11 +309,11 @@ impl Node {
                 lower_bound,
                 cell_height,
             } => {
-                let flat = Volume {
-                    size: [volume.size[0], 1, volume.size[2]],
-                    min: [volume.min[0], 0, volume.min[2]],
-                    step: volume.step,
-                };
+                let flat = Volume::new(
+                    [volume.size[0], 1, volume.size[2]],
+                    [volume.min[0], 0, volume.min[2]],
+                    volume.step,
+                );
                 let upper = upper_bound.values(f, &flat);
                 let mut surfaces = vec![0.0; flat.len()];
                 for_each(&flat, |i, x, _, z| {
@@ -546,10 +546,11 @@ fn domain_warp(
 fn warp(f: &mut Fill, volume: &Volume, out: &mut [f32], input: &Sampler, offsets: &Warp) {
     let (ox, oy, oz) = match offsets {
         Warp::Const(o) => {
-            let moved = Volume {
-                min: std::array::from_fn(|a| volume.min[a].wrapping_add(o[a])),
-                ..*volume
-            };
+            let moved = Volume::new(
+                volume.size,
+                std::array::from_fn(|a| volume.min[a].wrapping_add(o[a])),
+                volume.step,
+            );
             input.fill(f, &moved, out);
             return;
         }

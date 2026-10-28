@@ -27,6 +27,7 @@ pub enum Outcome {
 
 /// A seed judged against a query by [`Session::evaluate`].
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Evaluation {
     /// Over the required constraints: failed if any failed, possibly met if any is only
     /// possibly met, met otherwise.
@@ -61,6 +62,7 @@ impl Evaluation {
 
 /// One constraint's result.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ConstraintResult {
     /// The dimension it counts in: its features' positions are in its coordinates.
     pub dimension: Dimension,
@@ -96,6 +98,20 @@ pub enum Feature {
     },
     /// The spawn.
     Spawn(SpawnOrigin),
+}
+
+impl Feature {
+    /// Where the feature is on a map, as block `[x, z]`: a structure's or a biome sample's
+    /// position, a slime chunk's centre, or the spawn's map block
+    /// (`docs/specs/search.md#positions-and-regions`).
+    pub fn map_block(&self) -> [i32; 2] {
+        match self {
+            Feature::Structure(s) => [s.position[0], s.position[2]],
+            Feature::SlimeChunk(chunk) => chunk.map(|c| c.wrapping_mul(16).wrapping_add(8)),
+            Feature::Biome { position, .. } => [position[0], position[2]],
+            Feature::Spawn(spawn) => spawn.map_block(),
+        }
+    }
 }
 
 /// A constraint's answer in both cases, before the spawn's uncertainty is applied.

@@ -241,6 +241,39 @@ mod tests {
     }
 
     #[test]
+    fn draws_derive_from_the_jdk_longs() {
+        // State (1, 2)'s first four longs are pinned to the JDK above. Each draw is a fixed
+        // function of one long (none of these bounded draws is rejected): floats its top 24
+        // bits over 2^24, doubles its top 53 over 2^53, and bounded ints Lemire's
+        // `(low 32 bits · bound) >> 32`. These are those functions, worked out from the longs.
+        let fresh = || XoroshiroRandomSource::from_state(1, 2);
+        let mut r = fresh();
+        let floats: Vec<f32> = (0..4).map(|_| r.next_float()).collect();
+        let tops = [0_u32, 608, 1_575_628, 10_363_501];
+        assert_eq!(floats, tops.map(|k| k as f32 / 16_777_216.0));
+        let mut r = fresh();
+        let doubles: Vec<f64> = (0..4).map(|_| r.next_double()).collect();
+        let tops = [
+            192_u64,
+            326_820_170_944,
+            845_908_850_651_328,
+            5_563_862_344_560_120,
+        ];
+        assert_eq!(doubles, tops.map(|k| k as f64 / 9_007_199_254_740_992.0));
+        for (bound, expected) in [
+            (1, [0, 0, 0, 0]),
+            (7, [0, 0, 3, 0]),
+            (100, [0, 0, 44, 1]),
+            (1 << 30, [98_304, 1_671_169, 476_152_244, 14_414_129]),
+            (i32::MAX, [196_608, 3_342_339, 952_304_489, 28_828_259]),
+        ] {
+            let mut r = fresh();
+            let ints: Vec<i32> = (0..4).map(|_| r.next_int_bounded(bound)).collect();
+            assert_eq!(ints, expected, "bound {bound}");
+        }
+    }
+
+    #[test]
     fn bounded_ints_stay_in_range() {
         let mut r = XoroshiroRandomSource::new(42);
         for bound in [1, 2, 3, 7, 1 << 30, i32::MAX] {

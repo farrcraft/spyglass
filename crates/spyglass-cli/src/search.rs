@@ -160,11 +160,10 @@ fn print_text(game: &Game, query: &SearchQuery, options: &SearchOptions, outcome
         for (line, c) in lines.iter().zip(&hit.evaluation.constraints) {
             let found = match c.features.first() {
                 None => String::new(),
-                Some(f) => format!(
-                    " ({} found{})",
-                    c.features.len(),
-                    feature_at(f).map_or(String::new(), |[x, z]| format!(", first at {x} {z}"))
-                ),
+                Some(f) => {
+                    let [x, z] = f.map_block();
+                    format!(" ({} found, first at {x} {z})", c.features.len())
+                }
             };
             out!("       {:<8} {line}{found}", outcome_word(c.outcome));
         }
@@ -172,16 +171,6 @@ fn print_text(game: &Game, query: &SearchQuery, options: &SearchOptions, outcome
     match p.next {
         Some(next) => out!("\ncontinue with --from {next}"),
         None => out!("\nevery seed in the source was searched"),
-    }
-}
-
-fn feature_at(f: &Feature) -> Option<[i32; 2]> {
-    match f {
-        Feature::Structure(s) => Some([s.position[0], s.position[2]]),
-        Feature::SlimeChunk(c) => Some(c.map(|v| v * 16 + 8)),
-        Feature::Biome { position, .. } => Some([position[0], position[2]]),
-        Feature::Spawn(s) => Some(s.map_block()),
-        _ => None,
     }
 }
 
@@ -230,7 +219,7 @@ fn print_json(
         format: json::FORMAT,
         command: "search",
         version: game.version(),
-        dimension: query.dimension(0).id(),
+        dimension: query.first_dimension().id(),
         query: &canonical,
         source,
         from: options.from,

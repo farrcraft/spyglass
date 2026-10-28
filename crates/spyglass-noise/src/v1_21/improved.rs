@@ -29,12 +29,10 @@ impl ImprovedNoise {
     /// as 26.3's [`PerlinNoise::new`](crate::PerlinNoise::new).
     pub fn new(random: &mut impl RandomSource) -> Self {
         let offset = std::array::from_fn(|_| random.next_double() * 256.0);
-        let mut perms: [u8; 256] = std::array::from_fn(|i| i as u8);
-        for i in 0..256 {
-            let j = random.next_int_bounded(256 - i as i32) as usize;
-            perms.swap(i, i + j);
+        ImprovedNoise {
+            perms: crate::perlin::permutation(random),
+            offset,
         }
-        ImprovedNoise { perms, offset }
     }
 
     /// `xo`, `yo` and `zo`.

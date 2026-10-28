@@ -1,9 +1,9 @@
 # m10. Hardening after the 2026-10-28 audit
 
-- Status: In progress
-- Milestone: [10. Hardening](../roadmap/10-hardening.md)
+- Status: Completed
+- Milestone: [10. Hardening](../../roadmap/completed/10-hardening.md)
 - Started: 2026-10-28
-- Completed: —
+- Completed: 2026-10-28
 
 ## Goal
 
@@ -273,7 +273,7 @@ Six phases, each one or more commits that pass `cargo xtask check` on their own,
 - [x] D10 `CONTRIBUTING.md` (setup, hooks, the process, the Mojang-data rule, pointing at existing docs rather than repeating them) and `SECURITY.md` (what counts: hostile saves and packs, downloads; how to report). Before the repo is published.
 - [x] D11 `cli-json.md`: the `other` feature kind.
 - [x] R10 Every multi-line non-raw literal rewritten with `\n` escapes or `\` continuations (the deliberate text block in `code_diff.rs` stays); the CLI's two messages and `server.properties` fixed.
-- [ ] X6 A test for the `locate structure` text: moved to M10, which gives the explanation a home in the library where a test can reach it.
+- [x] X6 A test for the `locate structure` text, done with M10 (`spyglass-cli/tests/locate.rs`).
 
 ### 2. Hostile input
 
@@ -319,22 +319,22 @@ Six phases, each one or more commits that pass `cargo xtask check` on their own,
 
 ### 5. API and maintainability
 
-- [ ] M3 `#[non_exhaustive]` on results, options (with `Default` and setters) and the query AST; `query::Constraint`; no panicking index methods.
-- [ ] M10 `Feature::map_block`, `Locate::why_uncertain`; CLI and viewer use them.
-- [ ] M1 `app.rs` split into `search`, `locate`, `saves` and `map` modules; tests for the pure helpers.
-- [ ] M2 Shared identical noise and binder code; merged kind tables; oracle-test and bench before and after, in the notes.
-- [ ] M4 `position_only` and `depends_on_y` docs.
-- [ ] M5 `end_island_height` with `java::` helpers.
-- [ ] M6 `Volume` private fields, `usize` length, real `is_empty`.
-- [ ] M7 `LoadError` context for intervals and anchors.
-- [ ] M8 `IntervalError` single message source.
-- [ ] M9 `domain_axes` once per node; range noises built once.
+- [x] M3 `#[non_exhaustive]` on the API's output types; `query::ConstraintKind` for the query's `Kind`; `SearchQuery::dimension` returns an `Option`, with an infallible `first_dimension`, and `forget_dimension` a `bool`. Options and the query AST stay exhaustive (see notes).
+- [x] M10 `Feature::map_block`, used by the CLI and viewer. The uncertain-candidate wording stays in each front end (see notes); X6's test of the CLI's `locate structure` text added.
+- [x] M1 `app.rs` (2,054 lines) split into `app/search_panel.rs`, `saves.rs`, `side_panel.rs` and `map.rs`; `app.rs` keeps the state and background work (610 lines).
+- [x] M2 Shared: the permutation shuffle, 2D simplex `corner`/`dot`, the legacy octave levels, `WorldRandom` and the Nether biome noises; one list for both timing tables. Oracle-test passes and the bench shows no regression (see notes).
+- [x] M4 `position_only` and `depends_on_y` docs.
+- [x] M5 `end_island_height` with `java::` helpers.
+- [x] M6 `Volume`: every literal in the density crate goes through `new`; `index` in `usize`; real `is_empty`. Fields stay public (see notes).
+- [x] M7 Bind-time `LoadError`s say they happened binding to a seed (see notes).
+- [x] M8 `IntervalError`'s message has one source.
+- [x] M9 `domain_axes` remembered on the binder; range noises left as they are (see notes).
 
 ### 6. Test gaps
 
-- [ ] X3 Xoroshiro reference values for bounded ints, floats and doubles.
-- [ ] X3 26.3 `PerlinNoise::get` hand-worked value.
-- [ ] X3 26.3 `NormalNoise::create` interleaving and narrowing.
+- [x] X3 Xoroshiro's bounded ints, floats and doubles, worked out from the JDK-pinned longs.
+- [x] X3 26.3 `PerlinNoise::get` hand-worked value (26.2's case, exact in `f32` too).
+- [x] X3 26.3 `NormalNoise::create`: the two factories' layers alternating, frequencies, and amplitudes narrowed once.
 
 ## Verification
 
@@ -347,22 +347,37 @@ Six phases, each one or more commits that pass `cargo xtask check` on their own,
 
 ## Durable outputs
 
-- [ ] ADR: fuzzing with `cargo-fuzz` on nightly (or the rejected alternative).
-- [ ] ADR: the oracle accepts the EULA only on explicit request (refines 0015).
-- [ ] ADR: exact toolchain pin and how it's bumped.
-- [ ] ADR: Windows in CI, if it changes ADR 0028.
-- [ ] ADR: search stop granularity, only if the round design changes ADR 0021.
-- [ ] `density-functions.md`: reference depth limit and vanilla maximum, `Mth.binarySearch`, data the game can't finish, D1 anchors.
-- [ ] `world-saves.md`: modified UTF-8 handling, region length rule, unreadable files.
-- [ ] `structure-placement.md`: empty alias lists.
-- [ ] `locate.md`: radius and region caps.
-- [ ] `search.md` and `cli-json.md`: confirming progress, partial outcomes, stop granularity, `other` feature kind.
-- [ ] `oracle.md`, `data-sources.md`, getting-started, CLAUDE.md, README, architecture.md, `development-process.md`.
-- [ ] CONTRIBUTING.md and SECURITY.md.
+- [x] ADR 0036: fuzzing with `cargo-fuzz` on nightly.
+- [x] ADR 0033: the oracle accepts the EULA only on explicit request (refines 0015).
+- [x] ADR 0034: exact toolchain pin and how it's bumped.
+- [x] ADR 0035: Windows in CI.
+- [x] Search stop granularity: in `search.md`, not an ADR. Rounds still go as ADR 0021 says; only where they can be cut changed.
+- [x] `density-functions.md`: reference depth limit and vanilla maximum, `Mth.binarySearch`, data the game can't finish, D1 anchors.
+- [x] `world-saves.md`: modified UTF-8 handling, region length rule, unreadable files.
+- [x] `structure-placement.md`: empty alias lists.
+- [x] `locate.md`: radius and region caps.
+- [x] `search.md` and `cli-json.md`: confirming progress, partial outcomes, stop granularity, `other` feature kind.
+- [x] `oracle.md`, `data-sources.md`, getting-started, CLAUDE.md, README, architecture.md, `development-process.md`.
+- [x] CONTRIBUTING.md and SECURITY.md.
 
 ## Notes
 
 Decisions, surprises and dead ends, newest first.
+
+- 2026-10-28: Plan complete.
+  - **Fuzzing:** an hour each on Windows, with no crash. `nbt` ran 7,483,598 inputs and `region` 546,690 (it writes a file per input).
+  - **Oracle comparisons:** they pass after every phase that touched worldgen, for 26.2, 26.3, both 26.4 snapshots and the test pack.
+  - **Benchmarks:** the full bench ran on the 26.3 bundle before phase 5 and after it. Every line is within run-to-run noise, and several are faster: `structure_layout` went from 11.1 to 7.5 ms, a scale-1 biome tile from 15.4 to 10.9 ms.
+    - Search throughput looked 2 to 5% lower against the commit before phase 2. Alternating runs said otherwise: three runs of each binary at that commit, before and after phase 3's runner change, and now (`witch huts unconfirmed, 1 thread`: 3,314 to 3,602, 3,376 to 3,641, and 3,370 to 3,871 seeds/s). Run to run the machine varies by about ±8%. `heights_in 40 × 25` was 10.6 to 11.3 ms before and 10.8 to 14.6 ms after on the same tree.
+  - **Not done as planned:** the viewer's Stop wasn't timed by hand; it can't be driven from here. It sets the same `SearchStop` that the CLI's Ctrl-C and the runner's tests use.
+
+- 2026-10-28: Phases 5 and 6.
+  - **M3, what's `#[non_exhaustive]`:** only the output types, which callers only read. On options structs it would forbid `..Default::default()` outside the crate, needing setters at about 30 call sites. On the query AST enums, the API crate would need wildcard arms, so a new constraint kind would stop being a compile error where it's evaluated: exhaustiveness checking the workspace relies on. `Outcome` is a closed three-way verdict.
+  - **M10, what stayed:** the uncertain-candidate explanation stays in each front end, because each names its own control (`--unconfirmed`, the viewer's confirm checkbox). That's presentation.
+  - **M6, why fields stay public:** about 97 sites read `Volume`'s fields, many in inner loops. Accessors would be churn without changing what's checked, since every constructor now goes through `new`.
+  - **M7, no names:** binding works on graphs whose references are already resolved into shared nodes, so a function's name isn't available when binding fails. The errors say they happened binding to a seed, instead of printing an empty name.
+  - **M9, the range half:** `Binder::normal_noise` only builds parameters, not seeded octaves, and ranges are already remembered per function, so there was nothing to save.
+  - **M2, where duplication stays:** code that differs between the families by width or narrowing stays duplicated, as ADR 0026 intends. 26.2's `kind` table, over its own node type, stays separate.
 
 - 2026-10-28: Phase 4's decisions, made by the user: an explicit EULA opt-in, Rust pinned at 1.99.1, a Windows check job, and cargo-fuzz on nightly.
   - **Fuzzing on Windows:** the fuzz binary failed with `STATUS_DLL_NOT_FOUND`. AddressSanitizer's runtime (`clang_rt.asan_dynamic-x86_64.dll`) ships with Visual Studio's MSVC tools but isn't on PATH, so `cargo xtask fuzz` finds the newest one and adds it.

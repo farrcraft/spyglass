@@ -9,7 +9,7 @@ use std::thread;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use spyglass::query::{Anchor, Kind, Place, Query, Region};
+use spyglass::query::{Anchor, ConstraintKind, Place, Query, Region};
 use spyglass::{
     Dimension, Evaluation, Feature, Game, SearchOptions, SearchOutcome, SearchProgress,
     SearchQuery, SearchStop, SeedSource,
@@ -201,25 +201,14 @@ pub fn matches(query: &SearchQuery, evaluation: &Evaluation) -> Vec<Match> {
     let mut out = Vec::new();
     for (line, result) in text.lines().zip(&evaluation.constraints) {
         for feature in &result.features {
-            let (at, what, certain) = match feature {
-                Feature::Structure(s) => (
-                    [s.position[0], s.position[2]],
-                    s.structures.join(" or "),
-                    s.certain,
-                ),
-                Feature::SlimeChunk(c) => (c.map(|v| v * 16 + 8), "Slime chunk".to_string(), true),
-                Feature::Biome {
-                    position,
-                    biome,
-                    certain,
-                } => ([position[0], position[2]], biome.biome.clone(), *certain),
-                Feature::Spawn(s) => (
-                    s.map_block(),
-                    "World spawn".to_string(),
-                    !s.platform_dependent,
-                ),
+            let (what, certain) = match feature {
+                Feature::Structure(s) => (s.structures.join(" or "), s.certain),
+                Feature::SlimeChunk(_) => ("Slime chunk".to_string(), true),
+                Feature::Biome { biome, certain, .. } => (biome.biome.clone(), *certain),
+                Feature::Spawn(s) => ("World spawn".to_string(), !s.platform_dependent),
                 _ => continue,
             };
+            let at = feature.map_block();
             out.push(Match {
                 dimension: result.dimension,
                 at,
@@ -269,13 +258,15 @@ pub fn focus(query: &Query, spawn: [i32; 2]) -> [i32; 2] {
         return spawn;
     };
     match &first.kind {
-        Kind::Structures { region, .. } | Kind::Slime { region, .. } => match region {
-            Region::Place(p) | Region::NearStructure { place: p, .. } => centre(p),
-        },
-        Kind::Cluster { place, .. }
-        | Kind::Biome { place, .. }
-        | Kind::Coverage { place, .. }
-        | Kind::Spawn { place } => centre(place),
+        ConstraintKind::Structures { region, .. } | ConstraintKind::Slime { region, .. } => {
+            match region {
+                Region::Place(p) | Region::NearStructure { place: p, .. } => centre(p),
+            }
+        }
+        ConstraintKind::Cluster { place, .. }
+        | ConstraintKind::Biome { place, .. }
+        | ConstraintKind::Coverage { place, .. }
+        | ConstraintKind::Spawn { place } => centre(place),
     }
 }
 

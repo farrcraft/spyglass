@@ -20,3 +20,4 @@ Plans that have been fully implemented. See [development-process.md](../../devel
 | [m08-dimensions](m08-dimensions.md)                     | 08. Nether, End and multiple versions      | 2026-10-26 |
 | [m08-versions](m08-versions.md)                         | 08. Nether, End and multiple versions      | 2026-10-27 |
 | [m09-fast-density](m09-fast-density.md)                 | 09. Fast density evaluation                | 2026-10-28 |
+| [m10-hardening](m10-hardening.md)                       | 10. Hardening                              | 2026-10-28 |

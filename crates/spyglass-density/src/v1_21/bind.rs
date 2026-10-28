@@ -24,14 +24,13 @@ use spyglass_noise::NormalNoiseParameters;
 use spyglass_noise::mth;
 use spyglass_noise::v1_21::{BlendedNoise, NormalNoise, SimplexNoise};
 use spyglass_rng::{
-    LegacyPositionalRandomFactory, LegacyRandomSource, PositionalRandomFactory, RandomSource,
-    XoroshiroPositionalRandomFactory, XoroshiroRandomSource,
+    LegacyRandomSource, PositionalRandomFactory, RandomSource, XoroshiroRandomSource,
 };
 
 use super::chunk::NoiseChunk;
 use super::function::{DensityFunction, Df, Mapped, Marker, Spline, TwoArgument};
 use crate::java;
-use crate::sampler::sample_multipoint;
+use crate::sampler::{NETHER_BIOME_NOISES, WorldRandom, sample_multipoint};
 
 /// The visitor a graph was mapped with, which decides what's a constant operand, which markers
 /// remain and what the ranges are.
@@ -717,22 +716,6 @@ fn spline_range(
 
 /// Tells binders apart, so a `NoiseChunk` never reads another binder's slots.
 static BINDERS: AtomicU64 = AtomicU64::new(0);
-
-/// `RandomState`'s positional factory, which `legacy_random_source` chooses.
-#[derive(Debug, Clone)]
-enum WorldRandom {
-    /// `XoroshiroRandomSource(seed).forkPositional()`.
-    Xoroshiro(XoroshiroPositionalRandomFactory),
-    /// `LegacyRandomSource(seed).forkPositional()`.
-    Legacy(LegacyPositionalRandomFactory),
-}
-
-/// `Noises.TEMPERATURE_NETHER` and `VEGETATION_NETHER`, with the offsets their legacy sources
-/// add to the seed (`NoiseWiringHelper.visitNoise`).
-const NETHER_BIOME_NOISES: [(&str, i64); 2] = [
-    ("minecraft:nether/temperature", 0),
-    ("minecraft:nether/vegetation", 1),
-];
 
 /// Binds 26.2 functions for one seed, as `RandomState`'s noise wiring does: each noise is made
 /// once (`getOrCreateNoise`), and shared nodes stay shared.

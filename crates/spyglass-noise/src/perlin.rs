@@ -47,6 +47,18 @@ fn grad_dot(hash: i32, x: f32, y: f32, z: f32) -> f32 {
     gx as f32 * x + gy as f32 * y + gz as f32 * z
 }
 
+/// The permutation table every gradient noise draws after its offsets, in every version:
+/// `0..=255` shuffled by Fisher–Yates from the front, `j = nextInt(256 − i)` swapping `p[i]`
+/// and `p[i + j]`.
+pub(crate) fn permutation(random: &mut impl RandomSource) -> [u8; 256] {
+    let mut perms: [u8; 256] = std::array::from_fn(|i| i as u8);
+    for i in 0..256 {
+        let j = random.next_int_bounded(256 - i as i32) as usize;
+        perms.swap(i, i + j);
+    }
+    perms
+}
+
 /// `PerlinNoise` (with the state of `GradientNoise`): one octave.
 #[derive(Debug, Clone)]
 pub struct PerlinNoise {
@@ -59,12 +71,10 @@ impl PerlinNoise {
     /// shuffle of the permutation table.
     pub fn new(random: &mut impl RandomSource) -> Self {
         let offset = std::array::from_fn(|_| random.next_double() * 256.0);
-        let mut perms: [u8; 256] = std::array::from_fn(|i| i as u8);
-        for i in 0..256 {
-            let j = random.next_int_bounded(256 - i as i32) as usize + i;
-            perms.swap(i, j);
+        PerlinNoise {
+            perms: permutation(random),
+            offset,
         }
-        PerlinNoise { perms, offset }
     }
 
     /// `offsetX`, `offsetY` and `offsetZ`.
@@ -406,6 +416,21 @@ mod tests {
         noise.add_to_volume(&mut buffer, &volume, scale, scale, 1.0);
         let want = noise.get(12345.0 * scale, 67.0 * scale, -891.0 * scale);
         assert_eq!(buffer[0], want);
+    }
+
+    /// 26.2's hand-worked value (`v1_21::improved`'s `value_with_identity_permutation`), in
+    /// 26.3's `f32`: with `p[i] = i` and no offsets, at (0.25, 0.5, 0.75) each corner's gradient is
+    /// `GRADIENT[dx + dy + dz]`. Every step is a short binary fraction, exact in `f32` too:
+    /// `0.0517578125 + 0.896484375 · 0.396484375 = 106745 / 2^18`.
+    #[test]
+    fn value_with_identity_permutation() {
+        let noise = PerlinNoise {
+            perms: std::array::from_fn(|i| i as u8),
+            offset: [0.0; 3],
+        };
+        assert_eq!(noise.get(0.25, 0.5, 0.75), 106_745.0 / 262_144.0);
+        // At a lattice corner every gradient dot is 0.
+        assert_eq!(noise.get(3.0, -2.0, 5.0), 0.0);
     }
 
     #[test]

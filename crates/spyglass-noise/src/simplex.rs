@@ -19,12 +19,10 @@ impl SimplexNoise {
     pub fn new(random: &mut impl RandomSource, zero_offsets: bool) -> Self {
         let scale = if zero_offsets { 0.0 } else { 256.0 };
         let offset = std::array::from_fn(|_| random.next_double() * scale);
-        let mut perms: [u8; 256] = std::array::from_fn(|i| i as u8);
-        for i in 0..256 {
-            let j = random.next_int_bounded(256 - i as i32) as usize + i;
-            perms.swap(i, j);
+        SimplexNoise {
+            perms: crate::perlin::permutation(random),
+            offset,
         }
-        SimplexNoise { perms, offset }
     }
 
     /// `offsetX`, `offsetY` and `offsetZ`.
@@ -68,8 +66,8 @@ impl SimplexNoise {
     }
 }
 
-/// `SimplexNoise.getCornerNoise3D`.
-fn corner(g: i32, x: f64, y: f64, z: f64, base: f64) -> f64 {
+/// `SimplexNoise.getCornerNoise3D`, the same in 26.2 and 26.3.
+pub(crate) fn corner(g: i32, x: f64, y: f64, z: f64, base: f64) -> f64 {
     let t = ((base - x * x) - y * y) - z * z;
     // dcmpg/ifge: NaN goes on to the else branch.
     if t < 0.0 {
@@ -80,8 +78,9 @@ fn corner(g: i32, x: f64, y: f64, z: f64, base: f64) -> f64 {
     }
 }
 
-/// `GradientNoise.Gradient.dot(double, double, double)`: in `f64`, the z term always added.
-fn dot(g: i32, x: f64, y: f64, z: f64) -> f64 {
+/// `GradientNoise.Gradient.dot(double, double, double)` (26.2's `SimplexNoise.dot`): in `f64`,
+/// the z term always added.
+pub(crate) fn dot(g: i32, x: f64, y: f64, z: f64) -> f64 {
     let [gx, gy, gz] = GRADIENT[g as usize];
     (f64::from(gx) * x + f64::from(gy) * y) + f64::from(gz) * z
 }

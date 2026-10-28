@@ -267,7 +267,7 @@ fn constraints_infer_their_dimension() {
              prefer 2 slime within 64 of spawn",
         )
         .unwrap();
-    let dimensions: Vec<Dimension> = (0..7).map(|i| query.dimension(i)).collect();
+    let dimensions: Vec<Dimension> = (0..7).map(|i| query.dimension(i).unwrap()).collect();
     let (o, n) = (Dimension::Overworld, Dimension::Nether);
     assert_eq!(dimensions, [n, n, o, n, o, n, o]);
     // A dimension is written only where it isn't the inferred one.
@@ -336,7 +336,7 @@ fn a_world_searches_its_own_dimension() {
     let query = nether
         .search_query("require nether fort within 50 of 0,0\nprefer #minecraft:mixed in 0,0 to 9,9")
         .unwrap();
-    assert_eq!(query.dimension(1), Dimension::Nether);
+    assert_eq!(query.dimension(1), Some(Dimension::Nether));
     assert_eq!(
         query.to_string(),
         "require minecraft:fort within 50 of 0,0\nprefer #minecraft:mixed in 0,0 to 9,9\n"

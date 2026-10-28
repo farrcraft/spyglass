@@ -680,7 +680,8 @@ mod tests {
             query.to_string(),
             "require overworld minecraft:igloo within 5 of spawn\n"
         );
-        query.forget_dimension(0);
+        assert!(query.forget_dimension(0));
+        assert!(!query.forget_dimension(1));
         assert_eq!(
             query.to_string(),
             "require minecraft:igloo within 5 of spawn\n"

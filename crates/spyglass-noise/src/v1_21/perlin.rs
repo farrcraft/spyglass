@@ -70,28 +70,8 @@ impl PerlinNoise {
         first_octave: i32,
         amplitudes: Vec<f64>,
     ) -> Result<Self, NoiseError> {
-        let n = amplitudes.len() as i32;
-        let zero = first_octave.wrapping_neg();
-        let mut levels: Vec<Option<ImprovedNoise>> = vec![None; amplitudes.len()];
-        let at_zero = ImprovedNoise::new(random);
-        if (0..n).contains(&zero) && amplitudes[zero as usize] != 0.0 {
-            levels[zero as usize] = Some(at_zero);
-        }
-        for i in (0..zero).rev() {
-            if i < n && amplitudes[i as usize] != 0.0 {
-                levels[i as usize] = Some(ImprovedNoise::new(random));
-            } else {
-                // skipOctave.
-                random.consume_count(262);
-            }
-        }
-        let made = levels.iter().filter(|l| l.is_some()).count();
-        if made != amplitudes.iter().filter(|&&a| a != 0.0).count() {
-            return Err(NoiseError::LegacyOctaves);
-        }
-        if zero < n - 1 {
-            return Err(NoiseError::PositiveOctaves);
-        }
+        let levels =
+            crate::normal::legacy_levels(random, first_octave, &amplitudes, ImprovedNoise::new)?;
         Ok(Self::with_levels(levels, first_octave, amplitudes))
     }
 

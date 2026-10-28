@@ -254,9 +254,10 @@ pub(crate) enum BoundSpline {
 /// Tells binders apart, so remembered values are never read by another binder's nodes.
 static BINDERS: AtomicU64 = AtomicU64::new(0);
 
-/// `RandomState`'s positional factory, which `legacy_random_source` chooses.
+/// `RandomState`'s positional factory, which `legacy_random_source` chooses. Both evaluator
+/// families' binders use it.
 #[derive(Debug, Clone)]
-enum WorldRandom {
+pub(crate) enum WorldRandom {
     /// `XoroshiroRandomSource(seed).forkPositional()`.
     Xoroshiro(XoroshiroPositionalRandomFactory),
     /// `LegacyRandomSource(seed).forkPositional()`.
@@ -264,8 +265,9 @@ enum WorldRandom {
 }
 
 /// `Noises.TEMPERATURE_NETHER` and `VEGETATION_NETHER`, with the offsets their legacy sources
-/// add to the seed (`RandomState`'s `createNoiseSampler`).
-const NETHER_BIOME_NOISES: [(&str, i64); 2] = [
+/// add to the seed (`RandomState`'s `createNoiseSampler`, and 26.2's
+/// `NoiseWiringHelper.visitNoise`).
+pub(crate) const NETHER_BIOME_NOISES: [(&str, i64); 2] = [
     ("minecraft:nether/temperature", 0),
     ("minecraft:nether/vegetation", 1),
 ];
@@ -282,6 +284,10 @@ pub struct Binder<'n> {
     bound: HashMap<*const DensityFunction, (Df, Sampler)>,
     /// Ranges by function identity, kept alive the same way.
     ranges: HashMap<*const DensityFunction, (Df, Interval)>,
+    /// [`domain_axes`] by node identity, for every node under `axes_roots`, which keep them
+    /// alive. Shared, so nested warps don't each walk their subtrees again.
+    axes: HashMap<*const DensityFunction, u8>,
+    axes_roots: Vec<Df>,
     id: u64,
     slots: u32,
     /// What vertical anchors resolve against, if known.
@@ -315,10 +321,21 @@ impl<'n> Binder<'n> {
             noises: HashMap::new(),
             bound: HashMap::new(),
             ranges: HashMap::new(),
+            axes: HashMap::new(),
+            axes_roots: Vec::new(),
             id: BINDERS.fetch_add(1, Ordering::Relaxed),
             slots: 0,
             anchors: None,
         }
+    }
+
+    /// [`domain_axes`] of `function`, remembered for it and every node under it.
+    fn domain_axes(&mut self, function: &Df) -> u8 {
+        if let Some(&axes) = self.axes.get(&Arc::as_ptr(function)) {
+            return axes;
+        }
+        self.axes_roots.push(function.clone());
+        domain_axes(function, &mut self.axes)
     }
 
     /// Resolves vertical anchors against `heights` (`RandomState.verticalAnchors()`): the
@@ -335,11 +352,9 @@ impl<'n> Binder<'n> {
             GradientCoordinate::Absolute(c) => Ok(c),
             GradientCoordinate::Anchor(anchor) => {
                 let heights = self.anchors.ok_or_else(|| {
-                    LoadError::new(
-                        "",
-                        "",
-                        LoadErrorKind::Invalid("a vertical anchor needs the level's heights"),
-                    )
+                    binding_error(LoadErrorKind::Invalid(
+                        "a vertical anchor needs the level's heights",
+                    ))
                 })?;
                 Ok(anchor.resolve(heights))
             }
@@ -642,8 +657,8 @@ impl<'n> Binder<'n> {
                 offset_y,
                 offset_z,
             } => {
-                let axes = domain_axes(function, &mut HashMap::new());
-                let flat = domain_axes(input, &mut HashMap::new()) & AXIS_Y == 0;
+                let axes = self.domain_axes(function);
+                let flat = self.domain_axes(input) & AXIS_Y == 0;
                 let bound = self.bind(input)?;
                 let offsets = match [offset_x, offset_y, offset_z].map(|o| o.as_constant()) {
                     // f2i: truncation, saturating, NaN to 0.
@@ -883,9 +898,14 @@ fn end_island_height(noise: &SimplexNoise, x: i32, z: i32) -> f32 {
                 // Mth.sqrt(float): (float) Math.sqrt((double) f).
                 let length = f64::from(fx * fx + fz * fz).sqrt() as f32;
                 let v = 100.0 - length * size;
-                // Mth.clamp(float): v < min ? min : Math.min(v, max).
-                let v = if v < -100.0 { -100.0 } else { v.min(80.0) };
-                height = height.max(v);
+                // Mth.clamp(float): v < min ? min : Math.min(v, max). Java's min and max, as
+                // everywhere, though v is finite and never -0 here.
+                let v = if v < -100.0 {
+                    -100.0
+                } else {
+                    java::min(v, 80.0)
+                };
+                height = java::max(height, v);
             }
         }
     }
@@ -929,9 +949,15 @@ fn create_fbm(
     NoiseStack::new(layers)
 }
 
+/// An error found while binding a function to a seed. By then references are resolved into
+/// shared nodes and no longer carry their names, so the error says when it happened instead.
+fn binding_error(kind: LoadErrorKind) -> LoadError {
+    LoadError::new("binding a density function to a seed", "", kind)
+}
+
 impl From<IntervalError> for LoadError {
     fn from(e: IntervalError) -> Self {
-        LoadError::new("", "", LoadErrorKind::Invalid(e.reason()))
+        binding_error(LoadErrorKind::Invalid(e.reason()))
     }
 }
 
@@ -1084,100 +1110,71 @@ impl Sampler {
     }
 }
 
-impl Node {
-    /// The node's type, for [`timing`](crate::timing) on the volume path.
-    #[cfg(feature = "timing")]
-    pub(crate) fn kind(&self) -> &'static str {
-        match self {
-            Node::Constant(..) => "volume: Constant",
-            Node::Noise { .. } => "volume: Noise",
-            Node::NoiseShiftedXz { .. } => "volume: NoiseShiftedXz",
-            Node::NoiseShiftedXyz { .. } => "volume: NoiseShiftedXyz",
-            Node::SmearedNoise { .. } => "volume: SmearedNoise",
-            Node::ShiftA(..) => "volume: ShiftA",
-            Node::ShiftB(..) => "volume: ShiftB",
-            Node::Shift(..) => "volume: Shift",
-            Node::Add(..) => "volume: Add",
-            Node::Sub(..) => "volume: Sub",
-            Node::Mul(..) => "volume: Mul",
-            Node::MulConst(..) => "volume: MulConst",
-            Node::Div(..) => "volume: Div",
-            Node::ConstDiv(..) => "volume: ConstDiv",
-            Node::Min(..) => "volume: Min",
-            Node::MinConst(..) => "volume: MinConst",
-            Node::Max(..) => "volume: Max",
-            Node::MaxConst(..) => "volume: MaxConst",
-            Node::Unary(..) => "volume: Unary",
-            Node::Round(..) => "volume: Round",
-            Node::RoundInteger(..) => "volume: RoundInteger",
-            Node::Clamp(..) => "volume: Clamp",
-            Node::MathClamp(..) => "volume: MathClamp",
-            Node::Pow(..) => "volume: Pow",
-            Node::PowConstBase(..) => "volume: PowConstBase",
-            Node::PowConstExponent(..) => "volume: PowConstExponent",
-            Node::Lerp { .. } => "volume: Lerp",
-            Node::RangeChoice { .. } => "volume: RangeChoice",
-            Node::IntervalSelect { .. } => "volume: IntervalSelect",
-            Node::Slice { .. } => "volume: Slice",
-            Node::Interpolated { .. } => "volume: Interpolated",
-            Node::Upscale(..) => "volume: Upscale",
-            Node::UpscaleNearest { .. } => "volume: UpscaleNearest",
-            Node::FindTopSurface { .. } => "volume: FindTopSurface",
-            Node::Gradient { .. } => "volume: Gradient",
-            Node::GradientRepeat { .. } => "volume: GradientRepeat",
-            Node::Spline(..) => "volume: Spline",
-            Node::DistanceToPoint { .. } => "volume: DistanceToPoint",
-            Node::EndIslands(..) => "volume: EndIslands",
-            Node::DomainWarp { .. } => "volume: DomainWarp",
+/// [`Node::kind`] and [`Node::point_kind`] for every variant, from one list, so the two can't
+/// disagree.
+macro_rules! node_kinds {
+    ($($variant:ident),* $(,)?) => {
+        /// The node's type, for [`timing`](crate::timing) on the volume path.
+        #[cfg(feature = "timing")]
+        pub(crate) fn kind(&self) -> &'static str {
+            match self {
+                $(Node::$variant { .. } => concat!("volume: ", stringify!($variant)),)*
+            }
         }
-    }
 
-    /// The node's type, for [`timing`](crate::timing) on the point path.
-    #[cfg(feature = "timing")]
-    pub(crate) fn point_kind(&self) -> &'static str {
-        match self {
-            Node::Constant(..) => "point: Constant",
-            Node::Noise { .. } => "point: Noise",
-            Node::NoiseShiftedXz { .. } => "point: NoiseShiftedXz",
-            Node::NoiseShiftedXyz { .. } => "point: NoiseShiftedXyz",
-            Node::SmearedNoise { .. } => "point: SmearedNoise",
-            Node::ShiftA(..) => "point: ShiftA",
-            Node::ShiftB(..) => "point: ShiftB",
-            Node::Shift(..) => "point: Shift",
-            Node::Add(..) => "point: Add",
-            Node::Sub(..) => "point: Sub",
-            Node::Mul(..) => "point: Mul",
-            Node::MulConst(..) => "point: MulConst",
-            Node::Div(..) => "point: Div",
-            Node::ConstDiv(..) => "point: ConstDiv",
-            Node::Min(..) => "point: Min",
-            Node::MinConst(..) => "point: MinConst",
-            Node::Max(..) => "point: Max",
-            Node::MaxConst(..) => "point: MaxConst",
-            Node::Unary(..) => "point: Unary",
-            Node::Round(..) => "point: Round",
-            Node::RoundInteger(..) => "point: RoundInteger",
-            Node::Clamp(..) => "point: Clamp",
-            Node::MathClamp(..) => "point: MathClamp",
-            Node::Pow(..) => "point: Pow",
-            Node::PowConstBase(..) => "point: PowConstBase",
-            Node::PowConstExponent(..) => "point: PowConstExponent",
-            Node::Lerp { .. } => "point: Lerp",
-            Node::RangeChoice { .. } => "point: RangeChoice",
-            Node::IntervalSelect { .. } => "point: IntervalSelect",
-            Node::Slice { .. } => "point: Slice",
-            Node::Interpolated { .. } => "point: Interpolated",
-            Node::Upscale(..) => "point: Upscale",
-            Node::UpscaleNearest { .. } => "point: UpscaleNearest",
-            Node::FindTopSurface { .. } => "point: FindTopSurface",
-            Node::Gradient { .. } => "point: Gradient",
-            Node::GradientRepeat { .. } => "point: GradientRepeat",
-            Node::Spline(..) => "point: Spline",
-            Node::DistanceToPoint { .. } => "point: DistanceToPoint",
-            Node::EndIslands(..) => "point: EndIslands",
-            Node::DomainWarp { .. } => "point: DomainWarp",
+        /// The node's type, for [`timing`](crate::timing) on the point path.
+        #[cfg(feature = "timing")]
+        pub(crate) fn point_kind(&self) -> &'static str {
+            match self {
+                $(Node::$variant { .. } => concat!("point: ", stringify!($variant)),)*
+            }
         }
-    }
+    };
+}
+
+impl Node {
+    node_kinds!(
+        Constant,
+        Noise,
+        NoiseShiftedXz,
+        NoiseShiftedXyz,
+        SmearedNoise,
+        ShiftA,
+        ShiftB,
+        Shift,
+        Add,
+        Sub,
+        Mul,
+        MulConst,
+        Div,
+        ConstDiv,
+        Min,
+        MinConst,
+        Max,
+        MaxConst,
+        Unary,
+        Round,
+        RoundInteger,
+        Clamp,
+        MathClamp,
+        Pow,
+        PowConstBase,
+        PowConstExponent,
+        Lerp,
+        RangeChoice,
+        IntervalSelect,
+        Slice,
+        Interpolated,
+        Upscale,
+        UpscaleNearest,
+        FindTopSurface,
+        Gradient,
+        GradientRepeat,
+        Spline,
+        DistanceToPoint,
+        EndIslands,
+        DomainWarp,
+    );
 
     /// The node's value at `pos`, its children's through `memo`.
     pub(crate) fn compute(&self, memo: &mut Memo, pos: Pos) -> f32 {
@@ -1499,12 +1496,6 @@ impl Node {
         }
     }
 
-    /// Whether the value can depend on y, from the children's flags.
-    ///
-    /// A noise's y input only reaches the noise as `wrap(y * frequency) + offset`, with an offset
-    /// from `nextDouble() * 256`, never `-0.0`. With a y scale of 0, `y * 0.0` is `+0.0` or `-0.0`
-    /// depending on the sign of y, and adding the offset makes the two the same. So a noise with
-    /// a y scale of 0 and a y-independent y shift doesn't depend on y.
     /// Whether the node's value over a volume, at each position, depends only on the position.
     /// A domain warp's doesn't (whether it samples at points or over a box depends on the
     /// volume), and interpolation and upscaling are counted out too, conservatively: an
@@ -1572,6 +1563,12 @@ impl Node {
         }
     }
 
+    /// Whether the value can depend on y, from the children's flags.
+    ///
+    /// A noise's y input only reaches the noise as `wrap(y * frequency) + offset`, with an offset
+    /// from `nextDouble() * 256`, never `-0.0`. With a y scale of 0, `y * 0.0` is `+0.0` or `-0.0`
+    /// depending on the sign of y, and adding the offset makes the two the same. So a noise with
+    /// a y scale of 0 and a y-independent y shift doesn't depend on y.
     fn depends_on_y(&self) -> bool {
         match self {
             Node::Constant(_) | Node::ShiftA(_) | Node::ShiftB(_) => false,

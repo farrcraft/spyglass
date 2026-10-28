@@ -1,8 +1,8 @@
 # 10. Hardening
 
-- Status: In progress
-- Depends on: [09](completed/09-fast-density.md)
-- Plans: [m10-hardening](../plans/m10-hardening.md)
+- Status: Completed
+- Depends on: [09](09-fast-density.md)
+- Plans: [m10-hardening](../../plans/completed/m10-hardening.md)
 
 ## Goal
 
@@ -21,8 +21,8 @@ Not in scope: new worldgen behavior. Surface rules, features and the final spawn
 
 ## Exit criteria
 
-- [ ] Every finding in the plan is fixed, or closed with a recorded reason.
-- [ ] No input file in a save or pack makes the process abort, as shown by tests for each finding and by fuzzing the NBT and region readers.
+- [x] Every finding in the plan is fixed, or closed with a recorded reason.
+- [x] No input file in a save or pack makes the process abort, as shown by tests for each finding and by fuzzing the NBT and region readers.
 - [x] Ctrl-C, `--time` and the viewer's Stop end a search within one second of the request, measured on a stronghold query with `--top 1000`.
-- [ ] `cargo xtask check` reports broken relative links and anchors in Markdown, and passes.
-- [ ] `cargo xtask check` and `cargo xtask oracle-test` pass for every supported version.
+- [x] `cargo xtask check` reports broken relative links and anchors in Markdown, and passes.
+- [x] `cargo xtask check` and `cargo xtask oracle-test` pass for every supported version.

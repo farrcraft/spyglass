@@ -1,6 +1,6 @@
 # 11. Releases
 
-- Status: Planned
+- Status: In progress
 - Depends on: [10](completed/10-hardening.md)
 - Plans: [m11-releases](../plans/m11-releases.md)
 

@@ -1,6 +1,6 @@
 # m11. Releases
 
-- Status: Draft
+- Status: In progress
 - Milestone: [11. Releases](../roadmap/11-releases.md)
 - Started: 2026-10-28
 - Completed: YYYY-MM-DD
@@ -109,7 +109,7 @@ Every action is pinned by commit SHA, as `ci.yml` does. The workflow only calls 
 
 ## Tasks
 
-- [ ] ADRs 0037, 0038 and 0039, accepted before the code that depends on them.
+- [x] ADRs 0037, 0038 and 0039, accepted before the code that depends on them.
 - [ ] `default_bundles_dir()` in `spyglass-data`, re-exported. CLI, extractor and viewer use it. Tests for each step of the order, using `SPYGLASS_BUNDLES` and a temp folder. bundle-format.md updated.
 - [ ] `versions::CHECKED` and its sync test against `ci.yml`. The unchecked-version warning in the API, CLI (text and `--json`), viewer and extractor. Tests with a bundle whose data version is changed in a temp copy.
 - [ ] Version strings with commit and date in all three binaries, and the checked versions in `spyglass --version`.
@@ -134,7 +134,7 @@ Every action is pinned by commit SHA, as `ci.yml` does. The workflow only calls 
 
 ## Durable outputs
 
-- [ ] ADRs 0037, 0038, 0039.
+- [x] ADRs 0037, 0038, 0039.
 - [ ] [bundle-format.md](../specs/bundle-format.md): the default bundles folder.
 - [ ] A spec section on checked versions and the warning, in [bundle-format.md](../specs/bundle-format.md) or a new `versions.md`.
 - [ ] `docs/releasing.md`.

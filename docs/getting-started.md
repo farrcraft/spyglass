@@ -349,6 +349,8 @@ cargo run --release -p spyglass-viewer
 
 The viewer opens the newest release in the bundles folder (or the newest snapshot if there's no release) (choose another folder from the side panel) and shows seed 0. Without a bundle it says how to extract one.
 
+![The viewer's side panel and a biome map of seed 8675309 at 8 blocks per pixel, with villages, outposts, swamp huts, temples, mansions and monuments marked](images/viewer-overworld.png)
+
 - **Move around:** drag to pan, scroll to zoom around the pointer, or use the arrow keys and `+`/`-`. **Go to** takes `x z` or `x y z`. The status bar shows the block, chunk and biome under the pointer.
 - **Seed or save:** type a seed and press **Show**, or open a save from the launchers' list or any folder. A save opens on its player, in the player's dimension, with anything that makes its answers inexact listed.
 - **Dimension:** switch between the Overworld, the Nether and the End; each keeps its own view. Slime chunks and the spawn are the Overworld's, and terrain layers aren't drawn in the Nether, whose surface is its ceiling.
@@ -358,6 +360,18 @@ The viewer opens the newest release in the bundles folder (or the newest snapsho
 - **Search:** type a query in the **Search** section, set a seed count or time limit (and **Confirm with terrain** to decide structures), and press **Search**. The best seeds appear as they're found; click one to open it, in its first constraint's dimension and centred on that constraint's place, with everything its constraints matched there ringed.
 
 Rendering runs in the background on all but one core, so the map stays responsive while tiles fill in. Settings are kept between runs.
+
+Up close, with **Relief** and **Biomes at the surface** on, and the bounds of a plains village drawn:
+
+![A close-up at 1 block per pixel: shaded terrain, rivers, and a village's outline](images/viewer-relief.png)
+
+The Nether, with fortresses and bastions marked:
+
+![The Nether's biomes at 4 blocks per pixel, with fortress and bastion markers](images/viewer-nether.png)
+
+A search's results, the best seed opened, and what its constraints matched ringed:
+
+![The Search section listing ten ranked seeds, and the best one's two swamp huts and cherry grove ringed on the map](images/viewer-search.png)
 
 ## Next steps
 

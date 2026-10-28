@@ -6,6 +6,10 @@ A local-only seed explorer for Minecraft: Java Edition. Describe what you want i
 
 > Status: early. For game versions 26.2, 26.3 and the 26.4 snapshots so far (26.4-snapshot-5 and 26.4-snapshot-6), each checked against the real game, the `spyglass` command answers `/locate`-style questions (structures, biomes, slime chunks, spawn) for any seed or a world save, in the Overworld, the Nether and the End, with `--json` for scripts, draws maps of them, and searches for the seeds that best fit a query of required and preferred constraints, which can span dimensions ("a fortress near the spawn's portal"). The viewer shows the same maps, pannable and zoomable, with layers you choose and a dimension switch, and runs the same searches. Terrain heights decide which structures really generate, so locate answers match the game's `/locate`, with exact bounds for villages, bastions and other jigsaw structures; maps can show terrain relief up close. New versions are added as they come out, snapshots included, and stay supported ([adding a version](docs/adding-a-version.md)).
 
+![The spyglass viewer showing the best seed from a search for two swamp huts near spawn, with the huts and a cherry grove ringed on a biome map](docs/images/viewer-search.png)
+
+More of the viewer is in [getting started](docs/getting-started.md#10-the-viewer).
+
 Not affiliated with or endorsed by Mojang or Microsoft.
 
 ## Goals

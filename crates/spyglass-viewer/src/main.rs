@@ -12,6 +12,12 @@ mod tiles;
 mod view;
 
 fn main() -> eframe::Result {
+    // The one argument the viewer takes: for bug reports, and for checking a release archive on a
+    // machine with no display.
+    if std::env::args().nth(1).as_deref() == Some("--version") {
+        println!("spyglass-viewer {}", spyglass::build::version());
+        return Ok(());
+    }
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("spyglass")

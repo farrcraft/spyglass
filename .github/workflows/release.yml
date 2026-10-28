@@ -1,0 +1,140 @@
+# Release (ADRs 0037 and 0038; docs/releasing.md): a pushed v<version> tag, made by
+# `cargo xtask release`, becomes a draft GitHub release with an archive per target, SHA256SUMS
+# and a provenance attestation for each archive. The owner publishes the draft by hand.
+#
+# Every check and oracle job runs first, on the tagged commit. The archives hold only spyglass's
+# own binaries and docs; nothing derived from the game is uploaded (ADR 0008): the smoke test's
+# bundle stays on its runner. Each step calls `cargo xtask`, so it runs the same locally.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    name: Tag and release notes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # release-notes checks that the tagged commit is on main.
+          fetch-depth: 0
+      - run: cargo xtask release-notes --tag "$GITHUB_REF_NAME" --out notes.md
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: notes
+          path: notes.md
+
+  ci:
+    name: CI
+    needs: verify
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    name: build ${{ matrix.target }}
+    needs: ci
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            runner: windows-2025
+          # The oldest hosted image, for the oldest glibc the binaries need.
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+            # The full smoke test runs once: the game's answers don't depend on the OS.
+            extract: "26.3"
+          - target: aarch64-apple-darwin
+            runner: macos-15
+          # Cross-compiled; its smoke test runs under Rosetta.
+          - target: x86_64-apple-darwin
+            runner: macos-15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: The viewer's system libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libxkbcommon-dev libwayland-dev libx11-dev \
+            libxcursor-dev libxrandr-dev libxi-dev libvulkan-dev
+      - run: rustup target add ${{ matrix.target }}
+      # Only tools are cached, never anything derived from the game (ADR 0008).
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/bin/cargo-about
+            ~/.cargo/bin/cargo-about.exe
+          key: cargo-about-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/workflows/release.yml') }}
+      # Keep the version in step with the setup scripts' release tools; an xtask test checks it.
+      - name: cargo-about
+        shell: bash
+        run: cargo about --version || cargo install --locked --features cli cargo-about@0.9.3
+      - run: cargo xtask dist --target ${{ matrix.target }}
+      - name: The JDK major the smoke test's extraction needs
+        if: matrix.extract
+        id: jdk
+        run: |
+          echo "major=$(cargo xtask jdk-status --game-version '${{ matrix.extract }}' | cut -d' ' -f1)" \
+            >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        if: matrix.extract
+        with:
+          distribution: temurin
+          java-version: ${{ steps.jdk.outputs.major }}
+      - name: Smoke test
+        shell: bash
+        run: |
+          archive=$(ls target/archives/spyglass-*)
+          cargo xtask smoke "$archive" ${{ matrix.extract && format('--extract {0}', matrix.extract) || '' }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: archive-${{ matrix.target }}
+          path: target/archives/spyglass-*
+          if-no-files-found: error
+
+  publish:
+    name: Draft release
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # The only job that can write: the release, and the attestations with their signing token.
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: archive-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: notes
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum spyglass-* > SHA256SUMS && cat SHA256SUMS
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/spyglass-*
+      # A draft, so nothing is public until the owner publishes it. A tag with a pre-release
+      # (v0.1.0-rc.1) makes a pre-release.
+      - name: Create the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          prerelease=""
+          case "$TAG" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --verify-tag $prerelease \
+            --title "spyglass ${TAG#v}" --notes-file notes.md dist/*

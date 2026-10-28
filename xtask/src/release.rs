@@ -1,10 +1,11 @@
 //! `cargo xtask release <version>`: the release commit and tag, made locally and never pushed
-//! (docs/adr/0037-versions-and-releases.md).
+//! (docs/adr/0037-versions-and-releases.md). docs/releasing.md has the whole process.
 //!
 //! It sets the workspace version, turns the changelog's Unreleased section into the release's,
 //! with the game versions this build was checked against, runs every check, then commits and
 //! tags. A pre-release (`0.1.0-rc.1`) leaves the changelog alone: its notes are Unreleased.
 
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail, ensure};
@@ -98,7 +99,7 @@ pub fn run(args: &Release) -> Result<()> {
     println!(
         "Committed and tagged {tag}. Nothing is pushed. To release:\n\n    \
          git push --atomic origin main {tag}\n\n\
-         The release workflow then builds a draft release to publish."
+         The release workflow then builds a draft release to publish (docs/releasing.md)."
     );
     Ok(())
 }
@@ -160,14 +161,87 @@ fn today() -> String {
 const UNRELEASED: &str = "## [Unreleased]\n";
 
 /// The text of the changelog's Unreleased section, after its heading and before the next.
-pub fn unreleased(changelog: &str) -> Option<&str> {
-    let start = changelog.find(UNRELEASED)? + UNRELEASED.len();
+fn unreleased(changelog: &str) -> Option<&str> {
+    section(changelog, "Unreleased")
+}
+
+/// The text of the changelog's section `name` (a version, or `Unreleased`): after its heading,
+/// up to the next section or the link definitions.
+fn section<'a>(changelog: &'a str, name: &str) -> Option<&'a str> {
+    let heading = format!("## [{name}]");
+    let start = changelog
+        .match_indices(&heading)
+        .map(|(at, _)| at)
+        .find(|&at| at == 0 || changelog[..at].ends_with('\n'))?;
     let rest = &changelog[start..];
+    let rest = &rest[rest.find('\n')? + 1..];
     let end = rest
         .find("\n## ")
         .or_else(|| rest.find("\n["))
         .unwrap_or(rest.len());
     Some(&rest[..end])
+}
+
+#[derive(clap::Args)]
+pub struct ReleaseNotes {
+    /// The release's tag, e.g. `v0.1.0`.
+    #[arg(long)]
+    tag: String,
+    /// Where to write the notes.
+    #[arg(long)]
+    out: PathBuf,
+}
+
+/// Checks a pushed tag and writes its release notes: the release's changelog section, or
+/// Unreleased for a pre-release, with relative links made absolute to the tag.
+pub fn notes(args: &ReleaseNotes) -> Result<()> {
+    let tag = &args.tag;
+    let version = tag
+        .strip_prefix('v')
+        .with_context(|| format!("the tag {tag:?} isn't v<version>"))?;
+    let parsed = Version::parse(version)?;
+    let workspace = toml_string("Cargo.toml", &["workspace", "package", "version"])?;
+    ensure!(
+        workspace == version,
+        "the tag {tag} doesn't match the workspace version, {workspace}"
+    );
+    let on_main = command("git")
+        .args(["merge-base", "--is-ancestor", "HEAD", "origin/main"])
+        .status()
+        .context("failed to run git")?;
+    ensure!(on_main.success(), "{tag}'s commit isn't on origin/main");
+    let changelog =
+        std::fs::read_to_string(repo_root().join("CHANGELOG.md"))?.replace("\r\n", "\n");
+    let text = match parsed.pre {
+        Some(_) => unreleased(&changelog),
+        None => section(&changelog, version),
+    }
+    .filter(|text| !text.trim().is_empty())
+    .with_context(|| format!("CHANGELOG.md has nothing for {version}"))?;
+    std::fs::write(&args.out, format!("{}\n", absolute_links(text.trim(), tag)))?;
+    Ok(())
+}
+
+/// `text` with each relative Markdown link target made a link to the file at `tag` on GitHub,
+/// since a release page resolves nothing relative.
+fn absolute_links(text: &str, tag: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find("](") {
+        let (before, after) = rest.split_at(at + 2);
+        out.push_str(before);
+        let end = after.find(')').unwrap_or(after.len());
+        let target = &after[..end];
+        let absolute =
+            target.contains("://") || target.starts_with('#') || target.starts_with("mailto:");
+        if !absolute {
+            out.push_str(&format!("{REPO}/blob/{tag}/"));
+        }
+        out.push_str(target);
+        rest = &after[end..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// The changelog with Unreleased become `version`'s section, dated `date` and listing the game
@@ -287,6 +361,28 @@ mod tests {
             "{out}"
         );
         assert_eq!(unreleased(&next).unwrap().trim(), "### Fixed\n\n- A bug.");
+    }
+
+    #[test]
+    fn sections() {
+        let changelog = "## [Unreleased]\n\n- Next.\n\n## [0.1.0-rc.1] - x\n\n- Pre.\n\n\
+                         ## [0.1.0] - 2026-11-02\n\n- First.\n\n[Unreleased]: x\n";
+        assert_eq!(section(changelog, "0.1.0").unwrap().trim(), "- First.");
+        assert_eq!(section(changelog, "Unreleased").unwrap().trim(), "- Next.");
+        assert_eq!(section(changelog, "0.2.0"), None);
+    }
+
+    #[test]
+    fn links_become_absolute() {
+        assert_eq!(
+            absolute_links(
+                "See [the spec](docs/specs/cli-json.md#warnings), [SemVer](https://semver.org/) \
+                 and [below](#added).",
+                "v0.1.0"
+            ),
+            "See [the spec](https://github.com/farrcraft/spyglass/blob/v0.1.0/docs/specs/\
+             cli-json.md#warnings), [SemVer](https://semver.org/) and [below](#added)."
+        );
     }
 
     #[test]

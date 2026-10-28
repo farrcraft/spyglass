@@ -18,6 +18,7 @@ mod locate;
 mod oracle;
 mod oracle_test;
 mod release;
+mod smoke;
 mod version_diff;
 
 #[derive(Parser)]
@@ -84,8 +85,14 @@ enum Cmd {
         cmd: oracle::OracleCmd,
     },
     /// Prepare a release: set the version, date the changelog, run every check, then commit and
-    /// tag. Never pushes (docs/adr/0037-versions-and-releases.md).
+    /// tag. Never pushes (docs/releasing.md).
     Release(release::Release),
+    /// Check a pushed tag against the workspace version and main, and write its release notes
+    /// from the changelog. The release workflow's first step.
+    ReleaseNotes(release::ReleaseNotes),
+    /// Unpack a release archive outside the repo and run what's in it, as a user without Rust
+    /// would; with `--extract`, also extract a game version and answer from it.
+    Smoke(smoke::Smoke),
     /// Report what changed between two bundles in the data spyglass reads: ids added and
     /// removed, files changed, and new or gone JSON shapes (types, fields, value kinds).
     VersionDiff(version_diff::VersionDiff),
@@ -107,6 +114,8 @@ fn main() -> ExitCode {
         Cmd::Oracle { cmd } => oracle::run(cmd),
         Cmd::OracleTest { game_version } => oracle_test::run(game_version.as_deref()),
         Cmd::Release(args) => release::run(&args),
+        Cmd::ReleaseNotes(args) => release::notes(&args),
+        Cmd::Smoke(args) => smoke::run(&args),
         Cmd::VersionDiff(args) => version_diff::run(&args),
     };
     match result {

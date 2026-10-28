@@ -118,11 +118,11 @@ Every action is pinned by commit SHA, as `ci.yml` does. The workflow only calls 
 - [x] `cargo-about` config, its license list kept equal to `deny.toml` by a test, `THIRD-PARTY-LICENSES.html` in the archive. Setup scripts (`--release-tools` / `-ReleaseTools`, the pair kept in step) and `doctor`.
 - [x] `GETTING-STARTED.txt` for the archive, written for someone with no Rust and no clone.
 - [x] `cargo xtask release <version>`.
-- [ ] `ci.yml` gains `workflow_call`. `release.yml` with verify, ci, build, smoke and publish. The release notes' relative links are made absolute to the tag (`https://github.com/farrcraft/spyglass/blob/vX.Y.Z/...`), since they don't resolve on the release page.
+- [x] `ci.yml` gains `workflow_call`. `release.yml` with verify, ci, build, smoke and publish. The release notes' relative links are made absolute to the tag (`https://github.com/farrcraft/spyglass/blob/vX.Y.Z/...`), since they don't resolve on the release page.
 - [ ] A dry run: push a `v0.1.0-rc.1` tag to a fork, or run the workflow by `workflow_dispatch` with publishing off. Fix what it finds.
 - [ ] A reproducibility check: build the same tag twice and compare hashes. Record the result in ADR 0038. Windows done (identical, see the notes); Linux and macOS in the workflow's dry run.
 - [ ] Manual check on a clean Windows, macOS and Linux machine, by the first-run guide only.
-- [ ] `docs/releasing.md`: cutting a release, what to do when a step fails, deleting a bad draft. Links from the README, CONTRIBUTING (changelog entries) and getting-started.
+- [x] `docs/releasing.md`: cutting a release, what to do when a step fails, deleting a bad draft. Links from the README, CONTRIBUTING (changelog entries) and getting-started.
 - [ ] README "Install" section pointing at the releases page, ahead of building from source.
 
 ## Verification
@@ -137,12 +137,13 @@ Every action is pinned by commit SHA, as `ci.yml` does. The workflow only calls 
 - [x] ADRs 0037, 0038, 0039.
 - [x] [bundle-format.md](../specs/bundle-format.md): the default bundles folder.
 - [x] A spec section on checked versions and the warning, in [bundle-format.md](../specs/bundle-format.md#checked-versions).
-- [ ] `docs/releasing.md`.
-- [ ] `CHANGELOG.md`.
+- [x] `docs/releasing.md`.
+- [x] `CHANGELOG.md`.
 - [ ] README, getting-started, CONTRIBUTING and SECURITY updated.
 
 ## Notes
 
+- 2026-10-28: the workflow's steps are `cargo xtask` commands: `release-notes` (checks the tag and writes the notes) and `smoke` (unpacks an archive outside the repo and runs it with Rust's folders off PATH; with `--extract`, on Linux only, also extracts and answers). The viewer gained `--version`, so it can be checked on a runner with no display. The dry run needs no `workflow_dispatch`: a pre-release tag makes a draft pre-release, which nothing publishes. The IDE's Actions extension flags the pinned action SHAs as unresolvable; the GitHub API finds every one, so that's the extension.
 - 2026-10-28: `cargo xtask release` takes pre-releases too (`0.1.0-rc.1`), for the workflow's dry run: they set the version and tag but leave the changelog alone, so their notes are Unreleased. The changelog gets Keep a Changelog's link definitions at the end, and markdownlint's MD024 is now `siblings_only`, since every release repeats headings like "Added" and "Game versions". The command refuses before changing anything if the version isn't after the current one, the tree is dirty, the branch isn't `main`, the tag exists or Unreleased is empty; if the checks fail after it has changed the version and changelog, it leaves them uncommitted and says so.
 - 2026-10-28: `cargo xtask dist` works on Windows. What it took:
   - cargo-about 0.9.3's binary needs `--features cli`, and it refuses to write to a pipe from PowerShell, so dist has it write to a file with `-o`.

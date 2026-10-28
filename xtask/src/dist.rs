@@ -271,7 +271,8 @@ fn file(from: &str, name: &str) -> Result<Entry> {
 /// The third-party licenses page, from cargo-about.
 fn third_party_licenses() -> Result<Vec<u8>> {
     // To a file: cargo-about refuses to write to a pipe from PowerShell, for fear of its encoding.
-    let page = repo_root().join("target").join("archives").join(LICENSES);
+    // Not in target/archives/, whose `spyglass-*` files are the release's.
+    let page = repo_root().join("target").join("about").join(LICENSES);
     std::fs::create_dir_all(page.parent().expect("a file in a folder"))?;
     let out = command("cargo")
         .args(["about", "generate", "--locked", "--workspace", "--fail"])
@@ -491,6 +492,30 @@ mod tests {
             .collect();
         strings.sort();
         strings
+    }
+
+    /// The setup scripts and the release workflow install the same cargo-about.
+    #[test]
+    fn one_cargo_about_version() {
+        let pins: Vec<(&str, String)> = [
+            "scripts/setup.sh",
+            "scripts/setup.ps1",
+            ".github/workflows/release.yml",
+        ]
+        .into_iter()
+        .map(|file| {
+            let text = std::fs::read_to_string(repo_root().join(file)).unwrap();
+            let (_, rest) = text
+                .split_once("cargo-about@")
+                .unwrap_or_else(|| panic!("{file} doesn't install cargo-about@<version>"));
+            let version: String = rest
+                .chars()
+                .take_while(|c| c.is_ascii_digit() || *c == '.')
+                .collect();
+            (file, version)
+        })
+        .collect();
+        assert!(pins.iter().all(|(_, v)| *v == pins[0].1), "{pins:?}");
     }
 
     #[test]

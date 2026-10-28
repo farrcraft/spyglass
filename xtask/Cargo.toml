@@ -19,8 +19,6 @@ spyglass-data.workspace = true
 spyglass-extract.workspace = true
 spyglass-world.workspace = true
 tar.workspace = true
+tempfile.workspace = true
 toml_edit.workspace = true
 zip.workspace = true
-
-[dev-dependencies]
-tempfile.workspace = true

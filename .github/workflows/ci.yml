@@ -9,6 +9,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The release workflow runs all of this on the tagged commit before it builds (ADR 0037).
+  workflow_call:
 
 # A newer push to the same ref cancels the run it supersedes.
 concurrency:

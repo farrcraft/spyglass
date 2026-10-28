@@ -1,0 +1,99 @@
+spyglass: getting started
+=========================
+
+spyglass explores Minecraft: Java Edition seeds on your own computer: where
+structures and biomes are, maps, and searches for the seeds that fit what you
+want. It works for seeds and for your own world saves.
+
+This folder holds three programs:
+
+  spyglass           the command: locate, render, search, heights, world
+  spyglass-viewer    the map app
+  spyglass-extract   builds the game data spyglass needs, once per game version
+
+Not affiliated with or endorsed by Mojang or Microsoft.
+
+
+1. The first run on Windows and macOS
+-------------------------------------
+
+These programs aren't code-signed, so your system warns you the first time.
+
+  Windows: if SmartScreen says "Windows protected your PC", choose
+  "More info", then "Run anyway".
+
+  macOS: open Terminal in this folder and run
+
+      xattr -dr com.apple.quarantine .
+
+  once. Otherwise macOS says the programs "can't be opened". You can also
+  allow each one in System Settings > Privacy & Security > "Open Anyway".
+
+To check that a download wasn't changed on the way, compare its SHA-256 with
+the one in SHA256SUMS on the release page, or verify its provenance with the
+GitHub CLI:
+
+    gh attestation verify <archive> --repo farrcraft/spyglass
+
+
+2. Get the game data
+--------------------
+
+spyglass ships nothing of Mojang's. The extractor downloads the game's server
+jar from Mojang, checks it, and builds the data spyglass reads from it, all on
+your machine:
+
+    spyglass-extract 26.3
+
+(`spyglass-extract` alone uses the latest release.) Run it once for each game
+version you want.
+
+It needs a Java runtime of the version the game needs: Java 25 for 26.3. If
+you've played that version, you probably have one already. The extractor
+looks in the official Minecraft Launcher and the Modrinth App, after
+JAVA_HOME and PATH. Otherwise install one, for example Eclipse Temurin from
+https://adoptium.net, or point the extractor at one with --java <path>.
+
+The data goes in your per-user data folder:
+
+    Windows  %LOCALAPPDATA%\spyglass\data\bundles
+    macOS    ~/Library/Application Support/spyglass/bundles
+    Linux    ~/.local/share/spyglass/bundles
+
+Set SPYGLASS_BUNDLES to use another folder. Every program finds the data
+there, wherever you run it from.
+
+
+3. Use it
+---------
+
+    spyglass locate structure '#minecraft:village' --seed 12345
+    spyglass locate structure minecraft:fortress --seed 12345 --dimension nether
+    spyglass locate structure '#minecraft:village' --world "My World" --from player
+    spyglass render --seed 12345 --structures '#minecraft:village' --spawn -o map.png
+    spyglass search -q 'require 2 minecraft:swamp_hut within 600 of spawn' --time 60s
+
+On Windows, in PowerShell or cmd, use double quotes instead of single quotes.
+
+Every command has --help, and --json for scripts. Or start spyglass-viewer
+for the map.
+
+On Linux, the viewer needs the usual desktop libraries (on Debian and Ubuntu:
+libxkbcommon0, libwayland-client0, libx11-6, libxcursor1, libxrandr2, libxi6
+and libvulkan1). Most desktops already have them.
+
+
+4. Which game versions
+----------------------
+
+`spyglass --version` lists the game versions this build was checked against
+the real game for. Data for any other version still works, with a warning
+that its answers may differ from the game's. A newer spyglass may support it.
+
+
+More
+----
+
+Documentation, the source and bug reports: https://github.com/farrcraft/spyglass
+What changed in this release: CHANGELOG.md
+Licenses: LICENSE (spyglass's own) and THIRD-PARTY-LICENSES.html

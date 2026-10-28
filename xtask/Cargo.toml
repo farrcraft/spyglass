@@ -13,11 +13,14 @@ workspace = true
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+flate2.workspace = true
 serde_json.workspace = true
 spyglass-data.workspace = true
 spyglass-extract.workspace = true
 spyglass-world.workspace = true
+tar.workspace = true
 toml_edit.workspace = true
+zip.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

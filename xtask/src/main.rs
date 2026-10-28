@@ -10,6 +10,7 @@ use spyglass_extract::{java, manifest};
 
 mod ci;
 mod code_diff;
+mod dist;
 mod fuzz;
 mod links;
 mod linux_check;
@@ -37,6 +38,9 @@ enum Cmd {
     /// Run one game version's CI job: extract its bundle, regenerate every oracle output
     /// (goldens, locate and, where it loads, the test pack), and run every comparison.
     Ci(ci::Ci),
+    /// Build one target's release archive into `target/archives/`: the binaries in a `dist`
+    /// build, the docs and the third-party licenses (docs/adr/0038-how-release-archives-are-built.md).
+    Dist(dist::Dist),
     /// Fuzz a reader of untrusted files with cargo-fuzz on nightly: `nbt` or `region`.
     Fuzz(fuzz::Fuzz),
     /// Report whether this machine is ready to work on spyglass. Never installs anything.
@@ -89,6 +93,7 @@ fn main() -> ExitCode {
         Cmd::Bench { bundle } => bench(bundle.as_deref()),
         Cmd::Check => check(),
         Cmd::Ci(args) => ci::run(&args),
+        Cmd::Dist(args) => dist::run(&args),
         Cmd::Doctor { game_version, java } => doctor(&game_version, java.as_deref()),
         Cmd::Fuzz(args) => fuzz::run(&args),
         Cmd::JdkStatus { game_version } => jdk_status(&game_version),
@@ -364,6 +369,16 @@ fn rust_checks(r: &mut Report, setup: &str) {
                 Some(setup),
             ),
         }
+    }
+    // Only `cargo xtask dist` needs it, so it's never a failure.
+    match first_line("cargo", &["about", "--version"]) {
+        Some(v) => r.line(Status::Ok, "cargo-about", &v, None),
+        None => r.line(
+            Status::Warn,
+            "cargo-about",
+            "not installed; only release archives need it",
+            Some("run scripts/setup.ps1 -ReleaseTools or scripts/setup.sh --release-tools"),
+        ),
     }
 
     match msrv_version() {

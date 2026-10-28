@@ -48,7 +48,7 @@ Switch ranges are open-ended ([ADR 0026](../adr/0026-how-game-versions-coexist.m
 
 - Builds `spyglass`, `spyglass-viewer` and `spyglass-extract` with `--profile dist --locked` for one target (the host by default).
 - Sets `SOURCE_DATE_EPOCH` from the commit date. Strips build machine paths with `--remap-path-prefix` for the workspace, `CARGO_HOME` and the rustup toolchain. Windows targets link the C runtime statically (`-C target-feature=+crt-static`), so no Visual C++ redistributable is needed.
-- Writes `target/dist/spyglass-<version>-<target>.{zip|tar.gz}` with a deterministic file order, fixed timestamps and fixed permissions. Contents:
+- Writes `target/archives/spyglass-<version>-<target>.{zip|tar.gz}` (`target/dist/` is where the `dist` profile builds without `--target`) with a deterministic file order, fixed timestamps and fixed permissions. Contents:
   - the three binaries;
   - `README.md`;
   - `LICENSE`;
@@ -114,13 +114,13 @@ Every action is pinned by commit SHA, as `ci.yml` does. The workflow only calls 
 - [x] `versions::CHECKED` and its sync test against `ci.yml`. The unchecked-version warning in the API, CLI (text and `--json`), viewer and extractor. Unit tests for the check, its wording and the JSON (see the notes).
 - [x] Version strings with commit and date in all three binaries, and the checked versions in `spyglass --version`.
 - [x] `CHANGELOG.md` with `Unreleased` filled in from milestones 01 to 10. The workspace version stays `0.0.0` until `cargo xtask release 0.1.0` sets it (see the notes).
-- [ ] `cargo xtask dist`: build, archive, allowlist, path scan. Unit tests for archive determinism (same inputs, same bytes) and the allowlist.
-- [ ] `cargo-about` config, its license list kept equal to `deny.toml` by a test, `THIRD-PARTY-LICENSES.html` in the archive. Setup scripts (`--release-tools` / `-ReleaseTools`, the pair kept in step) and `doctor`.
-- [ ] `GETTING-STARTED.txt` for the archive, written for someone with no Rust and no clone.
+- [x] `cargo xtask dist`: build, archive, allowlist, path scan. Unit tests for archive determinism (same inputs, same bytes) and the allowlist.
+- [x] `cargo-about` config, its license list kept equal to `deny.toml` by a test, `THIRD-PARTY-LICENSES.html` in the archive. Setup scripts (`--release-tools` / `-ReleaseTools`, the pair kept in step) and `doctor`.
+- [x] `GETTING-STARTED.txt` for the archive, written for someone with no Rust and no clone.
 - [ ] `cargo xtask release <version>`.
 - [ ] `ci.yml` gains `workflow_call`. `release.yml` with verify, ci, build, smoke and publish. The release notes' relative links are made absolute to the tag (`https://github.com/farrcraft/spyglass/blob/vX.Y.Z/...`), since they don't resolve on the release page.
 - [ ] A dry run: push a `v0.1.0-rc.1` tag to a fork, or run the workflow by `workflow_dispatch` with publishing off. Fix what it finds.
-- [ ] A reproducibility check: build the same tag twice and compare hashes. Record the result in ADR 0038.
+- [ ] A reproducibility check: build the same tag twice and compare hashes. Record the result in ADR 0038. Windows done (identical, see the notes); Linux and macOS in the workflow's dry run.
 - [ ] Manual check on a clean Windows, macOS and Linux machine, by the first-run guide only.
 - [ ] `docs/releasing.md`: cutting a release, what to do when a step fails, deleting a bad draft. Links from the README, CONTRIBUTING (changelog entries) and getting-started.
 - [ ] README "Install" section pointing at the releases page, ahead of building from source.
@@ -143,6 +143,13 @@ Every action is pinned by commit SHA, as `ci.yml` does. The workflow only calls 
 
 ## Notes
 
+- 2026-10-28: `cargo xtask dist` works on Windows. What it took:
+  - cargo-about 0.9.3's binary needs `--features cli`, and it refuses to write to a pipe from PowerShell, so dist has it write to a file with `-o`.
+  - The MSVC linker writes the PDB's absolute path into each exe; `/PDBALTPATH:%_PDB%` leaves only its file name. The leak scan would have caught it.
+  - Two clean builds differed until `/Brepro` (the linker's timestamp and PDB GUID). With it, binaries and zip are identical.
+  - The `zip` crate records the OS it runs on as each entry's "made by" system, so a zip made on Windows read back with DOS permissions. Entries are now made on Unix.
+  - cargo-about lists every crate in the workspace, its own included; `[private] ignore` drops ours, which are all `publish = false`. Generating for the whole workspace also lists xtask's own dependencies (`tar`, `toml_edit`): more notices than strictly needed, never fewer.
+  - The archive is about 10 MB for Windows; the viewer is 17 MB of it unpacked.
 - 2026-10-28: the workspace version isn't set to `0.1.0` ahead of the release. If `main` said `0.1.0` before the tag existed, every untagged build would claim to be that release. `cargo xtask release` sets the version in the release commit, as ADR 0037 has it, so between releases `main` carries the last release's version and `--version` adds `(dev build)`.
 - 2026-10-28: unchecked versions can't be tested end to end with a relabelled copy of a real bundle: each structure template records its data version, and loading refuses one that differs from the bundle's. The warning's logic and wording are unit-tested in `spyglass-data` and `spyglass`, the JSON wiring in the CLI's `json` module, and an ignored CLI test checks that a checked version prints no warning. The extractor warns by id at the jar step, before downloading, since the data version is only known from the jar.
 - 2026-10-28: the per-user folder is `ProjectDirs::data_local_dir()`, not `data_dir()`: on Windows that's `%LOCALAPPDATA%`, not the roaming profile, which shouldn't carry hundreds of megabytes of bundles. The two are the same elsewhere. The test drives the choice through a private function that takes what it found, since setting an environment variable in a test is `unsafe` in edition 2024 and the workspace forbids `unsafe`. `doctor` reports the folder too.

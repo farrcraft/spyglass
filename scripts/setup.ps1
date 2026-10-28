@@ -1,6 +1,7 @@
 # Installs rustup (if missing) and the toolchain pinned in rust-toolchain.toml, then uv,
-# pre-commit and the git hooks. -Oracle also installs the JDK that oracle work needs.
-param([switch]$Oracle)
+# pre-commit and the git hooks. -Oracle also installs the JDK that oracle work needs;
+# -ReleaseTools, the tools release archives need.
+param([switch]$Oracle, [switch]$ReleaseTools)
 $ErrorActionPreference = 'Stop'
 Set-Location (Split-Path -Parent $PSScriptRoot)
 
@@ -47,6 +48,13 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 # them itself. Keep the versions in step with setup.sh. The first install compiles for a few minutes.
 cargo install --locked cargo-nextest@0.9.149 cargo-shear@1.14.0
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+# cargo xtask dist writes the third-party licenses with cargo-about (ADR 0038). Its binary needs
+# the cli feature. Keep the version in step with setup.sh.
+if ($ReleaseTools) {
+    cargo install --locked --features cli cargo-about@0.9.3
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
 
 # uv provides pre-commit (and its own Python). See docs/adr/0002-git-hooks-for-local-checks.md.
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {

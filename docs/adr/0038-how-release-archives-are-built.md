@@ -48,6 +48,7 @@ We will build release archives with **`cargo xtask dist [--target <triple>]`**, 
 - Intel macOS is cross-compiled from Apple Silicon and runs under Rosetta in its smoke test, never on Intel hardware in CI.
 - Unsigned binaries mean every Windows and macOS user sees a warning on first run, and some will stop there. Provenance and checksums help users who check them, which most won't.
 - Reproducibility is checked by building one tag twice. Remaining differences are recorded here once known.
+  - **Windows (2026-10-28):** two clean builds of one commit gave identical binaries and an identical zip, once the MSVC linker had `/Brepro`. Without it, the PE header's timestamp and the PDB's GUID differ on every link. The zip records its entries as made on Unix, since the `zip` crate otherwise records the OS it runs on. Linux and macOS are still to check, in the release workflow's first runs.
 
 ## Alternatives considered
 

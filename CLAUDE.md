@@ -20,6 +20,7 @@ cargo xtask oracle golden                     # regenerate the game's answers (o
 cargo xtask oracle-test                       # ignored comparisons with the game, where inputs exist
 cargo xtask ci --game-version <v>             # one version's CI job: extract, regenerate, compare
 cargo xtask bench                             # time the public API's main operations
+cargo xtask dist [--target <triple>]          # one target's release archive, in target/archives/
 cargo xtask doctor                            # is this machine ready? (check-only)
 cargo xtask links                             # every relative Markdown link and anchor resolves
 cargo xtask fuzz <nbt|region>                 # fuzz a reader of untrusted files (nightly, cargo-fuzz)

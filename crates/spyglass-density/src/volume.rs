@@ -16,6 +16,7 @@
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
 use spyglass_noise::{Volume, mth};
@@ -57,7 +58,9 @@ impl Sampler {
     /// Writes the value over `volume` into `out`, reusing what this call already computed.
     fn fill(&self, f: &mut Fill, volume: &Volume, out: &mut [f32]) {
         let slot = self.slot as usize;
-        if self.slot != NO_SLOT
+        // Only a node the graph shares can be asked for again in one call.
+        let remembered = self.slot != NO_SLOT && self.shared.load(Ordering::Relaxed);
+        if remembered
             && let Some(Some((v, values))) = f.cells.get(slot)
             && v == volume
         {
@@ -85,7 +88,7 @@ impl Sampler {
         }
         #[cfg(feature = "timing")]
         let _t = crate::timing::detail("volume: memo store");
-        if self.slot != NO_SLOT {
+        if remembered {
             if f.cells.len() <= slot {
                 f.cells.resize_with(slot + 1, || None);
             }

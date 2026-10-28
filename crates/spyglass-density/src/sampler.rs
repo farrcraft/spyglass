@@ -15,7 +15,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use spyglass_data::anchor::AnchorHeights;
 use spyglass_data::codec::{LoadError, LoadErrorKind};
@@ -50,6 +50,9 @@ pub struct Sampler {
     binder: u64,
     /// Where its value is remembered, or [`NO_SLOT`] for constants.
     pub(crate) slot: u32,
+    /// Whether the graph references it more than once, so the volume path's memo can save work
+    /// on it. The binder sets it when it hands the sampler out again.
+    pub(crate) shared: Arc<AtomicBool>,
 }
 
 /// The slot of a node that isn't worth remembering.
@@ -402,6 +405,7 @@ impl<'n> Binder<'n> {
             node: Arc::new(node),
             binder: self.id,
             slot,
+            shared: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -409,11 +413,15 @@ impl<'n> Binder<'n> {
     pub fn bind(&mut self, function: &Df) -> Result<Sampler, LoadError> {
         let key = Arc::as_ptr(function);
         if let Some((_, s)) = self.bound.get(&key) {
+            s.shared.store(true, Ordering::Relaxed);
             return Ok(s.clone());
         }
         let sampler = match self.compile(function)? {
             Compiled::Node(node) => self.sampler(node),
-            Compiled::Alias(sampler) => sampler,
+            Compiled::Alias(sampler) => {
+                sampler.shared.store(true, Ordering::Relaxed);
+                sampler
+            }
         };
         self.bound.insert(key, (function.clone(), sampler.clone()));
         Ok(sampler)

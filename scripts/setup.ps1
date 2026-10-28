@@ -62,7 +62,8 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
     throw 'uv still not on PATH. Open a new terminal and re-run this script.'
 }
 
-uv tool install pre-commit
+# Pinned like the cargo tools; keep in step with setup.sh.
+uv tool install pre-commit==4.7.0
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 $env:Path = "$env:USERPROFILE\.local\bin;$env:Path"
 

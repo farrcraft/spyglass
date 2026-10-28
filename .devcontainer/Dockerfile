@@ -3,7 +3,8 @@
 
 # What docs/getting-started.md assumes a clean Linux machine has. No Rust and no Java:
 # scripts/setup.sh installs Rust, and linux-check installs Java itself.
-FROM ubuntu:24.04 AS base
+# Pinned by digest, which Dependabot keeps current; the tag alone can change under us.
+FROM ubuntu:24.04@sha256:24737cef17f4e22b1977df7d9a05e77c4e28b7da5b8911f8d8ccda136bf3573c AS base
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \

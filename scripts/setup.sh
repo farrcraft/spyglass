@@ -25,8 +25,11 @@ rustup toolchain install
 
 # A fresh rustup has no default toolchain, and the first toolchain installed by name (the MSRV,
 # below) would become the default everywhere. Make the pinned channel the default instead.
+# Each command substitution is assigned first: set -e stops on a failed assignment, but not on a
+# failed substitution inside another command's arguments.
 if ! rustup toolchain list | grep -q 'default)'; then
-    rustup default "$(rustup show active-toolchain | cut -d' ' -f1)"
+    active=$(rustup show active-toolchain)
+    rustup default "${active%% *}"
 fi
 
 if ! command -v cc >/dev/null 2>&1; then
@@ -34,7 +37,8 @@ if ! command -v cc >/dev/null 2>&1; then
 fi
 
 # The minimum supported Rust version, which the pre-push hook builds with.
-rustup toolchain install "$(cargo xtask msrv --print)" --profile minimal
+msrv=$(cargo xtask msrv --print)
+rustup toolchain install "$msrv" --profile minimal
 
 # Cargo tools the hooks call. They only build reliably with --locked, so pre-commit can't install
 # them itself. Keep the versions in step with setup.ps1. The first install compiles for a few minutes.
@@ -48,7 +52,8 @@ fi
 PATH="$HOME/.local/bin:$PATH"
 export PATH
 
-uv tool install pre-commit
+# Pinned like the cargo tools; keep in step with setup.ps1.
+uv tool install pre-commit==4.7.0
 
 # Installs the hook types listed in default_install_hook_types.
 pre-commit install

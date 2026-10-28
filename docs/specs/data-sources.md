@@ -11,6 +11,15 @@ Everything spyglass knows about a game version comes from Mojang's own distribut
 3. **Data generator:** `java -DbundlerMainClass=net.minecraft.data.Main -jar server.jar --reports --output <dir>` dumps reports, including the biome parameter lists that are built in code. See [Data generator](#data-generator).
 4. **Readable code:** decompile with Vineflower. From 26.x the server jar ships unobfuscated (confirmed for 26.2, 26.3 and the 26.4 snapshots: real class names, which the oracle's adapters compile against; 26.3's version JSON has no `server_mappings`), so no mappings step is needed. Older versions need the official mappings.
 
+## Chain of trust
+
+Every download goes over HTTPS only, redirects included (`spyglass_extract::manifest::agent`), and each step is checked by the one before:
+
+1. The **version manifest** is fetched from its fixed Mojang URL. TLS is its only check: nothing earlier gives its hash.
+2. A **version JSON** must have the SHA-1 the manifest lists for it. It gives the server jar's URL, size and SHA-1.
+3. The **server jar** must have that size and SHA-1 ([below](#jar-cache)).
+4. The **jars inside it** are trusted because the outer jar is ([Bundler layout](#bundler-layout)).
+
 ## Server jar
 
 ### Jar cache

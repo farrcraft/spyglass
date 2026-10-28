@@ -4,9 +4,16 @@
 # only call `cargo xtask`, so they run the same locally.
 name: CI
 
+# Pushes to main, and pull requests: a branch with a pull request runs once, not twice.
 on:
   push:
+    branches: [main]
   pull_request:
+
+# A newer push to the same ref cancels the run it supersedes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -33,6 +40,16 @@ jobs:
         with:
           distribution: temurin
           java-version: ${{ steps.jdk.outputs.major }}
+      # The cargo tools setup.sh installs take minutes to compile. Only tools are cached, never
+      # anything derived from the game (ADR 0008); the key changes when their versions do.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/bin/cargo-nextest
+            ~/.cargo/bin/cargo-shear
+            ~/.cargo/.crates.toml
+            ~/.cargo/.crates2.json
+          key: cargo-tools-${{ runner.os }}-${{ hashFiles('scripts/setup.sh') }}
       - name: Setup
         run: scripts/setup.sh --oracle
       - run: cargo xtask check

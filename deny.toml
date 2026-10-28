@@ -45,6 +45,13 @@ multiple-versions = "warn"
 wildcards = "deny"
 # Workspace path dependencies have no version, which counts as a wildcard.
 allow-wildcard-paths = true
+# TLS is rustls (ureq's default); a native TLS stack arriving through a new dependency would add
+# a C library and a second certificate path.
+deny = [
+  { name = "openssl", reason = "TLS is rustls" },
+  { name = "openssl-sys", reason = "TLS is rustls" },
+  { name = "native-tls", reason = "TLS is rustls" },
+]
 
 [sources]
 unknown-registry = "deny"

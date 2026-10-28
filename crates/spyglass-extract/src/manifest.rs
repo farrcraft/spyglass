@@ -19,6 +19,26 @@ pub enum ManifestError {
     /// The manifest has no version with this id.
     #[error("unknown version {0:?}")]
     UnknownVersion(String),
+    /// A download's SHA-1 isn't the one the manifest gives for it.
+    #[error("{url} has SHA-1 {actual}, but the manifest says {expected}")]
+    Sha1 {
+        /// What was downloaded.
+        url: String,
+        /// The manifest's hash.
+        expected: String,
+        /// The download's.
+        actual: String,
+    },
+}
+
+/// The HTTP client for every download: HTTPS only, redirects included, so a download can't be
+/// sent to or through plain HTTP. What's downloaded is then checked against Mojang's SHA-1s,
+/// except the manifest itself, whose only check is TLS (`docs/specs/data-sources.md`).
+pub fn agent() -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .https_only(true)
+        .build()
+        .into()
 }
 
 /// `version_manifest_v2.json`.
@@ -111,19 +131,32 @@ impl VersionManifest {
     }
 }
 
-fn get_json<T: serde::de::DeserializeOwned>(url: &str) -> Result<T, ManifestError> {
-    let body = ureq::get(url).call()?.body_mut().read_to_string()?;
-    Ok(serde_json::from_str(&body)?)
+fn get(url: &str) -> Result<Vec<u8>, ManifestError> {
+    Ok(agent().get(url).call()?.body_mut().read_to_vec()?)
 }
 
 /// Downloads the version manifest.
 pub fn fetch_manifest() -> Result<VersionManifest, ManifestError> {
-    get_json(MANIFEST_URL)
+    Ok(serde_json::from_slice(&get(MANIFEST_URL)?)?)
 }
 
-/// Downloads a version's JSON.
+/// Downloads a version's JSON, which must have the SHA-1 the manifest lists for it: it gives
+/// the server jar's URL and hash in turn.
 pub fn fetch_version(entry: &VersionEntry) -> Result<VersionJson, ManifestError> {
-    get_json(&entry.url)
+    parse_version(entry, &get(&entry.url)?)
+}
+
+/// A version's JSON from `body`, checked against `entry`'s SHA-1.
+fn parse_version(entry: &VersionEntry, body: &[u8]) -> Result<VersionJson, ManifestError> {
+    let actual = spyglass_data::bundle::sha1_hex(body).expect("reading a slice doesn't fail");
+    if !actual.eq_ignore_ascii_case(&entry.sha1) {
+        return Err(ManifestError::Sha1 {
+            url: entry.url.clone(),
+            expected: entry.sha1.clone(),
+            actual,
+        });
+    }
+    Ok(serde_json::from_slice(body)?)
 }
 
 #[cfg(test)]
@@ -175,5 +208,33 @@ mod tests {
         let server = version.downloads.server.unwrap();
         assert_eq!((server.sha1.as_str(), server.size), ("dd", 2));
         assert!(version.downloads.server_mappings.is_none());
+    }
+
+    #[test]
+    fn version_json_must_match_the_manifests_hash() {
+        let manifest: VersionManifest = serde_json::from_str(MANIFEST).unwrap();
+        let mut entry = manifest.resolve("26.3").unwrap().clone();
+        entry.sha1 = spyglass_data::bundle::sha1_hex(VERSION.as_bytes())
+            .unwrap()
+            .to_ascii_uppercase();
+        assert_eq!(
+            parse_version(&entry, VERSION.as_bytes()).unwrap().id,
+            "26.3"
+        );
+        let tampered = VERSION.replace("server.jar", "other.jar");
+        assert!(matches!(
+            parse_version(&entry, tampered.as_bytes()),
+            Err(ManifestError::Sha1 { .. })
+        ));
+    }
+
+    #[test]
+    fn downloads_refuse_plain_http() {
+        // Refused before any connection is made, so this needs no network.
+        let err = agent()
+            .get("http://example.invalid/x.json")
+            .call()
+            .unwrap_err();
+        assert!(matches!(err, ureq::Error::RequireHttpsOnly(_)), "{err}");
     }
 }

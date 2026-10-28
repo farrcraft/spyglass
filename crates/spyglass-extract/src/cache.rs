@@ -101,7 +101,8 @@ impl JarCache {
     pub fn get(&self, download: &Download) -> Result<PathBuf, CacheError> {
         self.get_with(download, |out| {
             let mut response =
-                ureq::get(&download.url)
+                crate::manifest::agent()
+                    .get(&download.url)
                     .call()
                     .map_err(|source| CacheError::Http {
                         url: download.url.clone(),

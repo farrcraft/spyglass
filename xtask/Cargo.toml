@@ -17,6 +17,7 @@ serde_json.workspace = true
 spyglass-data.workspace = true
 spyglass-extract.workspace = true
 spyglass-world.workspace = true
+toml_edit.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

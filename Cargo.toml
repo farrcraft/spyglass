@@ -64,6 +64,8 @@ serde_json = { version = "1.0.154", features = ["arbitrary_precision", "float_ro
 sha1 = "0.11.0"
 tempfile = "3.27.0"
 thiserror = "2.0.21"
+# xtask reads Cargo.toml and rust-toolchain.toml with it; already in the tree for the GUI stack.
+toml_edit = { version = "0.25.17", default-features = false, features = ["parse"] }
 ureq = "3.5.0"
 zip = { version = "9.1.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 

@@ -118,14 +118,7 @@ fn text(out: &Output) -> String {
 
 /// `channel` from rust-toolchain.toml.
 fn pinned_channel() -> Result<String> {
-    let path = repo_root().join("rust-toolchain.toml");
-    let toml = std::fs::read_to_string(&path)?;
-    toml.lines()
-        .find_map(|line| {
-            let (key, value) = line.split_once('=')?;
-            (key.trim() == "channel").then(|| value.trim().trim_matches('"').to_string())
-        })
-        .with_context(|| format!("no channel in {}", path.display()))
+    crate::toml_string("rust-toolchain.toml", &["toolchain", "channel"])
 }
 
 pub fn run(args: &LinuxCheck) -> Result<()> {
@@ -218,9 +211,15 @@ fn clone_and_set_up(c: &Container, target: &Target) -> Result<()> {
     Ok(())
 }
 
+/// `text` as one POSIX shell word: single-quoted, with each `'` written as `'\''`.
+fn sh_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', r"'\''"))
+}
+
 /// The extractor's error without Java, then with Java: doctor, extraction and a clean tree.
 fn java_and_extraction(c: &Container, target: &Target) -> Result<()> {
-    let (id, java) = (&target.version, target.java);
+    // The version id comes from Mojang's manifest, so it's quoted for the shell like any text.
+    let (id, java) = (sh_quote(&target.version), target.java);
     step("extract without Java");
     let out = c.capture(
         USER,
@@ -251,7 +250,7 @@ fn java_and_extraction(c: &Container, target: &Target) -> Result<()> {
     step("cargo xtask doctor");
     c.must(&format!("cargo xtask doctor --game-version {id}"))?;
 
-    step(&format!("extract {id}"));
+    step(&format!("extract {}", target.version));
     c.must(&format!(
         "cargo run -q -p spyglass-extract -- {id} \
          && cargo run -q -p spyglass-extract -- verify bundles/{id}"
@@ -266,4 +265,16 @@ fn java_and_extraction(c: &Container, target: &Target) -> Result<()> {
     );
     println!("clean");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shell_words_are_quoted() {
+        assert_eq!(sh_quote("26.3"), "'26.3'");
+        assert_eq!(sh_quote("a b; rm -rf /"), "'a b; rm -rf /'");
+        assert_eq!(sh_quote("it's"), r"'it'\''s'");
+    }
 }

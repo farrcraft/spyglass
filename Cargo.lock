@@ -4915,6 +4915,7 @@ dependencies = [
  "spyglass-extract",
  "spyglass-world",
  "tempfile",
+ "toml_edit",
 ]
 
 [[package]]

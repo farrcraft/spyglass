@@ -195,23 +195,25 @@ fn check() -> Result<()> {
 
 /// `rust-version` from the workspace Cargo.toml's `[workspace.package]`.
 fn msrv_version() -> Result<String> {
-    let path = repo_root().join("Cargo.toml");
-    let text = std::fs::read_to_string(&path)?;
-    let mut in_package = false;
-    for line in text.lines().map(str::trim) {
-        if line.starts_with('[') {
-            in_package = line == "[workspace.package]";
-        } else if in_package
-            && let Some((key, value)) = line.split_once('=')
-            && key.trim() == "rust-version"
-        {
-            return Ok(value.trim().trim_matches('"').to_string());
-        }
+    toml_string("Cargo.toml", &["workspace", "package", "rust-version"])
+}
+
+/// The string at `keys` (`["toolchain", "channel"]`) in the TOML file `file` in the repo root.
+fn toml_string(file: &str, keys: &[&str]) -> Result<String> {
+    let path = repo_root().join(file);
+    let text = std::fs::read_to_string(&path)
+        .with_context(|| format!("failed to read {}", path.display()))?;
+    let document: toml_edit::Document<String> = toml_edit::Document::parse(text)
+        .with_context(|| format!("{} isn't valid TOML", path.display()))?;
+    let mut item = document.as_item();
+    for key in keys {
+        item = item
+            .get(key)
+            .with_context(|| format!("no {} in {}", keys.join("."), path.display()))?;
     }
-    bail!(
-        "no rust-version in [workspace.package] of {}",
-        path.display()
-    )
+    item.as_str()
+        .map(str::to_string)
+        .with_context(|| format!("{} in {} isn't a string", keys.join("."), path.display()))
 }
 
 /// Whether rustup has a toolchain for `version`, e.g. `1.88` matches `1.88-x86_64-pc-windows-msvc`.

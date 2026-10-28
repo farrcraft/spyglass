@@ -307,15 +307,15 @@ Six phases, each one or more commits that pass `cargo xtask check` on their own,
 
 - [ ] T1 `--accept-eula` / `SPYGLASS_ACCEPT_EULA`; CI sets it; ADR; `oracle.md`, getting-started.
 - [ ] T2 Exact toolchain pin; `doctor` reports newer stable; ADR.
-- [ ] T3 Version JSON hash check; `https_only`; `https` jar URL; `data-sources.md`.
-- [ ] T4 linux-check passes the version as an argument.
-- [ ] T5 `setup.sh` checks `msrv`; pre-commit pinned in both scripts.
-- [ ] T6 Hook repos pinned by SHA.
-- [ ] T7 Windows CI job; `concurrency`; prebuilt or cached tools; Dependabot `cargo` and `docker`; ADR if 0028 changes.
-- [ ] T8 One TOML helper in xtask.
-- [ ] T9 `deny.toml` bans.
-- [ ] T10 `no-process-doc-refs` over `scripts/` and `oracle/`; `development-process.md`.
-- [ ] T11 Dockerfile base image by digest.
+- [x] T3 Version JSON hash check; one HTTPS-only agent for every download, redirects included; `data-sources.md#chain-of-trust`; tests.
+- [x] T4 linux-check quotes the version for the shell (`sh_quote`); test.
+- [x] T5 `setup.sh` assigns each command substitution before use, so `set -e` sees failures; pre-commit 4.7.0 pinned in both scripts.
+- [x] T6 Hook repos pinned by commit, tag in a `frozen:` comment; bumped with `pre-commit autoupdate --freeze`.
+- [ ] T7 Windows CI job (waiting on a decision); done: `concurrency`, `push` on `main` only, cached cargo tools, Dependabot `cargo` and `docker`.
+- [x] T8 One `toml_string` helper in xtask, on `toml_edit` (already in the tree).
+- [x] T9 `deny.toml` bans `openssl`, `openssl-sys` and `native-tls`.
+- [x] T10 `no-process-doc-refs` over `scripts/` and `oracle/`; `development-process.md`.
+- [x] T11 Dockerfile base image by digest, kept current by Dependabot.
 
 ### 5. API and maintainability
 

@@ -1,9 +1,26 @@
-# Keeps the workflow's actions current. They're pinned by commit SHA with the version in a
-# comment; Dependabot updates both. A release must be 7 days old before it's proposed.
+# Keeps the workflow's actions, the Cargo dependencies and the dev container's base image
+# current. Actions are pinned by commit SHA with the version in a comment, and the image by
+# digest; Dependabot updates both. A release must be 7 days old before it's proposed.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    # One pull request for the week's compatible updates; breaking ones come on their own.
+    groups:
+      compatible:
+        update-types: [minor, patch]
+  - package-ecosystem: docker
+    directory: /.devcontainer
     schedule:
       interval: weekly
     cooldown:

@@ -106,7 +106,7 @@ Reordered on 2026-10-27, with the user: 26.2 first, since its point evaluations 
 - [ ] 26.2's evaluator on the program, with `NoiseChunk`'s caches and interpolation as operations, and its single-point evaluations sharing subgraphs. Done for the chunk graph: a per-context memo for shared functions, shared corner and point stamps, and a per-column memo for columnar functions (e657cae, f61f361), then the compiled program (ad0eea6). The plain router and climate functions still evaluate as bound functions; they're off the hot path.
 - [ ] Columns without a `NoiseChunk` each, where the spec shows the answers are unchanged.
 - [x] Differential tests against the interpreter on 26.2's functions, points and cells; `oracle-test` for 26.2. `the_program_matches_the_functions`: 1.38 million values in three dimensions, every router entry at points and positioned, the full density through cells, surface levels; in `oracle-test`'s list. 26.2 passes (32 tests).
-- [ ] Measure 26.2's lines against its before lines and its target (within 2× of 26.3's isolated column).
+- [x] Measure 26.2's lines against its before lines and its target (within 2× of 26.3's isolated column). About 610 µs, 2.3 times 26.3's; the target stalled on work the game does too (notes).
 
 ### Phase 3: kernels
 
@@ -198,6 +198,8 @@ Sources:
 - crates.io metadata for each crate, fetched 2026-10-27.
 
 ## Notes
+
+- 2026-10-27: **26.2's isolated column stalls at about 2.3 times 26.3's.** The program now counts operations per column (timing on): about 15,900, mostly the aquifer's `find_top_surface` walks, about 125 of them at about 7.6 steps each, plus the cell corners. A walk step is about 20 cheap operations (y gradients, constants, clamps), because the walk's density reads `cache_2d(offset)` and `cache_2d(factor)`, which are remembered per column. So a walk costs about one evaluation of the `offset` and `factor` splines and the continents, erosion and ridges noise beneath them, per position. 26.2's aquifer asks for 125 distinct quart positions per isolated column (26.3's asks for 49), and the game computes the same ones. Evaluating transparent markers in the program without calling into the chunk made no measurable difference, so it isn't kept. Reaching 2 times would mean evaluating fewer of those positions than the game does, which bit-exactness rules out, or making the noise and splines themselves cheaper, which phase 1's kernel prototype says isn't there either. Stopped here, as agreed: 26.2 went from 1.9 to 2.4 ms to about 610 µs.
 
 - 2026-10-27: **26.2's program** (`dist`, coarse timing, three rounds): isolated column 602 to 620 µs (about 640 before it, 1.9 to 2.4 ms before the memo), region 68 to 73 ms (about 75), warm village layout about 47 ms (about 50), nearby column about the same. Less than the 100 µs estimated: once shared work is remembered, most of what's left is real noise and arithmetic, not per-node overhead. 26.2's isolated column is now 2.3 to 2.4 times 26.3's in the same build, against a target of 2 times (about 500 to 530 µs). The rest is split between cell corners and the aquifer's walks.
 

@@ -16,6 +16,7 @@ The milestones build toward the goals in the [README](../../README.md#goals): co
 | 08  | [Nether, End and multiple versions](completed/08-dimensions-and-versions.md)  | All three dimensions; more than one game version.                  | Completed |
 | 09  | [Fast density evaluation](completed/09-fast-density.md)                       | Cheap terrain: density programs where they pay.                    | Completed |
 | 10  | [Hardening](completed/10-hardening.md)                                        | Safe on hostile saves and packs; prompt stops; accurate docs.      | Completed |
+| 11  | [Releases](11-releases.md)                                                    | Downloadable, versioned builds for Windows, Linux and macOS.       | Planned   |
 
 ## Follow-ups
 

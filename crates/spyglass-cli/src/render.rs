@@ -115,7 +115,7 @@ pub fn run(args: &Render) -> Result<()> {
         (true, true) => ", biomes at the surface".to_string(),
         (true, false) => format!(", biomes at y {}", area.y),
     };
-    println!(
+    out!(
         "wrote {}: {w} × {h} pixels, {} blocks per pixel, x {x0} to {x1}, z {z0} to {z1}\
          {biomes}{}",
         path.display(),
@@ -124,7 +124,7 @@ pub fn run(args: &Render) -> Result<()> {
     );
     if layers.spawn || !layers.structures.is_empty() || layers.slime_chunks {
         let certain = features.structures.iter().filter(|s| s.certain).count();
-        println!(
+        out!(
             "  {} structures ({certain} certain, {} candidates), {} slime chunks, spawn {}",
             features.structures.len(),
             features.structures.len() - certain,

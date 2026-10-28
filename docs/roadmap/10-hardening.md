@@ -23,6 +23,6 @@ Not in scope: new worldgen behavior. Surface rules, features and the final spawn
 
 - [ ] Every finding in the plan is fixed, or closed with a recorded reason.
 - [ ] No input file in a save or pack makes the process abort, as shown by tests for each finding and by fuzzing the NBT and region readers.
-- [ ] Ctrl-C, `--time` and the viewer's Stop end a search within one second of the request, measured on a stronghold query with `--top 1000`.
+- [x] Ctrl-C, `--time` and the viewer's Stop end a search within one second of the request, measured on a stronghold query with `--top 1000`.
 - [ ] `cargo xtask check` reports broken relative links and anchors in Markdown, and passes.
 - [ ] `cargo xtask check` and `cargo xtask oracle-test` pass for every supported version.

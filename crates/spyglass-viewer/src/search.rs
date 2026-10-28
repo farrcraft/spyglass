@@ -176,6 +176,13 @@ impl Running {
     }
 }
 
+/// A search no one is waiting for any more stops at once rather than running on unseen.
+impl Drop for Running {
+    fn drop(&mut self) {
+        self.stop.stop_now();
+    }
+}
+
 /// Something a hit's constraint matched, to ring on the map.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Match {

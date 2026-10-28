@@ -2,7 +2,7 @@
 //! asked for, and sessions over every dimension for one seed.
 
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock, PoisonError};
 
 use spyglass_data::bundle::Bundle;
 
@@ -16,6 +16,8 @@ pub struct Game {
     /// Each dimension's `coordinate_scale`, if the preset has the dimension.
     scales: [Option<f64>; 3],
     worlds: [OnceLock<World>; 3],
+    /// Held while a dimension's world loads, so threads asking at once load it once.
+    loading: [Mutex<()>; 3],
     /// Why a dimension can't be answered for, when a save's report opened the game.
     blocked: [Option<String>; 3],
 }
@@ -44,6 +46,7 @@ impl Game {
             bundle,
             scales,
             worlds: Default::default(),
+            loading: Default::default(),
             blocked,
         })
     }
@@ -60,6 +63,14 @@ impl Game {
         if let Some(reason) = &self.blocked[i] {
             return Err(Error::Unsupported(reason.clone()));
         }
+        if let Some(world) = self.worlds[i].get() {
+            return Ok(world);
+        }
+        // Another thread may have loaded it while this one waited. A failed load leaves it
+        // unloaded, to try again.
+        let _loading = self.loading[i]
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         if let Some(world) = self.worlds[i].get() {
             return Ok(world);
         }

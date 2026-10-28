@@ -48,7 +48,8 @@ fn scenarios(world: &World, session: &spyglass::Session<'_>, pass: i32) {
             [origin, away],
             [origin + 39, away + 24],
             Heightmap::OceanFloorWg,
-        ));
+        ))
+        .unwrap();
     });
     // A village's layout cold (a new session each time) and warm (the same session again).
     let seeds = 1000 * i64::from(pass);

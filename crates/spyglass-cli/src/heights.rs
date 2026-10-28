@@ -6,8 +6,8 @@ use crate::Out;
 use crate::args::Heights;
 use crate::json;
 
-/// The most columns one request may ask for: about a second of work.
-const MAX_COLUMNS: i64 = 256 * 256;
+/// The most columns one request may ask for, checked before loading anything.
+const MAX_COLUMNS: i64 = spyglass::MAX_HEIGHT_COLUMNS;
 
 pub fn run(args: &Heights) -> Result<()> {
     let (min, max) = match (args.at, args.min, args.max) {
@@ -19,7 +19,7 @@ pub fn run(args: &Heights) -> Result<()> {
     if size.iter().any(|&s| s <= 0) {
         bail!("--max must be at least --min on both axes");
     }
-    if size[0] * size[1] > MAX_COLUMNS {
+    if size[0].saturating_mul(size[1]) > MAX_COLUMNS {
         bail!(
             "{} × {} columns is more than {MAX_COLUMNS}; ask for a smaller region",
             size[0],
@@ -34,7 +34,7 @@ pub fn run(args: &Heights) -> Result<()> {
         report: report.as_ref(),
     };
     let heightmap = args.heightmap.heightmap();
-    let heights = session.heights_in(min, max, heightmap);
+    let heights = session.heights_in(min, max, heightmap)?;
     let rows: Vec<&[i32]> = heights.chunks(size[0] as usize).collect();
     if out.json {
         return out.print(
@@ -48,10 +48,10 @@ pub fn run(args: &Heights) -> Result<()> {
         );
     }
     if min == max {
-        println!("Height at {} {}{}", min[0], min[1], out.context(None));
-        println!("  {}: {}", heightmap.key(), heights[0]);
+        out!("Height at {} {}{}", min[0], min[1], out.context(None));
+        out!("  {}: {}", heightmap.key(), heights[0]);
     } else {
-        println!(
+        out!(
             "Heights from {} {} to {} {}, x across and z down{}",
             min[0],
             min[1],
@@ -59,13 +59,13 @@ pub fn run(args: &Heights) -> Result<()> {
             max[1],
             out.context(None)
         );
-        println!("  {}", heightmap.key());
+        out!("  {}", heightmap.key());
         for (z, row) in (min[1]..).zip(rows) {
             let row: Vec<String> = row.iter().map(|h| format!("{h:>4}")).collect();
-            println!("  z {z:>7} {}", row.join(""));
+            out!("  z {z:>7} {}", row.join(""));
         }
     }
-    println!(
+    out!(
         "Heights are one above the highest block, before structures, carvers, features and \
          surface blocks change the column."
     );

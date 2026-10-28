@@ -1,6 +1,17 @@
 //! The `spyglass` command: a thin front end over the `spyglass` library (ADR 0014). Output is
 //! human-readable, or JSON with `--json` (`docs/specs/cli-json.md`).
 
+/// `println!` to stdout that ends the process quietly when the reader has gone, as when the
+/// output is piped into `head`, rather than panicking.
+macro_rules! out {
+    () => {
+        $crate::write_out(format_args!(""))
+    };
+    ($($arg:tt)*) => {
+        $crate::write_out(format_args!($($arg)*))
+    };
+}
+
 mod args;
 mod heights;
 mod json;
@@ -29,6 +40,20 @@ fn main() -> ExitCode {
             eprintln!("error: {e:#}");
             ExitCode::FAILURE
         }
+    }
+}
+
+/// A line of output for [`out!`]. A closed pipe ends the process with success: whoever read the
+/// output has what they wanted. Any other write error ends it with failure.
+fn write_out(line: std::fmt::Arguments<'_>) {
+    use std::io::Write;
+    let mut stdout = std::io::stdout().lock();
+    if let Err(e) = writeln!(stdout, "{line}") {
+        if e.kind() == std::io::ErrorKind::BrokenPipe {
+            std::process::exit(0);
+        }
+        eprintln!("error: writing output: {e}");
+        std::process::exit(1);
     }
 }
 
@@ -156,7 +181,7 @@ impl Out<'_> {
     fn warn(&self) {
         if let (false, Some(report)) = (self.json, self.report) {
             for warning in &report.warnings {
-                println!("warning: {warning}");
+                out!("warning: {warning}");
             }
         }
     }

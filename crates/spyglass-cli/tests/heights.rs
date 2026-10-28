@@ -89,3 +89,29 @@ fn bad_requests_fail() {
         assert!(out.stdout.is_empty(), "{args:?}");
     }
 }
+
+#[test]
+fn a_closed_pipe_ends_quietly() {
+    // Reading one line and closing the pipe, as `| head -1` does: the command stops with
+    // success, not a panic about printing.
+    use std::io::{BufRead, BufReader};
+    use std::process::Stdio;
+    let fixture = fixtures::overworld(&[], false);
+    let mut child = Command::new(env!("CARGO_BIN_EXE_spyglass"))
+        .args(["heights", "--seed", "5", "--min", "0,0", "--max", "255,255"])
+        .arg("--bundle")
+        .arg(fixture.path())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut first = String::new();
+    BufReader::new(child.stdout.take().unwrap())
+        .read_line(&mut first)
+        .unwrap();
+    assert!(!first.is_empty());
+    let out = child.wait_with_output().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{:?}: {stderr}", out.status);
+    assert!(!stderr.contains("panicked"), "{stderr}");
+}

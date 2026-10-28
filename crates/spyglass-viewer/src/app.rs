@@ -236,6 +236,8 @@ pub struct App {
     cursor: Option<[i32; 2]>,
     /// The search query's text and what it parsed to, against the world shown.
     search_parsed: Option<(String, Result<SearchQuery, String>)>,
+    /// A query being parsed on its own thread: resolving it can load a dimension.
+    search_parsing: Option<(String, Pending<Result<SearchQuery, String>>)>,
     /// The search running or last run.
     search_run: Option<SearchRun>,
     /// A live hit being evaluated before it opens.
@@ -299,6 +301,7 @@ impl App {
             scrolled: 0.0,
             cursor: None,
             search_parsed: None,
+            search_parsing: None,
             search_run: None,
             opening: None,
             opened: None,
@@ -416,6 +419,7 @@ impl App {
             Ok(Ok((game, world))) => {
                 if self.game.is_none_or(|g| !std::ptr::eq(g, game)) {
                     self.search_parsed = None;
+                    self.search_parsing = None;
                 }
                 self.game = Some(game);
                 self.world = Some(world);
@@ -783,17 +787,42 @@ impl App {
                 .desired_width(f32::INFINITY)
                 .hint_text("require 2 minecraft:swamp_hut within 600 of spawn"),
         );
-        if self
+        // Resolving a query can load the Nether or the End, so it's done off this thread; a
+        // result for text that has since changed is dropped.
+        if let Some((text, pending)) = &self.search_parsing
+            && let Some(result) = pending.poll()
+        {
+            let parsed = result.unwrap_or_else(|()| Err("the query check failed".to_string()));
+            self.search_parsed = Some((text.clone(), parsed));
+            self.search_parsing = None;
+        }
+        let is_current = |text: Option<&String>| text.is_some_and(|t| *t == s.query);
+        if !is_current(self.search_parsed.as_ref().map(|(t, _)| t))
+            && !is_current(self.search_parsing.as_ref().map(|(t, _)| t))
+        {
+            let text = s.query.clone();
+            let pending = Pending::spawn(ui.ctx(), {
+                let text = text.clone();
+                move || game.search_query(&text).map_err(|e| e.to_string())
+            });
+            self.search_parsing = Some((text, pending));
+        }
+        let parsed = self
             .search_parsed
             .as_ref()
-            .is_none_or(|(text, _)| *text != s.query)
-        {
-            let parsed = game.search_query(&s.query).map_err(|e| e.to_string());
-            self.search_parsed = Some((s.query.clone(), parsed));
-        }
-        let parsed = self.search_parsed.as_ref().map(|(_, p)| p);
-        if let Some(Err(e)) = parsed {
-            ui.colored_label(ui.visuals().error_fg_color, e);
+            .filter(|(text, _)| *text == s.query)
+            .map(|(_, p)| p);
+        match parsed {
+            Some(Err(e)) => {
+                ui.colored_label(ui.visuals().error_fg_color, e);
+            }
+            None => {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.weak("Checking the query…");
+                });
+            }
+            Some(Ok(_)) => {}
         }
         ui.horizontal(|ui| {
             ui.label("Keep the best");

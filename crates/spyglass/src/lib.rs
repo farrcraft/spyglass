@@ -74,6 +74,17 @@ pub mod query {
 
 /// `/locate biome`'s search radius in blocks (`LocateCommand`).
 pub const LOCATE_BIOME_RADIUS: i32 = 6400;
+/// The most rings of placement cells [`Session::locate_structure`] searches: ten times
+/// [`LOCATE_RADIUS`], a hundred times its cells (`docs/specs/locate.md#limits`).
+pub const MAX_LOCATE_RADIUS: i32 = 1000;
+/// The largest radius in blocks [`Session::locate_biome`] searches: four times
+/// [`LOCATE_BIOME_RADIUS`], sixteen times its columns.
+pub const MAX_LOCATE_BIOME_RADIUS: i32 = 25_600;
+/// The largest radius in chunks [`Session::slime_chunks_near`] searches: about four million
+/// chunks.
+pub const MAX_SLIME_RADIUS: i32 = 1000;
+/// The most columns [`Session::heights_in`] computes at once: about a second of work.
+pub const MAX_HEIGHT_COLUMNS: i64 = 256 * 256;
 /// `/locate biome`'s horizontal step in blocks.
 const BIOME_HORIZONTAL_STEP: i32 = 32;
 /// `/locate biome`'s vertical step in blocks.
@@ -178,10 +189,32 @@ pub enum Error {
         /// The dimension converted to.
         to: Dimension,
     },
+    /// A request past one of the API's limits, such as a locate radius (`docs/specs/locate.md`).
+    #[error("{what} {asked} is more than {max}; ask for less")]
+    TooLarge {
+        /// What was asked for, e.g. `a structure locate radius of`.
+        what: &'static str,
+        /// How much.
+        asked: i64,
+        /// The most allowed.
+        max: i64,
+    },
     /// The search's worker threads couldn't be started, such as when asking for more than the
     /// system allows.
     #[error("couldn't start the search's threads: {0}")]
     Threads(Cause),
+}
+
+/// `value` as a [`Error::TooLarge`] if it's past `max`.
+fn at_most(what: &'static str, value: i32, max: i32) -> Result<()> {
+    if value > max {
+        return Err(Error::TooLarge {
+            what,
+            asked: i64::from(value),
+            max: i64::from(max),
+        });
+    }
+    Ok(())
 }
 
 /// What went wrong below the API, for [`Error::Data`] and [`Error::Save`]. Its message is the
@@ -776,13 +809,29 @@ impl<'w> Session<'w> {
     }
 
     /// [`height_at`](Self::height_at) for every column from `min` to `max` inclusive, z outer
-    /// and x inner. Empty if `max` is below `min` on either axis.
-    pub fn heights_in(&self, min: [i32; 2], max: [i32; 2], heightmap: Heightmap) -> Vec<i32> {
-        let size = [max[0] - min[0] + 1, max[1] - min[1] + 1];
+    /// and x inner. Empty if `max` is below `min` on either axis; more than
+    /// [`MAX_HEIGHT_COLUMNS`] columns is an error.
+    pub fn heights_in(
+        &self,
+        min: [i32; 2],
+        max: [i32; 2],
+        heightmap: Heightmap,
+    ) -> Result<Vec<i32>> {
+        let size = [0, 1].map(|d| i64::from(max[d]) - i64::from(min[d]) + 1);
         if size[0] <= 0 || size[1] <= 0 {
-            return Vec::new();
+            return Ok(Vec::new());
         }
-        self.terrain().base_heights(min, size, heightmap)
+        let columns = size[0].saturating_mul(size[1]);
+        if columns > MAX_HEIGHT_COLUMNS {
+            return Err(Error::TooLarge {
+                what: "a heights region of columns",
+                asked: columns,
+                max: MAX_HEIGHT_COLUMNS,
+            });
+        }
+        // Both sides are at most MAX_HEIGHT_COLUMNS, so they fit an i32.
+        let size = size.map(|s| s as i32);
+        Ok(self.terrain().base_heights(min, size, heightmap))
     }
 
     /// The biome at block `(x, y, z)`: its quart's, as the game stores it. This isn't always the
@@ -841,6 +890,11 @@ impl<'w> Session<'w> {
         options: &LocateOptions,
     ) -> Result<StructureLocate> {
         self.check_world(query.world, &query.argument)?;
+        at_most(
+            "a structure locate radius of",
+            options.radius,
+            MAX_LOCATE_RADIUS,
+        )?;
         let starts = self.starts(options.confirm);
         let search = starts.locate(&query.targets, from, options.radius);
         let hits = search
@@ -958,6 +1012,7 @@ impl<'w> Session<'w> {
         radius: i32,
     ) -> Result<BiomeLocate> {
         self.check_world(query.world, &query.id)?;
+        at_most("a biome locate radius of", radius, MAX_LOCATE_BIOME_RADIUS)?;
         let target = query.biome;
         let heights = self.world.sets.heights();
         let min_y = heights.level_min_y;
@@ -1004,8 +1059,10 @@ impl<'w> Session<'w> {
     }
 
     /// Every slime chunk within `radius` chunks of chunk `centre` on both axes (a square),
-    /// nearest first by Euclidean distance in chunks, then by z, then x.
-    pub fn slime_chunks_near(&self, centre: [i32; 2], radius: i32) -> Vec<[i32; 2]> {
+    /// nearest first by Euclidean distance in chunks, then by z, then x. A radius past
+    /// [`MAX_SLIME_RADIUS`] is an error.
+    pub fn slime_chunks_near(&self, centre: [i32; 2], radius: i32) -> Result<Vec<[i32; 2]>> {
+        at_most("a slime chunk radius of", radius, MAX_SLIME_RADIUS)?;
         let around = |c: i32| [c.saturating_sub(radius), c.saturating_add(radius)];
         let ([x0, x1], [z0, z1]) = (around(centre[0]), around(centre[1]));
         let mut chunks = self.slime_chunks([x0, z0], [x1, z1]);
@@ -1017,7 +1074,7 @@ impl<'w> Session<'w> {
             dx * dx + dz * dz
         };
         chunks.sort_by_key(|&c| (distance(c), c[1], c[0]));
-        chunks
+        Ok(chunks)
     }
 
     /// Where the world spawn search starts.

@@ -154,12 +154,16 @@ fn duration(text: &str) -> Result<Duration, String> {
     let n: u64 = number
         .parse()
         .map_err(|_| format!("expected a duration like 90s, 10m or 2h, got {text:?}"))?;
-    let seconds = |s: u64| Duration::from_secs(s);
+    let times = |unit: u64| {
+        n.checked_mul(unit)
+            .map(Duration::from_secs)
+            .ok_or_else(|| format!("{text:?} is too long"))
+    };
     Ok(match unit {
         "ms" => Duration::from_millis(n),
-        "" | "s" => seconds(n),
-        "m" => seconds(n * 60),
-        "h" => seconds(n * 3600),
+        "" | "s" => Duration::from_secs(n),
+        "m" => times(60)?,
+        "h" => times(3600)?,
         _ => {
             return Err(format!(
                 "unknown unit {unit:?} in {text:?}: use ms, s, m or h"
@@ -417,5 +421,68 @@ fn origin(text: &str) -> Result<Origin, String> {
         [x, y, z] => Ok(Origin::At([x, y, z])),
         [x, z] => Ok(Origin::At([x, 64, z])),
         _ => Err(format!("expected x,y,z, x,z or player, got {text:?}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn durations() {
+        assert_eq!(duration("90"), Ok(Duration::from_secs(90)));
+        assert_eq!(duration("90s"), Ok(Duration::from_secs(90)));
+        assert_eq!(duration("250ms"), Ok(Duration::from_millis(250)));
+        assert_eq!(duration("10m"), Ok(Duration::from_secs(600)));
+        assert_eq!(duration("2h"), Ok(Duration::from_secs(7200)));
+        // Too long for a u64 of seconds once multiplied: an error, not an overflow.
+        assert!(duration(&format!("{}h", u64::MAX / 3600 + 1)).is_err());
+        assert!(duration(&format!("{}m", u64::MAX)).is_err());
+        for bad in ["", "s", "-1s", "1d", "1.5s", "1 s"] {
+            assert!(duration(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn ranges() {
+        assert_eq!(range("-5..5"), Ok([-5, 5]));
+        assert_eq!(range("3..3"), Ok([3, 3]));
+        assert_eq!(
+            range("-9223372036854775808..9223372036854775807"),
+            Ok([i64::MIN, i64::MAX])
+        );
+        for bad in [
+            "5..-5",
+            "1..",
+            "..1",
+            "1-2",
+            "a..b",
+            "9223372036854775808..9",
+        ] {
+            assert!(range(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn sizes_and_columns() {
+        assert_eq!(size("1024x768"), Ok([1024, 768]));
+        assert_eq!(size("8X8"), Ok([8, 8]));
+        for bad in ["1024", "x8", "-1x8", "8x8x8"] {
+            assert!(size(bad).is_err(), "{bad:?}");
+        }
+        assert_eq!(xz("-3, 7"), Ok([-3, 7]));
+        for bad in ["1", "1,2,3", "1,a", "2147483648,0"] {
+            assert!(xz(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn origins() {
+        assert!(matches!(origin("player"), Ok(Origin::Player)));
+        assert!(matches!(origin("1,2,3"), Ok(Origin::At([1, 2, 3]))));
+        assert!(matches!(origin("-1,-2"), Ok(Origin::At([-1, 64, -2]))));
+        for bad in ["", "1", "1,2,3,4", "a,b", "Player"] {
+            assert!(origin(bad).is_err(), "{bad:?}");
+        }
     }
 }

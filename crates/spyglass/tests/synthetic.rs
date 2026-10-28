@@ -23,11 +23,14 @@ fn heights_follow_the_flat_seabed() {
     // Stone below y 50, water to the sea level at 63.
     assert_eq!(session.height_at([-30, 900], Heightmap::WorldSurfaceWg), 63);
     assert_eq!(session.height_at([-30, 900], Heightmap::OceanFloorWg), 50);
-    let region = session.heights_in([-3, 5], [20, 6], Heightmap::OceanFloorWg);
+    let region = session
+        .heights_in([-3, 5], [20, 6], Heightmap::OceanFloorWg)
+        .unwrap();
     assert_eq!(region, vec![50; 24 * 2]);
     assert!(
         session
             .heights_in([1, 1], [0, 5], Heightmap::OceanFloorWg)
+            .unwrap()
             .is_empty()
     );
 }
@@ -233,7 +236,7 @@ fn slime_chunks_near_come_nearest_first() {
     let fixture = fixtures::structured_overworld(false);
     let world = World::open(fixture.path()).unwrap();
     let session = world.session(12345).unwrap();
-    let near = session.slime_chunks_near([3, -4], 20);
+    let near = session.slime_chunks_near([3, -4], 20).unwrap();
     assert!(!near.is_empty());
     let d = |[x, z]: [i32; 2]| (x - 3) * (x - 3) + (z + 4) * (z + 4);
     assert!(near.windows(2).all(|w| d(w[0]) <= d(w[1])));
@@ -297,4 +300,45 @@ fn default_bundle_is_the_newest_release() {
     );
     let named = spyglass::find_bundle(dir.path(), Some("26.4-snapshot-5")).unwrap();
     assert_eq!(named.kind, spyglass::Kind::Snapshot);
+}
+
+#[test]
+fn requests_past_the_limits_are_errors() {
+    use spyglass::{
+        LocateOptions, MAX_HEIGHT_COLUMNS, MAX_LOCATE_BIOME_RADIUS, MAX_LOCATE_RADIUS,
+        MAX_SLIME_RADIUS,
+    };
+    let fixture = fixtures::structured_overworld(false);
+    let world = World::open(fixture.path()).unwrap();
+    let session = world.session(7).unwrap();
+    fn too_large<T>(r: Result<T, Error>) -> bool {
+        matches!(r, Err(Error::TooLarge { .. }))
+    }
+    assert!(too_large(
+        session.slime_chunks_near([0, 0], MAX_SLIME_RADIUS + 1)
+    ));
+    // The whole i32 plane: once overflow made it look empty.
+    let err = session
+        .heights_in([i32::MIN; 2], [i32::MAX; 2], Heightmap::OceanFloorWg)
+        .unwrap_err();
+    assert!(
+        matches!(err, Error::TooLarge { max, .. } if max == MAX_HEIGHT_COLUMNS),
+        "{err}"
+    );
+    let towers = world.structure_query("minecraft:tower").unwrap();
+    let options = LocateOptions {
+        radius: MAX_LOCATE_RADIUS + 1,
+        confirm: false,
+    };
+    assert!(too_large(session.locate_structure(
+        &towers,
+        [0, 64, 0],
+        &options
+    )));
+    let biome = world.biome_query("minecraft:plains").unwrap();
+    assert!(too_large(session.locate_biome(
+        &biome,
+        [0, 64, 0],
+        MAX_LOCATE_BIOME_RADIUS + 1
+    )));
 }

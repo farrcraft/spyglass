@@ -168,7 +168,7 @@ fn main() -> spyglass::Result<()> {
         black_box(heights.height_at([near, 5000], spyglass::Heightmap::WorldSurfaceWg));
     });
     report("heights_in 40 x 25 columns", 3, || {
-        black_box(heights.heights_in([0, 0], [39, 24], spyglass::Heightmap::OceanFloorWg));
+        black_box(heights.heights_in([0, 0], [39, 24], spyglass::Heightmap::OceanFloorWg)).unwrap();
     });
     // Seed search: one constraint of each kind, judged in a new session (what a search's
     // full check costs per seed), then whole searches.

@@ -170,7 +170,10 @@ fn work(queue: &(Mutex<Queue>, Condvar), send: &Sender<Done>, wake: &(dyn Fn() +
             q.running.insert(job.key);
             job
         };
-        let result = compute(&job);
+        // A panic in the library is a bug, but it fails one tile: the worker lives on, and the
+        // job leaves `running`, so the tile isn't waited on forever.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compute(&job)))
+            .unwrap_or_else(|_| Err("spyglass failed on this tile".to_string()));
         lock.lock()
             .unwrap_or_else(PoisonError::into_inner)
             .running

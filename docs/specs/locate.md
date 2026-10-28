@@ -67,6 +67,19 @@ A tied cell whose biomes disagree on the predicate is a candidate: the game's an
 
 _Versions:_ the search is the same in all three. 26.2's `BiomeSource.findClosestBiome3d` takes a `Climate.Sampler` and reads `getNoiseBiome(qx, qy, qz, sampler)`; 26.3 and 26.4-snapshot-5 take the `RandomState` and read through `createCachingResolver(randomState)`. Every unique cell's biome is the same, and a tied cell stays a candidate. In 26.4-snapshot-5 chunks store a biome per block ([world-saves.md](world-saves.md#chunk-biomes)), but `/locate biome` still tests quart biomes from the biome source, not stored ones.
 
+## Limits
+
+The game's own searches have fixed sizes. The API takes others, up to limits that keep any one request to at most minutes of work and a bounded amount of memory:
+
+| Request                      | Game's size  | Most allowed                              |
+| ---------------------------- | ------------ | ----------------------------------------- |
+| `locate_structure`'s radius  | 100 rings    | 1,000 rings (`MAX_LOCATE_RADIUS`)         |
+| `locate_biome`'s radius      | 6,400 blocks | 25,600 blocks (`MAX_LOCATE_BIOME_RADIUS`) |
+| `slime_chunks_near`'s radius | —            | 1,000 chunks (`MAX_SLIME_RADIUS`)         |
+| `heights_in`'s region        | —            | 65,536 columns (`MAX_HEIGHT_COLUMNS`)     |
+
+More is `Error::TooLarge`, naming what was asked and the limit. Region sizes are computed in 64-bit integers, saturating, so no region is too large to report.
+
 ## Testing
 
 - **Unit tests**: the spiral and `outFromOrigin` orders, text seeds, the shown distance, and the ring alternatives' rounding.

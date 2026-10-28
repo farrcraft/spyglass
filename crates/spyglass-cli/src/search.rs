@@ -126,7 +126,7 @@ fn outcome_word(o: Outcome) -> &'static str {
 
 fn print_text(game: &Game, query: &SearchQuery, options: &SearchOptions, outcome: &SearchOutcome) {
     let p = &outcome.progress;
-    println!(
+    out!(
         "{} of {} seeds reported, best {} shown (Minecraft {}, {:.1} s{}):",
         p.reported,
         p.evaluated,
@@ -145,12 +145,12 @@ fn print_text(game: &Game, query: &SearchQuery, options: &SearchOptions, outcome
         },
     );
     for line in query.to_string().lines() {
-        println!("  {line}");
+        out!("  {line}");
     }
     let lines: Vec<String> = query.to_string().lines().map(str::to_string).collect();
     for (rank, hit) in outcome.hits.iter().enumerate() {
-        println!();
-        println!(
+        out!();
+        out!(
             "{:>3}. seed {}  score {}  {}",
             rank + 1,
             hit.seed,
@@ -166,12 +166,12 @@ fn print_text(game: &Game, query: &SearchQuery, options: &SearchOptions, outcome
                     feature_at(f).map_or(String::new(), |[x, z]| format!(", first at {x} {z}"))
                 ),
             };
-            println!("       {:<8} {line}{found}", outcome_word(c.outcome));
+            out!("       {:<8} {line}{found}", outcome_word(c.outcome));
         }
     }
     match p.next {
-        Some(next) => println!("\ncontinue with --from {next}"),
-        None => println!("\nevery seed in the source was searched"),
+        Some(next) => out!("\ncontinue with --from {next}"),
+        None => out!("\nevery seed in the source was searched"),
     }
 }
 

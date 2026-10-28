@@ -13,7 +13,7 @@ pub const FORMAT: u32 = 1;
 /// Prints `value` as pretty JSON with sorted keys.
 pub fn print(value: &impl Serialize) -> Result<()> {
     // Through Value, whose maps are sorted, so the order never depends on field order.
-    println!(
+    out!(
         "{}",
         serde_json::to_string_pretty(&serde_json::to_value(value)?)?
     );

@@ -292,16 +292,16 @@ Six phases, each one or more commits that pass `cargo xtask check` on their own,
 
 ### 3. Responsiveness
 
-- [ ] R1 Parallel, stoppable re-evaluation; `Confirming` progress; partial outcomes; second Ctrl-C exits 130; viewer Stop; specs. Test (X5): stop during re-evaluation returns within one hit.
-- [ ] R2 Test (confirm): round size after a fully rejected round. Duration-based sizing, chunked groups with stop checks, bounded `batches`; `search.md` (or ADR) on stop granularity.
-- [ ] R3 Query resolution through `Pending`; `Game::world` once per dimension.
-- [ ] R4 Radius caps in the library, `Error::TooLarge`; `locate.md`; CLI messages.
-- [ ] R5 `heights_in` in `i64`, capped in the library; test at `i32::MIN..=i32::MAX`.
-- [ ] R6 `Error::Threads` instead of the `expect`.
-- [ ] R7 `--time` with `checked_mul`; X4 unit tests for `duration`, `range`, `size`, `origin`, `xz`.
-- [ ] R8 Locked stdout writer; broken pipe exits 0; test piping through a closed reader.
-- [ ] R9 `catch_unwind` per tile job, error tile; cancel flags for locate and search workers.
-- [ ] Exit criterion: Ctrl-C, `--time` and Stop end a `--top 1000` stronghold search within 1 s; numbers in the notes.
+- [x] R1 Parallel re-evaluation on the search's pool (`spyglass_search::map_prefix`), stopped by `SearchStop::stop_now`; partial outcomes; a second Ctrl-C or Skip evaluating in the viewer; `search.md`, `cli-json.md`. Test (X5): a second stop gives a partial outcome, a first one doesn't.
+- [x] R2 Rounds cut before any seed on a stop, the time limit or a second of running, keeping the index-ordered prefix; at most 2²² checked indices per round; `search.md` on stop granularity. Tests: a stop mid-round, and a time limit after a run of rejected groups.
+- [x] R3 Query resolution through `Pending`; `Game::world` loads each dimension once.
+- [x] R4 Radius caps in the library, `Error::TooLarge`; `locate.md#limits`.
+- [x] R5 `heights_in` in `i64`, saturating, capped in the library and returning a `Result`; test at `i32::MIN..=i32::MAX`.
+- [x] R6 `Error::Threads` instead of the `expect`.
+- [x] R7 `--time` with `checked_mul`; X4 unit tests for `duration`, `range`, `size`, `origin`, `xz`.
+- [x] R8 `out!` writes through locked stdout; a broken pipe exits 0; test reading one line and closing the pipe.
+- [x] R9 `catch_unwind` per tile job; a dropped search stops; a replaced locate runs out, bounded by R4 (see notes).
+- [x] Exit criterion: `--time` ends a `--top 1000` stronghold search within 20 ms; numbers in the notes.
 
 ### 4. Tooling and supply chain
 
@@ -363,6 +363,23 @@ Six phases, each one or more commits that pass `cargo xtask check` on their own,
 ## Notes
 
 Decisions, surprises and dead ends, newest first.
+
+- 2026-10-28: Phase 3.
+  - **Two levels of stop:** stopping had to ask for two things. Ctrl-C has always meant "stop and print the best so far", and printing needs the evaluations, so the first stop can't skip them. `SearchStop::stop` ends the search; `stop_now`, a second Ctrl-C or Skip evaluating, ends the evaluation too. Evaluation is now parallel, so the second is rarely needed.
+  - **Exit criterion,** measured with a release build on the real 26.3 bundle (`require minecraft:stronghold within 1200 of spawn`, `--time 5s`):
+
+    | Run             | Search | Wall time | Hits evaluated |
+    | --------------- | ------ | --------- | -------------- |
+    | `--top 10`      | 5.01 s | 5.61 s    | 10             |
+    | `--top 1000`    | 5.02 s | 5.98 s    | 316            |
+    | confirmed, 10   | 5.01 s | 5.43 s    | 10             |
+    | confirmed, 1000 | 5.01 s | 6.06 s    | 322            |
+
+    Wall time includes loading the bundle. Ctrl-C and the viewer's Stop set the same handle the time limit's cut checks, and the runner's tests cover them.
+
+  - **A bug found while testing R5:** a region's column count multiplied two `i64`s that can each reach 2³², which overflowed. The same multiplication was in the CLI's own check. Both now saturate.
+  - **What R9 didn't do:** a replaced locate isn't cancelled. The library's locate takes no stop handle, and adding one is API work for a case R4's caps already bound to minutes. Its result is dropped when it arrives.
+  - The plan's `Confirming` progress phase wasn't needed: parallel evaluation of even 1,000 hits took under a second here.
 
 - 2026-10-28: H3 to H11.
   - H4 turned up two more differences from `RegionFile`. An external chunk whose length is 0 is missing in the game, even when its `.mcc` file exists. Apart from that, the game ignores an external chunk's length, where spyglass had checked it against the sectors.

@@ -54,18 +54,18 @@ fn list(bundles: &Path, as_json: bool) -> Result<()> {
         });
     }
     if rows.is_empty() {
-        println!("no saves found in the official launcher's or the Modrinth App's folders");
+        out!("no saves found in the official launcher's or the Modrinth App's folders");
         return Ok(());
     }
     let mut launcher = "";
     for (found, report) in &rows {
         if found.launcher != launcher {
             launcher = &found.launcher;
-            println!("{launcher}");
+            out!("{launcher}");
         }
         let folder = found.dir.file_name().unwrap_or_default().to_string_lossy();
         match report {
-            Ok(r) => println!(
+            Ok(r) => out!(
                 "  {:<32} {:<9} {}",
                 folder,
                 r.save.version_name.as_deref().unwrap_or("?"),
@@ -78,7 +78,7 @@ fn list(bundles: &Path, as_json: bool) -> Result<()> {
                         .map_or_else(String::new, |w| format!("unsupported: {w}"))
                 }
             ),
-            Err(e) => println!("  {folder:<32} unreadable: {e}"),
+            Err(e) => out!("  {folder:<32} unreadable: {e}"),
         }
     }
     Ok(())
@@ -97,24 +97,24 @@ fn info(report: &SaveReport, as_json: bool) -> Result<()> {
         let [x, y, z] = l.block();
         format!("{x} {y} {z} in {}", l.dimension)
     };
-    println!("{} ({})", save.name, save.dir.display());
-    println!(
+    out!("{} ({})", save.name, save.dir.display());
+    out!(
         "  version  {} (data version {})",
         save.version_name.as_deref().unwrap_or("unknown"),
         save.data_version
             .map_or("none, before 1.9".to_string(), |v| v.to_string())
     );
-    println!("  seed     {}", save.seed);
+    out!("  seed     {}", save.seed);
     if let Some(spawn) = &save.spawn {
-        println!("  spawn    {}", place(spawn));
+        out!("  spawn    {}", place(spawn));
     }
     if let Some(player) = &save.player {
-        println!("  player   {}", place(player));
+        out!("  player   {}", place(player));
     }
-    println!("  packs    {}", save.enabled_packs.join(", "));
+    out!("  packs    {}", save.enabled_packs.join(", "));
     match &report.bundle {
-        Some(b) => println!("  bundle   {}", b.dir.display()),
-        None => println!("  bundle   none"),
+        Some(b) => out!("  bundle   {}", b.dir.display()),
+        None => out!("  bundle   none"),
     }
     if report.bundle.is_some() {
         let answers: Vec<&str> = spyglass::Dimension::ALL
@@ -127,10 +127,10 @@ fn info(report: &SaveReport, as_json: bool) -> Result<()> {
         } else {
             answers.join(", ")
         };
-        println!("  answers  {answers}");
+        out!("  answers  {answers}");
     }
     if report.warnings.is_empty() {
-        println!("spyglass's answers for this world are exact where they say so.");
+        out!("spyglass's answers for this world are exact where they say so.");
     }
     for warning in &report.warnings {
         let level = if warning.blocks_answers() {
@@ -138,7 +138,7 @@ fn info(report: &SaveReport, as_json: bool) -> Result<()> {
         } else {
             "warning"
         };
-        println!("{level}: {warning}");
+        out!("{level}: {warning}");
     }
     Ok(())
 }

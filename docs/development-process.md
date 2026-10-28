@@ -20,7 +20,7 @@ Work flows from roadmap milestones to implementation plans to code. Milestones a
 4. **Complete the plan.** When every task is done and verified, run `cargo xtask check`, and `cargo xtask oracle-test` if the plan touched worldgen, so the game comparisons that the hooks can't run pass too. Check that nothing durable lives only in the plan, then `git mv` it to `plans/completed/`, set its status to `Completed` and fix links to it.
 5. **Complete the milestone.** When all its plans are complete and its exit criteria are met, `git mv` it to `roadmap/completed/`, set its status to `Completed`, update the table in [roadmap/README.md](roadmap/README.md) and fix links to it.
 
-When moving a file, search the docs for its filename and update every relative link.
+When moving a file, search the docs for its filename and update every relative link. The `links` commit hook (`cargo xtask links`) fails on any link or anchor that no longer resolves.
 
 ## Process docs are not referenced by code
 

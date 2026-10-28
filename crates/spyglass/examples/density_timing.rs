@@ -21,11 +21,7 @@ fn main() -> spyglass::Result<()> {
     session.height_at([0, 0], Heightmap::WorldSurfaceWg);
     for (pass, detail) in [(1, false), (2, true)] {
         timing::set_detail(detail);
-        println!(
-            "
-##### {}",
-            if detail { "per node" } else { "coarse" }
-        );
+        println!("\n##### {}", if detail { "per node" } else { "coarse" });
         scenarios(&world, &session, pass);
     }
     Ok(())

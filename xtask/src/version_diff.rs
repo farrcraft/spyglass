@@ -86,8 +86,7 @@ pub fn run(args: &VersionDiff) -> Result<()> {
 /// Every behavior switch and whether it's on for this bundle.
 fn switches(manifest: &Manifest) -> String {
     let mut out = format!(
-        "{} (data version {}): behavior switches (ADR 0026)
-",
+        "{} (data version {}): behavior switches (ADR 0026)\n",
         manifest.version, manifest.data_version
     );
     for switch in SWITCHES {
@@ -360,13 +359,8 @@ fn report(old: &Snapshot, new: &Snapshot) -> String {
     if !flipped.is_empty() {
         let _ = writeln!(
             out,
-            "
-behavior switches that change:
-{}",
-            flipped.join(
-                "
-"
-            )
+            "\nbehavior switches that change:\n{}",
+            flipped.join("\n")
         );
     }
     let registries: BTreeSet<&String> = old.ids.keys().chain(new.ids.keys()).collect();

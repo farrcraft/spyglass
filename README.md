@@ -41,7 +41,7 @@ cargo build
 cargo test
 ```
 
-With a version bundle extracted, ask a seed where things are, as the game's `/locate` would:
+With a version bundle extracted, ask a seed where things are, as the game's `/locate` would. Extracting needs a Java runtime matching the game version (Java 25 for 26.3); if you've played that version, the launcher's runtime is found automatically ([Java](docs/getting-started.md#java)):
 
 ```sh
 cargo run -p spyglass-extract -- 26.3
@@ -82,8 +82,11 @@ See [docs/architecture.md](docs/architecture.md) for how they fit together.
 - [Getting started](docs/getting-started.md)
 - [Architecture](docs/architecture.md)
 - [Specs](docs/specs/)
+- [Adding a game version](docs/adding-a-version.md)
 - [Roadmap](docs/roadmap/README.md)
+- [Implementation plans](docs/plans/README.md)
 - [Development process](docs/development-process.md)
+- [Contributing](CONTRIBUTING.md) and [security](SECURITY.md)
 - [Decision records](docs/adr/)
 - [Research](docs/research/)
 

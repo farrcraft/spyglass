@@ -1,4 +1,4 @@
-//! What the Overworld's generator answers about terrain before any chunk exists: the density
+//! What each dimension's generator answers about terrain before any chunk exists: the density
 //! column, the aquifer, and the heights and block columns built on them
 //! (`NoiseBasedChunkGenerator.getBaseHeight`, `getBaseColumn`). Structures decide their starts
 //! from these. See `docs/specs/terrain.md` and ADR 0022; 26.2's terrain is another algorithm

@@ -16,15 +16,18 @@ cargo fmt --all                               # format
 cargo clippy --workspace --all-targets -- -D warnings
 cargo run -p spyglass-viewer                  # run the viewer
 cargo xtask check                             # every check, whole repo (as CI)
+cargo xtask oracle golden                     # regenerate the game's answers (oracle --help for the rest)
 cargo xtask oracle-test                       # ignored comparisons with the game, where inputs exist
 cargo xtask ci --game-version <v>             # one version's CI job: extract, regenerate, compare
 cargo xtask bench                             # time the public API's main operations
 cargo xtask doctor                            # is this machine ready? (check-only)
+cargo xtask links                             # every relative Markdown link and anchor resolves
 cargo xtask msrv                              # build with the minimum supported Rust version
 cargo xtask linux-check [--full]              # fresh clone + setup + extract on Ubuntu, in Docker
+cargo xtask version-diff <old> <new> [--code] # what changed between two bundles
 ```
 
-All checks are defined in `.pre-commit-config.yaml` and run as git hooks (commit: hygiene, Mojang-data blocks, fmt, unused deps, typos, TOML/JSON/YAML/Markdown formatting, shellcheck; push: clippy, nextest and doctests, cargo doc, MSRV build, cargo-deny). `cargo xtask check` runs all of them against the whole repo, as CI should. When a formatter hook modifies files, review and stage the changes, then commit again. Never bypass hooks with `--no-verify`. See [ADR 0002](docs/adr/0002-git-hooks-for-local-checks.md) and [ADR 0005](docs/adr/0005-extra-rust-checks.md). Lint levels live in `[workspace.lints]`; new crates opt in with `[lints] workspace = true`. A new dependency license must be allowed in `deny.toml`.
+All checks are defined in `.pre-commit-config.yaml` and run as git hooks (commit: hygiene, Mojang-data blocks, Markdown links, fmt, unused deps, typos, TOML/JSON/YAML/Markdown formatting, shellcheck; push: clippy, nextest and doctests, cargo doc, MSRV build, cargo-deny). `cargo xtask check` runs all of them against the whole repo, as CI should. When a formatter hook modifies files, review and stage the changes, then commit again. Never bypass hooks with `--no-verify`. See [ADR 0002](docs/adr/0002-git-hooks-for-local-checks.md) and [ADR 0005](docs/adr/0005-extra-rust-checks.md). Lint levels live in `[workspace.lints]`; new crates opt in with `[lints] workspace = true`. A new dependency license must be allowed in `deny.toml`.
 
 ## Layout
 

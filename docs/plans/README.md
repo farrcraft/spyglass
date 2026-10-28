@@ -6,6 +6,6 @@ Code must not reference plans. Anything durable a plan produces belongs in a spe
 
 ## Active
 
-None.
+- [m10-hardening](m10-hardening.md): 10. Hardening (in progress)
 
 Milestone 08's follow-ups ([roadmap](../roadmap/README.md#follow-ups)) need no plan of their own.

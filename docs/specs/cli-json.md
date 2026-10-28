@@ -143,6 +143,7 @@ Feature kinds; more may be added within format 1:
 - `slime_chunk`: `chunk`.
 - `biome`: `position` (`x`, `y`, `z`), `biome`, `tied` (as `locate biome`) and `certain`.
 - `spawn`: `locate spawn`'s fields.
+- `other`: a kind the library added that this build of the command can't describe yet. No other fields.
 
 ## `world info`
 

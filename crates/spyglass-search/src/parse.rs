@@ -666,8 +666,7 @@ mod tests {
     #[test]
     fn dimensions() {
         let c = parse(
-            "require nether fortress within 100 of spawn
-prefer end end_city in 0,0 to 9,9 weight 3",
+            "require nether fortress within 100 of spawn\nprefer end end_city in 0,0 to 9,9 weight 3",
         );
         assert_eq!(c[0].dimension, Some(Dimension::Nether));
         assert_eq!(c[1].dimension, Some(Dimension::End));
@@ -679,14 +678,12 @@ prefer end end_city in 0,0 to 9,9 weight 3",
         let mut query = Query::parse("require overworld igloo within 5 of spawn").unwrap();
         assert_eq!(
             query.to_string(),
-            "require overworld minecraft:igloo within 5 of spawn
-"
+            "require overworld minecraft:igloo within 5 of spawn\n"
         );
         query.forget_dimension(0);
         assert_eq!(
             query.to_string(),
-            "require minecraft:igloo within 5 of spawn
-"
+            "require minecraft:igloo within 5 of spawn\n"
         );
         // The dimension comes first, once, and is never an id.
         for (text, column) in [
@@ -712,19 +709,16 @@ prefer end end_city in 0,0 to 9,9 weight 3",
     /// The spec's query examples: its `text` blocks that start like a query.
     fn spec_examples() -> Vec<String> {
         let spec = include_str!("../../../docs/specs/search.md");
-        spec.split(
-            "```text
-",
-        )
-        .skip(1)
-        .filter_map(|block| block.split_once("```").map(|(body, _)| body.to_string()))
-        .filter(|body| {
-            let first = body.trim_start();
-            ["#", "require", "prefer"]
-                .iter()
-                .any(|p| first.starts_with(p))
-        })
-        .collect()
+        spec.split("```text\n")
+            .skip(1)
+            .filter_map(|block| block.split_once("```").map(|(body, _)| body.to_string()))
+            .filter(|body| {
+                let first = body.trim_start();
+                ["#", "require", "prefer"]
+                    .iter()
+                    .any(|p| first.starts_with(p))
+            })
+            .collect()
     }
 
     #[test]
@@ -732,12 +726,7 @@ prefer end end_city in 0,0 to 9,9 weight 3",
         let examples = spec_examples();
         assert!(!examples.is_empty());
         for text in &examples {
-            let query = Query::parse(text).unwrap_or_else(|e| {
-                panic!(
-                    "{text}
-{e}"
-                )
-            });
+            let query = Query::parse(text).unwrap_or_else(|e| panic!("{text}\n{e}"));
             let canonical = query.to_string();
             let again = Query::parse(&canonical).unwrap();
             assert_eq!(again.constraints(), query.constraints());

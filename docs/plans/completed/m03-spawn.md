@@ -1,9 +1,9 @@
 # m03. World spawn origin
 
-- Status: Draft
+- Status: Completed
 - Milestone: [03. Structure placement and locate queries](../../roadmap/completed/03-structure-placement.md)
-- Started: —
-- Completed: —
+- Started: 2026-10-25
+- Completed: 2026-10-25
 
 ## Goal
 

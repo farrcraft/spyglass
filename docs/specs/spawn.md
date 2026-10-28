@@ -1,6 +1,6 @@
 # World spawn
 
-Status: stable. Covers the spawn origin of a noise-based dimension (the Default world preset's three), implemented in `spyglass-biome` for 26.3 and checked against the oracle's [spawn golden files](oracle.md#spawn-golden-files). The final spawn block needs generated blocks (the surface and features), not only the generator's heights, and is deferred to a later milestone ([roadmap](../roadmap/README.md)). 26.2 and the 26.4 snapshots are implemented and checked against the oracle; their differences are in _Versions_ notes and [26.2](#262).
+Status: stable. Covers the spawn origin of a noise-based dimension (the Default world preset's three), implemented in `spyglass-biome` for 26.3 and checked against the oracle's [spawn golden files](oracle.md#spawn-golden-files). The final spawn block needs generated blocks (the surface and features), not only the generator's heights, and is deferred to a later milestone ([roadmap](../roadmap/README.md#not-yet-planned)). 26.2 and the 26.4 snapshots are implemented and checked against the oracle; their differences are in _Versions_ notes and [26.2](#262).
 
 ## How the game picks the spawn
 

@@ -1,7 +1,7 @@
 # m06. Seed search
 
 - Status: Completed
-- Milestone: [06. Seed search](../../../roadmap/completed/06-seed-search.md)
+- Milestone: [06. Seed search](../../roadmap/completed/06-seed-search.md)
 - Started: 2026-10-25
 - Completed: 2026-10-25
 

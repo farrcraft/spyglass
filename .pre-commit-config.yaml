@@ -50,6 +50,14 @@ repos:
         language: pygrep
         entry: docs[/\\](roadmap|plans)
         files: ^(crates|xtask)/
+      # Relative links and anchors in Markdown, as GitHub resolves them. Runs on any Markdown
+      # change, since moving or retitling one document can break links in another.
+      - id: links
+        name: Markdown links resolve
+        language: system
+        entry: cargo xtask links
+        files: \.md$
+        pass_filenames: false
 
   - repo: local
     hooks:

@@ -106,7 +106,7 @@ cargo run -p spyglass-extract
 
 All checks are defined in [`.pre-commit-config.yaml`](../.pre-commit-config.yaml) (see [ADR 0002](adr/0002-git-hooks-for-local-checks.md) and [ADR 0005](adr/0005-extra-rust-checks.md)). Once the setup script has run, they run automatically:
 
-- **On commit**, against staged files: line endings and whitespace, JSON/YAML/TOML syntax, blocks on jars, class files and extracted game data, `cargo fmt`, unused dependencies (cargo-shear), spelling (typos), TOML formatting (taplo), JSON/YAML/Markdown formatting (Prettier), Markdown lint and shellcheck. Formatters fix files in place and fail the commit; review the changes, `git add` them and commit again.
+- **On commit**, against staged files: line endings and whitespace, JSON/YAML/TOML syntax, blocks on jars, class files and extracted game data, relative Markdown links and anchors (`cargo xtask links`), `cargo fmt`, unused dependencies (cargo-shear), spelling (typos), TOML formatting (taplo), JSON/YAML/Markdown formatting (Prettier), Markdown lint and shellcheck. Formatters fix files in place and fail the commit; review the changes, `git add` them and commit again.
 - **On push:** `cargo clippy` with warnings as errors, tests (`cargo nextest run`, then `cargo test --doc` for doctests), `cargo doc` with the rustdoc lints, a build with the minimum supported Rust version (`cargo xtask msrv`), and `cargo-deny` (security advisories, licenses, dependency sources; configured in [`deny.toml`](../deny.toml)).
 
 Lint levels for every crate are set once, in `[workspace.lints]` in the root `Cargo.toml`. A new crate opts in with `[lints] workspace = true`.
@@ -141,16 +141,18 @@ It builds the `base` stage of `.devcontainer/Dockerfile` (only git, curl and a C
 
 Project-level commands live in the `xtask` crate and run as `cargo xtask <command>` (see [ADR 0003](adr/0003-cargo-xtask-for-project-commands.md)). `cargo xtask --help` lists them. The first run compiles it, which takes a few seconds.
 
-| Command                   | What it does                                              |
-| ------------------------- | --------------------------------------------------------- |
-| `cargo xtask bench`       | Times the public API's main operations (`dist` build).    |
-| `cargo xtask check`       | Every check in the pre-commit config, on all files.       |
-| `cargo xtask ci`          | One game version's CI job, from extraction to comparison. |
-| `cargo xtask doctor`      | Reports whether this machine is ready.                    |
-| `cargo xtask linux-check` | Checks a fresh clone on a clean Linux machine, in Docker. |
-| `cargo xtask msrv`        | Builds the workspace with its minimum Rust version.       |
-| `cargo xtask oracle`      | Builds and runs the oracle harness (below).               |
-| `cargo xtask oracle-test` | Runs the ignored comparisons with the game (below).       |
+| Command                    | What it does                                                                        |
+| -------------------------- | ----------------------------------------------------------------------------------- |
+| `cargo xtask bench`        | Times the public API's main operations (`dist` build).                              |
+| `cargo xtask check`        | Every check in the pre-commit config, on all files.                                 |
+| `cargo xtask ci`           | One game version's CI job, from extraction to comparison.                           |
+| `cargo xtask doctor`       | Reports whether this machine is ready.                                              |
+| `cargo xtask links`        | Checks every relative link and anchor in the Markdown.                              |
+| `cargo xtask linux-check`  | Checks a fresh clone on a clean Linux machine, in Docker.                           |
+| `cargo xtask msrv`         | Builds the workspace with its minimum Rust version.                                 |
+| `cargo xtask oracle`       | Builds and runs the oracle harness (below).                                         |
+| `cargo xtask oracle-test`  | Runs the ignored comparisons with the game (below).                                 |
+| `cargo xtask version-diff` | Reports what changed between two bundles ([adding a version](adding-a-version.md)). |
 
 ## 6. The oracle
 
@@ -187,6 +189,8 @@ cargo test --release -p spyglass-structure -- --ignored
 ```sh
 cargo test --release -p spyglass-biome --test spawn -- --ignored
 ```
+
+The other subcommands each do one part of the work, and `cargo xtask oracle --help` describes them: `build` compiles the harness (the others do it first when anything is stale), `biomes` writes one golden biome file for a seed and region, `heights` writes the height golden files (part of `golden`), `locate` asks a real dedicated server `/locate` questions and takes several minutes (not part of `golden`), and `test-pack` checks the forms vanilla data doesn't use ([specs/oracle.md](specs/oracle.md)).
 
 `check-save` takes any world created in the same game version with the Default preset and no worldgen datapacks. Its folder is in your launcher's `saves` directory. It should report zero unexplained mismatches.
 

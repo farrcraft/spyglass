@@ -10,6 +10,7 @@ use spyglass_extract::{java, manifest};
 
 mod ci;
 mod code_diff;
+mod links;
 mod linux_check;
 mod locate;
 mod oracle;
@@ -52,6 +53,8 @@ enum Cmd {
     },
     /// Check a fresh clone, scripts/setup.sh and the extractor on a clean Ubuntu machine, in Docker.
     LinuxCheck(linux_check::LinuxCheck),
+    /// Check that every relative link and anchor in the repo's Markdown resolves.
+    Links,
     /// Check the workspace builds with its minimum supported Rust version (`rust-version` in
     /// Cargo.toml). Needs that toolchain; the setup scripts install it.
     Msrv {
@@ -86,6 +89,7 @@ fn main() -> ExitCode {
         Cmd::Doctor { game_version, java } => doctor(&game_version, java.as_deref()),
         Cmd::JdkStatus { game_version } => jdk_status(&game_version),
         Cmd::LinuxCheck(args) => linux_check::run(&args),
+        Cmd::Links => links::run(),
         Cmd::Msrv { print } => msrv(print),
         Cmd::Oracle { cmd } => oracle::run(cmd),
         Cmd::OracleTest { game_version } => oracle_test::run(game_version.as_deref()),

@@ -333,18 +333,11 @@ fn server_dir(harness: &Harness, name: &str, source: &Source<'_>) -> Result<Path
         fs::remove_dir_all(&dir)?;
     }
     fs::create_dir_all(&dir)?;
-    fs::write(
-        dir.join("eula.txt"),
-        "eula=true
-",
-    )?;
+    fs::write(dir.join("eula.txt"), "eula=true\n")?;
     // The world is the default level-name, "world". Port 0 binds any free port. Pausing when
     // empty would stop the tick loop that runs console commands.
     let seed = match source {
-        Source::Seed(seed) => format!(
-            "level-seed={seed}
-"
-        ),
+        Source::Seed(seed) => format!("level-seed={seed}\n"),
         Source::Save(save) => {
             copy_save(save, &dir.join("world"))?;
             String::new()
@@ -353,13 +346,12 @@ fn server_dir(harness: &Harness, name: &str, source: &Source<'_>) -> Result<Path
     fs::write(
         dir.join("server.properties"),
         format!(
-            "{seed}server-ip=127.0.0.1
-server-port=0
-online-mode=false
-             pause-when-empty-seconds=-1
-sync-chunk-writes=false
-spawn-protection=0
-"
+            "{seed}server-ip=127.0.0.1\n\
+             server-port=0\n\
+             online-mode=false\n\
+             pause-when-empty-seconds=-1\n\
+             sync-chunk-writes=false\n\
+             spawn-protection=0\n"
         ),
     )?;
     Ok(dir)

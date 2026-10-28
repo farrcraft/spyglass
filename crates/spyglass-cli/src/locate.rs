@@ -103,12 +103,14 @@ pub fn structure(
             ", or further out."
         };
         let why = if options.confirm {
-            "Candidates are behind a tied biome, a platform-dependent ring position or a              mineshaft spyglass can't place."
+            "Candidates are behind a tied biome, a platform-dependent ring position or a \
+             mineshaft spyglass can't place."
         } else {
             "Candidates depend on terrain, which --unconfirmed leaves undecided, or a tied biome."
         };
         println!(
-            "{why} The game's answer is the first of these it generates, usually the first              listed{rest}"
+            "{why} The game's answer is the first of these it generates, usually the first \
+             listed{rest}"
         );
     }
     Ok(())

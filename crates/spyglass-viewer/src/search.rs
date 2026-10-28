@@ -326,10 +326,7 @@ mod tests {
         let fixture = spyglass_oracle::fixtures::structured_overworld(false);
         let game = Game::open(fixture.path()).unwrap();
         let query = game
-            .search_query(
-                "prefer 3 hut within 400 of -100,0
-prefer spawn within 9 of 0,0",
-            )
+            .search_query("prefer 3 hut within 400 of -100,0\nprefer spawn within 9 of 0,0")
             .unwrap();
         let evaluation = game.session(4).evaluate(&query, false).unwrap();
         let found = matches(&query, &evaluation);

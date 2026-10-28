@@ -50,7 +50,7 @@ repos:
         name: code must not reference docs/roadmap or docs/plans
         language: pygrep
         entry: docs[/\\](roadmap|plans)
-        files: ^(crates|xtask|scripts|oracle)/
+        files: ^(crates|xtask|scripts|oracle|fuzz)/
       # Relative links and anchors in Markdown, as GitHub resolves them. Runs on any Markdown
       # change, since moving or retitling one document can break links in another.
       - id: links

@@ -10,6 +10,7 @@ use spyglass_extract::{java, manifest};
 
 mod ci;
 mod code_diff;
+mod fuzz;
 mod links;
 mod linux_check;
 mod locate;
@@ -36,6 +37,8 @@ enum Cmd {
     /// Run one game version's CI job: extract its bundle, regenerate every oracle output
     /// (goldens, locate and, where it loads, the test pack), and run every comparison.
     Ci(ci::Ci),
+    /// Fuzz a reader of untrusted files with cargo-fuzz on nightly: `nbt` or `region`.
+    Fuzz(fuzz::Fuzz),
     /// Report whether this machine is ready to work on spyglass. Never installs anything.
     Doctor {
         /// Game version whose Java requirement to check: an id, `latest` or `latest-snapshot`.
@@ -87,6 +90,7 @@ fn main() -> ExitCode {
         Cmd::Check => check(),
         Cmd::Ci(args) => ci::run(&args),
         Cmd::Doctor { game_version, java } => doctor(&game_version, java.as_deref()),
+        Cmd::Fuzz(args) => fuzz::run(&args),
         Cmd::JdkStatus { game_version } => jdk_status(&game_version),
         Cmd::LinuxCheck(args) => linux_check::run(&args),
         Cmd::Links => links::run(),
@@ -311,6 +315,7 @@ fn rust_checks(r: &mut Report, setup: &str) {
     // Rust: this binary compiled, so the toolchain and linker work.
     let rustc = first_line("rustc", &["--version"]).unwrap_or_else(|| "unknown".into());
     r.line(Status::Ok, "Rust toolchain", &rustc, None);
+    pin_check(r);
     for (component, args) in [
         ("rustfmt", ["fmt", "--version"]),
         ("clippy", ["clippy", "--version"]),
@@ -350,6 +355,42 @@ fn rust_checks(r: &mut Report, setup: &str) {
         }
         Err(err) => r.line(Status::Fail, "MSRV toolchain", &format!("{err:#}"), None),
     }
+}
+
+/// Whether a `stable` toolchain newer than rust-toolchain.toml's pin is installed: the pin is
+/// bumped deliberately, so doctor says when there's something to bump to (ADR 0034). Offline,
+/// it knows only what rustup has installed.
+fn pin_check(r: &mut Report) {
+    let pinned = match toml_string("rust-toolchain.toml", &["toolchain", "channel"]) {
+        Ok(pinned) => pinned,
+        Err(err) => return r.line(Status::Fail, "toolchain pin", &format!("{err:#}"), None),
+    };
+    let stable = first_line("rustc", &["+stable", "--version"])
+        .and_then(|line| line.split_whitespace().nth(1).map(str::to_string));
+    match stable.zip(version_triple(&pinned)) {
+        Some((stable, pin)) if version_triple(&stable).is_some_and(|s| s > pin) => r.line(
+            Status::Warn,
+            "toolchain pin",
+            &format!("rust-toolchain.toml pins {pinned}; Rust {stable} is installed"),
+            Some("bump channel in rust-toolchain.toml, then fix what clippy finds"),
+        ),
+        _ => r.line(
+            Status::Ok,
+            "toolchain pin",
+            &format!("{pinned} (rust-toolchain.toml)"),
+            None,
+        ),
+    }
+}
+
+/// `1.99.1` as numbers, for ordering versions.
+fn version_triple(version: &str) -> Option<(u32, u32, u32)> {
+    let mut parts = version.split('.').map(|p| p.parse::<u32>().ok());
+    Some((
+        parts.next()??,
+        parts.next()??,
+        parts.next().flatten().unwrap_or(0),
+    ))
 }
 
 /// The hook runner, and whether the hooks are installed.
@@ -510,5 +551,19 @@ fn java_checks(r: &mut Report, game_version: &str, explicit: Option<&Path>) {
                 )),
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn versions_order_numerically() {
+        assert_eq!(version_triple("1.99.1"), Some((1, 99, 1)));
+        assert_eq!(version_triple("1.95"), Some((1, 95, 0)));
+        assert!(version_triple("1.100.0") > version_triple("1.99.1"));
+        assert_eq!(version_triple("stable"), None);
+        assert_eq!(version_triple("1.x"), None);
     }
 }

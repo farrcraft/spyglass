@@ -38,3 +38,7 @@ Start from [template.md](template.md). Files are named `NNNN-kebab-case-title.md
 | [0030](0030-a-test-pack-for-forms-vanilla-doesnt-use.md)      | A test pack for forms the vanilla data doesn't use                    | Accepted                                                             |
 | [0031](0031-flattened-density-evaluation.md)                  | Flattened density evaluation                                          | Superseded by [0032](0032-density-programs-only-where-they-pay.md)   |
 | [0032](0032-density-programs-only-where-they-pay.md)          | Density programs only where they pay                                  | Accepted                                                             |
+| [0033](0033-the-oracle-accepts-the-eula-only-when-asked.md)   | The oracle accepts the Minecraft EULA only when asked                 | Accepted                                                             |
+| [0034](0034-an-exact-toolchain-bumped-deliberately.md)        | An exact toolchain, bumped deliberately                               | Accepted                                                             |
+| [0035](0035-ci-checks-windows-too.md)                         | CI checks Windows too                                                 | Accepted                                                             |
+| [0036](0036-fuzzing-with-cargo-fuzz.md)                       | Fuzzing the readers of untrusted files with cargo-fuzz                | Accepted                                                             |

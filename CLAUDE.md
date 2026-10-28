@@ -22,6 +22,7 @@ cargo xtask ci --game-version <v>             # one version's CI job: extract, r
 cargo xtask bench                             # time the public API's main operations
 cargo xtask doctor                            # is this machine ready? (check-only)
 cargo xtask links                             # every relative Markdown link and anchor resolves
+cargo xtask fuzz <nbt|region>                 # fuzz a reader of untrusted files (nightly, cargo-fuzz)
 cargo xtask msrv                              # build with the minimum supported Rust version
 cargo xtask linux-check [--full]              # fresh clone + setup + extract on Ubuntu, in Docker
 cargo xtask version-diff <old> <new> [--code] # what changed between two bundles
@@ -34,6 +35,7 @@ All checks are defined in `.pre-commit-config.yaml` and run as git hooks (commit
 - `crates/` holds one crate per layer (rng → noise → density → biome/terrain → structure → search, with `data` feeding versioned parameters and `viewer` on top). Keep dependencies flowing in that direction; lower crates must not depend on higher ones.
 - `docs/` holds getting-started, architecture, the development process, `specs/` (behavior the code must match), `adr/` (decision records), `research/` (prior art, open questions), `roadmap/` (one file per milestone) and `plans/` (implementation plans). `roadmap/` and `plans/` each have a `completed/` subdirectory.
 - `xtask/` holds project commands (`cargo xtask <cmd>`; [ADR 0003](docs/adr/0003-cargo-xtask-for-project-commands.md)). It's tooling: no crate may depend on it. Add new project commands here, in Rust, rather than as scripts.
+- `fuzz/` holds cargo-fuzz targets for the readers of untrusted files, a workspace of its own that needs nightly ([ADR 0036](docs/adr/0036-fuzzing-with-cargo-fuzz.md)).
 - `scripts/` holds only the setup scripts, in PowerShell and POSIX sh, because they run before Rust exists. Keep the pair in sync.
 
 ## Rules

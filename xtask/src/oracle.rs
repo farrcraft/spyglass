@@ -68,6 +68,7 @@ pub enum OracleCmd {
     },
     /// Ask a real dedicated server `/locate` questions for a fixed case list, and write the
     /// answers into `oracle-out/<version>/locate/`. Takes several minutes; not part of `golden`.
+    /// Running the server means accepting the Minecraft EULA (ADR 0033).
     Locate {
         #[command(flatten)]
         common: Common,
@@ -75,6 +76,10 @@ pub enum OracleCmd {
         /// never opens the save itself.
         #[arg(long)]
         world: Vec<PathBuf>,
+        /// Accept the Minecraft EULA (https://aka.ms/MinecraftEULA) for the server this runs,
+        /// as `SPYGLASS_ACCEPT_EULA=1` does.
+        #[arg(long)]
+        accept_eula: bool,
     },
     /// Load the test data pack in `oracle/testpack/` over the vanilla one and write probe and
     /// structure files into `oracle-out/<version>+testpack/`, with the bundle merged with the
@@ -198,7 +203,12 @@ pub fn run(cmd: OracleCmd) -> Result<()> {
             let harness = build(&common)?;
             harness.structures()
         }
-        OracleCmd::Locate { common, world } => {
+        OracleCmd::Locate {
+            common,
+            world,
+            accept_eula,
+        } => {
+            crate::locate::require_eula(accept_eula)?;
             let harness = build(&common)?;
             crate::locate::run(&harness, &world)
         }

@@ -119,6 +119,29 @@ enum Source<'a> {
     Save(&'a Path),
 }
 
+/// The environment variable that accepts the Minecraft EULA, as `--accept-eula` does.
+const ACCEPT_EULA_VAR: &str = "SPYGLASS_ACCEPT_EULA";
+
+/// An error unless whoever runs this has accepted the Minecraft EULA, with `--accept-eula`
+/// (`flag`) or [`ACCEPT_EULA_VAR`] set to `1` or `true`. The dedicated server won't start
+/// without an `eula.txt` that accepts it, and accepting is for the person running it, not for
+/// spyglass to do silently (ADR 0033).
+pub fn require_eula(flag: bool) -> Result<()> {
+    let var = std::env::var(ACCEPT_EULA_VAR).unwrap_or_default();
+    if flag || eula_value_accepts(&var) {
+        return Ok(());
+    }
+    bail!(
+        "this runs Mojang's dedicated server, which needs you to accept the Minecraft EULA \
+         (https://aka.ms/MinecraftEULA); pass --accept-eula or set {ACCEPT_EULA_VAR}=1 if you do"
+    )
+}
+
+/// Whether the variable's value accepts the EULA.
+fn eula_value_accepts(value: &str) -> bool {
+    matches!(value.trim(), "1" | "true")
+}
+
 /// With no `worlds`, writes `oracle-out/<version>/locate/<seed>.json` for each seed, replacing
 /// the folder. With `worlds`, writes `world-<folder>.json` for each save, from a copy of it,
 /// with the player's position as an extra origin in the player's dimension.
@@ -333,6 +356,7 @@ fn server_dir(harness: &Harness, name: &str, source: &Source<'_>) -> Result<Path
         fs::remove_dir_all(&dir)?;
     }
     fs::create_dir_all(&dir)?;
+    // Accepted by whoever ran this: `require_eula` checked before any server started.
     fs::write(dir.join("eula.txt"), "eula=true\n")?;
     // The world is the default level-name, "world". Port 0 binds any free port. Pausing when
     // empty would stop the tick loop that runs console commands.
@@ -475,4 +499,20 @@ fn parse(lines: &[String], case: &Case) -> Result<Answer> {
         found: Some(found.to_string()),
         message: message.clone(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_eula_is_accepted_only_when_asked() {
+        assert!(require_eula(true).is_ok());
+        for yes in ["1", "true", " 1 "] {
+            assert!(eula_value_accepts(yes), "{yes:?}");
+        }
+        for no in ["", "0", "false", "yes", "TRUE"] {
+            assert!(!eula_value_accepts(no), "{no:?}");
+        }
+    }
 }

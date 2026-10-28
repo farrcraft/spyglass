@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-25
+- See also: [0033](0033-the-oracle-accepts-the-eula-only-when-asked.md), which makes the server's EULA an explicit opt-in
 
 ## Context
 

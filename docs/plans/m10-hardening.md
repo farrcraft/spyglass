@@ -288,7 +288,7 @@ Six phases, each one or more commits that pass `cargo xtask check` on their own,
 - [x] H9 `region_dir` validates the id and returns a `Result`; test with `x:../../..`.
 - [x] H10 Closed with no change: see notes.
 - [x] H11 `density-functions.md`: data the game can't finish either.
-- [ ] X2 ADR for fuzzing on nightly; `fuzz/` targets for NBT and regions; `cargo xtask fuzz`; weekly CI job. Or the property-test fallback.
+- [x] X2 ADR 0036: `fuzz/` targets for NBT and region scans on cargo-fuzz; `cargo xtask fuzz` seeds a corpus and, on Windows, finds the sanitizer runtime; weekly `fuzz.yml` workflow.
 
 ### 3. Responsiveness
 
@@ -305,13 +305,13 @@ Six phases, each one or more commits that pass `cargo xtask check` on their own,
 
 ### 4. Tooling and supply chain
 
-- [ ] T1 `--accept-eula` / `SPYGLASS_ACCEPT_EULA`; CI sets it; ADR; `oracle.md`, getting-started.
-- [ ] T2 Exact toolchain pin; `doctor` reports newer stable; ADR.
+- [x] T1 `--accept-eula` / `SPYGLASS_ACCEPT_EULA` on `oracle locate` and `ci`, checked first; CI sets it; ADR 0033; `oracle.md`, getting-started.
+- [x] T2 Pinned to 1.99.1; `doctor` warns when an installed stable is newer; ADR 0034.
 - [x] T3 Version JSON hash check; one HTTPS-only agent for every download, redirects included; `data-sources.md#chain-of-trust`; tests.
 - [x] T4 linux-check quotes the version for the shell (`sh_quote`); test.
 - [x] T5 `setup.sh` assigns each command substitution before use, so `set -e` sees failures; pre-commit 4.7.0 pinned in both scripts.
 - [x] T6 Hook repos pinned by commit, tag in a `frozen:` comment; bumped with `pre-commit autoupdate --freeze`.
-- [ ] T7 Windows CI job (waiting on a decision); done: `concurrency`, `push` on `main` only, cached cargo tools, Dependabot `cargo` and `docker`.
+- [x] T7 `check-windows` job on `windows-2025` (ADR 0035); `concurrency`, `push` on `main` only, cached cargo tools, Dependabot `cargo` and `docker`.
 - [x] T8 One `toml_string` helper in xtask, on `toml_edit` (already in the tree).
 - [x] T9 `deny.toml` bans `openssl`, `openssl-sys` and `native-tls`.
 - [x] T10 `no-process-doc-refs` over `scripts/` and `oracle/`; `development-process.md`.
@@ -363,6 +363,11 @@ Six phases, each one or more commits that pass `cargo xtask check` on their own,
 ## Notes
 
 Decisions, surprises and dead ends, newest first.
+
+- 2026-10-28: Phase 4's decisions, made by the user: an explicit EULA opt-in, Rust pinned at 1.99.1, a Windows check job, and cargo-fuzz on nightly.
+  - **Fuzzing on Windows:** the fuzz binary failed with `STATUS_DLL_NOT_FOUND`. AddressSanitizer's runtime (`clang_rt.asan_dynamic-x86_64.dll`) ships with Visual Studio's MSVC tools but isn't on PATH, so `cargo xtask fuzz` finds the newest one and adds it.
+  - **Seeding:** unseeded, the region target stayed at 45 coverage points, since random bytes rarely make a 4 KiB header. `cargo xtask fuzz` now writes valid seeds first.
+  - **The EULA and older ADRs:** ADR 0004's "no EULA step" was right for its in-process harness. The dedicated server arrived with ADR 0015, so ADR 0033 refines 0015 and 0004 needs no change.
 
 - 2026-10-28: Phase 3.
   - **Two levels of stop:** stopping had to ask for two things. Ctrl-C has always meant "stop and print the best so far", and printing needs the evaluations, so the first stop can't skip them. `SearchStop::stop` ends the search; `stop_now`, a second Ctrl-C or Skip evaluating, ends the evaluation too. Evaluation is now parallel, so the second is rarely needed.

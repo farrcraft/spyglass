@@ -54,6 +54,30 @@ jobs:
         run: scripts/setup.sh --oracle
       - run: cargo xtask check
 
+  # Windows is the main development OS: the same checks there, set up by setup.ps1 (ADR 0035).
+  # The oracle jobs stay on Linux, since their results don't depend on the OS.
+  check-windows:
+    name: cargo xtask check (Windows)
+    runs-on: windows-2025
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/bin/cargo-nextest.exe
+            ~/.cargo/bin/cargo-shear.exe
+            ~/.cargo/.crates.toml
+            ~/.cargo/.crates2.json
+          key: cargo-tools-${{ runner.os }}-${{ hashFiles('scripts/setup.ps1') }}
+      - name: Setup
+        shell: pwsh
+        run: |
+          ./scripts/setup.ps1
+          # setup.ps1 puts pre-commit on this step's PATH only; later steps need it too.
+          "$env:USERPROFILE\.local\bin" >> $env:GITHUB_PATH
+      - run: cargo xtask check
+
   oracle:
     name: oracle ${{ matrix.version }}
     runs-on: ubuntu-24.04
@@ -78,4 +102,8 @@ jobs:
         with:
           distribution: temurin
           java-version: ${{ steps.jdk.outputs.major }}
+      # `oracle locate` runs Mojang's dedicated server; this accepts the Minecraft EULA for it
+      # (https://aka.ms/MinecraftEULA, ADR 0033).
       - run: cargo xtask ci --game-version '${{ matrix.version }}'
+        env:
+          SPYGLASS_ACCEPT_EULA: "1"

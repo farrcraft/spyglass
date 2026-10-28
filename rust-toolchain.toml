@@ -1,4 +1,6 @@
 [toolchain]
-channel = "stable"
+# An exact release, bumped deliberately in its own commit (ADR 0034). The minimum supported
+# version is separate: rust-version in Cargo.toml.
+channel = "1.99.1"
 components = ["rustfmt", "clippy"]
 profile = "minimal"

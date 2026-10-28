@@ -33,9 +33,15 @@ pub struct Ci {
     /// Parallel jobs for the golden files. Defaults to the number of CPUs.
     #[arg(long)]
     threads: Option<usize>,
+    /// Accept the Minecraft EULA for `oracle locate`'s server, as `SPYGLASS_ACCEPT_EULA=1`
+    /// does (ADR 0033).
+    #[arg(long)]
+    accept_eula: bool,
 }
 
 pub fn run(args: &Ci) -> Result<()> {
+    // Asked first, so a job doesn't fail at `oracle locate` after minutes of work.
+    crate::locate::require_eula(args.accept_eula)?;
     let version = step("extract the bundle", || extract_bundle(&args.game_version))?;
     let common = || Common::for_version(&version);
     step("oracle golden", || {
@@ -48,6 +54,7 @@ pub fn run(args: &Ci) -> Result<()> {
         oracle::run(OracleCmd::Locate {
             common: common(),
             world: Vec::new(),
+            accept_eula: true,
         })
     })?;
     let data_version =

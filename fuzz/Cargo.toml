@@ -1,0 +1,34 @@
+# Fuzz targets for the readers of untrusted files (ADR 0036). Run with `cargo xtask fuzz`; they
+# build only with nightly and cargo-fuzz, so this is a workspace of its own, outside the main
+# one's builds and checks.
+[package]
+name = "spyglass-fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+spyglass-data = { path = "../crates/spyglass-data" }
+spyglass-world = { path = "../crates/spyglass-world" }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "nbt"
+path = "fuzz_targets/nbt.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "region"
+path = "fuzz_targets/region.rs"
+test = false
+doc = false
+bench = false

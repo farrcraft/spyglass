@@ -1,0 +1,5 @@
+# What fuzzing makes: builds, the corpus and any crashing inputs stay local.
+/target
+/corpus
+/artifacts
+/coverage

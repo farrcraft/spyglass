@@ -17,13 +17,13 @@
 //! An `interpolated` inside another's input, evaluated while the outer one's corners are filled,
 //! reads its own state in the game; here it's its input at the corner. Vanilla has none.
 
-use std::cell::{OnceCell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use spyglass_noise::mth;
 
-use super::bind::{Ctx, Function, Own};
+use super::bind::{Ctx, Function, Own, next_stamp, reserve_stamps};
 use super::function::Marker;
 use super::router::{CLIMATE, ChunkGraph, NoiseSettings, RandomState, RouterEntry};
 use crate::java::{floor_div, floor_mod};
@@ -46,6 +46,14 @@ pub struct NoiseChunk {
     tables: Vec<OnceCell<Box<[OnceCell<f64>]>>>,
     /// `preliminarySurfaceLevelCache`.
     surface_levels: RefCell<HashMap<(i32, i32), i32>>,
+    /// The memo stamp of corner 0 ([`corner`](Self::corner)); each corner has its own, so the
+    /// functions interpolated at one corner share what they have in common.
+    corner_stamps: u64,
+    /// The last single-point context [`compute`](Self::compute) made: its block and stamp, so
+    /// router entries asked at one block share what they have in common.
+    last_point: Cell<Option<([i32; 3], u64)>>,
+    /// The memo's column stamp of each column contexts have been made at.
+    columns: RefCell<HashMap<(i32, i32), u64>>,
 }
 
 impl NoiseChunk {
@@ -63,13 +71,15 @@ impl NoiseChunk {
         let cell_width = noise.cell_width();
         let cell_height = noise.cell_height();
         let noise_size_xz = cell_count_xz.wrapping_mul(cell_width) >> 2;
+        let cell_count_y = floor_div(noise.height, cell_height);
+        let corners = (cell_count_xz as u64 + 1).pow(2) * (cell_count_y.max(0) as u64 + 1);
         NoiseChunk {
             tables: (0..graph.slots).map(|_| OnceCell::new()).collect(),
             graph,
             cell_width,
             cell_height,
             cell_count_xz,
-            cell_count_y: floor_div(noise.height, cell_height),
+            cell_count_y,
             cell_noise_min_y: floor_div(noise.min_y, cell_height),
             first_cell_x: floor_div(x0, cell_width),
             first_cell_z: floor_div(z0, cell_width),
@@ -77,6 +87,9 @@ impl NoiseChunk {
             first_noise_z: z0 >> 2,
             noise_size_xz,
             surface_levels: RefCell::new(HashMap::new()),
+            corner_stamps: reserve_stamps(corners),
+            last_point: Cell::new(None),
+            columns: RefCell::new(HashMap::new()),
         }
     }
 
@@ -183,9 +196,17 @@ impl NoiseChunk {
     /// aquifer samples it: `interpolated` is its raw input, and `flat_cache` its quart corner's
     /// value inside the chunk's window.
     pub fn compute(&self, entry: RouterEntry, x: i32, y: i32, z: i32) -> f64 {
+        let stamp = match self.last_point.get() {
+            Some((at, stamp)) if at == [x, y, z] => stamp,
+            _ => {
+                let stamp = next_stamp();
+                self.last_point.set(Some(([x, y, z], stamp)));
+                stamp
+            }
+        };
         #[cfg(feature = "timing")]
         let _t = crate::timing::span("26.2: point compute (aquifer, climate)");
-        self.graph.entries[entry as usize].eval(&self.ctx(x, y, z, Own::Foreign))
+        self.graph.entries[entry as usize].eval(&self.ctx_stamped(x, y, z, Own::Foreign, stamp))
     }
 
     /// `cachedClimateSampler(...).sample` before narrowing: the six climate entries of the
@@ -232,14 +253,36 @@ impl NoiseChunk {
         max
     }
 
+    /// The memo's column stamp for column `(x, z)`, the same for every context of this chunk
+    /// there.
+    pub(crate) fn column_stamp(&self, x: i32, z: i32) -> u64 {
+        *self
+            .columns
+            .borrow_mut()
+            .entry((x, z))
+            .or_insert_with(next_stamp)
+    }
+
+    /// A context of this chunk at block `(x, y, z)`, with a fresh memo stamp.
     fn ctx(&self, x: i32, y: i32, z: i32, own: Own) -> Ctx<'_> {
+        self.ctx_stamped(x, y, z, own, next_stamp())
+    }
+
+    /// A context of this chunk at block `(x, y, z)`, with `stamp`, which must be fresh or one
+    /// this chunk gave the same context before.
+    fn ctx_stamped(&self, x: i32, y: i32, z: i32, own: Own, stamp: u64) -> Ctx<'_> {
         Ctx {
             x,
             y,
             z,
             chunk: Some(self),
             own,
-            stamp: super::bind::next_stamp(),
+            stamp,
+            // A block of a cell's fill shares its column with nothing worth remembering.
+            column: match own {
+                Own::Cell { .. } | Own::Incremental { .. } => stamp,
+                Own::Corner { .. } | Own::Foreign => self.column_stamp(x, z),
+            },
         }
     }
 
@@ -275,7 +318,8 @@ impl NoiseChunk {
         let n = self.cell_count_xz as usize + 1;
         let ny = self.cell_count_y as usize + 1;
         let table = self.table(slot, n * n * ny);
-        *table[(cx * n + cz) * ny + cy].get_or_init(|| {
+        let index = (cx * n + cz) * ny + cy;
+        *table[index].get_or_init(|| {
             #[cfg(feature = "timing")]
             let _t = crate::timing::span("26.2: cell corner (fillSlice)");
             let x = self
@@ -289,7 +333,8 @@ impl NoiseChunk {
                 .first_cell_z
                 .wrapping_add(cz as i32)
                 .wrapping_mul(self.cell_width);
-            input.eval(&self.ctx(x, y, z, Own::Corner { cx, cy, cz }))
+            let stamp = self.corner_stamps + index as u64;
+            input.eval(&self.ctx_stamped(x, y, z, Own::Corner { cx, cy, cz }, stamp))
         })
     }
 

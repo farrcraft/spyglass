@@ -8,8 +8,11 @@
 //!
 //! Evaluation remembers each bound function's value per context ([`Ctx`]): a function shared by
 //! several others (a named function the graph references more than once, or a spline coordinate
-//! read at every level) is computed once per point. The game recomputes it, but every function
-//! here is pure, so only the work changes, never a value.
+//! read at every level) is computed once per point. One that doesn't depend on y and holds no
+//! marker, so its value depends only on the column, is computed once per column: across the
+//! points of a `find_top_surface` walk, a chunk's corners above each other, or blocks down a
+//! column. The game recomputes them, but every function here is pure, so only the work changes,
+//! never a value.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -55,6 +58,9 @@ pub struct Function {
     /// Where its value is remembered per context, once the graph is seen to share it. `None`
     /// for constants and functions made outside a binder.
     memo: Option<Arc<MemoSlot>>,
+    /// Whether its value depends only on the column: no y dependence and no marker inside, so
+    /// it's the same at every context with the same x and z.
+    columnar: bool,
 }
 
 /// A bound function's place in the memo.
@@ -84,10 +90,16 @@ thread_local! {
 
 /// A stamp no earlier context on this thread has had.
 pub(crate) fn next_stamp() -> u64 {
+    reserve_stamps(1)
+}
+
+/// The first of `count` consecutive stamps no earlier context on this thread has had, for
+/// contexts that are the same wherever they recur (a chunk's corners).
+pub(crate) fn reserve_stamps(count: u64) -> u64 {
     STAMP.with(|s| {
-        let next = s.get() + 1;
-        s.set(next);
-        next
+        let first = s.get() + 1;
+        s.set(first + count - 1);
+        first
     })
 }
 
@@ -183,6 +195,9 @@ pub(crate) struct Ctx<'c> {
     pub(crate) own: Own,
     /// Identifies this context for the memo: unique per context made on a thread.
     pub(crate) stamp: u64,
+    /// Identifies the context's column for the memo of [columnar](Function) functions: shared
+    /// by contexts known to be at the same x and z, or the context's own stamp when none is.
+    pub(crate) column: u64,
 }
 
 /// What a context is to the `NoiseChunk` evaluating it.
@@ -225,11 +240,21 @@ impl<'c> Ctx<'c> {
             chunk: None,
             own: Own::Foreign,
             stamp: next_stamp(),
+            column: next_stamp(),
         }
     }
 
     /// `SinglePointContext(x, y, z)` evaluated by `chunk`'s graph.
     fn foreign(&self, x: i32, y: i32, z: i32) -> Self {
+        // The same column as this context's if it is, else the chunk's for it.
+        let column = if (x, z) == (self.x, self.z) {
+            self.column
+        } else {
+            match self.chunk {
+                Some(chunk) => chunk.column_stamp(x, z),
+                None => next_stamp(),
+            }
+        };
         Ctx {
             x,
             y,
@@ -237,6 +262,7 @@ impl<'c> Ctx<'c> {
             chunk: self.chunk,
             own: Own::Foreign,
             stamp: next_stamp(),
+            column,
         }
     }
 }
@@ -244,6 +270,7 @@ impl<'c> Ctx<'c> {
 impl Function {
     fn new(node: Node, min: f64, max: f64) -> Self {
         Function {
+            columnar: columnar(&node),
             node: Arc::new(node),
             min,
             max,
@@ -280,17 +307,17 @@ impl Function {
     }
 
     pub(crate) fn eval(&self, ctx: &Ctx<'_>) -> f64 {
-        let Some(memo) = self
-            .memo
-            .as_deref()
-            .filter(|m| m.shared.load(Ordering::Relaxed))
-        else {
+        let Some(memo) = self.memo.as_deref().filter(|m| {
+            // A columnar function pays off when the context shares its column with others.
+            m.shared.load(Ordering::Relaxed) || (self.columnar && ctx.column != ctx.stamp)
+        }) else {
             return self.compute_node(ctx);
         };
         let (binder, slot) = (memo.binder, memo.slot as usize);
+        let stamp = if self.columnar { ctx.column } else { ctx.stamp };
         let known = MEMO.with_borrow(|m| {
             m.get(slot)
-                .filter(|r| r.stamp == ctx.stamp && r.binder == binder)
+                .filter(|r| r.stamp == stamp && r.binder == binder)
                 .map(|r| r.value)
         });
         if let Some(value) = known {
@@ -309,7 +336,7 @@ impl Function {
                 );
             }
             m[slot] = Remembered {
-                stamp: ctx.stamp,
+                stamp,
                 binder,
                 value,
             };
@@ -317,8 +344,39 @@ impl Function {
         value
     }
 
+    /// The node's type, for [`timing`](crate::timing).
+    #[cfg(feature = "timing")]
+    fn kind(&self) -> &'static str {
+        match &*self.node {
+            Node::Constant(_) => "26.2 node: Constant",
+            Node::Add(..) => "26.2 node: Add",
+            Node::Mul(..) => "26.2 node: Mul",
+            Node::Min(..) => "26.2 node: Min",
+            Node::Max(..) => "26.2 node: Max",
+            Node::AddConstant(..) => "26.2 node: AddConstant",
+            Node::MulConstant(..) => "26.2 node: MulConstant",
+            Node::Mapped(..) => "26.2 node: Mapped",
+            Node::Clamp(..) => "26.2 node: Clamp",
+            Node::Noise { .. } => "26.2 node: Noise",
+            Node::ShiftedNoise { .. } => "26.2 node: ShiftedNoise",
+            Node::ShiftA(_) => "26.2 node: ShiftA",
+            Node::ShiftB(_) => "26.2 node: ShiftB",
+            Node::Shift(_) => "26.2 node: Shift",
+            Node::YClampedGradient { .. } => "26.2 node: YClampedGradient",
+            Node::RangeChoice { .. } => "26.2 node: RangeChoice",
+            Node::IntervalSelect { .. } => "26.2 node: IntervalSelect",
+            Node::Spline(_) => "26.2 node: Spline",
+            Node::FindTopSurface { .. } => "26.2 node: FindTopSurface",
+            Node::EndIslands(_) => "26.2 node: EndIslands",
+            Node::BlendedNoise(_) => "26.2 node: BlendedNoise",
+            Node::Marker { .. } => "26.2 node: Marker",
+        }
+    }
+
     /// The function's value at `ctx`, its inputs' through [`eval`](Self::eval).
     fn compute_node(&self, ctx: &Ctx<'_>) -> f64 {
+        #[cfg(feature = "timing")]
+        let _t = crate::timing::detail(self.kind());
         match &*self.node {
             Node::Constant(v) => *v,
             Node::Add(a, b) => a.eval(ctx) + b.eval(ctx),
@@ -448,6 +506,42 @@ impl Function {
     }
 }
 
+/// Whether `node`'s value depends only on its context's x and z, whatever the context is to its
+/// chunk. It reads no y (a noise with a y scale of 0 adds ±0 to its y offset, the same either
+/// way), and holds only markers that are per column: `cache_2d`, which the game keys by the last
+/// x and z, and `flat_cache`, by the quart column. The others depend on the context's y or role.
+fn columnar(node: &Node) -> bool {
+    match node {
+        Node::Constant(_) | Node::ShiftA(_) | Node::ShiftB(_) | Node::EndIslands(_) => true,
+        Node::Shift(_) | Node::YClampedGradient { .. } | Node::BlendedNoise(_) => false,
+        Node::Marker { marker, .. } => matches!(marker, Marker::Cache2D | Marker::FlatCache),
+        Node::Add(a, b) | Node::Mul(a, b) | Node::Min(a, b) | Node::Max(a, b) => {
+            a.columnar && b.columnar
+        }
+        Node::AddConstant(input, _)
+        | Node::MulConstant(input, _)
+        | Node::Mapped(_, input)
+        | Node::Clamp(input, _, _) => input.columnar,
+        Node::Noise { y_scale, .. } => *y_scale == 0.0,
+        Node::ShiftedNoise { y_scale, shift, .. } => {
+            *y_scale == 0.0 && shift.iter().all(|f| f.columnar)
+        }
+        Node::RangeChoice {
+            input,
+            when_in_range,
+            when_out_of_range,
+            ..
+        } => input.columnar && when_in_range.columnar && when_out_of_range.columnar,
+        Node::IntervalSelect {
+            input, functions, ..
+        } => input.columnar && functions.iter().all(|f| f.columnar),
+        Node::Spline(spline) => spline.columnar(),
+        // Its own y isn't read: the density is sampled at single points down the column, the
+        // same whatever context asks.
+        Node::FindTopSurface { upper_bound, .. } => upper_bound.columnar,
+    }
+}
+
 /// `ShiftNoise.compute(x, y, z)`: the noise at a quarter of each coordinate, times 4.
 fn shift(noise: &NormalNoise, x: f64, y: f64, z: f64) -> f64 {
     noise.get_value(x * 0.25, y * 0.25, z * 0.25) * 4.0
@@ -516,6 +610,16 @@ fn mth_clamp_f32(v: f32, min: f32, max: f32) -> f32 {
 }
 
 impl BoundSpline {
+    /// Whether every coordinate is [columnar](Function).
+    fn columnar(&self) -> bool {
+        match self {
+            BoundSpline::Constant(_) => true,
+            BoundSpline::Multipoint {
+                coordinate, values, ..
+            } => coordinate.columnar && values.iter().all(BoundSpline::columnar),
+        }
+    }
+
     /// `CubicSpline.sample`, each coordinate `(float)` of its function's value.
     fn sample(&self, ctx: &Ctx<'_>) -> f32 {
         match self {

@@ -174,7 +174,7 @@ impl SpawnTargets {
             }
             Targets::Points { points, router } => Ok(SpawnSearch(Search::Points {
                 points: points.clone(),
-                climate: router.sampler(seed)?,
+                climate: Box::new(router.sampler(seed)?),
             })),
         }
     }
@@ -213,7 +213,7 @@ enum Search {
     Functions(Vec<Vec<(Sampler, Parameter)>>),
     Points {
         points: Vec<ParameterPoint>,
-        climate: ClimateSampler,
+        climate: Box<ClimateSampler>,
     },
 }
 

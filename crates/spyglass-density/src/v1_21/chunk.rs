@@ -25,6 +25,7 @@ use spyglass_noise::mth;
 
 use super::bind::{Ctx, Function, Own, next_stamp, reserve_stamps};
 use super::function::Marker;
+use super::program::Arg;
 use super::router::{CLIMATE, ChunkGraph, NoiseSettings, RandomState, RouterEntry};
 use crate::java::{floor_div, floor_mod};
 
@@ -54,6 +55,9 @@ pub struct NoiseChunk {
     last_point: Cell<Option<([i32; 3], u64)>>,
     /// The memo's column stamp of each column contexts have been made at.
     columns: RefCell<HashMap<(i32, i32), u64>>,
+    /// Whether the chunk evaluates the bound functions themselves, not their program: the
+    /// reference the program is tested against.
+    reference: bool,
 }
 
 impl NoiseChunk {
@@ -90,7 +94,16 @@ impl NoiseChunk {
             corner_stamps: reserve_stamps(corners),
             last_point: Cell::new(None),
             columns: RefCell::new(HashMap::new()),
+            reference: false,
         }
+    }
+
+    /// The same chunk evaluating the bound functions rather than their compiled program, for
+    /// tests that compare the two.
+    #[doc(hidden)]
+    pub fn reference(mut self) -> Self {
+        self.reference = true;
+        self
     }
 
     /// `NoiseChunk.forChunk` for the chunk at `(chunk_x, chunk_z)`, over the noise settings'
@@ -168,7 +181,11 @@ impl NoiseChunk {
             iy,
             iz,
         };
-        self.graph.density.eval(&self.ctx(x, y, z, own))
+        self.root(
+            self.graph.density_arg,
+            &self.graph.density,
+            &self.ctx(x, y, z, own),
+        )
     }
 
     /// Router `entry` with the chunk itself as the context, positioned at block `(x, y, z)` by
@@ -189,7 +206,12 @@ impl NoiseChunk {
             iy,
             iz,
         };
-        self.graph.entries[entry as usize].eval(&self.ctx(x, y, z, own))
+        let ctx = self.ctx(x, y, z, own);
+        self.root(
+            self.graph.entry_args[entry as usize],
+            &self.graph.entries[entry as usize],
+            &ctx,
+        )
     }
 
     /// Router `entry` of the chunk's wrapped router at `SinglePointContext(x, y, z)`, as the
@@ -206,7 +228,12 @@ impl NoiseChunk {
         };
         #[cfg(feature = "timing")]
         let _t = crate::timing::span("26.2: point compute (aquifer, climate)");
-        self.graph.entries[entry as usize].eval(&self.ctx_stamped(x, y, z, Own::Foreign, stamp))
+        let ctx = self.ctx_stamped(x, y, z, Own::Foreign, stamp);
+        self.root(
+            self.graph.entry_args[entry as usize],
+            &self.graph.entries[entry as usize],
+            &ctx,
+        )
     }
 
     /// `cachedClimateSampler(...).sample` before narrowing: the six climate entries of the
@@ -251,6 +278,16 @@ impl NoiseChunk {
             z = z.wrapping_add(4);
         }
         max
+    }
+
+    /// A root of the chunk's graph at `ctx`: its compiled program's, or the bound function's for
+    /// a [reference](Self::reference) chunk.
+    fn root(&self, arg: Arg, function: &Function, ctx: &Ctx<'_>) -> f64 {
+        if self.reference {
+            function.eval(ctx)
+        } else {
+            self.graph.program.eval_root(arg, ctx)
+        }
     }
 
     /// The memo's column stamp for column `(x, z)`, the same for every context of this chunk
@@ -314,7 +351,14 @@ impl NoiseChunk {
 
     /// The input of the `interpolated` or `cache_once` in `slot` at corner `(cx, cy, cz)`, as
     /// `fillSlice` computes it: with the chunk itself as the context, at the corner.
-    fn corner(&self, slot: u32, input: &Function, cx: usize, cy: usize, cz: usize) -> f64 {
+    fn corner(
+        &self,
+        slot: u32,
+        input: &mut dyn FnMut(&Ctx<'_>) -> f64,
+        cx: usize,
+        cy: usize,
+        cz: usize,
+    ) -> f64 {
         let n = self.cell_count_xz as usize + 1;
         let ny = self.cell_count_y as usize + 1;
         let table = self.table(slot, n * n * ny);
@@ -334,7 +378,7 @@ impl NoiseChunk {
                 .wrapping_add(cz as i32)
                 .wrapping_mul(self.cell_width);
             let stamp = self.corner_stamps + index as u64;
-            input.eval(&self.ctx_stamped(x, y, z, Own::Corner { cx, cy, cz }, stamp))
+            input(&self.ctx_stamped(x, y, z, Own::Corner { cx, cy, cz }, stamp))
         })
     }
 
@@ -342,10 +386,10 @@ impl NoiseChunk {
     pub(crate) fn marker(
         &self,
         marker: Marker,
-        input: &Function,
         binder: u64,
         slot: u32,
         ctx: &Ctx<'_>,
+        input: &mut dyn FnMut(&Ctx<'_>) -> f64,
     ) -> f64 {
         assert_eq!(
             binder, self.graph.binder,
@@ -361,7 +405,7 @@ impl NoiseChunk {
                     iy,
                     iz,
                 } => {
-                    let n = |dx, dy, dz| self.corner(slot, input, cx + dx, cy + dy, cz + dz);
+                    let mut n = |dx, dy, dz| self.corner(slot, input, cx + dx, cy + dy, cz + dz);
                     let (cw, ch) = (f64::from(self.cell_width), f64::from(self.cell_height));
                     // NoiseInterpolator.compute: Mth.lerp3, x, then y, then z, each t a division.
                     mth::lerp3_f64(
@@ -386,7 +430,7 @@ impl NoiseChunk {
                     iy,
                     iz,
                 } => {
-                    let n = |dx, dy, dz| self.corner(slot, input, cx + dx, cy + dy, cz + dz);
+                    let mut n = |dx, dy, dz| self.corner(slot, input, cx + dx, cy + dy, cz + dz);
                     let (cw, ch) = (f64::from(self.cell_width), f64::from(self.cell_height));
                     let (tx, ty, tz) = (f64::from(ix) / cw, f64::from(iy) / ch, f64::from(iz) / cw);
                     // updateForY, then updateForX, then updateForZ.
@@ -399,7 +443,7 @@ impl NoiseChunk {
                     mth::lerp_f64(tz, z0, z1)
                 }
                 // Another context gets the raw input; see the module docs for corners.
-                Own::Corner { .. } | Own::Foreign => input.eval(ctx),
+                Own::Corner { .. } | Own::Foreign => input(ctx),
             },
             Marker::FlatCache => {
                 // QuartPos.fromBlock, relative to the window's first quart.
@@ -410,16 +454,16 @@ impl NoiseChunk {
                 if (0..size).contains(&i) && (0..size).contains(&j) {
                     let table = self.table(slot, (size * size) as usize);
                     *table[(i + j * size) as usize]
-                        .get_or_init(|| input.eval(&self.ctx(qx << 2, 0, qz << 2, Own::Foreign)))
+                        .get_or_init(|| input(&self.ctx(qx << 2, 0, qz << 2, Own::Foreign)))
                 } else {
-                    input.eval(ctx)
+                    input(ctx)
                 }
             }
             Marker::CacheOnce => match ctx.own {
                 Own::Corner { cx, cy, cz } => self.corner(slot, input, cx, cy, cz),
-                _ => input.eval(ctx),
+                _ => input(ctx),
             },
-            Marker::Cache2D | Marker::CacheAllInCell | Marker::BlendDensity => input.eval(ctx),
+            Marker::Cache2D | Marker::CacheAllInCell | Marker::BlendDensity => input(ctx),
         }
     }
 }

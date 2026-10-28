@@ -60,7 +60,7 @@ pub struct Function {
     memo: Option<Arc<MemoSlot>>,
     /// Whether its value depends only on the column: no y dependence and no marker inside, so
     /// it's the same at every context with the same x and z.
-    columnar: bool,
+    pub(crate) columnar: bool,
 }
 
 /// A bound function's place in the memo.
@@ -245,7 +245,7 @@ impl<'c> Ctx<'c> {
     }
 
     /// `SinglePointContext(x, y, z)` evaluated by `chunk`'s graph.
-    fn foreign(&self, x: i32, y: i32, z: i32) -> Self {
+    pub(crate) fn foreign(&self, x: i32, y: i32, z: i32) -> Self {
         // The same column as this context's if it is, else the chunk's for it.
         let column = if (x, z) == (self.x, self.z) {
             self.column
@@ -500,7 +500,9 @@ impl Function {
                 slot,
             } => match ctx.chunk {
                 None => input.eval(ctx),
-                Some(chunk) => chunk.marker(*marker, input, *binder, *slot, ctx),
+                Some(chunk) => chunk.marker(*marker, *binder, *slot, ctx, &mut |c: &Ctx<'_>| {
+                    input.eval(c)
+                }),
             },
         }
     }
@@ -543,12 +545,12 @@ fn columnar(node: &Node) -> bool {
 }
 
 /// `ShiftNoise.compute(x, y, z)`: the noise at a quarter of each coordinate, times 4.
-fn shift(noise: &NormalNoise, x: f64, y: f64, z: f64) -> f64 {
+pub(crate) fn shift(noise: &NormalNoise, x: f64, y: f64, z: f64) -> f64 {
     noise.get_value(x * 0.25, y * 0.25, z * 0.25) * 4.0
 }
 
 /// `Mapped.transform`.
-fn mapped(op: Mapped, x: f64) -> f64 {
+pub(crate) fn mapped(op: Mapped, x: f64) -> f64 {
     match op {
         Mapped::Abs => x.abs(),
         Mapped::Square => x * x,
@@ -579,7 +581,7 @@ fn mapped(op: Mapped, x: f64) -> f64 {
 /// `EndIslandDensityFunction.getHeightValue(noise, x, z)`, with `x` and `z` a block's divided by
 /// 8: the central island, then the highest outer island over the 25 × 25 cells around
 /// `(x / 2, z / 2)`, in `f32`.
-fn end_island_height(noise: &SimplexNoise, x: i32, z: i32) -> f32 {
+pub(crate) fn end_island_height(noise: &SimplexNoise, x: i32, z: i32) -> f32 {
     let (xs, zs, xr, zr) = (x / 2, z / 2, x % 2, z % 2);
     // Mth.sqrt((float)(x·x + z·z)), the squares and sum in wrapping int.
     let d = x.wrapping_mul(x).wrapping_add(z.wrapping_mul(z)) as f32;

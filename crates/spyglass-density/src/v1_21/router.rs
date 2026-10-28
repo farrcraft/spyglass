@@ -12,6 +12,7 @@ use spyglass_noise::NormalNoiseParameters;
 use super::bind::{Binder, Function, Wiring};
 use super::function::Df;
 use super::load::Loader;
+use super::program::{Arg, Program};
 use crate::load::Resources;
 use crate::router::NOISE_SETTINGS;
 
@@ -297,6 +298,8 @@ impl NoiseRouter {
         let [t, h, c, e, d, w] = climate;
         // cacheAllInCell(add(finalDensity, beardifier)): an Ap2 add of the beardifier's 0.
         let density = Function::add_zero(&chunk[RouterEntry::FinalDensity as usize]);
+        let roots: Vec<&Function> = chunk.iter().chain([&density]).collect();
+        let (program, args) = Program::compile(&roots);
         Ok(RandomState {
             plain,
             climate: ClimateSampler([t?, h?, c?, e?, d?, w?]),
@@ -305,6 +308,9 @@ impl NoiseRouter {
                 slots: binder.slots(),
                 entries: chunk,
                 density,
+                program,
+                entry_args: args[..15].try_into().expect("fifteen entries"),
+                density_arg: args[15],
             }),
             noise: self.noise,
         })
@@ -331,6 +337,12 @@ pub(crate) struct ChunkGraph {
     pub(crate) entries: [Function; 15],
     /// `fullNoiseDensity`.
     pub(crate) density: Function,
+    /// The entries and `fullNoiseDensity` compiled (ADR 0031), which chunks evaluate.
+    pub(crate) program: Program,
+    /// Each entry's operand in [`program`](Self::program).
+    pub(crate) entry_args: [Arg; 15],
+    /// `fullNoiseDensity`'s operand in [`program`](Self::program).
+    pub(crate) density_arg: Arg,
 }
 
 /// 26.2's `RandomState` for one seed: the router wired to the seed.

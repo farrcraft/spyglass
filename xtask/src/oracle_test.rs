@@ -91,6 +91,11 @@ const TESTS: &[(&str, &str, &[Input])] = &[
         &[Input::Bundle],
     ),
     (
+        "spyglass-density",
+        "the_program_matches_the_functions",
+        &[Input::Bundle],
+    ),
+    (
         "spyglass-terrain",
         "every_aquifer_block_matches_the_game",
         &[Input::Probe, Input::Bundle],

@@ -23,24 +23,50 @@ Nothing is public until you publish the draft.
 
 ## Cut it
 
+`main` only takes changes through pull requests, so a release is a pull request, then a tag on what it merged ([ADR 0040](adr/0040-releases-go-through-a-pull-request.md)).
+
+### 1. The release's pull request
+
+From `main`, up to date with `origin/main`:
+
 ```sh
 cargo xtask release 0.2.0
 ```
 
-It refuses before changing anything if the tree isn't clean, the branch isn't `main`, the tag exists, the version isn't after the current one, or Unreleased is empty. Then it:
+It refuses before changing anything if:
+
+- the tree isn't clean;
+- you're not on `main`, or `main` differs from `origin/main`;
+- the tag or the branch `release/v0.2.0` exists;
+- the version isn't after the current one;
+- Unreleased is empty.
+
+Otherwise, on a new branch `release/v0.2.0`, it:
 
 1. sets the workspace version and refreshes `Cargo.lock`;
 2. turns Unreleased into `## [0.2.0] - <today>` with the game versions this build was checked against, opens a new empty Unreleased, and updates the links at the end of the changelog;
 3. runs `cargo xtask check`, every hook on every file, which takes several minutes;
-4. commits `Release 0.2.0` and makes the annotated tag `v0.2.0`.
+4. commits `Release 0.2.0`.
 
-If a check fails, the changes are left uncommitted. Fix the problem, `git checkout .`, and run it again.
+If a check fails, the changes are left uncommitted on the branch. Fix them and commit there, or start again with `git checkout . && git switch main && git branch -D release/v0.2.0`.
 
-Nothing is pushed. Read the commit, then push the branch and the tag together:
+Nothing is pushed. Read the commit, then push the branch and open the pull request:
 
 ```sh
-git push --atomic origin main v0.2.0
+git push --set-upstream origin release/v0.2.0
+gh pr create --fill
 ```
+
+Merge it once CI passes, by any merge method.
+
+### 2. The tag
+
+```sh
+cargo xtask release-tag 0.2.0
+git push origin v0.2.0
+```
+
+`release-tag` fetches `main` and finds the commit that set the workspace version to 0.2.0: the merged pull request, whichever way it was merged. It then makes the annotated tag `v0.2.0` there. If other pull requests have merged since, it says so; the tag stays on the release commit, so their changes aren't in this release. Pushing the tag starts the release workflow.
 
 ## Watch it
 
@@ -75,7 +101,11 @@ A pre-release version (`0.2.0-rc.1`) runs everything the same way, but doesn't t
 
 ```sh
 cargo xtask release 0.2.0-rc.1
-git push --atomic origin main v0.2.0-rc.1
+git push --set-upstream origin release/v0.2.0-rc.1
+gh pr create --fill
+# merge it, then:
+cargo xtask release-tag 0.2.0-rc.1
+git push origin v0.2.0-rc.1
 ```
 
 If you don't publish it, delete the draft and its tag when you're done. The release commit can stay, and `cargo xtask release 0.2.0` follows on from it:
@@ -96,17 +126,18 @@ git tag -d v0.2.0-rc.1
    git tag -d v0.2.0
    ```
 
-2. Fix the problem on `main` as usual. The release commit has already set the version and dated the changelog, so don't run `cargo xtask release` again.
-3. Tag the fixed commit by hand, and push:
+2. Fix the problem through a pull request as usual. The release commit has already set the version and dated the changelog, so don't run `cargo xtask release` again.
+3. Once the fix is merged, tag `main`'s new head by hand: `release-tag` would find the release commit, from before the fix. Then push the tag:
 
    ```sh
-   git tag --annotate v0.2.0 -m "spyglass 0.2.0"
-   git push --atomic origin main v0.2.0
+   git fetch origin main
+   git tag --annotate v0.2.0 origin/main -m "spyglass 0.2.0"
+   git push origin v0.2.0
    ```
 
 Some failures need no fix in the code:
 
-- **The tag job fails:** the tag doesn't match `Cargo.toml`, its commit isn't on `main`, or the changelog has no section for it. Tagging by hand is the usual cause; `cargo xtask release` gets all three right.
+- **The tag job fails:** the tag doesn't match `Cargo.toml`, its commit isn't on `main`, or the changelog has no section for it. Tagging by hand is the usual cause; `cargo xtask release-tag` gets all three right.
 - **An oracle job fails** where `main` passed: often Mojang's download servers. Re-run the failed jobs from the run's page.
 
 **After publishing**, never move or reuse the tag: people may have downloaded it, and its checksums and attestations name those bytes. Fix forward with a patch release.

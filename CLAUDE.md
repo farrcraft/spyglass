@@ -21,7 +21,8 @@ cargo xtask oracle-test                       # ignored comparisons with the gam
 cargo xtask ci --game-version <v>             # one version's CI job: extract, regenerate, compare
 cargo xtask bench                             # time the public API's main operations
 cargo xtask dist [--target <triple>]          # one target's release archive, in target/archives/
-cargo xtask release <version>                 # release commit and tag (never pushes)
+cargo xtask release <version>                 # release commit on a release/v<version> branch, for a PR
+cargo xtask release-tag <version>             # tag the merged release commit on main (never pushes)
 cargo xtask doctor                            # is this machine ready? (check-only)
 cargo xtask links                             # every relative Markdown link and anchor resolves
 cargo xtask fuzz <nbt|region>                 # fuzz a reader of untrusted files (nightly, cargo-fuzz)

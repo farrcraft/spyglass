@@ -154,7 +154,8 @@ Project-level commands live in the `xtask` crate and run as `cargo xtask <comman
 | `cargo xtask msrv`         | Builds the workspace with its minimum Rust version.                                                                   |
 | `cargo xtask oracle`       | Builds and runs the oracle harness (below).                                                                           |
 | `cargo xtask oracle-test`  | Runs the ignored comparisons with the game (below).                                                                   |
-| `cargo xtask release`      | Prepares a release commit and tag, without pushing ([ADR 0037](adr/0037-versions-and-releases.md)).                   |
+| `cargo xtask release`      | Prepares a release commit on its own branch, for a pull request ([releasing](releasing.md)).                          |
+| `cargo xtask release-tag`  | Tags a merged release on `main`, without pushing ([releasing](releasing.md)).                                         |
 | `cargo xtask version-diff` | Reports what changed between two bundles ([adding a version](adding-a-version.md)).                                   |
 
 ## 6. The oracle

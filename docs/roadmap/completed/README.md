@@ -12,3 +12,4 @@ Milestones whose exit criteria are met. See [development-process.md](../../devel
 | 06  | [Seed search](06-seed-search.md)                                    | 2026-10-25                                                                |
 | 07  | [Terrain, structure validity, jigsaw](07-terrain-and-validity.md)   | 2026-10-26                                                                |
 | 08  | [Nether, End and multiple versions](08-dimensions-and-versions.md)  | 2026-10-27, two criteria carried as [follow-ups](../README.md#follow-ups) |
+| 09  | [Fast density evaluation](09-fast-density.md)                       | 2026-10-28                                                                |

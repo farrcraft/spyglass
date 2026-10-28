@@ -36,4 +36,5 @@ Start from [template.md](template.md). Files are named `NNNN-kebab-case-title.md
 | [0028](0028-supported-versions-and-ci.md)                     | Supported versions, snapshots and CI                                  | Accepted                                                             |
 | [0029](0029-oracle-adapters-extend-a-base.md)                 | Oracle adapters can extend a base adapter                             | Accepted                                                             |
 | [0030](0030-a-test-pack-for-forms-vanilla-doesnt-use.md)      | A test pack for forms the vanilla data doesn't use                    | Accepted                                                             |
-| [0031](0031-flattened-density-evaluation.md)                  | Flattened density evaluation                                          | Accepted                                                             |
+| [0031](0031-flattened-density-evaluation.md)                  | Flattened density evaluation                                          | Superseded by [0032](0032-density-programs-only-where-they-pay.md)   |
+| [0032](0032-density-programs-only-where-they-pay.md)          | Density programs only where they pay                                  | Accepted                                                             |

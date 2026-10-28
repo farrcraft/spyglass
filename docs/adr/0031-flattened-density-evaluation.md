@@ -1,6 +1,6 @@
 # 0031. Flattened density evaluation
 
-- Status: Accepted
+- Status: Superseded by [0032](0032-density-programs-only-where-they-pay.md)
 - Date: 2026-10-27
 - See also: [0011](0011-parse-json-numbers-from-their-text.md), [0022](0022-terrain-crate-and-volume-evaluation.md), [0026](0026-how-game-versions-coexist.md)
 

@@ -19,3 +19,4 @@ Plans that have been fully implemented. See [development-process.md](../../devel
 | [m07-terrain-and-validity](m07-terrain-and-validity.md) | 07. Terrain, structure validity, jigsaw    | 2026-10-26 |
 | [m08-dimensions](m08-dimensions.md)                     | 08. Nether, End and multiple versions      | 2026-10-26 |
 | [m08-versions](m08-versions.md)                         | 08. Nether, End and multiple versions      | 2026-10-27 |
+| [m09-fast-density](m09-fast-density.md)                 | 09. Fast density evaluation                | 2026-10-28 |

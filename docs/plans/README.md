@@ -6,6 +6,6 @@ Code must not reference plans. Anything durable a plan produces belongs in a spe
 
 ## Active
 
-- [m09-fast-density](m09-fast-density.md) (in progress): a flattened density evaluation for every family, bit for bit, with an isolated column at most 150 µs, for milestone [09](../roadmap/09-fast-density.md).
+None.
 
 Milestone 08's follow-ups ([roadmap](../roadmap/README.md#follow-ups)) need no plan of their own.

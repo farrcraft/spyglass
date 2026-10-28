@@ -8,7 +8,7 @@ spyglass separates what the game _does_ (algorithms, written in Rust) from the _
 | ---------- | ----------------------------------------------------------------------- | --------------------------------------------------------------- |
 | RNG        | Java LCG, Xoroshiro128++, positional random factories, MD5 name seeding | —                                                               |
 | Noise      | Perlin (`f32` samples), noise stacks, normal noise                      | Noise parameters                                                |
-| Density    | Graph interpreter (later: flattened, SIMD-friendly evaluation)          | Density-function graphs, noise settings                         |
+| Density    | Graph interpreter; 26.2's chunk graph compiled to a program (ADR 0032)  | Density-function graphs, noise settings                         |
 | Biomes     | Climate sampler, exact nearest-point search that reports ties           | Biome parameter list                                            |
 | Structures | Random-spread and concentric-ring placement, validity checks, jigsaw    | Structure sets, biome tags, template pools, structure templates |
 | Features   | Decoration order, per-feature RNG                                       | Placed/configured features                                      |

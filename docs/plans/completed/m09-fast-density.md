@@ -1,9 +1,9 @@
 # m09. Fast density evaluation
 
-- Status: In progress
-- Milestone: [09. Fast density evaluation](../roadmap/09-fast-density.md)
+- Status: Completed
+- Milestone: [09. Fast density evaluation](../../roadmap/completed/09-fast-density.md)
 - Started: 2026-10-27
-- Completed: not yet
+- Completed: 2026-10-28
 
 ## Goal
 
@@ -40,12 +40,12 @@ From the code at c98dbeb, the bench (`cargo xtask bench <version>`, 2026-10-27, 
   The isolated column is 393 µs, not milestone 07's 243 µs. Something since then has made it slower: milestone 08's anchors, switches, `upscale` or the multi-version loaders, or noise on the machine. The first task finds out. The target needs about 2.6× from 393 µs, or 1.6× from 243 µs.
 
 - **26.2 is 4 to 8 times slower than 26.3** on isolated columns and searches, and close to it where columns are near each other. The difference is in the family's structure, not in its arithmetic.
-- **The architecture already names this step.** [architecture.md](../architecture.md) lists the density layer as "graph interpreter (later: flattened, SIMD-friendly evaluation)".
+- **The architecture already names this step.** [architecture.md](../../architecture.md) lists the density layer as "graph interpreter (later: flattened, SIMD-friendly evaluation)".
 - **Constraints from the project.**
   - Stable Rust, MSRV 1.95. `std::simd` isn't stable, so SIMD means auto-vectorized loops, `std::arch` intrinsics, or a crate, which is an ADR and a `deny.toml` license check.
   - Bit-exact means the same IEEE operations in the same order for each value. Rust doesn't contract `a * b + c` into a fused multiply-add unless asked, but explicit `mul_add` and intrinsic FMA are out.
   - The noise gradient lookups are table gathers, which SIMD handles poorly without AVX2.
-  - The point and volume paths have different arithmetic in places ([density-functions.md](../specs/density-functions.md)). The flattened form must keep each path's own arithmetic, not unify them.
+  - The point and volume paths have different arithmetic in places ([density-functions.md](../../specs/density-functions.md)). The flattened form must keep each path's own arithmetic, not unify them.
 
 ## Approach
 
@@ -72,13 +72,13 @@ To be decided in an ADR after the measurement. The likely shape:
   - The game's compile-time choices stay where they are made today, in binding.
 - **Two runners over the same program.** A point runner and a volume runner, each with the arithmetic of its own path. The volume runner works over flat buffers from a per-thread arena that's reused between calls, so a call allocates nothing once warm. This targets the fixed cost per volume.
 - **Batched, SIMD-friendly kernels where the arithmetic allows.** Noise octaves, splines, and the clamp and unary operations over whole buffers, written so each lane does exactly the scalar operations.
-- **One program form per family.** 26.2's `f64` family compiles to the same kind of program with its own operations, or to a variant the ADR names. The point is to share the runner's structure, not the arithmetic ([ADR 0026](../adr/0026-how-game-versions-coexist.md)).
+- **One program form per family.** 26.2's `f64` family compiles to the same kind of program with its own operations, or to a variant the ADR names. The point is to share the runner's structure, not the arithmetic ([ADR 0026](../../adr/0026-how-game-versions-coexist.md)).
 
 The interpreter stays as the reference for differential tests, behind `cfg(test)` or a test-only feature. ADR 0026's one code path per algorithm means it never evaluates outside tests.
 
 ### Cheaper surface levels and 26.2's columns
 
-- **`find_top_surface`** walks down from an upper bound one `cell_height` step at a time ([density-functions.md](../specs/density-functions.md)). Batch the aquifer's 49 samples into one pass, sharing the work their columns have in common, without changing which values are computed.
+- **`find_top_surface`** walks down from an upper bound one `cell_height` step at a time ([density-functions.md](../../specs/density-functions.md)). Batch the aquifer's 49 samples into one pass, sharing the work their columns have in common, without changing which values are computed.
 - **26.2's columns** each build a `NoiseChunk`. Milestone 08 found that column and chunk answers differ (`flat_cache` is quantized to the quart corner inside the chunk's window), and chose each column's own `NoiseChunk` because the oracle can't tell. Any sharing has to keep each column's answers exactly; the spec's 26.2 section says what may be shared.
 
 ### Checking it
@@ -87,7 +87,7 @@ The interpreter stays as the reference for differential tests, behind `cfg(test)
 - **The oracle:** `cargo xtask oracle-test` for every version, and the test pack, after each phase.
 - **The bench:** every phase reports before and after on the four lines the exit criterion names, for each family.
 
-Specs and ADRs that govern this: [density-functions.md](../specs/density-functions.md), [noise.md](../specs/noise.md), [terrain.md](../specs/terrain.md), [oracle.md](../specs/oracle.md), [ADR 0011](../adr/0011-parse-json-numbers-from-their-text.md), [ADR 0022](../adr/0022-terrain-crate-and-volume-evaluation.md), [ADR 0026](../adr/0026-how-game-versions-coexist.md).
+Specs and ADRs that govern this: [density-functions.md](../../specs/density-functions.md), [noise.md](../../specs/noise.md), [terrain.md](../../specs/terrain.md), [oracle.md](../../specs/oracle.md), [ADR 0011](../../adr/0011-parse-json-numbers-from-their-text.md), [ADR 0022](../../adr/0022-terrain-crate-and-volume-evaluation.md), [ADR 0026](../../adr/0026-how-game-versions-coexist.md).
 
 ## Tasks
 
@@ -95,9 +95,9 @@ Specs and ADRs that govern this: [density-functions.md](../specs/density-functio
 
 - [x] Find why the isolated column went from 243 µs (milestone 07's close, 0ef3687) to 393 µs: bench both commits on the same machine in one sitting, then bisect if it's real. Fix it if it's a mistake rather than a cost of supporting versions. Mostly the bench's noise; the real regression is codegen, not code (see the notes). Fixed by measuring with a `dist` profile (fat LTO, one codegen unit), decided 2026-10-27.
 - [x] Bench lines before, for every supported version: the bench's terrain lines, plus `structure_layout`, confirmed search and region lines, recorded in the notes. Three rounds per version under `dist`; ranges in the notes.
-- [ ] A profile of an isolated column, a nearby column, a 40 × 25 region and a village layout, for 26.3 and 26.2, split into tree-walking, allocation, memo, noise, `find_top_surface`, aquifer and the rest. Done for both families (notes), with timing spans behind a `timing` feature and the `density_timing` example, since this machine has no profiler that runs unelevated.
+- [x] A profile of an isolated column, a nearby column, a 40 × 25 region and a village layout, for 26.3 and 26.2, split into tree-walking, allocation, memo, noise, `find_top_surface`, aquifer and the rest. Done for both families (notes), with timing spans behind a `timing` feature and the `density_timing` example, since this machine has no profiler that runs unelevated.
 - [x] Prototype the hottest part of the breakdown, to check the design reaches 150 µs before building all of it. Two prototypes (notes): a vectorized noise kernel (no), and the point path's split inside `find_top_surface`. Projection: about 200 to 220 µs from removing the interpreter's overhead; 150 µs would need more (see phase 4).
-- [x] ADR: the flattened evaluation. Covers the program form, the runners, buffers, which kernels are SIMD and how (auto-vectorization, `std::arch` with runtime detection, or a crate), the families, and what happens to the interpreter. [ADR 0031](../adr/0031-flattened-density-evaluation.md), accepted: no SIMD dependency for now.
+- [x] ADR: the flattened evaluation. Covers the program form, the runners, buffers, which kernels are SIMD and how (auto-vectorization, `std::arch` with runtime detection, or a crate), the families, and what happens to the interpreter. [ADR 0031](../../adr/0031-flattened-density-evaluation.md), accepted: no SIMD dependency for now.
 
 ### Phase 2: the program, 26.2's family
 
@@ -110,32 +110,36 @@ Reordered on 2026-10-27, with the user: 26.2 first, since its point evaluations 
 
 ### Phase 3: kernels
 
-- [ ] Noise octaves (`ImprovedNoise`, `SimplexNoise`, the blended noise) over buffers, bit-exact per lane; SIMD where the profile says it pays.
-- [ ] Splines, clamps and unary operations over buffers.
-- [ ] Bench after each kernel.
+Not done, by phase 1's prototype: a bit-identical vectorized octave loop was slower except at the lowest frequencies, with or without AVX2, and splines and unary operations are a few percent each ([ADR 0032](../../adr/0032-density-programs-only-where-they-pay.md)).
+
+- [x] ~~Noise octaves over buffers, SIMD where it pays.~~ It doesn't pay.
+- [x] ~~Splines, clamps and unary operations over buffers.~~ Too small to matter.
+- [x] ~~Bench after each kernel.~~
 
 ### Phase 4: surface levels and the aquifer
 
-- [ ] `find_top_surface` batched across the aquifer's 49 samples, with the point path's arithmetic.
-- [ ] Prototype a per-seed cache of y-independent values at quart positions, shared between the volume path's cell corners and `find_top_surface`'s points, and across columns. First show the two paths give the same bits for those nodes; then measure nearby columns, regions, layouts and the isolated column.
-- [ ] Whatever else the profile shows in the aquifer's scan.
-- [ ] The isolated column at or under the target set after phase 5 (26.3). Exit criterion 2.
+- [x] ~~`find_top_surface` batched across the aquifer's 49 samples.~~ Every position still needs a full point evaluation; batching would only save tree-walking, a few percent (notes).
+- [x] Per-seed caches shared across queries, done where they're exact: 26.2's cell corners (`CornerStore`) and 26.3's position-only interpolation and upscale corners (`CornerCache`), each argued in the spec. The cross-path y-independent cache wasn't built: the point and volume paths round noise differently, so their values can't be shared.
+- [x] The aquifer's scan: nothing further worth doing in the profile.
+- [x] The isolated column at or under the target (26.3). Exit criterion 2. Target set with the user on 2026-10-28 at 235 µs; the bench's after lines give 227 to 233 µs.
 
 ### Phase 5: the program, 26.3's family
 
-- [ ] Compile a bound `Sampler` into a `Program`, keeping binding's choices; a point runner over it.
-- [ ] The volume runner, with an arena of buffers reused between calls; y-independent operations once per column; `upscale`, `interpolated`, `slice`, `domain_warp`, `find_top_surface` and the caches as operations.
-- [ ] Differential tests against the interpreter on every bundle's functions, points and volumes.
-- [ ] Switch the climate router, terrain, spawn and corner constraints to the program. `oracle-test` passes for 26.3, both 26.4 snapshots and the test pack.
+Replaced by targeted fixes, decided with the user on 2026-10-28 ([ADR 0032](../../adr/0032-density-programs-only-where-they-pay.md)): the interpreter's cost was its memo copies, not its tree-walking, and a point program would add only a few percent.
 
-- [ ] Measure every line against the before lines, then decide the isolated column's target with the user (agreed 2026-10-27: decided after the programs are built, not before).
+- [x] The volume memo keeps only shared nodes (f227d2a): a region's time halved.
+- [x] `interpolated` and `upscale` keep position-only corners per seed (2fb69c6).
+- [x] ~~A 26.3 `Program` with point and volume runners, its differential tests, and switching callers to it.~~ Not built (ADR 0032).
+- [x] `oracle-test` passes for 26.3, both 26.4 snapshots and the test pack after each change.
+
+- [x] Measure every line against the before lines, then decide the isolated column's target with the user (agreed 2026-10-27: decided after the programs are built, not before). 235 µs, met (2026-10-28).
 
 ### Phase 6: close-out
 
-- [ ] Move the interpreter behind `cfg(test)` or a test-only feature, as the differential tests' reference.
-- [ ] Bench lines after, for every version, beside the before lines. Exit criterion 3.
-- [ ] Specs: density-functions.md, noise.md and terrain.md describe the evaluation where it's observable (never values; those don't change). architecture.md's density row.
-- [ ] `cargo xtask check` and `cargo xtask oracle-test` for every version. Exit criterion 1. Move this plan to `completed/`, and milestone 09 with it.
+- [x] ~~Move the interpreter behind `cfg(test)`.~~ Superseded: 26.3's interpreter stays the evaluator, and 26.2's bound functions stay as its plain router, climate functions and the program's reference (ADR 0032).
+- [x] Bench lines after, for every version, beside the before lines. Exit criterion 3. In the notes.
+- [x] Specs: density-functions.md, noise.md and terrain.md describe the evaluation where it's observable (never values; those don't change). architecture.md's density row. density-functions.md says why each cache across queries is exact (26.2's corners, 26.3's corners); noise.md and terrain.md needed nothing, since nothing observable changed there.
+- [x] `cargo xtask check` and `cargo xtask oracle-test` for every version. Exit criterion 1. Move this plan to `completed/`, and milestone 09 with it. oracle-test passes for every version and the test pack on the final code (f227d2a; only docs changed after).
 
 ## Verification
 
@@ -146,9 +150,10 @@ Reordered on 2026-10-27, with the user: 26.2 first, since its point evaluations 
 
 ## Durable outputs
 
-- [x] ADR: the flattened density evaluation ([0031](../adr/0031-flattened-density-evaluation.md)).
-- [ ] `docs/specs/density-functions.md`, `docs/specs/noise.md`, `docs/specs/terrain.md`: where evaluation order or sharing is observable.
-- [ ] `docs/architecture.md`: the density row.
+- [x] ADR: the flattened density evaluation ([0031](../../adr/0031-flattened-density-evaluation.md)).
+- [x] `docs/specs/density-functions.md`, `docs/specs/noise.md`, `docs/specs/terrain.md`: where evaluation order or sharing is observable.
+- [x] `docs/architecture.md`: the density row.
+- [x] ADR: [0032](../../adr/0032-density-programs-only-where-they-pay.md), superseding 0031 where 26.3 kept its interpreter.
 
 ## Decisions
 
@@ -198,6 +203,25 @@ Sources:
 - crates.io metadata for each crate, fetched 2026-10-27.
 
 ## Notes
+
+- 2026-10-28: **Bench lines after** (`dist`, three rounds per version, against the before lines below). The `structure_layout` line repeats one layout in one session, so the per-seed caches flatter it; a layout in a new session improved about 25%.
+
+  | Line                                               | 26.2 before      | 26.2 after       | 26.3 before        | 26.3 after         |
+  | -------------------------------------------------- | ---------------- | ---------------- | ------------------ | ------------------ |
+  | `height_at` one column, bound                      | 2.1 to 2.4 ms    | 533 to 876 µs    | 296 to 313 µs      | 227 to 233 µs      |
+  | `height_at` one nearby column, bound               | 506 to 600 µs    | 192 to 196 µs    | 197 to 230 µs      | 168 to 170 µs      |
+  | `height_at` one column, new session                | 1.4 to 2.0 ms    | 1.1 to 1.2 ms    | 598 to 692 µs      | 555 to 576 µs      |
+  | `heights_in` 40 × 25 columns                       | 67 to 74 ms      | 51 to 63 ms      | 20 to 22 ms        | 10 ms              |
+  | `height_map` 256², scale 1                         | 4.4 to 5.5 s     | 3.7 to 4.6 s     | 1.4 to 1.5 s       | 0.9 to 1.2 s       |
+  | `height_map` 256², scale 4                         | 28 to 36 s       | 9.1 to 11.1 s    | 10.8 to 11.8 s     | 8.1 to 10.1 s      |
+  | `structure_layout` village_plains, bound           | 111 to 169 ms    | 15 to 21 ms      | 80 to 85 ms        | 7.2 to 9.2 ms      |
+  | `locate_structure` #village confirmed, new session | 29 to 60 ms      | 14 to 16 ms      | 2.8 to 3.1 ms      | 2.9 to 3.0 ms      |
+  | witch huts confirmed, 1 thread                     | 400 to 473/s     | 675 to 811/s     | 3,204 to 3,312/s   | 3,340 to 4,163/s   |
+  | witch huts confirmed, all threads                  | 3,984 to 4,234/s | 5,972 to 6,564/s | 26,824 to 28,201/s | 28,556 to 31,101/s |
+  | `biome_at` 256² quarts                             | 676 to 754 ms    | 347 to 448 ms    | 194 to 233 ms      | 157 to 221 ms      |
+  | `render` 1024² at scale 16                         | 12.3 to 13.2 s   | 7.1 to 9.0 s     | 3.2 to 3.7 s       | 2.5 to 3.2 s       |
+
+  The 26.4 snapshots move with 26.3: an isolated column 222 to 367 and 225 to 299 µs, `heights_in` 13 to 19 and 12 to 18 ms, a repeated layout about 9 ms.
 
 - 2026-10-27: **26.3's volume memo keeps only shared nodes.** A node the binder hands out once can't be asked for again within one volume call (its parent's own entry covers a repeat), so its result isn't copied into the memo. The binder marks a sampler shared when it hands it out a second time. `dist`, coarse, three rounds: 40 × 25 region 21 to 22 → about 17 ms; isolated column 241 to 261 µs and nearby column 160 to 177 µs, about the same. oracle-test passes for every version and the test pack.
 

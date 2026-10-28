@@ -334,13 +334,16 @@ impl std::fmt::Display for UncheckedVersion {
         if self.newer {
             write!(
                 f,
-                "{} is newer than every version this build of spyglass was checked against                  (the newest is {newest}), so its answers may differ from the game's; a newer                  spyglass may support it",
+                "{} is newer than every version this build of spyglass was checked against \
+                 (the newest is {newest}), so its answers may differ from the game's; a newer \
+                 spyglass may support it",
                 self.version
             )
         } else {
             write!(
                 f,
-                "this build of spyglass wasn't checked against {}, so its answers may differ                  from the game's",
+                "this build of spyglass wasn't checked against {}, so its answers may differ \
+                 from the game's",
                 self.version
             )
         }

@@ -97,7 +97,8 @@ fn run_extract(args: &Args) -> anyhow::Result<()> {
             // Before the download, so there's time to stop (ADR 0039).
             if !versions::is_checked_id(v) {
                 eprintln!(
-                    "warning: this build of spyglass wasn't checked against {v}; its bundle will                      load, but answers for it may differ from the game's"
+                    "warning: this build of spyglass wasn't checked against {v}; its bundle will \
+                     load, but answers for it may differ from the game's"
                 );
             }
             println!("Fetching the {v} server jar into {}", cache.dir().display());

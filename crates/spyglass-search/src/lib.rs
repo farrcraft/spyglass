@@ -19,4 +19,4 @@ pub use query::{
     Anchor, Constraint, Count, DEFAULT_STEP, DEFAULT_Y, Importance, Kind, MAX_COORDINATE,
     MAX_PLACE_SIDE, MAX_SAMPLES, Place, Query, Region, Sampling,
 };
-pub use run::{Checked, Hit, Progress, RunOptions, SeedSource, run};
+pub use run::{Checked, Hit, Progress, RunOptions, SeedSource, Stop, map_prefix, pool, run};

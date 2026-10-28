@@ -315,16 +315,16 @@ prefer minecraft:bastion_remnant within 200 of minecraft:fortress within 1000 of
 
 Each constraint is in one dimension, inferred from what it counts: fortresses and bastions are the Nether's, end cities the End's, villages the Overworld's. `spawn` in a Nether constraint is the block the Overworld spawn's portal leads to (its position divided by 8), and a structure anchor in another dimension is converted the same way. Write `nether`, `end` or `overworld` after `require` or `prefer` to choose for a structure tag that spans dimensions: `require nether #minecraft:ruined_portal within 300 of spawn` ([specs/search.md](specs/search.md#dimensions)).
 
-| Option                          | Default    | What it does                                                                                       |
-| ------------------------------- | ---------- | -------------------------------------------------------------------------------------------------- |
-| `-q <text>` or `--query-file`   | required   | The query.                                                                                         |
-| `--count <n>`, `--time <t>`     | none       | Stop after this many seeds, or this long (`90s`, `10m`, `2h`). Without either, Ctrl-C stops it.    |
-| `--range <a..b>`, `--seeds <f>` | every seed | Only seeds from a to b (both included; the example is every text seed), or those listed in a file. |
-| `--from <index>`                | `0`        | Where to start; a search prints the index to continue from.                                        |
-| `--top <n>`                     | `10`       | How many seeds to keep.                                                                            |
-| `--confirm`                     | off        | Decide structure starts with each seed's terrain, as the game does.                                |
-| `--certain`                     | off        | Only seeds whose required constraints hold whatever is left undecided.                             |
-| `--threads <n>`                 | all cores  | Worker threads.                                                                                    |
+| Option                          | Default    | What it does                                                                                                                                                                  |
+| ------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `-q <text>` or `--query-file`   | required   | The query.                                                                                                                                                                    |
+| `--count <n>`, `--time <t>`     | none       | Stop after this many seeds, or this long (`90s`, `10m`, `2h`). Without either, Ctrl-C stops it and prints the best so far; a second Ctrl-C skips evaluating the rest of them. |
+| `--range <a..b>`, `--seeds <f>` | every seed | Only seeds from a to b (both included; the example is every text seed), or those listed in a file.                                                                            |
+| `--from <index>`                | `0`        | Where to start; a search prints the index to continue from.                                                                                                                   |
+| `--top <n>`                     | `10`       | How many seeds to keep.                                                                                                                                                       |
+| `--confirm`                     | off        | Decide structure starts with each seed's terrain, as the game does.                                                                                                           |
+| `--certain`                     | off        | Only seeds whose required constraints hold whatever is left undecided.                                                                                                        |
+| `--threads <n>`                 | all cores  | Worker threads.                                                                                                                                                               |
 
 The bundle options are as for `locate`; `--json` prints every hit with what each constraint matched. Searching every seed checks structure placement first, which depends only on the seed's lower 48 bits, so seeds that can't place enough structures are skipped 65,536 at a time. The same query, range, start and count always give the same list, on any machine.
 

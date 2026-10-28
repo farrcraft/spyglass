@@ -839,8 +839,15 @@ impl App {
             .is_some_and(|r| r.running.is_some());
         let mut start = None;
         if running {
-            if ui.button("Stop").clicked()
-                && let Some(running) = self.search_run.as_ref().and_then(|r| r.running.as_ref())
+            let current = self.search_run.as_ref().and_then(|r| r.running.as_ref());
+            // Once stopped, the best seeds are still evaluated; a second click skips the rest.
+            let label = if current.is_some_and(|r| r.stopping()) {
+                "Skip evaluating"
+            } else {
+                "Stop"
+            };
+            if ui.button(label).clicked()
+                && let Some(running) = current
             {
                 running.stop();
             }

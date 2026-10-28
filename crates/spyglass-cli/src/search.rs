@@ -2,13 +2,12 @@
 
 use std::io::{IsTerminal, Write};
 use std::ops::ControlFlow;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use spyglass::{
-    Feature, Game, Outcome, SearchOptions, SearchOutcome, SearchProgress, SearchQuery, SeedSource,
+    Feature, Game, Outcome, SearchOptions, SearchOutcome, SearchProgress, SearchQuery, SearchStop,
+    SeedSource,
 };
 
 use crate::args::Search;
@@ -46,13 +45,22 @@ pub fn run(args: &Search) -> Result<()> {
         threads: args.threads,
         certain: args.certain,
         confirm: args.confirm,
+        stop: SearchStop::new(),
     };
 
-    let stop = Arc::new(AtomicBool::new(false));
     {
-        let stop = Arc::clone(&stop);
-        // A second handler can't be installed; then Ctrl-C just ends the process.
-        let _ = ctrlc::set_handler(move || stop.store(true, Ordering::Relaxed));
+        // The first Ctrl-C stops searching, and the best seeds so far are evaluated and
+        // printed; a second skips evaluating the rest. A second handler can't be installed;
+        // then Ctrl-C just ends the process.
+        let stop = options.stop.clone();
+        let _ = ctrlc::set_handler(move || {
+            if stop.is_stopped() {
+                stop.stop_now();
+            } else {
+                stop.stop();
+                eprintln!("\nstopping; Ctrl-C again to skip evaluating the best seeds");
+            }
+        });
     }
     let terminal = std::io::stderr().is_terminal();
     if terminal
@@ -69,11 +77,7 @@ pub fn run(args: &Search) -> Result<()> {
             eprint!("\r{}", status(p));
             let _ = std::io::stderr().flush();
         }
-        if stop.load(Ordering::Relaxed) {
-            ControlFlow::Break(())
-        } else {
-            ControlFlow::Continue(())
-        }
+        ControlFlow::Continue(())
     })?;
     if terminal {
         eprint!("\r{}\r", " ".repeat(status(&outcome.progress).len()));
@@ -126,7 +130,11 @@ fn print_text(game: &Game, query: &SearchQuery, options: &SearchOptions, outcome
         "{} of {} seeds reported, best {} shown (Minecraft {}, {:.1} s{}):",
         p.reported,
         p.evaluated,
-        outcome.hits.len(),
+        if outcome.partial {
+            format!("{} of {}", outcome.hits.len(), outcome.progress.top.len())
+        } else {
+            outcome.hits.len().to_string()
+        },
         game.version(),
         p.elapsed.as_secs_f64(),
         match (options.certain, options.confirm) {
@@ -236,6 +244,7 @@ fn print_json(
         reported: p.reported,
         elapsed_seconds: p.elapsed.as_secs_f64(),
         hits,
+        partial: outcome.partial,
     })
 }
 

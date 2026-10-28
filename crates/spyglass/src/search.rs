@@ -13,7 +13,9 @@ use spyglass_structure::PlacementKind;
 
 use evaluate::Sessions;
 pub use evaluate::{ConstraintResult, Evaluation, Feature, Outcome};
-pub use spyglass_search::{Hit as RankedSeed, Progress as SearchProgress, SeedSource};
+pub use spyglass_search::{
+    Hit as RankedSeed, Progress as SearchProgress, SeedSource, Stop as SearchStop,
+};
 
 use crate::{BiomeQuery, Dimension, Error, Game, Result, StructureQuery, World};
 
@@ -423,6 +425,9 @@ pub struct SearchOptions {
     /// Decide structure starts with each seed's terrain, as the game does. Slower: terrain is
     /// checked last, for the seeds that pass everything else.
     pub confirm: bool,
+    /// Stops the search from another thread, before its next seed. [`SearchStop::stop`] still
+    /// evaluates the best seeds found; [`SearchStop::stop_now`] cuts that short too.
+    pub stop: SearchStop,
 }
 
 impl Default for SearchOptions {
@@ -437,6 +442,7 @@ impl Default for SearchOptions {
             threads: None,
             certain: false,
             confirm: false,
+            stop: SearchStop::new(),
         }
     }
 }
@@ -461,12 +467,16 @@ pub struct SearchOutcome {
     pub progress: SearchProgress,
     /// The ranked seeds, best first, with their evaluations.
     pub hits: Vec<SearchHit>,
+    /// Whether [`SearchStop::stop_now`] cut evaluating the ranked seeds short: then `hits` has
+    /// only the best of `progress.top`, in rank order.
+    pub partial: bool,
 }
 
 impl World {
     /// Searches seeds for `query`, keeping the best (ADR 0021). Runs on its own thread pool;
     /// calls `progress` between rounds of work with the best so far, and stops when the budget
-    /// in `options` is spent, the source runs out, or `progress` returns `Break`. The same
+    /// in `options` is spent, the source runs out, `progress` returns `Break`, or
+    /// [`SearchOptions::stop`] is asked. Then the best seeds are evaluated, in parallel. The same
     /// query, source, `from` and seed count give the same hits on any machine and any number
     /// of threads. The query must be in this world's dimension only: [`Game::search`] searches
     /// any.
@@ -533,38 +543,41 @@ fn search(
     options: &SearchOptions,
     accepts: impl Fn(i64) -> bool + Sync,
     check: impl Fn(i64, u64) -> Result<spyglass_search::Checked> + Sync,
-    evaluate: impl Fn(i64) -> Result<Evaluation>,
+    evaluate: impl Fn(i64) -> Result<Evaluation> + Sync,
     progress: impl FnMut(&SearchProgress) -> ControlFlow<()>,
 ) -> Result<SearchOutcome> {
+    let pool = spyglass_search::pool(options.threads)
+        .map_err(|e| Error::Threads(crate::Cause(Box::new(e))))?;
     let run = RunOptions {
         source: options.source.clone(),
         from: options.from,
         seeds: options.seeds,
         time: options.time,
         top: options.top,
-        threads: options.threads,
+        stop: options.stop.clone(),
     };
-    let progress = spyglass_search::run(&run, accepts, check, progress)?;
-    let hits = progress
-        .top
-        .iter()
-        .map(|hit| {
-            let evaluation = evaluate(hit.seed)?;
-            debug_assert!(
-                evaluation.reported(options.certain)
-                    && evaluation.score(options.certain) == hit.score,
-                "the fast path disagrees with evaluate on seed {}: {query}",
-                hit.seed
-            );
-            Ok(SearchHit {
-                index: hit.index,
-                seed: hit.seed,
-                score: hit.score,
-                evaluation,
-            })
+    let progress = spyglass_search::run(&pool, &run, accepts, check, progress)?;
+    let stop = || options.stop.is_stopped_now();
+    let hits = spyglass_search::map_prefix(&pool, &progress.top, stop, |hit| {
+        let evaluation = evaluate(hit.seed)?;
+        debug_assert!(
+            evaluation.reported(options.certain) && evaluation.score(options.certain) == hit.score,
+            "the fast path disagrees with evaluate on seed {}: {query}",
+            hit.seed
+        );
+        Ok::<_, Error>(SearchHit {
+            index: hit.index,
+            seed: hit.seed,
+            score: hit.score,
+            evaluation,
         })
-        .collect::<Result<_>>()?;
-    Ok(SearchOutcome { progress, hits })
+    })?;
+    let partial = hits.len() < progress.top.len();
+    Ok(SearchOutcome {
+        progress,
+        hits,
+        partial,
+    })
 }
 
 #[cfg(test)]

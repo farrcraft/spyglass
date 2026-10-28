@@ -124,6 +124,7 @@ The best seeds for a query ([search.md](search.md)). A search is over many seeds
 | `reported`        | int         | Seeds that met the required constraints, whether or not they made the list.                              |
 | `elapsed_seconds` | number      | How long the search took. The only field that differs between runs of the same search.                   |
 | `hits`            | array       | The best seeds, best first: by `score`, then by `index`.                                                 |
+| `partial`         | bool        | Whether a second Ctrl-C cut evaluating the best seeds short: then `hits` has only the best of them.      |
 
 Each hit has `index`, `seed`, `score`, `verdict` (`met` or `possibly`) and `constraints`, one per line of the query, each with:
 

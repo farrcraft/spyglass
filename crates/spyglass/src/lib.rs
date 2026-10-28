@@ -54,7 +54,7 @@ pub use save::{
 };
 pub use search::{
     ConstraintResult, Evaluation, Feature, Outcome, RankedSeed, SearchHit, SearchOptions,
-    SearchOutcome, SearchProgress, SearchQuery, SeedSource,
+    SearchOutcome, SearchProgress, SearchQuery, SearchStop, SeedSource,
 };
 pub use spyglass_data::bundle::Kind;
 pub use spyglass_data::dimension::Dimension;
@@ -178,6 +178,10 @@ pub enum Error {
         /// The dimension converted to.
         to: Dimension,
     },
+    /// The search's worker threads couldn't be started, such as when asking for more than the
+    /// system allows.
+    #[error("couldn't start the search's threads: {0}")]
+    Threads(Cause),
 }
 
 /// What went wrong below the API, for [`Error::Data`] and [`Error::Save`]. Its message is the

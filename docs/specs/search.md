@@ -212,10 +212,16 @@ A source is a finite or full sequence of seeds, each with an **index**:
 A search starts at index `from` and runs until its **budget** is spent:
 
 - **A seed count** `n`: exactly the indices `from` to `from + n − 1`, or to the end of the source.
-- **A time limit**: until the time is up, then stops at the next point where every index below some `next` has been evaluated.
+- **A time limit**: until the time is up.
 - Both: whichever comes first.
 
-Every search reports `next`, the first index it didn't evaluate, or that the source is finished. Starting again from `next` continues where it stopped.
+A search can also be **stopped** from another thread (`SearchStop`): Ctrl-C in the command, Stop in the viewer.
+
+Work goes in rounds of about half a second, with progress reported between them. A time limit, a stop, or a round that has run for a second cuts the round short before its next seed, however many seeds it was sized for. So a search stops within one seed's check of being asked. What a cut round keeps is every index below the first one not finished; seeds checked past that point are dropped and checked again by the next round, if there is one.
+
+Every search reports `next`, the first index it didn't evaluate, or that the source is finished. Every index below `next` has been evaluated. Starting again from `next` continues where it stopped.
+
+**After the search** the ranked seeds are evaluated again in full, in parallel, for the features each matched. A stop ends the search but still evaluates them. A second stop (`SearchStop::stop_now`: a second Ctrl-C, or Skip evaluating in the viewer) skips what's left. The outcome is then **partial**: its hits are the best seeds evaluated, in rank order, up to the first one that wasn't.
 
 ## Determinism
 

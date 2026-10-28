@@ -330,6 +330,7 @@ pub struct SearchAnswer<'a> {
     pub reported: u64,
     pub elapsed_seconds: f64,
     pub hits: Vec<SearchHit<'a>>,
+    pub partial: bool,
 }
 
 #[derive(Serialize)]

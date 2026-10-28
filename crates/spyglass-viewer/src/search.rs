@@ -3,7 +3,6 @@
 //! `Game::search`, across dimensions; the matched features come from `GameSession::evaluate`.
 
 use std::ops::ControlFlow;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
@@ -13,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use spyglass::query::{Anchor, Kind, Place, Query, Region};
 use spyglass::{
     Dimension, Evaluation, Feature, Game, SearchOptions, SearchOutcome, SearchProgress,
-    SearchQuery, SeedSource,
+    SearchQuery, SearchStop, SeedSource,
 };
 
 /// The search panel's settings, kept between runs.
@@ -97,6 +96,7 @@ impl SearchSettings {
             threads: Some(threads),
             certain: self.certain,
             confirm: self.confirm,
+            stop: SearchStop::new(),
         })
     }
 }
@@ -108,7 +108,7 @@ pub fn threads() -> usize {
 
 /// A search running on its own thread.
 pub struct Running {
-    stop: Arc<AtomicBool>,
+    stop: SearchStop,
     progress: Arc<Mutex<Option<SearchProgress>>>,
     done: Receiver<Result<SearchOutcome, String>>,
 }
@@ -121,20 +121,16 @@ impl Running {
         options: SearchOptions,
         repaint: impl Fn() + Send + 'static,
     ) -> Running {
-        let stop = Arc::new(AtomicBool::new(false));
+        let stop = options.stop.clone();
         let progress = Arc::new(Mutex::new(None));
         let (send, done) = channel();
         {
-            let (stop, progress) = (stop.clone(), progress.clone());
+            let progress = progress.clone();
             thread::spawn(move || {
                 let outcome = game.search(&query, &options, |p| {
                     *progress.lock().unwrap_or_else(PoisonError::into_inner) = Some(p.clone());
                     repaint();
-                    if stop.load(Ordering::Relaxed) {
-                        ControlFlow::Break(())
-                    } else {
-                        ControlFlow::Continue(())
-                    }
+                    ControlFlow::Continue(())
                 });
                 let _ = send.send(outcome.map_err(|e| e.to_string()));
                 repaint();
@@ -147,9 +143,19 @@ impl Running {
         }
     }
 
-    /// Asks the search to stop after its current round.
+    /// Asks the search to stop before its next seed; the best seeds found are still
+    /// evaluated. Asked again, it stops evaluating them too, keeping the best done so far.
     pub fn stop(&self) {
-        self.stop.store(true, Ordering::Relaxed);
+        if self.stop.is_stopped() {
+            self.stop.stop_now();
+        } else {
+            self.stop.stop();
+        }
+    }
+
+    /// Whether [`stop`](Self::stop) has been asked.
+    pub fn stopping(&self) -> bool {
+        self.stop.is_stopped()
     }
 
     /// The latest progress.

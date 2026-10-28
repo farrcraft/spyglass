@@ -7,8 +7,8 @@
 use std::ops::ControlFlow;
 
 use spyglass::{
-    Error, Feature, Outcome, SearchOptions, SearchOutcome, SeedSource, Session, StructureStart,
-    World,
+    Error, Feature, Outcome, SearchOptions, SearchOutcome, SearchStop, SeedSource, Session,
+    StructureStart, World,
 };
 use spyglass_oracle::fixtures;
 
@@ -631,4 +631,46 @@ fn progress_reports_and_can_stop() {
         },
     );
     assert_eq!(ranked(&again), ranked(&outcome));
+}
+
+#[test]
+fn a_stop_still_evaluates_the_best_unless_asked_again() {
+    let fixture = fixtures::structured_overworld(false);
+    let world = World::open(fixture.path()).unwrap();
+    let query = world.search_query(RANKED).unwrap();
+    let options = |stop: SearchStop| SearchOptions {
+        source: SeedSource::Range {
+            first: 0,
+            last: 1_000_000,
+        },
+        top: 3,
+        threads: Some(2),
+        stop,
+        ..SearchOptions::default()
+    };
+    // Stopped once, from another thread mid-search: the best seeds so far are evaluated.
+    let stop = SearchStop::new();
+    let outcome = world
+        .search(&query, &options(stop.clone()), |p| {
+            if p.reported >= 3 {
+                stop.stop();
+            }
+            ControlFlow::Continue(())
+        })
+        .unwrap();
+    assert!(outcome.progress.next.is_some());
+    assert!(!outcome.partial);
+    assert_eq!(outcome.hits.len(), outcome.progress.top.len());
+    // Stopped twice: what's left of the evaluation is skipped, and the outcome says so.
+    let stop = SearchStop::new();
+    let outcome = world
+        .search(&query, &options(stop.clone()), |p| {
+            if p.reported >= 3 {
+                stop.stop_now();
+            }
+            ControlFlow::Continue(())
+        })
+        .unwrap();
+    assert!(outcome.partial);
+    assert!(outcome.hits.len() < outcome.progress.top.len());
 }

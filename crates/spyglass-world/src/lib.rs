@@ -106,7 +106,8 @@ pub struct Save {
 }
 
 /// The most a save's NBT files (`level.dat`, player and settings files) may hold, compressed or
-/// not. Real ones are kilobytes; the limit keeps a crafted file from filling memory.
+/// not, and the most memory the tree read from one may take. Real ones are kilobytes; the limit
+/// keeps a crafted file from filling memory.
 const MAX_NBT_FILE: u64 = 64 << 20;
 
 /// A whole file, unless it's longer than `max` bytes.

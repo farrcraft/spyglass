@@ -277,9 +277,9 @@ Six phases, each one or more commits that pass `cargo xtask check` on their own,
 
 ### 2. Hostile input
 
-- [ ] H1 + X1 NBT list reservation; tests: a huge list length (fails before), nesting at 512 (reads) and 513 (errors).
-- [ ] H6 + X1 Modified UTF-8 as Java; tests for `0x00` and a lone surrogate in a value and in a name; `world-saves.md`.
-- [ ] H2 Test: a chain of 10,000 references (confirm). Reference depth limit; vanilla maximum measured and recorded in `density-functions.md`; `loading` as a set.
+- [x] H1 + X1 NBT list reservation (at most 1,024 up front) and a memory limit on limited reads; tests: a huge list length, a list of a million bytes, nesting at 512 (reads) and 513 (errors), the deepest on a 1 MiB stack.
+- [x] H6 + X1 Modified UTF-8 as Java; tests for `0x00` and a lone surrogate in a value and in a name; `bundle-format.md`.
+- [x] H2 Test: a chain of 10,000 references (confirmed: it overflowed the stack). Nesting limit of 128 through references; vanilla maximum measured and recorded in `density-functions.md`. `loading` stays a `Vec`: with chains capped at 128, its scan is cheap.
 - [ ] H3 Test: unsorted locations (confirm). `mth::binary_search`, both families; `density-functions.md:51` updated.
 - [ ] H4 Region length check as `RegionFile`; test at the 4-byte boundary.
 - [ ] H5 Header-then-seek region reads; unopenable files counted and warned; test.
@@ -364,6 +364,17 @@ Six phases, each one or more commits that pass `cargo xtask check` on their own,
 
 Decisions, surprises and dead ends, newest first.
 
+- 2026-10-28: H2.
+  - Measured on every bundle, vanilla density functions nest at most 48 deep (26.3, 26.4-snapshot-5 and -6) or 53 (26.2, whose references are nodes).
+  - In a debug build, loading a chain overflowed a 2 MiB stack at about 180 levels, roughly 23 KB of stack per reference. So the limit is 128, not something larger: the deepest graph allowed loads, binds, samples and drops on a 2 MiB thread in debug.
+  - A function loaded once keeps its height, so a reference to it from the cache counts in full. Without that, a pack could build depth up across separate loads, for example from successive router entries.
+  - A debug build on a Windows main thread (1 MiB) could still overflow at the limit. Release frames are far smaller. Running the CLI's work on a thread with a larger stack would close this; it's left for R-phase work if it's wanted.
+- 2026-10-28: H1 and H6.
+  - Fixing the reservation alone wasn't enough. A well-formed 64 MiB list of bytes becomes 64 Mi `Tag`s, about 2 GiB. So `read_compressed_limited` also counts the tree's memory against its limit.
+  - The test that a list's claimed length isn't reserved didn't abort under the old code on this machine: Windows accepted about 64 GB of reservations that were never touched. The test still guards the limited path, which now fails with `Memory` before the data runs out.
+  - The game's `NbtAccounter.pushDepth` (26.3 bytecode) counts only lists and compounds, and throws once 512 are open. spyglass counted every tag and allowed an empty 513th container. It now matches the game.
+  - At that depth the old reader overflowed a 2 MiB test thread in a debug build, which the game's limit allows. Containers now recurse through small functions of their own, and the deepest read fits in 1 MiB.
+  - Strings decode as `readUTF` decodes them: a raw zero byte is accepted. An unpaired surrogate is U+FFFD in a value and an error in a name.
 - 2026-10-28: Phase 1 done.
   - `cargo xtask links` found exactly the audit's six broken links (with the templates excluded) and nothing else. The `#column-evaluation` proof now lives under _Remembered values_.
   - Templates are excluded by file name (`template.md`), not by path, because the `no-process-doc-refs` hook rightly refuses a path naming the plans folder in xtask.

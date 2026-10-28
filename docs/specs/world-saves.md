@@ -83,7 +83,7 @@ For reading 26.4 saves, the data version tells the shapes apart: `biomes` holds 
 
 Saves are untrusted input, so reads are capped well above anything the game writes:
 
-- NBT files (`level.dat`, player and world-gen settings files): 64 MiB, both on disk and after decompression. Larger is an error.
+- NBT files (`level.dat`, player and world-gen settings files): 64 MiB, both on disk and after decompression, and 64 MiB of memory for the tree they're read into. More is an error.
 - Region files: the format's own maximum, 2 + 1,024 × 255 sectors of 4 KiB. Every chunk of a larger file is unreadable.
 - One chunk, or one `.mcc` file: 32 MiB, both stored and after decompression. Larger chunks are unreadable.
 - Data pack folders are walked without following symbolic links. So `spyglass world info` scans by default, and `locate --world` doesn't.

@@ -13,8 +13,8 @@ use spyglass_noise::NormalNoiseParameters;
 
 use super::function::{DensityFunction, Df, Mapped, Marker, Spline, TwoArgument};
 use crate::load::{
-    DENSITY_FUNCTION, DIMENSION_MAX_Y, DIMENSION_MIN_Y, NOISE, Resources, parse_blended_noise,
-    parse_noise,
+    DENSITY_FUNCTION, DIMENSION_MAX_Y, DIMENSION_MIN_Y, Depth, NOISE, Resources,
+    parse_blended_noise, parse_noise,
 };
 
 /// Loads 26.2's named density functions and noises, sharing each one however often it's
@@ -25,6 +25,7 @@ pub struct Loader<'r, R: Resources + ?Sized> {
     noises: HashMap<String, NormalNoiseParameters>,
     /// Named functions being loaded, outermost first, for cycle detection.
     loading: Vec<String>,
+    depth: Depth,
 }
 
 impl<'r, R: Resources + ?Sized> Loader<'r, R> {
@@ -35,6 +36,7 @@ impl<'r, R: Resources + ?Sized> Loader<'r, R> {
             functions: HashMap::new(),
             noises: HashMap::new(),
             loading: Vec::new(),
+            depth: Depth::default(),
         }
     }
 
@@ -42,8 +44,9 @@ impl<'r, R: Resources + ?Sized> Loader<'r, R> {
     /// [`DensityFunction::Reference`] to it.
     pub fn function(&mut self, id: &str) -> LoadResult<Df> {
         let id = full_id(id);
-        if let Some(f) = self.functions.get(&id) {
-            return Ok(f.clone());
+        if let Some(f) = self.functions.get(&id).cloned() {
+            self.depth.reuse(&id, &At::root(&id))?;
+            return Ok(f);
         }
         if let Some(start) = self.loading.iter().position(|l| *l == id) {
             let mut cycle = self.loading[start..].to_vec();
@@ -56,7 +59,9 @@ impl<'r, R: Resources + ?Sized> Loader<'r, R> {
             .resource(DENSITY_FUNCTION, &id)
             .map_err(|e| at.error(e.into()))?;
         self.loading.push(id.clone());
+        let outer = self.depth.start();
         let parsed = self.parse_function(&json, &at);
+        self.depth.finish(&id, outer, parsed.is_ok());
         self.loading.pop();
         let f = parsed?;
         self.functions.insert(id, f.clone());
@@ -94,18 +99,22 @@ impl<'r, R: Resources + ?Sized> Loader<'r, R> {
     /// `DensityFunction.CODEC`: a number (a constant), a string (a reference) or an object with
     /// a `type`.
     fn parse_function(&mut self, json: &Value, at: &At<'_>) -> LoadResult<Df> {
-        match json {
-            Value::Number(_) => Ok(Arc::new(DensityFunction::Constant(noise_value(json, at)?))),
-            Value::String(id) => {
-                let function = self.function(id)?;
-                Ok(Arc::new(DensityFunction::Reference {
+        self.depth.enter(at)?;
+        let parsed = match json {
+            Value::Number(_) => {
+                noise_value(json, at).map(|v| Arc::new(DensityFunction::Constant(v)))
+            }
+            Value::String(id) => self.function(id).map(|function| {
+                Arc::new(DensityFunction::Reference {
                     id: full_id(id),
                     function,
-                }))
-            }
+                })
+            }),
             Value::Object(obj) => self.parse_typed(obj, at),
             _ => Err(at.error(LoadErrorKind::Shape("a number, a reference or an object"))),
-        }
+        };
+        self.depth.leave();
+        parsed
     }
 
     fn parse_typed(&mut self, obj: &Map<String, Value>, at: &At<'_>) -> LoadResult<Df> {
@@ -230,6 +239,13 @@ impl<'r, R: Resources + ?Sized> Loader<'r, R> {
 
     /// `CubicSpline.codec`, as 26.3's: a number or `{"coordinate", "points"}`.
     fn parse_spline(&mut self, json: &Value, at: &At<'_>) -> LoadResult<Spline> {
+        self.depth.enter(at)?;
+        let parsed = self.parse_spline_value(json, at);
+        self.depth.leave();
+        parsed
+    }
+
+    fn parse_spline_value(&mut self, json: &Value, at: &At<'_>) -> LoadResult<Spline> {
         match json {
             Value::Number(_) => Ok(Spline::Constant(float(json, at)?)),
             Value::Object(obj) => {

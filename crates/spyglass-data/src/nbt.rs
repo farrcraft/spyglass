@@ -9,8 +9,12 @@ use std::io::Read;
 
 use flate2::read::GzDecoder;
 
-/// The deepest nesting accepted, as the game's `NbtAccounter` allows.
+/// The most lists and compounds nested in one another, as the game's `NbtAccounter` allows.
 const MAX_DEPTH: usize = 512;
+
+/// The most elements a list reserves room for before reading them. A list's length is only a
+/// claim; past this, its `Vec` grows as elements actually arrive.
+const LIST_RESERVE: usize = 1024;
 
 /// A tag's value.
 #[derive(Debug, Clone, PartialEq)]
@@ -149,6 +153,9 @@ pub enum NbtError {
     /// More data than the reader's limit, after decompression.
     #[error("more than {0} bytes uncompressed")]
     TooLarge(u64),
+    /// A tree that would take more memory than the reader's limit.
+    #[error("needs more than {0} bytes of memory")]
+    Memory(u64),
 }
 
 /// Reads gzip-compressed NBT (`NbtIo.readCompressed`): the root tag's name and value.
@@ -157,7 +164,9 @@ pub fn read_compressed(bytes: &[u8]) -> Result<(String, Tag), NbtError> {
 }
 
 /// [`read_compressed`] for untrusted data: more than `max` bytes after decompression is an
-/// error, so a small file can't expand to fill memory.
+/// error, and so is a tree that would take more than `max` bytes of memory, so a small file
+/// can't expand to fill memory. (A tag takes several times the bytes it's stored in: a list of
+/// a million bytes is a million [`Tag`]s.)
 pub fn read_compressed_limited(bytes: &[u8], max: u64) -> Result<(String, Tag), NbtError> {
     let mut raw = Vec::new();
     GzDecoder::new(bytes)
@@ -167,12 +176,17 @@ pub fn read_compressed_limited(bytes: &[u8], max: u64) -> Result<(String, Tag), 
     if raw.len() as u64 > max {
         return Err(NbtError::TooLarge(max));
     }
-    read(&raw)
+    read_within(&raw, max)
 }
 
 /// Reads uncompressed NBT: one named root tag, and nothing after it.
 pub fn read(bytes: &[u8]) -> Result<(String, Tag), NbtError> {
-    let mut r = Reader::new(bytes);
+    read_within(bytes, u64::MAX)
+}
+
+/// [`read`], with an error if the tree would take more than `memory` bytes.
+fn read_within(bytes: &[u8], memory: u64) -> Result<(String, Tag), NbtError> {
+    let mut r = Reader::new(bytes, memory);
     let id = r.u8()?;
     let name = r.string()?;
     let tag = r.payload(id, 0)?;
@@ -184,7 +198,8 @@ pub fn read(bytes: &[u8]) -> Result<(String, Tag), NbtError> {
 /// `None` if the root isn't a compound or has no such int. The rest of the data is still
 /// checked as [`read`] checks it, except that strings other than names aren't decoded.
 pub fn read_root_int(bytes: &[u8], name: &str) -> Result<Option<i32>, NbtError> {
-    let mut r = Reader::new(bytes);
+    // Skipping builds nothing, so needs no memory limit.
+    let mut r = Reader::new(bytes, u64::MAX);
     let id = r.u8()?;
     r.skip_string()?;
     let mut found = None;
@@ -226,15 +241,29 @@ struct Reader<'b> {
     bytes: &'b [u8],
     pos: usize,
     path: Vec<Segment>,
+    /// The memory the tree may take, and what's left of it.
+    memory: u64,
+    memory_left: u64,
 }
 
 impl<'b> Reader<'b> {
-    fn new(bytes: &'b [u8]) -> Self {
+    fn new(bytes: &'b [u8], memory: u64) -> Self {
         Reader {
             bytes,
             pos: 0,
             path: Vec::new(),
+            memory,
+            memory_left: memory,
         }
+    }
+
+    /// Counts `bytes` of the tree's memory against the limit.
+    fn charge(&mut self, bytes: usize) -> Result<(), NbtError> {
+        self.memory_left = self
+            .memory_left
+            .checked_sub(bytes as u64)
+            .ok_or(NbtError::Memory(self.memory))?;
+        Ok(())
     }
 
     /// The path to the current tag, e.g. `blocks[3].pos`.
@@ -254,9 +283,7 @@ impl<'b> Reader<'b> {
     /// A segment as text. Names were checked when read, so they always decode.
     fn segment_text(&self, segment: Segment) -> String {
         match segment {
-            Segment::Name(start, end) => {
-                decode_modified_utf8(&self.bytes[start..end]).unwrap_or_default()
-            }
+            Segment::Name(start, end) => name_text(&self.bytes[start..end]).unwrap_or_default(),
             Segment::Index(i) => format!("[{i}]"),
         }
     }
@@ -302,10 +329,12 @@ impl<'b> Reader<'b> {
         self.take(len)
     }
 
-    /// `DataInput.readUTF`.
+    /// `DataInput.readUTF`, with any unpaired surrogate as U+FFFD.
     fn string(&mut self) -> Result<String, NbtError> {
         let bytes = self.raw_string()?;
-        decode_modified_utf8(bytes).ok_or_else(|| NbtError::String { path: self.path() })
+        let units =
+            decode_modified_utf8(bytes).ok_or_else(|| NbtError::String { path: self.path() })?;
+        Ok(String::from_utf16_lossy(&units))
     }
 
     fn skip_string(&mut self) -> Result<(), NbtError> {
@@ -315,13 +344,20 @@ impl<'b> Reader<'b> {
     /// A compound child's name, and its path segment.
     fn name(&mut self) -> Result<(String, Segment), NbtError> {
         let bytes = self.raw_string()?;
-        let text =
-            decode_modified_utf8(bytes).ok_or_else(|| NbtError::String { path: self.path() })?;
+        let text = name_text(bytes).ok_or_else(|| NbtError::String { path: self.path() })?;
         Ok((text, Segment::Name(self.pos - bytes.len(), self.pos)))
     }
 
-    fn check_depth(&self, depth: usize) -> Result<(), NbtError> {
-        if depth > MAX_DEPTH {
+    /// `NbtAccounter.pushDepth`, which only lists and compounds call: a tag of type `id` inside
+    /// `depth` of them may be one more only if `depth` is under the limit.
+    /// [`name`](Self::name)'s segment, with the name checked but not kept.
+    #[inline(never)]
+    fn skip_name(&mut self) -> Result<Segment, NbtError> {
+        self.name().map(|(_, segment)| segment)
+    }
+
+    fn check_depth(&self, id: u8, depth: usize) -> Result<(), NbtError> {
+        if matches!(id, 9 | 10) && depth >= MAX_DEPTH {
             return Err(NbtError::TooDeep { path: self.path() });
         }
         Ok(())
@@ -334,8 +370,54 @@ impl<'b> Reader<'b> {
         }
     }
 
+    /// A tag of type `id`, inside `depth` lists and compounds. Lists and compounds recurse
+    /// through their own functions, and everything else is read by [`leaf`](Self::leaf), so each
+    /// level of nesting costs a few small stack frames even in a debug build: the game allows
+    /// 512 levels, which must fit in a thread's default stack.
     fn payload(&mut self, id: u8, depth: usize) -> Result<Tag, NbtError> {
-        self.check_depth(depth)?;
+        self.check_depth(id, depth)?;
+        self.charge(size_of::<Tag>())?;
+        match id {
+            9 => self.list(depth).map(Tag::List),
+            10 => self.compound(depth).map(Tag::Compound),
+            _ => self.leaf(id),
+        }
+    }
+
+    fn list(&mut self, depth: usize) -> Result<Vec<Tag>, NbtError> {
+        let element = self.u8()?;
+        let len = self.len()?;
+        let mut items = Vec::with_capacity(len.min(LIST_RESERVE));
+        // An empty list may say TAG_End as its type.
+        if element != 0 || len != 0 {
+            for i in 0..len {
+                self.path.push(Segment::Index(i));
+                items.push(self.payload(element, depth + 1)?);
+                self.path.pop();
+            }
+        }
+        Ok(items)
+    }
+
+    fn compound(&mut self, depth: usize) -> Result<Compound, NbtError> {
+        let mut compound = Compound::new();
+        loop {
+            let child = self.u8()?;
+            if child == 0 {
+                return Ok(compound);
+            }
+            let (name, segment) = self.name()?;
+            self.charge(size_of::<String>() + name.len())?;
+            self.path.push(segment);
+            let value = self.payload(child, depth + 1)?;
+            self.path.pop();
+            compound.insert(name, value);
+        }
+    }
+
+    /// A tag that holds no other tags.
+    #[inline(never)]
+    fn leaf(&mut self, id: u8) -> Result<Tag, NbtError> {
         Ok(match id {
             1 => Tag::Byte(i8::from_be_bytes(self.array()?)),
             2 => Tag::Short(i16::from_be_bytes(self.array()?)),
@@ -345,41 +427,19 @@ impl<'b> Reader<'b> {
             6 => Tag::Double(f64::from_be_bytes(self.array()?)),
             7 => {
                 let len = self.len()?;
-                Tag::ByteArray(self.take(len)?.iter().map(|&b| b as i8).collect())
+                let bytes = self.take(len)?;
+                self.charge(len)?;
+                Tag::ByteArray(bytes.iter().map(|&b| b as i8).collect())
             }
-            8 => Tag::String(self.string()?),
-            9 => {
-                let element = self.u8()?;
-                let len = self.len()?;
-                let mut items = Vec::with_capacity(len.min(self.bytes.len()));
-                // An empty list may say TAG_End as its type.
-                if element != 0 || len != 0 {
-                    for i in 0..len {
-                        self.path.push(Segment::Index(i));
-                        items.push(self.payload(element, depth + 1)?);
-                        self.path.pop();
-                    }
-                }
-                Tag::List(items)
-            }
-            10 => {
-                let mut compound = Compound::new();
-                loop {
-                    let child = self.u8()?;
-                    if child == 0 {
-                        break;
-                    }
-                    let (name, segment) = self.name()?;
-                    self.path.push(segment);
-                    let value = self.payload(child, depth + 1)?;
-                    self.path.pop();
-                    compound.insert(name, value);
-                }
-                Tag::Compound(compound)
+            8 => {
+                let text = self.string()?;
+                self.charge(text.len())?;
+                Tag::String(text)
             }
             11 => {
                 let len = self.len()?;
                 let bytes = self.take(len.saturating_mul(4))?;
+                self.charge(bytes.len())?;
                 Tag::IntArray(
                     bytes
                         .as_chunks::<4>()
@@ -392,6 +452,7 @@ impl<'b> Reader<'b> {
             12 => {
                 let len = self.len()?;
                 let bytes = self.take(len.saturating_mul(8))?;
+                self.charge(bytes.len())?;
                 Tag::LongArray(
                     bytes
                         .as_chunks::<8>()
@@ -407,17 +468,8 @@ impl<'b> Reader<'b> {
 
     /// [`payload`](Self::payload) without building anything.
     fn skip(&mut self, id: u8, depth: usize) -> Result<(), NbtError> {
-        self.check_depth(depth)?;
+        self.check_depth(id, depth)?;
         match id {
-            1 => self.take(1).map(drop),
-            2 => self.take(2).map(drop),
-            3 | 5 => self.take(4).map(drop),
-            4 | 6 => self.take(8).map(drop),
-            7 => {
-                let len = self.len()?;
-                self.take(len).map(drop)
-            }
-            8 => self.skip_string(),
             9 => {
                 let element = self.u8()?;
                 let len = self.len()?;
@@ -435,11 +487,28 @@ impl<'b> Reader<'b> {
                 if child == 0 {
                     return Ok(());
                 }
-                let (_, segment) = self.name()?;
+                let segment = self.skip_name()?;
                 self.path.push(segment);
                 self.skip(child, depth + 1)?;
                 self.path.pop();
             },
+            _ => self.skip_leaf(id),
+        }
+    }
+
+    /// [`leaf`](Self::leaf) without building anything.
+    #[inline(never)]
+    fn skip_leaf(&mut self, id: u8) -> Result<(), NbtError> {
+        match id {
+            1 => self.take(1).map(drop),
+            2 => self.take(2).map(drop),
+            3 | 5 => self.take(4).map(drop),
+            4 | 6 => self.take(8).map(drop),
+            7 => {
+                let len = self.len()?;
+                self.take(len).map(drop)
+            }
+            8 => self.skip_string(),
             11 => {
                 let len = self.len()?;
                 self.take(len.saturating_mul(4)).map(drop)
@@ -453,9 +522,17 @@ impl<'b> Reader<'b> {
     }
 }
 
-/// Java's modified UTF-8 (`DataInput.readUTF`): `U+0000` as two bytes, and characters outside
-/// the BMP as two three-byte surrogates. `None` if malformed.
-fn decode_modified_utf8(bytes: &[u8]) -> Option<String> {
+/// A compound child's name: its modified UTF-8, which must be well-formed UTF-16 too. Names
+/// key a map, so an unpaired surrogate is an error rather than U+FFFD, which could make two
+/// names one.
+fn name_text(bytes: &[u8]) -> Option<String> {
+    String::from_utf16(&decode_modified_utf8(bytes)?).ok()
+}
+
+/// Java's modified UTF-8 as `DataInput.readUTF` decodes it, into UTF-16 units: one byte up to
+/// `0x7F` (writers send `U+0000` as `C0 80`, but a raw zero is accepted), then two- and
+/// three-byte forms, surrogates included. `None` if malformed, as `readUTF` throws.
+fn decode_modified_utf8(bytes: &[u8]) -> Option<Vec<u16>> {
     let mut units = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
@@ -465,7 +542,7 @@ fn decode_modified_utf8(bytes: &[u8]) -> Option<String> {
             _ => None,
         };
         let (unit, width) = match b {
-            0x01..=0x7F => (u16::from(b), 1),
+            0x00..=0x7F => (u16::from(b), 1),
             0xC0..=0xDF => (u16::from(b & 0x1F) << 6 | cont(i + 1)?, 2),
             0xE0..=0xEF => (
                 u16::from(b & 0x0F) << 12 | cont(i + 1)? << 6 | cont(i + 2)?,
@@ -476,7 +553,7 @@ fn decode_modified_utf8(bytes: &[u8]) -> Option<String> {
         units.push(unit);
         i += width;
     }
-    String::from_utf16(&units).ok()
+    Some(units)
 }
 
 impl Tag {
@@ -698,14 +775,136 @@ mod tests {
         b.extend((text.len() as u16).to_be_bytes());
         b.extend(text);
         assert_eq!(read(&b).unwrap().1, Tag::String("\0é\u{1F600}".into()));
-        // A raw zero byte and four-byte UTF-8 aren't modified UTF-8.
-        for bad in [&[0x00][..], &[0xF0, 0x9F, 0x98, 0x80]] {
-            let mut b = vec![8];
-            b.extend(0_u16.to_be_bytes());
-            b.extend((bad.len() as u16).to_be_bytes());
-            b.extend(bad);
-            assert!(matches!(read(&b), Err(NbtError::String { .. })));
+        // Four-byte UTF-8, a stray continuation byte and a cut-off character aren't modified
+        // UTF-8; `readUTF` throws on each.
+        for bad in [&[0xF0, 0x9F, 0x98, 0x80][..], &[0x80], &[0xE2, 0x82]] {
+            assert!(
+                matches!(read(&string_tag(bad)), Err(NbtError::String { .. })),
+                "{bad:?}"
+            );
         }
+    }
+
+    /// A root string tag, unnamed, holding `bytes`.
+    fn string_tag(bytes: &[u8]) -> Vec<u8> {
+        let mut b = named(8, "");
+        b.extend((bytes.len() as u16).to_be_bytes());
+        b.extend(bytes);
+        b
+    }
+
+    #[test]
+    fn strings_read_as_java_reads_them() {
+        // `readUTF` takes a raw zero byte as U+0000, as it does `C0 80`.
+        assert_eq!(
+            read(&string_tag(&[b'a', 0x00, b'b'])).unwrap().1,
+            Tag::String("a\0b".into())
+        );
+        // A Java string may hold an unpaired surrogate, which a Rust one can't: a value reads
+        // with U+FFFD in its place, rather than failing the whole file.
+        let lone = [b'x', 0xED, 0xA0, 0xBD];
+        assert_eq!(
+            read(&string_tag(&lone)).unwrap().1,
+            Tag::String("x\u{FFFD}".into())
+        );
+        // A name with one is an error: two names could otherwise become one.
+        let mut b = vec![10, 0, 0, 8];
+        b.extend((lone.len() as u16).to_be_bytes());
+        b.extend(lone);
+        b.extend([0, 0, 0]);
+        assert!(matches!(read(&b), Err(NbtError::String { .. })));
+    }
+
+    /// `n` lists nested in one another, the innermost empty.
+    fn nested_lists(n: usize) -> Vec<u8> {
+        let mut b = named(9, "");
+        for _ in 1..n {
+            b.push(9);
+            b.extend(1_i32.to_be_bytes());
+        }
+        b.push(0);
+        b.extend(0_i32.to_be_bytes());
+        b
+    }
+
+    /// `n` compounds nested in one another, each the only child, named `c`, of the one outside.
+    fn nested_compounds(n: usize) -> Vec<u8> {
+        let mut b = named(10, "");
+        for _ in 1..n {
+            b.extend(named(10, "c"));
+        }
+        b.resize(b.len() + n, 0);
+        b
+    }
+
+    #[test]
+    fn nesting_stops_where_the_games_does() {
+        // `NbtAccounter` counts lists and compounds: 512 of them read, 513 don't. The deepest
+        // must fit in 1 MiB of stack, a Windows main thread's, even in a debug build.
+        std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(|| {
+                for nested in [nested_lists, nested_compounds] {
+                    assert!(read(&nested(512)).is_ok());
+                    assert!(read_root_int(&nested(512), "x").is_ok());
+                    assert!(matches!(read(&nested(513)), Err(NbtError::TooDeep { .. })));
+                    assert!(matches!(
+                        read_root_int(&nested(513), "x"),
+                        Err(NbtError::TooDeep { .. })
+                    ));
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+        // A number in the 512th is fine: only containers count.
+        let mut b = named(9, "");
+        for _ in 1..512 {
+            b.push(9);
+            b.extend(1_i32.to_be_bytes());
+        }
+        b.push(3);
+        b.extend(1_i32.to_be_bytes());
+        b.extend(7_i32.to_be_bytes());
+        assert!(read(&b).is_ok());
+    }
+
+    #[test]
+    fn list_lengths_are_claims_not_reservations() {
+        // 500 nested lists that each claim 2^31 - 1 elements, around 4 MB of bytes: reserving
+        // even 4 MB of elements per list would ask for 64 GB and abort.
+        let mut b = named(9, "");
+        for _ in 0..500 {
+            b.push(9);
+            b.extend(i32::MAX.to_be_bytes());
+        }
+        b.push(1);
+        b.extend(i32::MAX.to_be_bytes());
+        b.resize(b.len() + (4 << 20), 0);
+        assert!(matches!(read(&b), Err(NbtError::Truncated { .. })));
+        // Limited, the innermost list's four million tags (over 100 MB) exceed the limit
+        // before the data runs out.
+        let gz = write_compressed_raw(&b);
+        assert!(matches!(
+            read_compressed_limited(&gz, 64 << 20),
+            Err(NbtError::Memory(_))
+        ));
+    }
+
+    #[test]
+    fn limited_reads_count_the_trees_memory() {
+        // A million-byte list is 1 MB stored, but a million tags in memory.
+        let mut b = named(9, "");
+        b.push(1);
+        b.extend(1_000_000_i32.to_be_bytes());
+        b.resize(b.len() + 1_000_000, 0);
+        let gz = write_compressed_raw(&b);
+        assert!(matches!(
+            read_compressed_limited(&gz, 2_000_000),
+            Err(NbtError::Memory(2_000_000))
+        ));
+        assert!(read_compressed_limited(&gz, 64 << 20).is_ok());
+        assert!(read(&b).is_ok());
     }
 
     #[test]
@@ -875,7 +1074,9 @@ mod tests {
             read_compressed_limited(&gz, 100_000),
             Err(NbtError::TooLarge(100_000))
         ));
-        assert!(read_compressed_limited(&gz, b.len() as u64).is_ok());
+        // The limit covers the decompressed bytes and the array they become, with room for the
+        // tag around it.
+        assert!(read_compressed_limited(&gz, b.len() as u64 + 1000).is_ok());
     }
 
     fn write_compressed_raw(bytes: &[u8]) -> Vec<u8> {

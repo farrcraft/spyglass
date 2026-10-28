@@ -87,6 +87,60 @@ fn cycles_are_errors() {
     assert_eq!(cycle, &["minecraft:a", "minecraft:b", "minecraft:a"]);
 }
 
+/// `n` functions `minecraft:f0`, `f1`, ..., each the `abs` of the next, and the last 1.
+fn chain(n: usize) -> Map {
+    resources(
+        (0..n)
+            .map(|i| {
+                let value = if i + 1 < n {
+                    json!({"type": "abs", "input": format!("minecraft:f{}", i + 1)})
+                } else {
+                    json!(1)
+                };
+                df(&format!("minecraft:f{i}"), value)
+            })
+            .collect(),
+    )
+}
+
+#[test]
+fn reference_chains_have_a_depth_limit() {
+    // A data pack can chain references without end; the graph is limited to 128 levels
+    // rather than overflowing the stack when it's loaded, bound, evaluated or dropped. Each
+    // link is two: the reference, then the function it names. The deepest allowed must fit
+    // a thread's default 2 MiB stack, even in a debug build.
+    std::thread::Builder::new()
+        .stack_size(2 << 20)
+        .spawn(|| {
+            for n in [65, 10_000] {
+                let err = Loader::new(&chain(n)).function("minecraft:f0").unwrap_err();
+                assert!(matches!(*err.kind, LoadErrorKind::TooDeep(128)), "{err}");
+            }
+            let map = chain(64);
+            let mut loader = Loader::new(&map);
+            let f = loader.function("minecraft:f0").unwrap();
+            let sampler = Binder::new(loader.noises(), 0).bind(&f).unwrap();
+            assert_eq!(sampler.sample(1, 2, 3), 1.0);
+            drop((sampler, f, loader));
+            // A function loaded once counts its whole height where it's referenced again: f0
+            // nests 79 deep and is loaded first, so `again` reaches it from the cache, and 50
+            // levels around a reference to it are still too deep.
+            let mut map = chain(40);
+            let wrapped = (0..50).fold(
+                json!("minecraft:f0"),
+                |inner, _| json!({"type": "abs", "input": inner}),
+            );
+            map.extend(resources(vec![df("minecraft:again", wrapped)]));
+            let mut loader = Loader::new(&map);
+            loader.function("minecraft:f0").unwrap();
+            let err = loader.function("minecraft:again").unwrap_err();
+            assert!(matches!(*err.kind, LoadErrorKind::TooDeep(128)), "{err}");
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
 #[test]
 fn errors_name_the_resource_and_path() {
     let map = resources(vec![df(

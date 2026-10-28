@@ -113,6 +113,19 @@ fn loading_follows_26_2s_codecs() {
     ]);
     let err = Loader::new(&cycle).function("minecraft:f").unwrap_err();
     assert!(matches!(*err.kind, LoadErrorKind::Cycle(_)), "{err}");
+    // References chained without end are too deep, as for 26.3.
+    let chain = resources(
+        (0..10_000)
+            .map(|i| {
+                df(
+                    &format!("minecraft:f{i}"),
+                    json!(format!("minecraft:f{}", i + 1)),
+                )
+            })
+            .collect(),
+    );
+    let err = Loader::new(&chain).function("minecraft:f0").unwrap_err();
+    assert!(matches!(*err.kind, LoadErrorKind::TooDeep(128)), "{err}");
 }
 
 #[test]

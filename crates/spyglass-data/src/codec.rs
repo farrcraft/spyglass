@@ -80,6 +80,9 @@ pub enum LoadErrorKind {
     /// Resources refer to each other in a cycle.
     #[error("reference cycle: {}", .0.join(" -> "))]
     Cycle(Vec<String>),
+    /// Values nested more deeply than the limit, counting through references.
+    #[error("nested more than {0} deep, counting through references")]
+    TooDeep(usize),
 }
 
 /// A load result.

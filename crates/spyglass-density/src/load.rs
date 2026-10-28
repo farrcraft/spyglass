@@ -53,6 +53,70 @@ impl Resources for HashMap<String, Value> {
     }
 }
 
+/// The deepest a density function may nest, counting through references, splines included.
+/// Binding, evaluating and dropping a function all recurse as deep as it nests, so a data pack
+/// that chains references without end would otherwise overflow the stack. The game has no
+/// limit of its own; this one is well above vanilla's deepest (see
+/// `docs/specs/density-functions.md`).
+pub(crate) const MAX_NESTING: usize = 128;
+
+/// How deeply what's being loaded nests, counting through references: a named function loaded
+/// once and referenced again counts its whole height where it's referenced.
+#[derive(Default)]
+pub(crate) struct Depth {
+    /// The nesting of the value being parsed.
+    current: usize,
+    /// The deepest nesting reached under the named function being loaded.
+    deepest: usize,
+    /// How deeply each loaded named function nests.
+    heights: HashMap<String, usize>,
+}
+
+impl Depth {
+    /// Enters a value at `at`; an error past the limit. Pair with [`leave`](Self::leave) when
+    /// this succeeds.
+    pub(crate) fn enter(&mut self, at: &At<'_>) -> LoadResult<()> {
+        self.reach(self.current + 1, at)?;
+        self.current += 1;
+        Ok(())
+    }
+
+    pub(crate) fn leave(&mut self) {
+        self.current -= 1;
+    }
+
+    /// The loaded named function `id`, referenced here: its height counts from here.
+    pub(crate) fn reuse(&mut self, id: &str, at: &At<'_>) -> LoadResult<()> {
+        self.reach(
+            self.current + self.heights.get(id).copied().unwrap_or(0),
+            at,
+        )
+    }
+
+    /// Starts loading a named function, returning what [`finish`](Self::finish) restores.
+    pub(crate) fn start(&mut self) -> usize {
+        std::mem::replace(&mut self.deepest, self.current)
+    }
+
+    /// Ends loading the named function `id` started with `outer` from [`start`](Self::start),
+    /// remembering its height if it loaded.
+    pub(crate) fn finish(&mut self, id: &str, outer: usize, loaded: bool) {
+        if loaded {
+            self.heights
+                .insert(id.to_string(), self.deepest - self.current);
+        }
+        self.deepest = self.deepest.max(outer);
+    }
+
+    fn reach(&mut self, depth: usize, at: &At<'_>) -> LoadResult<()> {
+        if depth > MAX_NESTING {
+            return Err(at.error(LoadErrorKind::TooDeep(MAX_NESTING)));
+        }
+        self.deepest = self.deepest.max(depth);
+        Ok(())
+    }
+}
+
 /// Loads named density functions and noises, sharing each one however often it's referenced.
 pub struct Loader<'r, R: Resources + ?Sized> {
     resources: &'r R,
@@ -62,6 +126,7 @@ pub struct Loader<'r, R: Resources + ?Sized> {
     noises: HashMap<String, NormalNoiseParameters>,
     /// Named functions being loaded, outermost first, for cycle detection.
     loading: Vec<String>,
+    depth: Depth,
 }
 
 impl<'r, R: Resources + ?Sized> Loader<'r, R> {
@@ -73,14 +138,16 @@ impl<'r, R: Resources + ?Sized> Loader<'r, R> {
             functions: HashMap::new(),
             noises: HashMap::new(),
             loading: Vec::new(),
+            depth: Depth::default(),
         }
     }
 
     /// The named density function `id`, loaded once and shared.
     pub fn function(&mut self, id: &str) -> LoadResult<Df> {
         let id = full_id(id);
-        if let Some(f) = self.functions.get(&id) {
-            return Ok(f.clone());
+        if let Some(f) = self.functions.get(&id).cloned() {
+            self.depth.reuse(&id, &At::root(&id))?;
+            return Ok(f);
         }
         if let Some(start) = self.loading.iter().position(|l| *l == id) {
             let mut cycle = self.loading[start..].to_vec();
@@ -93,7 +160,9 @@ impl<'r, R: Resources + ?Sized> Loader<'r, R> {
             .resource(DENSITY_FUNCTION, &id)
             .map_err(|e| at.error(e.into()))?;
         self.loading.push(id.clone());
+        let outer = self.depth.start();
         let parsed = self.parse_function(&json, &at);
+        self.depth.finish(&id, outer, parsed.is_ok());
         self.loading.pop();
         let f = parsed?;
         self.functions.insert(id, f.clone());
@@ -131,12 +200,17 @@ impl<'r, R: Resources + ?Sized> Loader<'r, R> {
     /// A density function value: a number (a constant), a string (a reference) or an object
     /// with a `type` (`DensityFunction.CODEC`).
     fn parse_function(&mut self, json: &Value, at: &At<'_>) -> LoadResult<Df> {
-        match json {
-            Value::Number(_) => Ok(Arc::new(DensityFunction::Constant(noise_value(json, at)?))),
+        self.depth.enter(at)?;
+        let parsed = match json {
+            Value::Number(_) => {
+                noise_value(json, at).map(|v| Arc::new(DensityFunction::Constant(v)))
+            }
             Value::String(id) => self.function(id),
             Value::Object(obj) => self.parse_typed(obj, at),
             _ => Err(at.error(LoadErrorKind::Shape("a number, a reference or an object"))),
-        }
+        };
+        self.depth.leave();
+        parsed
     }
 
     fn parse_typed(&mut self, obj: &Map<String, Value>, at: &At<'_>) -> LoadResult<Df> {
@@ -361,6 +435,13 @@ impl<'r, R: Resources + ?Sized> Loader<'r, R> {
     /// `CubicSpline.codec`: a number (a constant) or `{"coordinate", "points"}`, each point
     /// `{"location", "value", "derivative"}`.
     fn parse_spline(&mut self, json: &Value, at: &At<'_>) -> LoadResult<Spline> {
+        self.depth.enter(at)?;
+        let parsed = self.parse_spline_value(json, at);
+        self.depth.leave();
+        parsed
+    }
+
+    fn parse_spline_value(&mut self, json: &Value, at: &At<'_>) -> LoadResult<Spline> {
         match json {
             Value::Number(_) => Ok(Spline::Constant(float(json, at)?)),
             Value::Object(obj) => {

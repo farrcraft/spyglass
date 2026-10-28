@@ -16,6 +16,8 @@ Density functions live in a bundle's `data/<namespace>/worldgen/density_function
 
 Loading fails, naming the resource and the JSON path, on an unsupported type, a missing field, a wrong shape or an out-of-range value.
 
+**Nesting** is limited where the game's isn't: a function may nest at most 128 values deep, counting each function value, each spline value and each reference, through references into the functions they name. A function loaded once and referenced again counts its whole height where it's referenced. Binding, evaluating and dropping a function recurse as deep as it nests, so without a limit a data pack that chains references without end would overflow the stack, where the game would throw `StackOverflowError`. Vanilla nests at most 48 deep (26.3 and the 26.4 snapshots) or 53 (26.2, whose references are nodes of their own), and the deepest function allowed fits a thread's default 2 MiB stack even in a debug build. Deeper is an error naming where the limit was passed.
+
 _Versions:_ 26.2 (`levelgen.DensityFunctions`) reads a constant as `double` (`Codec.doubleRange(-1000000, 1000000)`: the text parsed as `f64`, never narrowed), and has its own type ids and field names ([below](#262-types)). 26.4-snapshot-5 has no `interpolated` id; its data uses [`upscale`](#upscale) instead.
 
 ## Types

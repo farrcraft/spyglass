@@ -142,6 +142,23 @@ fn reference_chains_have_a_depth_limit() {
 }
 
 #[test]
+fn unsorted_spline_locations_search_as_the_game_does() {
+    // The codec doesn't require ascending locations. Mth.binarySearch for the first location
+    // above 3.5 in [0, 1, 2, 4, 3] ends past the end, so the spline extends from its last point;
+    // a different binary search could stop at index 3 and interpolate between 2 and 4.
+    let points: Vec<Value> = [0, 1, 2, 4, 3]
+        .iter()
+        .enumerate()
+        .map(|(i, location)| json!({"location": location, "value": i * 10, "derivative": 0}))
+        .collect();
+    let map = resources(vec![df(
+        "minecraft:s",
+        json!({"type": "spline", "spline": {"coordinate": 3.5, "points": points}}),
+    )]);
+    assert_eq!(bind_one(&map, "minecraft:s").sample(0, 0, 0), 40.0);
+}
+
+#[test]
 fn errors_name_the_resource_and_path() {
     let map = resources(vec![df(
         "minecraft:x",

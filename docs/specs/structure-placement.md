@@ -298,6 +298,8 @@ The start is tested after its move and the padding check (step 8 [above](#jigsaw
 
 `pool_aliases` (in 26.3 only the trial chambers') resolve once per start, with their own random: `LegacyRandomSource(seed).forkPositional().at(minX, sampled start y, minZ)`. Bindings in list order: `direct` maps an alias to a pool; `random` picks one target by weight (`nextInt(total)`, then the entry that index falls in, in list order); `random_group` picks a group the same way and resolves its bindings in order with the same random. Every jigsaw block's pool goes through the result. The start pool would too, but spyglass doesn't support aliasing it (none of 26.3's structures does).
 
+The weighted lists load as `WeightedList.nonEmptyCodec` reads them: at least one entry, each weight a non-negative int, the weights summing to at most 2,147,483,647 (`WeightedRandom.getTotalWeight`); anything else is a load error, as in the game. A list whose weights are all 0 loads in the game and throws when a start picks from it; spyglass refuses it at load instead.
+
 ## Bounds
 
 A start's box (`StructureStart.getBoundingBox`) is the box around its pieces' boxes, grown by 12 on every side if the structure's `terrain_adaptation` isn't `none` (`Structure.adjustBoundingBox`). In 26.3's Overworld that's strongholds and every jigsaw. Boxes are as generated, before placement moves any piece. spyglass gives them for jigsaw structures (`Layout`).

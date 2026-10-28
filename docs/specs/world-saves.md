@@ -54,6 +54,7 @@ A player's `Pos` is three doubles and `Dimension` an id (an int, 0, −1 or 1, b
 | `data_pack`             | An enabled pack other than `vanilla` may change worldgen: a `file/` pack with any file under `data/<ns>/worldgen/` or `data/<ns>/tags/worldgen/` (at its root or in an overlay folder; zips and folders both read); a `file/` pack that's missing, or whose name isn't a single file name (such as `file/../x`; it isn't read, and the game couldn't find it either); or any other pack (a built-in feature pack or a mod's), whose files aren't in the save. `file/` packs without worldgen files are ignored. |
 | `modded`                | `Data.WasModded` is set: mods can change generation without data packs.                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `older_chunks`          | With `Scan::Chunks`, per dimension: chunks in its region files whose own `DataVersion` is older than the save's (or that have none). Their terrain and structures follow the version that generated them.                                                                                                                                                                                                                                                                                                       |
+| `unreadable_regions`    | With `Scan::Chunks`, per dimension: region files that couldn't be opened or read, whose chunks weren't counted.                                                                                                                                                                                                                                                                                                                                                                                                 |
 
 A vanilla dedicated server opening a save that enables a pack it doesn't have logs `Missing data pack <name>` and carries on without it (26.3, checked 2026-10-25).
 
@@ -63,7 +64,8 @@ A vanilla dedicated server opening a save that enables a pack it doesn't have lo
 
 - The first 4 KiB is 1,024 big-endian locations, chunk `(x & 31) + (z & 31) · 32`: a 3-byte sector offset and a 1-byte sector count, sectors being 4 KiB; zero means no chunk.
 - At the offset, a `u32` length (counting the next byte), a compression byte (1 gzip, 2 zlib, 3 none, 4 LZ4), then the chunk's NBT. With 128 added to the compression byte, the data is in `c.<x>.<z>.mcc` beside the region file, with the chunk's absolute coordinates.
-- Each chunk's root `DataVersion` is counted. Chunks with none are from before 1.9, older than any versioned chunk. LZ4 (an opt-in server setting), unknown compression, missing `.mcc` files and malformed chunks are counted as unreadable, not errors.
+- Each chunk's root `DataVersion` is counted. Chunks with none are from before 1.9, older than any versioned chunk. LZ4 (an opt-in server setting), unknown compression, missing `.mcc` files and malformed chunks are counted as unreadable, not errors. A region file that can't be opened is counted too, as an unreadable file, and the scan goes on.
+- A chunk is read as `RegionFile.getChunkDataInputStream` reads it: its sectors, or what's left of the file, at most 255 × 4 KiB. It's unreadable if that's under 5 bytes, if its length is 0 (even for an external chunk), or, inside the region file, if the length is negative or the data (`length − 1` bytes after the compression byte) runs past what was read. An external chunk's length is otherwise ignored.
 - A length longer than the location's sectors is malformed, as `RegionFile` treats it.
 
 The scan reads every chunk, without building its tree (`nbt::read_root_int`). The largest save checked (344,000 chunks, 4.7 GB) takes about 8 seconds.
@@ -84,7 +86,7 @@ For reading 26.4 saves, the data version tells the shapes apart: `biomes` holds 
 Saves are untrusted input, so reads are capped well above anything the game writes:
 
 - NBT files (`level.dat`, player and world-gen settings files): 64 MiB, both on disk and after decompression, and 64 MiB of memory for the tree they're read into. More is an error.
-- Region files: the format's own maximum, 2 + 1,024 × 255 sectors of 4 KiB. Every chunk of a larger file is unreadable.
+- Region files: no limit, since each chunk is read on its own, at most its 255 sectors.
 - One chunk, or one `.mcc` file: 32 MiB, both stored and after decompression. Larger chunks are unreadable.
 - Data pack folders are walked without following symbolic links. So `spyglass world info` scans by default, and `locate --world` doesn't.
 
@@ -99,7 +101,7 @@ Saves are untrusted input, so reads are capped well above anything the game writ
 
 ## Testing
 
-- **Unit tests** build saves of each layout, the single player, errors, data packs (worldgen and other files, missing packs, names outside `datapacks/`, symlink cycles on Unix) and region files (every compression, `.mcc` chunks, unversioned and corrupt chunks, short files, lengths past their sectors, offsets past the end, decompression bombs) in the test, with `nbt::write` (ADR 0008).
+- **Unit tests** build saves of each layout, the single player, errors, data packs (worldgen and other files, missing packs, names outside `datapacks/`, symlink cycles on Unix) and region files (every compression, `.mcc` chunks, unversioned and corrupt chunks, short files, lengths past their sectors and at the 4-byte boundary, zero-length external chunks, offsets past the end, decompression bombs, region files that can't be read) in the test, with `nbt::write` (ADR 0008).
 - **Fixture tests per dimension**, on a fixture bundle with an Overworld and a Nether: a save whose Nether generator isn't the Default one, or is missing, blocks the Nether only, in `open_world` and `open_game` alike.
 - **The CLI tests** run `world info` and `locate --world` on saves built in the test: Default, superflat, no bundle, packs, and `--from player`.
 - **Ignored tests on the machine's own saves**: every save in the launchers reads (191 on the development machine, all three layouts, 1.9 to 26.3), and every answerable save that no older version generated part of has its Overworld spawn in the 11 × 11 chunks around spyglass's spawn origin. Every Default 26.3 save there stores all three dimensions' generators, each the Default preset's; a superflat one is blocked in the Overworld only.

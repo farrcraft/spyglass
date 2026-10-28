@@ -134,7 +134,7 @@ fn current_layout() {
     assert_eq!(save.spawn.as_ref().unwrap().pos, [-16.0, 61.0, 16.0]);
     assert_eq!(save.player.as_ref().unwrap().pos, [587.5, 121.0, 2339.75]);
     assert_eq!(
-        save.region_dir("minecraft:the_nether"),
+        save.region_dir("minecraft:the_nether").unwrap(),
         dir.path().join("dimensions/minecraft/the_nether/region")
     );
     assert_eq!(
@@ -190,7 +190,7 @@ fn legacy_layout() {
         "minecraft:the_nether"
     );
     assert_eq!(
-        save.region_dir("minecraft:the_end"),
+        save.region_dir("minecraft:the_end").unwrap(),
         dir.path().join("DIM1/region")
     );
 }
@@ -231,9 +231,20 @@ fn before_1_16() {
         "minecraft:the_nether"
     );
     assert_eq!(
-        save.region_dir("minecraft:overworld"),
+        save.region_dir("minecraft:overworld").unwrap(),
         dir.path().join("region")
     );
+    // A data pack's dimension is under dimensions/, and an id that could lead out isn't one.
+    assert_eq!(
+        save.region_dir("pack:deep/sky").unwrap(),
+        dir.path().join("dimensions/pack/deep/sky/region")
+    );
+    for bad in ["x:../../..", "x:a/./b", "X:y", "x:", ":y"] {
+        assert!(
+            matches!(save.region_dir(bad), Err(WorldError::DimensionId(_))),
+            "{bad}"
+        );
+    }
 }
 
 /// A pre-1.16 save in `dir` that enables `packs`.
@@ -441,4 +452,62 @@ fn region_edge_cases_are_unreadable_not_errors() {
     let counts = region::file_versions(&path).unwrap();
     assert_eq!(counts.unreadable, 5);
     assert_eq!(counts.total(), 5);
+}
+
+/// Uncompressed chunk NBT of exactly `size` bytes, with data version `version`.
+fn chunk_of_size(version: i32, size: usize) -> Vec<u8> {
+    let padding = |n: usize| {
+        nbt::write(
+            "",
+            &Tag::Compound(Compound::from([
+                ("DataVersion".to_string(), Tag::Int(version)),
+                ("p".to_string(), Tag::ByteArray(vec![0; n])),
+            ])),
+        )
+    };
+    let bytes = padding(size - padding(0).len());
+    assert_eq!(bytes.len(), size);
+    bytes
+}
+
+#[test]
+fn region_chunks_are_cut_off_where_the_games_are() {
+    // RegionFile reads a chunk's sectors, and its data (after the 4-byte length and the
+    // compression byte) must fit in what's left: 4,091 bytes in one sector, not 4,092, even when
+    // the file goes on.
+    let dir = tempfile::tempdir().unwrap();
+    let mut file = vec![0_u8; 8192];
+    for (index, sector) in [(0, 2_u32), (1, 4), (2, 7)] {
+        file[index * 4..index * 4 + 4].copy_from_slice(&((sector << 8) | 1).to_be_bytes());
+    }
+    for (version, size) in [(100, 4091), (200, 4092)] {
+        let nbt = chunk_of_size(version, size);
+        file.extend(((nbt.len() + 1) as u32).to_be_bytes());
+        file.push(3);
+        file.extend(&nbt);
+        file.resize(file.len().next_multiple_of(4096) + 4096, 0);
+    }
+    // An external chunk with a length of 0: missing, though its .mcc file is there.
+    file.extend([0, 0, 0, 0, 3 | 128]);
+    file.resize(file.len().next_multiple_of(4096), 0);
+    let path = dir.path().join("r.0.0.mca");
+    std::fs::write(&path, &file).unwrap();
+    std::fs::write(dir.path().join("c.2.0.mcc"), chunk_of_size(300, 100)).unwrap();
+
+    let counts = region::file_versions(&path).unwrap();
+    assert_eq!(
+        counts.by_version.into_iter().collect::<Vec<_>>(),
+        [(100, 1)]
+    );
+    assert_eq!(counts.unreadable, 2);
+}
+
+#[test]
+fn region_files_that_cant_be_read_are_counted_not_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    // A folder named like a region file can't be read as one, on any platform.
+    std::fs::create_dir(dir.path().join("r.0.0.mca")).unwrap();
+    let counts = region::chunk_versions(dir.path()).unwrap();
+    assert_eq!(counts.unreadable_files, 1);
+    assert_eq!(counts.total(), 0);
 }

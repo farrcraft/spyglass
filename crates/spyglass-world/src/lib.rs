@@ -46,6 +46,9 @@ pub enum WorldError {
         /// What was expected there.
         expected: &'static str,
     },
+    /// A dimension id that isn't a valid identifier, so names no folder.
+    #[error("not a dimension id: {0:?}")]
+    DimensionId(String),
 }
 
 /// Which file layout a save uses.
@@ -406,8 +409,12 @@ impl Save {
         location(&Fields { path: &path }, &tag).map(Some)
     }
 
-    /// Where a dimension's region files are, e.g. `minecraft:overworld`.
-    pub fn region_dir(&self, dimension: &str) -> PathBuf {
+    /// Where a dimension's region files are, e.g. `minecraft:overworld`. An id that isn't a
+    /// valid identifier, such as one with a `..` segment, is an error rather than a path that
+    /// could lead out of the save.
+    pub fn region_dir(&self, dimension: &str) -> Result<PathBuf, WorldError> {
+        spyglass_data::bundle::Bundle::resource_path("dimension", dimension)
+            .map_err(|_| WorldError::DimensionId(dimension.to_string()))?;
         let (namespace, path) = dimension
             .split_once(':')
             .unwrap_or(("minecraft", dimension));
@@ -418,13 +425,13 @@ impl Save {
                 .join(path)
                 .join("region")
         };
-        match (self.layout, dimension) {
+        Ok(match (self.layout, dimension) {
             (Layout::Current, _) => custom(),
             (_, "minecraft:overworld") => self.dir.join("region"),
             (_, "minecraft:the_nether") => self.dir.join("DIM-1").join("region"),
             (_, "minecraft:the_end") => self.dir.join("DIM1").join("region"),
             (_, _) => custom(),
-        }
+        })
     }
 }
 

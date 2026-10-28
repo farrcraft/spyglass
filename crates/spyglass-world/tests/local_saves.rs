@@ -17,7 +17,8 @@ fn every_local_save_reads() {
                 Ok(save) => {
                     read += 1;
                     let t0 = Instant::now();
-                    let chunks = region::chunk_versions(&save.region_dir("minecraft:overworld"));
+                    let chunks =
+                        region::chunk_versions(&save.region_dir("minecraft:overworld").unwrap());
                     let summary = match &chunks {
                         Ok(c) => format!(
                             "{} chunks, {} older ({} unversioned), {} unreadable",

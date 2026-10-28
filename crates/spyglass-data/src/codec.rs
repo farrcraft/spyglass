@@ -239,10 +239,48 @@ pub fn int_of(value: &Value) -> Option<i32> {
     if let Ok(l) = text.parse::<i64>() {
         return Some(l as i32);
     }
-    // BigDecimal.intValue: the integer part's low 32 bits. An f64 holds the integer part exactly
-    // up to 2^53, which covers anything a codec range would accept.
-    let d: f64 = text.parse().ok()?;
-    d.is_finite().then(|| (d.trunc() as i64) as i32)
+    big_decimal_int_value(&text)
+}
+
+/// `new BigDecimal(text).intValue()`: the exact integer part, truncated toward zero, then its
+/// low 32 bits, for a JSON number's text (`-`, digits, an optional fraction and exponent).
+/// Computed mod 2^32 from the digits, so a value past 2^63 wraps as Java's does rather than
+/// saturating: `10^k` is 0 mod 2^32 from `k = 32` on, so any exponent is cheap.
+fn big_decimal_int_value(text: &str) -> Option<i32> {
+    let (negative, unsigned) = match text.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, text),
+    };
+    let (mantissa, exponent) = match unsigned.split_once(['e', 'E']) {
+        Some((m, e)) => (m, e),
+        None => (unsigned, "0"),
+    };
+    let (whole, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    let digits: Vec<u32> = whole
+        .chars()
+        .chain(fraction.chars())
+        .map(|c| c.to_digit(10))
+        .collect::<Option<_>>()?;
+    // The digits times 10^shift; a huge exponent saturates, which keeps the result.
+    let exponent: i64 = match exponent.strip_prefix('+').unwrap_or(exponent).parse() {
+        Ok(e) => e,
+        Err(_) if exponent.starts_with('-') => i64::MIN,
+        Err(_) => i64::MAX,
+    };
+    let shift = exponent.saturating_sub(fraction.len() as i64);
+    // Shifting right drops digits (truncation toward zero); left multiplies by 10 per place.
+    let kept = match usize::try_from(shift.saturating_neg()) {
+        Ok(dropped) => &digits[..digits.len().saturating_sub(dropped)],
+        Err(_) => &digits[..],
+    };
+    let mut low = kept
+        .iter()
+        .fold(0_u32, |v, &d| v.wrapping_mul(10).wrapping_add(d));
+    for _ in 0..shift.clamp(0, 32) {
+        low = low.wrapping_mul(10);
+    }
+    let low = if negative { low.wrapping_neg() } else { low };
+    Some(low as i32)
 }
 
 fn text(value: &Value) -> Option<String> {
@@ -303,5 +341,22 @@ mod tests {
         assert_eq!(int_of(&num("1.9")), Some(1));
         assert_eq!(int_of(&num("-1.9")), Some(-1));
         assert_eq!(int_of(&Value::from("1")), None);
+        // Past i64 and past f64's exact integers, BigDecimal keeps the exact integer part's low
+        // 32 bits (values from java.math.BigDecimal's definition, computed exactly).
+        for (text, expected) in [
+            ("9223372036854775808", 0),
+            ("-9223372036854775809", -1),
+            ("1e19", -1_981_284_352),
+            ("-1e19", 1_981_284_352),
+            ("12345678901234567890.7", -350_287_150),
+            ("9007199254740993.5", 1),
+            ("1e400", 0),
+            ("1.5e2", 150),
+            ("1E+3", 1000),
+            ("123e-2", 1),
+            ("5e-1000", 0),
+        ] {
+            assert_eq!(int_of(&num(text)), Some(expected), "{text}");
+        }
     }
 }

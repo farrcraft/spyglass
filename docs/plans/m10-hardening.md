@@ -280,14 +280,14 @@ Six phases, each one or more commits that pass `cargo xtask check` on their own,
 - [x] H1 + X1 NBT list reservation (at most 1,024 up front) and a memory limit on limited reads; tests: a huge list length, a list of a million bytes, nesting at 512 (reads) and 513 (errors), the deepest on a 1 MiB stack.
 - [x] H6 + X1 Modified UTF-8 as Java; tests for `0x00` and a lone surrogate in a value and in a name; `bundle-format.md`.
 - [x] H2 Test: a chain of 10,000 references (confirmed: it overflowed the stack). Nesting limit of 128 through references; vanilla maximum measured and recorded in `density-functions.md`. `loading` stays a `Vec`: with chains capped at 128, its scan is cheap.
-- [ ] H3 Test: unsorted locations (confirm). `mth::binary_search`, both families; `density-functions.md:51` updated.
-- [ ] H4 Region length check as `RegionFile`; test at the 4-byte boundary.
-- [ ] H5 Header-then-seek region reads; unopenable files counted and warned; test.
-- [ ] H7 Codec checked for empty alias lists; rejected at load; test; spec note if it deviates.
-- [ ] H8 `int_of` exact for any integer text; tests at ±2⁶³ and beyond; comment fixed.
-- [ ] H9 `region_dir` validates the id; test with `x:../..`.
-- [ ] H10 `Result` or typed arguments for the three public functions; front ends updated.
-- [ ] H11 `density-functions.md`: data the game also can't finish.
+- [x] H3 Test: unsorted locations (confirmed: `[0, 1, 2, 4, 3]` at 3.5 interpolated where the game extends). `java::mth_binary_search`, shared by both families; `density-functions.md` updated.
+- [x] H4 Region chunks read as `RegionFile.getChunkDataInputStream` (26.3 bytecode); test at the boundary (fails on the old code).
+- [x] H5 Header-then-seek region reads, no whole-file cap; unreadable files counted, with an `unreadable_regions` warning; tests.
+- [x] H7 Both versions' codecs use `WeightedList.nonEmptyCodec`: empty lists and sums past `i32::MAX` rejected at load, zero weights accepted, all-zero lists refused (a deviation, in `structure-placement.md`); test.
+- [x] H8 `int_of` exact for any number text; tests at ±2⁶³ and beyond; comment fixed.
+- [x] H9 `region_dir` validates the id and returns a `Result`; test with `x:../../..`.
+- [x] H10 Closed with no change: see notes.
+- [x] H11 `density-functions.md`: data the game can't finish either.
 - [ ] X2 ADR for fuzzing on nightly; `fuzz/` targets for NBT and regions; `cargo xtask fuzz`; weekly CI job. Or the property-test fallback.
 
 ### 3. Responsiveness
@@ -364,6 +364,14 @@ Six phases, each one or more commits that pass `cargo xtask check` on their own,
 
 Decisions, surprises and dead ends, newest first.
 
+- 2026-10-28: H3 to H11.
+  - H4 turned up two more differences from `RegionFile`. An external chunk whose length is 0 is missing in the game, even when its `.mcc` file exists. Apart from that, the game ignores an external chunk's length, where spyglass had checked it against the sectors.
+  - Reading each chunk by seeking made the region-file size cap unnecessary, so it's gone: the game reads oversized files, and now spyglass does too.
+  - H7: the loader had refused zero weights, which the game's `Weighted` codec (`NON_NEGATIVE_INT`) accepts. A pack with one would have failed to load in spyglass only. `pick`'s `i32` sum could also overflow in a debug build; the load-time sum check rules that out.
+  - H10 closed without a code change:
+    - `find_closest_biome_3d` and `find_biome_horizontal` are only called with the game's constants: `/locate`'s steps and a structure's fixed increment.
+    - `biomes_in` is only called from tests. No user input reaches any of them; the front ends go through the `spyglass` API.
+    - Panicking on a violated, documented precondition is the Rust convention, as with `chunks(0)`. A `Result` or step newtype would be API churn that guards nothing.
 - 2026-10-28: H2.
   - Measured on every bundle, vanilla density functions nest at most 48 deep (26.3, 26.4-snapshot-5 and -6) or 53 (26.2, whose references are nodes).
   - In a debug build, loading a chain overflowed a 2 MiB stack at about 180 levels, roughly 23 KB of stack per reference. So the limit is 128, not something larger: the deepest graph allowed loads, binds, samples and drops on a 2 MiB thread in debug.

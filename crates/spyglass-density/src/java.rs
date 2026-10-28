@@ -85,6 +85,28 @@ pub(crate) fn floor_mod(x: i32, y: i32) -> i32 {
     x.wrapping_sub(floor_div(x, y).wrapping_mul(y))
 }
 
+/// `Mth.binarySearch(from, to, condition)`: the first index in `from..to` where `condition`
+/// holds, when it holds from some index on. When it doesn't (a spline's locations needn't be
+/// sorted), the answer depends on which indexes are tested, so this tests the game's.
+pub(crate) fn mth_binary_search(
+    mut from: usize,
+    to: usize,
+    mut condition: impl FnMut(usize) -> bool,
+) -> usize {
+    let mut len = to - from;
+    while len > 0 {
+        let half = len / 2;
+        let middle = from + half;
+        if condition(middle) {
+            len = half;
+        } else {
+            from = middle + 1;
+            len -= half + 1;
+        }
+    }
+    from
+}
+
 /// `Math.round(float)`: the nearest int, halves rounded up, saturating, NaN as 0.
 pub(crate) fn round(x: f32) -> i32 {
     // x + 0.5 is exact in f64 wherever x has a fraction, and floor then rounds halves up.

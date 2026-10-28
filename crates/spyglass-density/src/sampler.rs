@@ -1791,14 +1791,9 @@ pub(crate) fn sample_multipoint<V>(
     derivatives: &[f32],
     mut value: impl FnMut(&V) -> f32,
 ) -> f32 {
-    // findIntervalStart: Mth.binarySearch for the first location above c, minus one. The
-    // game's test is `c < location`, so a NaN coordinate finds no location and extends past
-    // the last point; the negation keeps that.
-    #[allow(
-        clippy::neg_cmp_op_on_partial_ord,
-        reason = "mirrors the game's NaN behavior"
-    )]
-    let i = locations.partition_point(|&l| !(c < l)) as isize - 1;
+    // findIntervalStart: Mth.binarySearch for the first location above c, minus one. The test
+    // is `c < location`, so a NaN coordinate finds no location and extends past the last point.
+    let i = java::mth_binary_search(0, locations.len(), |i| c < locations[i]) as isize - 1;
     let last = locations.len() - 1;
     // linearExtend outside the points.
     let mut extend = |i: usize| {

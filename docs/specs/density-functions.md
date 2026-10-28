@@ -18,6 +18,13 @@ Loading fails, naming the resource and the JSON path, on an unsupported type, a 
 
 **Nesting** is limited where the game's isn't: a function may nest at most 128 values deep, counting each function value, each spline value and each reference, through references into the functions they name. A function loaded once and referenced again counts its whole height where it's referenced. Binding, evaluating and dropping a function recurse as deep as it nests, so without a limit a data pack that chains references without end would overflow the stack, where the game would throw `StackOverflowError`. Vanilla nests at most 48 deep (26.3 and the 26.4 snapshots) or 53 (26.2, whose references are nodes of their own), and the deepest function allowed fits a thread's default 2 MiB stack even in a debug build. Deeper is an error naming where the limit was passed.
 
+**Data the game can't finish either** loads and runs as the game's does, so it takes as long. spyglass doesn't cut it short, because the parity rule covers it too:
+
+- A `find_top_surface` whose `upper_bound` is very large or +∞ starts at `Mth.floor(upper / cell_height) · cell_height`, up to `i32::MAX`, and samples `density` at every step down to `lower_bound`: about 2³¹ samples per column with a `cell_height` of 1.
+- A 26.2 legacy noise stack (the Nether's biome noises) whose `firstOctave` is near −2³¹ skips each octave from `−firstOctave − 1` down to 0, 262 draws apiece: about 2³¹ × 262 draws before the first sample.
+
+No vanilla data comes close, and the viewer does such work off its UI thread.
+
 _Versions:_ 26.2 (`levelgen.DensityFunctions`) reads a constant as `double` (`Codec.doubleRange(-1000000, 1000000)`: the text parsed as `f64`, never narrowed), and has its own type ids and field names ([below](#262-types)). 26.4-snapshot-5 has no `interpolated` id; its data uses [`upscale`](#upscale) instead.
 
 ## Types
@@ -39,7 +46,7 @@ Point evaluation at block `(x, y, z)` (ints), in `f32` unless stated. `X`, `Y`, 
 | `spline`                      | `spline` (below)                                                                                                                                                                                             | the spline's value                                                                                                                                                                                                                                                                                               |
 | `blend_alpha`, `blend_offset` | none                                                                                                                                                                                                         | 1 and 0: context-bound constants whose defaults apply when nothing is blending, which is always the case for new terrain                                                                                                                                                                                         |
 
-**Splines** (`CubicSpline`): a number is a constant (`float`). Otherwise `{"coordinate": function, "points": [{"location", "value", "derivative"}, ...]}`, where `location` and `derivative` are `float` and `value` is a spline. To sample, take `c` = the coordinate's value and `i` = the index of the first location greater than `c`, minus one (`c < location`, so a NaN `c` lands past the end):
+**Splines** (`CubicSpline`): a number is a constant (`float`). Otherwise `{"coordinate": function, "points": [{"location", "value", "derivative"}, ...]}`, where `location` and `derivative` are `float` and `value` is a spline. To sample, take `c` = the coordinate's value and `i` = the index of the first location greater than `c`, minus one, found by `Mth.binarySearch` (`c < location`, so a NaN `c` lands past the end). The codec doesn't require the locations to increase. When they don't, which index the search finds depends on the indexes it tests, so spyglass tests the game's, `from + len/2` each time:
 
 - `i < 0` or `i` is the last point: the point's value `v`, extended linearly. That's `v` if its derivative `d` is 0, else `v + d·(c − location)`;
 - otherwise, with `x0, x1` the locations, `f0, f1` the values and `d0, d1` the derivatives of points `i` and `i + 1`: `t = (c − x0)/(x1 − x0)`, `a = d0·(x1 − x0) − (f1 − f0)`, `b = −d1·(x1 − x0) + (f1 − f0)`, and the value is `lerp(t, f0, f1) + (t·(1 − t))·lerp(t, a, b)`, in exactly that order.

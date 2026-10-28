@@ -1222,9 +1222,14 @@ fn alias_binding(json: &Value, at: &At<'_>) -> LoadResult<AliasBinding> {
             .map(full_id)
             .ok_or_else(|| at.error(LoadErrorKind::Missing(name)))
     };
+    // WeightedList.nonEmptyCodec of Weighted.codec: at least one entry, each weight a
+    // non-negative int, summing to at most i32::MAX (WeightedRandom.getTotalWeight). A list
+    // whose weights are all 0 loads in the game and throws when a start picks from it; spyglass
+    // refuses it here instead (docs/specs/structure-placement.md).
     let weighted = |name: &'static str| -> LoadResult<Vec<(&Value, i32)>> {
         let at = at.child(name);
-        obj.get(name)
+        let list = obj
+            .get(name)
             .and_then(Value::as_array)
             .ok_or_else(|| at.error(LoadErrorKind::Shape("a weighted list")))?
             .iter()
@@ -1235,11 +1240,24 @@ fn alias_binding(json: &Value, at: &At<'_>) -> LoadResult<AliasBinding> {
                 let weight = e
                     .get("weight")
                     .and_then(codec::int_of)
-                    .filter(|&w| w > 0)
-                    .ok_or_else(|| at.error(LoadErrorKind::Shape("a positive weight")))?;
+                    .filter(|&w| w >= 0)
+                    .ok_or_else(|| at.error(LoadErrorKind::Shape("a non-negative weight")))?;
                 Ok((data, weight))
             })
-            .collect()
+            .collect::<LoadResult<Vec<_>>>()?;
+        let total: i64 = list.iter().map(|&(_, w)| i64::from(w)).sum();
+        if list.is_empty() {
+            return Err(at.error(LoadErrorKind::Invalid("a weighted list needs an entry")));
+        }
+        if total > i64::from(i32::MAX) {
+            return Err(at.error(LoadErrorKind::Invalid(
+                "weights must sum to at most 2147483647",
+            )));
+        }
+        if total == 0 {
+            return Err(at.error(LoadErrorKind::Invalid("weights must not all be 0")));
+        }
+        Ok(list)
     };
     let kind = string("type")?;
     match kind.as_str() {
@@ -1363,6 +1381,36 @@ mod tests {
             size,
             palettes: vec![vec![]],
         }
+    }
+
+    #[test]
+    fn weighted_alias_lists_load_as_the_codec_reads_them() {
+        let at = At::root("minecraft:s");
+        let random = |targets: serde_json::Value| {
+            alias_binding(
+                &serde_json::json!({"type": "random", "alias": "a", "targets": targets}),
+                &at,
+            )
+        };
+        // Zero weights are allowed, as long as one isn't 0.
+        assert!(
+            random(serde_json::json!([{"data": "p", "weight": 0}, {"data": "q", "weight": 1}]))
+                .is_ok()
+        );
+        // An empty list, weights all 0, a sum past i32::MAX and a negative weight aren't.
+        for bad in [
+            serde_json::json!([]),
+            serde_json::json!([{"data": "p", "weight": 0}]),
+            serde_json::json!([{"data": "p", "weight": 2147483647}, {"data": "q", "weight": 1}]),
+            serde_json::json!([{"data": "p", "weight": -1}]),
+        ] {
+            assert!(random(bad.clone()).is_err(), "{bad}");
+        }
+        let group = alias_binding(
+            &serde_json::json!({"type": "random_group", "groups": []}),
+            &at,
+        );
+        assert!(group.is_err());
     }
 
     #[test]

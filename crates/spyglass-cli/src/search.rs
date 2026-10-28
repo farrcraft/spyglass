@@ -19,6 +19,7 @@ pub fn run(args: &Search) -> Result<()> {
         &args.bundles,
         args.game_version.as_deref(),
     )?;
+    crate::warn_unchecked(game.unchecked_version(), args.json);
     let text = match (&args.query, &args.query_file) {
         (Some(text), None) => text.clone(),
         (None, Some(path)) => {
@@ -234,6 +235,7 @@ fn print_json(
         elapsed_seconds: p.elapsed.as_secs_f64(),
         hits,
         partial: outcome.partial,
+        warnings: json::all_warnings(None, game.unchecked_version()),
     })
 }
 

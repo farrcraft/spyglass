@@ -188,3 +188,15 @@ fn slime_and_spawn() {
     let out = text(&game(&["locate", "spawn", "--seed", "0"]));
     assert!(out.contains("the spawn search starts in chunk"));
 }
+
+#[test]
+#[ignore = "needs a bundle"]
+fn checked_versions_have_no_warnings() {
+    // Unchecked versions' warnings are tested in `json`: a bundle can't be relabelled, since its
+    // templates record their data version.
+    let value = json(&["locate", "spawn", "--seed", "1"]);
+    assert!(value.get("warnings").is_none());
+    let out = game(&["locate", "spawn", "--seed", "1"]);
+    text(&out);
+    assert!(out.stderr.is_empty());
+}

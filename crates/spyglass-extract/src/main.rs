@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use spyglass_data::bundle;
+use spyglass_data::{bundle, versions};
 use spyglass_extract::cache::JarCache;
 use spyglass_extract::extract::{self, ExtractError, Step};
 
@@ -93,7 +93,15 @@ fn run_extract(args: &Args) -> anyhow::Result<()> {
     };
     let done = extract::extract(&options, |step| match step {
         Step::Resolving(v) => println!("Resolving {v}"),
-        Step::Jar(v) => println!("Fetching the {v} server jar into {}", cache.dir().display()),
+        Step::Jar(v) => {
+            // Before the download, so there's time to stop (ADR 0039).
+            if !versions::is_checked_id(v) {
+                eprintln!(
+                    "warning: this build of spyglass wasn't checked against {v}; its bundle will                      load, but answers for it may differ from the game's"
+                );
+            }
+            println!("Fetching the {v} server jar into {}", cache.dir().display());
+        }
         Step::Java(j) => println!(
             "Using Java {} ({}: {})",
             j.version,

@@ -108,6 +108,9 @@ impl App {
         if let Some(e) = &self.load_error {
             ui.colored_label(ui.visuals().error_fg_color, e);
         }
+        if let Some(unchecked) = self.current_bundle().and_then(|b| b.unchecked_version()) {
+            ui.colored_label(ui.visuals().warn_fg_color, unchecked.to_string());
+        }
         ui.horizontal(|ui| {
             ui.label("Seed");
             let edit =

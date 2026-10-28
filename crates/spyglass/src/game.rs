@@ -56,6 +56,12 @@ impl Game {
         &self.bundle.manifest().version
     }
 
+    /// Why this game's answers are unchecked, if they are (ADR 0039).
+    pub fn unchecked_version(&self) -> Option<crate::UncheckedVersion> {
+        let manifest = self.bundle.manifest();
+        crate::UncheckedVersion::of(&manifest.version, manifest.data_version)
+    }
+
     /// `dimension`'s world, opened the first time it's asked for. Fails if the dimension can't
     /// be loaded, or if the save this game was opened for can't be answered for in it.
     pub fn world(&self, dimension: Dimension) -> Result<&World> {

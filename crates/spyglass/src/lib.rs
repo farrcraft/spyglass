@@ -39,6 +39,7 @@ use spyglass_biome::{BiomeId, BiomeSource, Biomes, SearchVolume, SpawnSearch, Sp
 use spyglass_data::anchor::AnchorHeights;
 use spyglass_data::bundle::{Bundle, BundleError};
 use spyglass_data::codec::{LoadError, full_id};
+use spyglass_data::versions::Checking;
 use spyglass_structure::{Assembly, JigsawPools, Placements, Starts, StructureSets};
 use spyglass_terrain::{Terrain, TerrainSettings};
 
@@ -58,6 +59,7 @@ pub use search::{
 };
 pub use spyglass_data::bundle::{BUNDLES_ENV, Kind, default_bundles_dir};
 pub use spyglass_data::dimension::Dimension;
+pub use spyglass_data::versions::{CHECKED, Checked};
 pub use spyglass_structure::LOCATE_RADIUS;
 pub use spyglass_terrain::Heightmap;
 /// Coarse timing of terrain, for finding where the time goes; not a stable interface.
@@ -285,6 +287,66 @@ pub struct BundleInfo {
     pub dir: PathBuf,
 }
 
+impl BundleInfo {
+    /// Why this bundle's answers are unchecked, if they are (ADR 0039).
+    pub fn unchecked_version(&self) -> Option<UncheckedVersion> {
+        UncheckedVersion::of(&self.version, self.data_version)
+    }
+}
+
+/// A bundle for a game version this build wasn't checked against: one not in [`CHECKED`]
+/// (ADR 0039). It loads and answers as usual, but nothing compared its answers with the game's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct UncheckedVersion {
+    /// The game version, e.g. `26.5`.
+    pub version: String,
+    /// Its data version.
+    pub data_version: u32,
+    /// Whether it's newer than every checked version, so a later spyglass may support it.
+    pub newer: bool,
+}
+
+impl UncheckedVersion {
+    /// The warning for game version `version`, if its data version isn't checked.
+    pub fn of(version: &str, data_version: u32) -> Option<Self> {
+        let newer = match Checking::of(data_version) {
+            Checking::Checked => return None,
+            Checking::Newer => true,
+            Checking::Unchecked => false,
+        };
+        Some(UncheckedVersion {
+            version: version.to_string(),
+            data_version,
+            newer,
+        })
+    }
+
+    /// A stable name for scripts: `unchecked_version`.
+    pub fn kind(&self) -> &'static str {
+        "unchecked_version"
+    }
+}
+
+impl std::fmt::Display for UncheckedVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let newest = CHECKED.last().map_or("none", |c| c.id);
+        if self.newer {
+            write!(
+                f,
+                "{} is newer than every version this build of spyglass was checked against                  (the newest is {newest}), so its answers may differ from the game's; a newer                  spyglass may support it",
+                self.version
+            )
+        } else {
+            write!(
+                f,
+                "this build of spyglass wasn't checked against {}, so its answers may differ                  from the game's",
+                self.version
+            )
+        }
+    }
+}
+
 /// The bundles in `dir`'s subdirectories (e.g. `bundles/`), newest first by data version.
 /// Subdirectories that aren't bundles are skipped. A missing `dir` has none.
 pub fn bundles_in(dir: impl AsRef<Path>) -> Result<Vec<BundleInfo>> {
@@ -428,6 +490,12 @@ impl World {
     /// The game version, e.g. `26.3`.
     pub fn version(&self) -> &str {
         &self.bundle.manifest().version
+    }
+
+    /// Why this world's answers are unchecked, if they are (ADR 0039).
+    pub fn unchecked_version(&self) -> Option<UncheckedVersion> {
+        let manifest = self.bundle.manifest();
+        UncheckedVersion::of(&manifest.version, manifest.data_version)
     }
 
     /// The dimension's id, e.g. `minecraft:overworld`.
@@ -1098,6 +1166,24 @@ impl<'w> Session<'w> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unchecked_versions_warn() {
+        assert_eq!(UncheckedVersion::of("26.3", 5023), None);
+        let newer = UncheckedVersion::of("27.1", 9000).unwrap();
+        assert!(
+            newer.newer && newer.to_string().contains("a newer spyglass"),
+            "{newer}"
+        );
+        let between = UncheckedVersion::of("26.4-snapshot-1", 5100).unwrap();
+        assert!(
+            !between.newer
+                && between
+                    .to_string()
+                    .contains("wasn't checked against 26.4-snapshot-1")
+        );
+        assert_eq!(between.kind(), "unchecked_version");
+    }
 
     #[test]
     fn seeds_parse_like_the_game() {

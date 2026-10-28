@@ -30,9 +30,11 @@ With `--world`, two more:
 | `world`    | object | `name` (the world list's name) and `dir` (the save's folder).                                       |
 | `warnings` | array  | What makes answers inexact, as [below](#warnings). Never one that blocks answers: those are errors. |
 
+Without `--world`, `warnings` is there only when the bundle's version is unchecked (`unchecked_version`, below).
+
 ## Warnings
 
-Each warning is `{kind, message}`: `message` is for people, `kind` one of `no_bundle`, `unsupported_generator`, `structures_disabled`, `data_pack`, `modded`, `older_chunks` or `unreadable_regions` ([world-saves.md](world-saves.md#warnings)). A warning about one dimension (`unsupported_generator`, `older_chunks` and `unreadable_regions`) also has `dimension`, its id; one that blocks answers blocks them in that dimension only. New kinds may be added within format 1.
+Each warning is `{kind, message}`: `message` is for people, `kind` one of `no_bundle`, `unsupported_generator`, `structures_disabled`, `data_pack`, `modded`, `older_chunks` or `unreadable_regions` ([world-saves.md](world-saves.md#warnings)), or `unchecked_version`: the bundle is for a game version this build wasn't checked against ([bundle-format.md](bundle-format.md#checked-versions)). In text mode, `unchecked_version` is a `warning:` line on stderr instead. A warning about one dimension (`unsupported_generator`, `older_chunks` and `unreadable_regions`) also has `dimension`, its id; one that blocks answers blocks them in that dimension only. New kinds may be added within format 1.
 
 ## `locate structure`
 
@@ -107,7 +109,7 @@ The image is written to the file given; the JSON describes it ([render.md](rende
 
 ## `search`
 
-The best seeds for a query ([search.md](search.md)). A search is over many seeds, so its object has no `seed`, `world` or `warnings`: it starts with `format`, `command` (`search`), `version` and `dimension` (the first constraint's; each constraint has its own), then:
+The best seeds for a query ([search.md](search.md)). A search is over many seeds, so its object has no `seed` or `world`, and has `warnings` only for `unchecked_version`: it starts with `format`, `command` (`search`), `version` and `dimension` (the first constraint's; each constraint has its own), then:
 
 | Field             | Type        | Meaning                                                                                                  |
 | ----------------- | ----------- | -------------------------------------------------------------------------------------------------------- |

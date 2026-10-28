@@ -94,7 +94,7 @@ A few comparisons expect one version's values exactly, for example the CLI's out
 
 ## Finishing
 
-- **CI.** Add the version to the `oracle` job's matrix in `.github/workflows/ci.yml`. The matrix only grows.
+- **CI.** Add the version to the `oracle` job's matrix in `.github/workflows/ci.yml`, and to `CHECKED` in `crates/spyglass-data/src/versions.rs` with its data version, in the same commit; a test fails if they differ. The matrix only grows. Until the version is in `CHECKED`, its bundle loads with an `unchecked_version` warning ([bundle-format.md](specs/bundle-format.md#checked-versions)).
 - **Specs.** Each change has a _Versions_ note in its spec. Each spec's status line lists the versions it has been checked against the oracle for.
 - **The cost log** below gets a row.
 - **A retro, if it wasn't cheap.** _Cheap_ means about a day or less, with changes confined to loaders, switches, harness adapters and spec notes. Any other update gets a short retro in the current plan's notes (see the [plans index](plans/README.md)): what forced the work, and what change to the structure would have made it cheap. That change becomes a task, or an ADR if it's a design change. The point is to learn, not to hit a number.

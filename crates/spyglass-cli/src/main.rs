@@ -26,7 +26,7 @@ use std::process::ExitCode;
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use serde::Serialize;
-use spyglass::{Dimension, Game, SaveReport, Scan, Session, World};
+use spyglass::{Dimension, Game, SaveReport, Scan, Session, UncheckedVersion, World};
 
 use crate::args::{Cli, Command, Common, Locate, Origin};
 
@@ -71,7 +71,7 @@ fn run(cli: Cli) -> Result<()> {
 /// world is `--dimension`'s; without it, the player's if `player` (the position asked about is
 /// the player's) and the save has one, otherwise the Overworld.
 fn load(common: &Common, player: bool) -> Result<(World, i64, Option<SaveReport>)> {
-    Ok(match (&common.world, &common.seed) {
+    let loaded = match (&common.world, &common.seed) {
         (Some(save), _) => {
             let dir = spyglass::find_save(save)?;
             let report = spyglass::inspect_save(&dir, &common.bundles, Scan::Quick)?;
@@ -88,7 +88,17 @@ fn load(common: &Common, player: bool) -> Result<(World, i64, Option<SaveReport>
         }
         (None, Some(seed)) => (open(common)?, spyglass::parse_seed(seed)?, None),
         (None, None) => bail!("give --seed or --world"),
-    })
+    };
+    warn_unchecked(loaded.0.unchecked_version(), common.json);
+    Ok(loaded)
+}
+
+/// Says on stderr, before a text answer, that its bundle's version wasn't checked (ADR 0039).
+/// JSON has it in `warnings` instead.
+fn warn_unchecked(unchecked: Option<UncheckedVersion>, json: bool) {
+    if let (Some(unchecked), false) = (unchecked, json) {
+        eprintln!("warning: {unchecked}");
+    }
 }
 
 fn run_locate(what: &Locate) -> Result<()> {
@@ -236,7 +246,7 @@ impl Out<'_> {
                     name: r.save.name.clone(),
                     dir: json::path(&r.save.dir),
                 }),
-                warnings: self.report.map(json::warnings),
+                warnings: json::all_warnings(self.report, world.unchecked_version()),
             },
             body,
         })

@@ -5,7 +5,9 @@ use std::path::Path;
 
 use anyhow::Result;
 use serde::Serialize;
-use spyglass::{Dimension, SaveLocation, SaveReport, SpawnOrigin, StructureLayout};
+use spyglass::{
+    Dimension, SaveLocation, SaveReport, SpawnOrigin, StructureLayout, UncheckedVersion,
+};
 
 /// The `--json` format version.
 pub const FORMAT: u32 = 1;
@@ -45,7 +47,7 @@ pub struct Header<'a> {
     /// With `--world`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub world: Option<WorldRef>,
-    /// With `--world`.
+    /// With `--world`, or for a bundle whose version wasn't checked.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub warnings: Option<Vec<Warning>>,
 }
@@ -76,6 +78,23 @@ pub fn warnings(report: &SaveReport) -> Vec<Warning> {
             dimension: w.dimension().map(Dimension::id),
         })
         .collect()
+}
+
+/// The save's warnings with `--world`, and the bundle's if its version wasn't checked. `None`
+/// when there's no save and nothing to say, so the field is left out.
+pub fn all_warnings(
+    report: Option<&SaveReport>,
+    unchecked: Option<UncheckedVersion>,
+) -> Option<Vec<Warning>> {
+    let mut all = report.map(warnings);
+    if let Some(unchecked) = unchecked {
+        all.get_or_insert_default().push(Warning {
+            kind: unchecked.kind(),
+            message: unchecked.to_string(),
+            dimension: None,
+        });
+    }
+    all
 }
 
 #[derive(Serialize)]
@@ -331,6 +350,9 @@ pub struct SearchAnswer<'a> {
     pub elapsed_seconds: f64,
     pub hits: Vec<SearchHit<'a>>,
     pub partial: bool,
+    /// For a bundle whose version wasn't checked.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warnings: Option<Vec<Warning>>,
 }
 
 #[derive(Serialize)]
@@ -376,4 +398,24 @@ pub enum FeatureAnswer<'a> {
     },
     Spawn(SpawnAnswer),
     Other,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unchecked_versions_are_warnings() {
+        assert!(all_warnings(None, None).is_none());
+        let unchecked = UncheckedVersion::of("99.1", 99_999);
+        let value = serde_json::to_value(all_warnings(None, unchecked)).unwrap();
+        assert_eq!(value[0]["kind"], "unchecked_version");
+        assert!(
+            value[0]["message"]
+                .as_str()
+                .unwrap()
+                .contains("99.1 is newer")
+        );
+        assert!(value[0].get("dimension").is_none());
+    }
 }

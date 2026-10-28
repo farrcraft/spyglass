@@ -94,6 +94,68 @@ macro_rules! switches {
     (@until $until:literal) => { Some($until) };
 }
 
+/// A game version this build's answers were compared with the game's for: one job in CI's oracle
+/// matrix (ADR 0028).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Checked {
+    /// The version id, e.g. `26.3`.
+    pub id: &'static str,
+    /// Its data version.
+    pub data_version: u32,
+}
+
+/// Every version CI checks this build against, oldest first. It changes in the same commit as
+/// the matrix in `.github/workflows/ci.yml`, which a test checks. Other versions still load, with
+/// a warning (ADR 0039).
+pub const CHECKED: &[Checked] = &[
+    Checked {
+        id: "26.2",
+        data_version: 4903,
+    },
+    Checked {
+        id: "26.3",
+        data_version: 5023,
+    },
+    Checked {
+        id: "26.4-snapshot-5",
+        data_version: 5125,
+    },
+    Checked {
+        id: "26.4-snapshot-6",
+        data_version: 5126,
+    },
+];
+
+/// How a data version relates to [`CHECKED`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Checking {
+    /// One of [`CHECKED`].
+    Checked,
+    /// Newer than every checked version: a later spyglass may support it.
+    Newer,
+    /// Not checked, but not newer either: older than them all, or between two.
+    Unchecked,
+}
+
+impl Checking {
+    /// How `data_version` relates to [`CHECKED`].
+    pub fn of(data_version: u32) -> Self {
+        let newest = CHECKED.iter().map(|c| c.data_version).max().unwrap_or(0);
+        if CHECKED.iter().any(|c| c.data_version == data_version) {
+            Checking::Checked
+        } else if data_version > newest {
+            Checking::Newer
+        } else {
+            Checking::Unchecked
+        }
+    }
+}
+
+/// Whether the version with id `id` is one of [`CHECKED`], for when only the id is known yet.
+pub fn is_checked_id(id: &str) -> bool {
+    CHECKED.iter().any(|c| c.id == id)
+}
+
 switches! {
     /// `Climate.Parameter.distance` is half-open: a value equal to `max` is at distance 1, not 0.
     /// Biome fitness, the search's box distances and spawn fitness all follow.
@@ -156,6 +218,39 @@ mod tests {
             mid,
             Behavior::default(),
             "26.3 is the baseline: every switch off"
+        );
+    }
+
+    #[test]
+    fn checking() {
+        assert_eq!(Checking::of(5023), Checking::Checked);
+        assert_eq!(Checking::of(9999), Checking::Newer);
+        assert_eq!(Checking::of(5000), Checking::Unchecked);
+        assert_eq!(Checking::of(100), Checking::Unchecked);
+        assert!(is_checked_id("26.3") && !is_checked_id("26.1"));
+        assert!(CHECKED.is_sorted_by_key(|c| c.data_version));
+    }
+
+    /// CHECKED names the versions in CI's oracle matrix, no more and no fewer.
+    #[test]
+    fn checked_is_the_ci_matrix() {
+        let ci =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.github/workflows/ci.yml");
+        let ci = std::fs::read_to_string(&ci).unwrap();
+        let mut ids: Vec<&str> = ci
+            .lines()
+            .skip_while(|line| line.trim() != "version:")
+            .skip(1)
+            .map_while(|line| line.trim().strip_prefix("- "))
+            .map(|id| id.trim_matches('"'))
+            .collect();
+        assert!(!ids.is_empty(), "no oracle matrix in ci.yml");
+        let mut checked: Vec<&str> = CHECKED.iter().map(|c| c.id).collect();
+        ids.sort_unstable();
+        checked.sort_unstable();
+        assert_eq!(
+            checked, ids,
+            "versions::CHECKED and ci.yml's oracle matrix differ"
         );
     }
 

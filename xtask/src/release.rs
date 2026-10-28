@@ -1,9 +1,12 @@
-//! `cargo xtask release <version>`: the release commit and tag, made locally and never pushed
-//! (docs/adr/0037-versions-and-releases.md). docs/releasing.md has the whole process.
+//! `cargo xtask release <version>` and `cargo xtask release-tag <version>`: a release goes
+//! through a pull request like any change (docs/adr/0040-releases-go-through-a-pull-request.md).
+//! docs/releasing.md has the whole process.
 //!
-//! It sets the workspace version, turns the changelog's Unreleased section into the release's,
-//! with the game versions this build was checked against, runs every check, then commits and
-//! tags. A pre-release (`0.1.0-rc.1`) leaves the changelog alone: its notes are Unreleased.
+//! `release` makes a `release/v<version>` branch from `main`, sets the workspace version, turns
+//! the changelog's Unreleased section into the release's with the game versions this build was
+//! checked against, runs every check and commits. A pre-release (`0.1.0-rc.1`) leaves the
+//! changelog alone: its notes are Unreleased. Once the pull request is merged, `release-tag` tags
+//! the merged release commit on `main`. Neither pushes.
 
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -22,6 +25,26 @@ pub struct Release {
     version: String,
 }
 
+/// `git` with `args`, from the repo root: its trimmed stdout, or an error if it fails.
+fn git(args: &[&str]) -> Result<String> {
+    let out = command("git")
+        .args(args)
+        .output()
+        .context("failed to run git")?;
+    ensure!(
+        out.status.success(),
+        "git {} failed: {}",
+        args.join(" "),
+        String::from_utf8_lossy(&out.stderr).trim()
+    );
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// The release branch for `version`.
+fn branch(version: &Version) -> String {
+    format!("release/v{version}")
+}
+
 pub fn run(args: &Release) -> Result<()> {
     let version = Version::parse(&args.version)?;
     let current = toml_string("Cargo.toml", &["workspace", "package", "version"])?;
@@ -30,26 +53,28 @@ pub fn run(args: &Release) -> Result<()> {
         version.core > current.core || (version.core == current.core && current.pre.is_some()),
         "{version} isn't after the current version, {current}"
     );
-    let git = |args: &[&str]| -> Result<String> {
-        let out = command("git")
-            .args(args)
-            .output()
-            .context("failed to run git")?;
-        ensure!(out.status.success(), "git {} failed", args.join(" "));
-        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
-    };
     ensure!(
         git(&["status", "--porcelain"])?.is_empty(),
         "the tree has uncommitted changes"
     );
     ensure!(
         git(&["rev-parse", "--abbrev-ref", "HEAD"])? == "main",
-        "releases are made on main"
+        "start a release from main"
+    );
+    git(&["fetch", "--quiet", "origin", "main"])?;
+    ensure!(
+        git(&["rev-parse", "HEAD"])? == git(&["rev-parse", "origin/main"])?,
+        "main isn't the same as origin/main; pull (or push) first"
     );
     let tag = format!("v{version}");
     ensure!(
         git(&["tag", "--list", &tag])?.is_empty(),
         "the tag {tag} already exists"
+    );
+    let branch = branch(&version);
+    ensure!(
+        git(&["branch", "--list", &branch])?.is_empty(),
+        "the branch {branch} already exists"
     );
 
     let changelog_path = repo_root().join("CHANGELOG.md");
@@ -58,6 +83,7 @@ pub fn run(args: &Release) -> Result<()> {
         unreleased(&changelog).is_some_and(|text| !text.trim().is_empty()),
         "CHANGELOG.md's Unreleased section is empty; a release needs something in it"
     );
+    git(&["switch", "--quiet", "--create", &branch])?;
     if version.pre.is_none() {
         let checked: Vec<&str> = CHECKED.iter().map(|c| c.id).collect();
         let released = release_changelog(&changelog, &version.to_string(), &today(), &checked)?;
@@ -78,8 +104,9 @@ pub fn run(args: &Release) -> Result<()> {
     println!("Running every check, as CI does...");
     if let Err(err) = crate::check() {
         bail!(
-            "{err:#}\nThe version and changelog changes are left uncommitted; fix the checks and \
-             run this again after `git checkout .`, or commit and tag by hand."
+            "{err:#}\nThe version and changelog changes are left uncommitted on {branch}. Fix the \
+             checks and commit there, or start again: `git checkout . && git switch main && \
+             git branch -D {branch}`."
         );
     }
     git(&[
@@ -89,19 +116,88 @@ pub fn run(args: &Release) -> Result<()> {
         "-m",
         &format!("Release {version}"),
     ])?;
+    println!(
+        "Committed `Release {version}` on {branch}. Nothing is pushed. Next:\n\n    \
+         git push --set-upstream origin {branch}\n    \
+         gh pr create --fill\n\n\
+         Once the pull request is merged into main:\n\n    \
+         cargo xtask release-tag {version}\n\n\
+         (docs/releasing.md)"
+    );
+    Ok(())
+}
+
+#[derive(clap::Args)]
+pub struct ReleaseTag {
+    /// The version whose merged release commit to tag, e.g. `0.1.0`.
+    version: String,
+}
+
+/// Tags the commit on origin/main that set the workspace version to the release's: the merged
+/// release pull request. Never pushes.
+pub fn tag(args: &ReleaseTag) -> Result<()> {
+    let version = Version::parse(&args.version)?;
+    let tag = format!("v{version}");
+    git(&["fetch", "--quiet", "--tags", "origin", "main"])?;
+    ensure!(
+        git(&["tag", "--list", &tag])?.is_empty(),
+        "the tag {tag} already exists"
+    );
+    // The newest commit on main that changed the workspace version to this one: the merged
+    // release pull request.
+    let wanted = version.to_string();
+    let version_at = |rev: &str| -> Option<String> {
+        manifest_version(&git(&["show", &format!("{rev}:Cargo.toml")]).ok()?)
+    };
+    let commit = git(&["log", "origin/main", "--format=%H", "--", "Cargo.toml"])?
+        .lines()
+        .find(|commit| {
+            version_at(commit).as_deref() == Some(wanted.as_str())
+                && version_at(&format!("{commit}^")).as_deref() != Some(wanted.as_str())
+        })
+        .map(str::to_string)
+        .with_context(|| {
+            format!(
+                "no commit on origin/main sets the version to {version}; is the release pull \
+                 request merged?"
+            )
+        })?;
+    let later = git(&["rev-list", "--count", &format!("{commit}..origin/main")])?;
+    if later != "0" {
+        eprintln!(
+            "note: {later} commit(s) merged into main after the release; the tag is on the \
+             release commit itself"
+        );
+    }
     git(&[
         "tag",
         "--annotate",
         &tag,
+        &commit,
         "-m",
         &format!("spyglass {version}"),
     ])?;
+    let subject = git(&["log", "-1", "--format=%h %s", &commit])?;
     println!(
-        "Committed and tagged {tag}. Nothing is pushed. To release:\n\n    \
-         git push --atomic origin main {tag}\n\n\
+        "Tagged {tag} on {subject}. Nothing is pushed. To release:\n\n    \
+         git push origin {tag}\n\n\
          The release workflow then builds a draft release to publish (docs/releasing.md)."
     );
     Ok(())
+}
+
+/// `[workspace.package]`'s version in the text of a `Cargo.toml`.
+fn manifest_version(manifest: &str) -> Option<String> {
+    let mut in_package = false;
+    for line in manifest.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_package = line == "[workspace.package]";
+        } else if in_package && let Some(value) = line.strip_prefix("version = ") {
+            return Some(value.trim_matches('"').to_string());
+        }
+    }
+    None
 }
 
 /// A SemVer version: major, minor and patch, and an optional pre-release.
@@ -383,6 +479,14 @@ mod tests {
             "See [the spec](https://github.com/farrcraft/spyglass/blob/v0.1.0/docs/specs/\
              cli-json.md#warnings), [SemVer](https://semver.org/) and [below](#added)."
         );
+    }
+
+    #[test]
+    fn manifest_versions() {
+        let manifest = "[workspace]\nmembers = []\n\n[workspace.package]\nversion = \"0.1.0\"\n\n\
+                        [workspace.dependencies]\nfoo = { version = \"1.0\" }\n";
+        assert_eq!(manifest_version(manifest).as_deref(), Some("0.1.0"));
+        assert_eq!(manifest_version("[package]\nversion = \"1.0.0\"\n"), None);
     }
 
     #[test]

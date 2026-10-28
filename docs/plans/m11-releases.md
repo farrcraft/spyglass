@@ -112,7 +112,7 @@ Every action is pinned by commit SHA, as `ci.yml` does. The workflow only calls 
 - [x] ADRs 0037, 0038 and 0039, accepted before the code that depends on them.
 - [x] `default_bundles_dir()` in `spyglass-data`, re-exported. CLI, extractor and viewer use it. Tests for each step of the order, using `SPYGLASS_BUNDLES` and a temp folder. bundle-format.md updated.
 - [x] `versions::CHECKED` and its sync test against `ci.yml`. The unchecked-version warning in the API, CLI (text and `--json`), viewer and extractor. Unit tests for the check, its wording and the JSON (see the notes).
-- [ ] Version strings with commit and date in all three binaries, and the checked versions in `spyglass --version`.
+- [x] Version strings with commit and date in all three binaries, and the checked versions in `spyglass --version`.
 - [ ] Workspace version `0.1.0`, `CHANGELOG.md` with `Unreleased` filled in from milestones 01 to 10.
 - [ ] `cargo xtask dist`: build, archive, allowlist, path scan. Unit tests for archive determinism (same inputs, same bytes) and the allowlist.
 - [ ] `cargo-about` config, its license list kept equal to `deny.toml` by a test, `THIRD-PARTY-LICENSES.html` in the archive. Setup scripts (`--release-tools` / `-ReleaseTools`, the pair kept in step) and `doctor`.

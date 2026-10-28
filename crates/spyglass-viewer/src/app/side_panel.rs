@@ -6,6 +6,7 @@ use super::*;
 impl App {
     pub(super) fn side_panel(&mut self, ui: &mut egui::Ui) {
         ui.heading("spyglass");
+        ui.weak(spyglass::build::version());
         ui.add_space(4.0);
         egui::CollapsingHeader::new("World")
             .default_open(true)

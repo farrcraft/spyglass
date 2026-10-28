@@ -9,7 +9,11 @@ use spyglass_extract::cache::JarCache;
 use spyglass_extract::extract::{self, ExtractError, Step};
 
 #[derive(Parser)]
-#[command(version, about, args_conflicts_with_subcommands = true)]
+#[command(
+    version = spyglass_data::build::version(),
+    about,
+    args_conflicts_with_subcommands = true
+)]
 struct Args {
     #[command(subcommand)]
     command: Option<Cmd>,

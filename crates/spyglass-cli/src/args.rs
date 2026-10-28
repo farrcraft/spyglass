@@ -9,7 +9,8 @@ use spyglass::{DEFAULT_MAP_Y, Dimension, Heightmap, LOCATE_BIOME_RADIUS, LOCATE_
 #[derive(Parser)]
 #[command(
     name = "spyglass",
-    version,
+    version = spyglass::build::version(),
+    long_version = spyglass::build::long_version(),
     about = "Explore Minecraft: Java Edition seeds locally."
 )]
 pub struct Cli {

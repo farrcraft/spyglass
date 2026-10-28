@@ -12,4 +12,4 @@ Out of scope: the game's own behavior (spyglass matches it on purpose, so data t
 
 ## Reporting
 
-Report privately through GitHub's **Report a vulnerability** button on the repository's Security tab, not in a public issue. Include the spyglass commit, the command or API call, and the file that triggers it if you can share it.
+Report privately through GitHub's **Report a vulnerability** button on the repository's Security tab, not in a public issue. Include what `spyglass --version` prints (or, building from source, the commit), the command or API call, and the file that triggers it if you can share it.

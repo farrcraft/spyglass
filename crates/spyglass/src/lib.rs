@@ -57,6 +57,7 @@ pub use search::{
     ConstraintResult, Evaluation, Feature, Outcome, RankedSeed, SearchHit, SearchOptions,
     SearchOutcome, SearchProgress, SearchQuery, SearchStop, SeedSource,
 };
+pub use spyglass_data::build;
 pub use spyglass_data::bundle::{BUNDLES_ENV, Kind, default_bundles_dir};
 pub use spyglass_data::dimension::Dimension;
 pub use spyglass_data::versions::{CHECKED, Checked};

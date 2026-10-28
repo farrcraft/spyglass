@@ -103,7 +103,7 @@ Specs and ADRs that govern this: [density-functions.md](../specs/density-functio
 
 Reordered on 2026-10-27, with the user: 26.2 first, since its point evaluations have no memo and its gains are several-fold, against about 8 to 10% for 26.3's (see the notes).
 
-- [ ] 26.2's evaluator on the program, with `NoiseChunk`'s caches and interpolation as operations, and its single-point evaluations sharing subgraphs.
+- [ ] 26.2's evaluator on the program, with `NoiseChunk`'s caches and interpolation as operations, and its single-point evaluations sharing subgraphs. First step done: a per-context memo for shared functions, shared corner and point stamps, and a per-column memo for columnar functions (e657cae, f61f361). The program itself is next.
 - [ ] Columns without a `NoiseChunk` each, where the spec shows the answers are unchanged.
 - [ ] Differential tests against the interpreter on 26.2's functions, points and cells; `oracle-test` for 26.2.
 - [ ] Measure 26.2's lines against its before lines and its target (within 2× of 26.3's isolated column).
@@ -198,6 +198,11 @@ Sources:
 - crates.io metadata for each crate, fetched 2026-10-27.
 
 ## Notes
+
+- 2026-10-27: **26.2 after its memo** (`dist`, coarse timing, quiet machine, three rounds): isolated column 635 to 646 µs (1.9 to 2.4 ms before), nearby column 344 to 351 µs (490), warm village layout about 50 ms (67), region about 75 ms (73, unchanged). oracle-test passes for 26.2 after each step.
+  - **What did it.** A function the binder sees bound twice is remembered per evaluation context. Corners of a `NoiseChunk` keep a stamp each, so the functions interpolated at a corner share their common work. Single-point computes at one block share a stamp. Columnar functions (no y, and only `cache_2d` or `flat_cache` markers) are remembered per column, which matches the game: its `cache_2d` returns the value for the last column asked, and the aquifer's `find_top_surface` walks (7 or 8 steps each) were recomputing it at every step.
+  - **What's left.** An isolated column evaluates about 16,900 nodes, most of them small arithmetic nodes, at about 1,000 points (cell corners and walk steps); noise is the minority. At 5 to 10 ns of call and memo overhead per node, the flattened program should take off about 100 µs, which would put 26.2 near its target (2× 26.3's isolated column, about 500 to 530 µs in the same build).
+  - **A clippy fix on the way:** 26.2's bound function grew, which made the spawn search's enum trip `large_enum_variant`; its climate sampler is boxed.
 
 - 2026-10-27: **26.3's volume memo is essential; the gain left is in its copies.** Skipping the volume path's memo store (values are unchanged, since recomputing a node gives the same bits) makes the isolated column 248 → 457 µs, a nearby column 188 → 396 µs, a 40 × 25 region 23 → 28.6 ms, and a warm village layout 30 → 58 ms. Shared subgraphs, including ones shared between interpolated corner volumes, are most of the work saved. What a program can still remove in 26.3's volume path is the memo's copying (13 to 19 µs per column) and per-child allocations (a few µs): about 8 to 10% of a column. 26.2's single-point router evaluations have no memo at all, which is where several-fold gains are.
 

@@ -69,7 +69,7 @@ pub struct NoiseChunk {
 /// marker slot and corner column, kept across queries. A corner's value depends only on its
 /// block: a corner is always inside its chunk's `flat_cache` window, on a quart, so the window's
 /// extent doesn't reach it. So the one-cell `NoiseChunk`s the game makes for each base column
-/// can share the corners between them. Cleared when it holds [`MAX_CORNER_COLUMNS`], so it
+/// can share the corners between them. Cleared when it holds about 15 MB of corners, so it
 /// can't grow without bound.
 #[derive(Debug, Default)]
 pub struct CornerStore(Mutex<HashMap<(u32, i32, i32), CornerColumn>>);

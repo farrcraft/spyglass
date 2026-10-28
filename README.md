@@ -86,6 +86,7 @@ See [docs/architecture.md](docs/architecture.md) for how they fit together.
 - [Roadmap](docs/roadmap/README.md)
 - [Implementation plans](docs/plans/README.md)
 - [Development process](docs/development-process.md)
+- [Changelog](CHANGELOG.md)
 - [Contributing](CONTRIBUTING.md) and [security](SECURITY.md)
 - [Decision records](docs/adr/)
 - [Research](docs/research/)

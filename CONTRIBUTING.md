@@ -12,7 +12,7 @@ Run `scripts/setup.ps1` (Windows) or `scripts/setup.sh` (macOS, Linux), then `ca
 
 ## How work flows
 
-Milestones become implementation plans, and plans become code ([development process](docs/development-process.md)). Behavior the code must match is written down in [specs](docs/specs/README.md); decisions that will outlast the change get an [ADR](docs/adr/README.md). A change to behavior that has a spec updates the spec in the same change.
+Milestones become implementation plans, and plans become code ([development process](docs/development-process.md)). Behavior the code must match is written down in [specs](docs/specs/README.md); decisions that will outlast the change get an [ADR](docs/adr/README.md). A change to behavior that has a spec updates the spec in the same change. A change people who use spyglass would notice gets a line under **Unreleased** in the [changelog](CHANGELOG.md), in the same change.
 
 Worldgen code aims to match the game **bit for bit**: Java's integer widths and wrapping, signed and unsigned shifts, `f32` against `f64`, and the order of floating-point operations all matter. Correctness is checked against the real game through the [oracle](docs/specs/oracle.md), not against other tools. Worldgen belongs in the library crates; the CLI and viewer only call the public API ([architecture](docs/architecture.md)).
 

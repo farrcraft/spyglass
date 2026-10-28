@@ -113,12 +113,12 @@ Every action is pinned by commit SHA, as `ci.yml` does. The workflow only calls 
 - [x] `default_bundles_dir()` in `spyglass-data`, re-exported. CLI, extractor and viewer use it. Tests for each step of the order, using `SPYGLASS_BUNDLES` and a temp folder. bundle-format.md updated.
 - [x] `versions::CHECKED` and its sync test against `ci.yml`. The unchecked-version warning in the API, CLI (text and `--json`), viewer and extractor. Unit tests for the check, its wording and the JSON (see the notes).
 - [x] Version strings with commit and date in all three binaries, and the checked versions in `spyglass --version`.
-- [ ] Workspace version `0.1.0`, `CHANGELOG.md` with `Unreleased` filled in from milestones 01 to 10.
+- [x] `CHANGELOG.md` with `Unreleased` filled in from milestones 01 to 10. The workspace version stays `0.0.0` until `cargo xtask release 0.1.0` sets it (see the notes).
 - [ ] `cargo xtask dist`: build, archive, allowlist, path scan. Unit tests for archive determinism (same inputs, same bytes) and the allowlist.
 - [ ] `cargo-about` config, its license list kept equal to `deny.toml` by a test, `THIRD-PARTY-LICENSES.html` in the archive. Setup scripts (`--release-tools` / `-ReleaseTools`, the pair kept in step) and `doctor`.
 - [ ] `GETTING-STARTED.txt` for the archive, written for someone with no Rust and no clone.
 - [ ] `cargo xtask release <version>`.
-- [ ] `ci.yml` gains `workflow_call`. `release.yml` with verify, ci, build, smoke and publish.
+- [ ] `ci.yml` gains `workflow_call`. `release.yml` with verify, ci, build, smoke and publish. The release notes' relative links are made absolute to the tag (`https://github.com/farrcraft/spyglass/blob/vX.Y.Z/...`), since they don't resolve on the release page.
 - [ ] A dry run: push a `v0.1.0-rc.1` tag to a fork, or run the workflow by `workflow_dispatch` with publishing off. Fix what it finds.
 - [ ] A reproducibility check: build the same tag twice and compare hashes. Record the result in ADR 0038.
 - [ ] Manual check on a clean Windows, macOS and Linux machine, by the first-run guide only.
@@ -143,6 +143,7 @@ Every action is pinned by commit SHA, as `ci.yml` does. The workflow only calls 
 
 ## Notes
 
+- 2026-10-28: the workspace version isn't set to `0.1.0` ahead of the release. If `main` said `0.1.0` before the tag existed, every untagged build would claim to be that release. `cargo xtask release` sets the version in the release commit, as ADR 0037 has it, so between releases `main` carries the last release's version and `--version` adds `(dev build)`.
 - 2026-10-28: unchecked versions can't be tested end to end with a relabelled copy of a real bundle: each structure template records its data version, and loading refuses one that differs from the bundle's. The warning's logic and wording are unit-tested in `spyglass-data` and `spyglass`, the JSON wiring in the CLI's `json` module, and an ignored CLI test checks that a checked version prints no warning. The extractor warns by id at the jar step, before downloading, since the data version is only known from the jar.
 - 2026-10-28: the per-user folder is `ProjectDirs::data_local_dir()`, not `data_dir()`: on Windows that's `%LOCALAPPDATA%`, not the roaming profile, which shouldn't carry hundreds of megabytes of bundles. The two are the same elsewhere. The test drives the choice through a private function that takes what it found, since setting an environment variable in a test is `unsafe` in edition 2024 and the workspace forbids `unsafe`. `doctor` reports the folder too.
 - 2026-10-28: drafted. Open decisions for the owner:

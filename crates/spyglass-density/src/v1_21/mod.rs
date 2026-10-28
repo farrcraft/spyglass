@@ -17,7 +17,7 @@ mod program;
 mod router;
 
 pub use bind::{Binder, Function};
-pub use chunk::NoiseChunk;
+pub use chunk::{CornerStore, NoiseChunk};
 pub use function::{BlendedNoise, DensityFunction, Df, Mapped, Marker, Spline, TwoArgument};
 pub use load::Loader;
 pub use router::{ClimateSampler, NoiseRouter, NoiseSettings, RandomState, RouterEntry, is_v1_21};

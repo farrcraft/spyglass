@@ -6,6 +6,10 @@ Changes go under **Unreleased** as they're made. `cargo xtask release` turns tha
 
 ## [Unreleased]
 
+### Fixed
+
+- The viewer no longer opens a console window beside its own on Windows.
+
 ## [0.1.0] - 2026-10-29
 
 ### Game versions

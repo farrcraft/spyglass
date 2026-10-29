@@ -1,6 +1,9 @@
 //! Native seed-map viewer. A front end over the `spyglass` library only (ADR 0014): tiles,
 //! colours and markers all come from its `render` module (`docs/specs/render.md`).
 
+// No console window beside the viewer's on Windows. Debug builds keep theirs, for panics and logs.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use eframe::egui;
 
 mod app;
@@ -13,7 +16,8 @@ mod view;
 
 fn main() -> eframe::Result {
     // The one argument the viewer takes: for bug reports, and for checking a release archive on a
-    // machine with no display.
+    // machine with no display. A Windows release build has no console, so this prints only where
+    // stdout is redirected or piped, as the release smoke test runs it.
     if std::env::args().nth(1).as_deref() == Some("--version") {
         println!("spyglass-viewer {}", spyglass::build::version());
         return Ok(());

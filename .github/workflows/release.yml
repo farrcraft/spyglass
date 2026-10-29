@@ -37,13 +37,17 @@ jobs:
           echo "Run the release workflow on main, not $GITHUB_REF_NAME." >&2
           exit 1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # Checks that the version isn't released yet, and that the changelog has its notes.
+      # Checks that the version isn't released yet, and that the changelog has its notes. The
+      # assignment comes first: inside echo's argument, a failure wouldn't fail the step.
       - id: notes
-        run: echo "tag=$(cargo xtask release-notes --out notes.md)" >> "$GITHUB_OUTPUT"
+        run: |
+          tag=$(cargo xtask release-notes --out notes.md)
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: notes
           path: notes.md
+          if-no-files-found: error
 
   ci:
     name: CI

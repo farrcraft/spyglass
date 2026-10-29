@@ -1,6 +1,6 @@
 # 0046. The viewer's search yields its cores to the map
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-29
 
 ## Context

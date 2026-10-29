@@ -6,6 +6,6 @@ Code must not reference plans. Anything durable a plan produces belongs in a spe
 
 ## Active
 
-- [m14-viewer-performance](m14-viewer-performance.md) (draft): measure, profile, then make the map's detailed tiles arrive sooner.
+None: every milestone so far is complete.
 
 The follow-ups of milestones 08 and 11 ([roadmap](../roadmap/README.md#follow-ups)) need no plan of their own.

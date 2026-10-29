@@ -1,9 +1,9 @@
 # m14. Viewer performance
 
-- Status: In progress
-- Milestone: [14. Viewer performance](../roadmap/14-viewer-performance.md)
+- Status: Completed
+- Milestone: [14. Viewer performance](../../roadmap/completed/14-viewer-performance.md)
 - Started: 2026-10-29
-- Completed:
+- Completed: 2026-10-29
 
 ## Goal
 
@@ -13,7 +13,7 @@ Milestone 13 made the wait look better: coarse tiles first fill a cold window at
 
 ## Approach
 
-Three phases, each finished before the next starts: measure, profile, fix. A fix is kept only if the benchmark shows it pays and `cargo xtask oracle-test` passes for every supported version. Every timing is taken from a `dist` build ([ADR 0031](../adr/0031-flattened-density-evaluation.md)): under the default release profile, how the compiler split crates moved speeds by up to 1.7×.
+Three phases, each finished before the next starts: measure, profile, fix. A fix is kept only if the benchmark shows it pays and `cargo xtask oracle-test` passes for every supported version. Every timing is taken from a `dist` build ([ADR 0031](../../adr/0031-flattened-density-evaluation.md)): under the default release profile, how the compiler split crates moved speeds by up to 1.7×.
 
 ### Phase 1: a baseline
 
@@ -60,9 +60,9 @@ Targets are set from the baseline and the profile, then written into the milesto
 - [x] Baseline for the five scenarios, recorded in Notes and in the milestone.
 - [x] `density_timing` scenario for a viewer tile, and contention between the tile workers (none from shared state).
 - [x] What lies outside terrain, and contention between the search and the map. Measured with the viewer's own timings (textures included) instead of samply: heights are 98% of the work.
-- [x] Targets written into milestone 14's exit criteria, with today's results; waiting for agreement before the criterion is ticked.
+- [x] Targets written into milestone 14's exit criteria, with today's results, and agreed.
 - [x] The fixes the profile points to, each measured before and after: sparse grids by column, partial surface-level reuse, the two-part scan from the top, 128-pixel tiles.
-- [x] ADR for any lasting decision: [ADR 0046](../adr/0046-the-viewers-search-yields-to-the-map.md), the viewer's search yields its cores to the map.
+- [x] ADR for any lasting decision: [ADR 0046](../../adr/0046-the-viewers-search-yields-to-the-map.md), the viewer's search yields its cores to the map.
 - [x] `cargo xtask viewer-timing`: the scenarios as a project command, so they can be run again.
 - [x] `cargo xtask check`, and `cargo xtask oracle-test` for every supported version after any library change (2026-10-29, after the fixes above).
 - [x] Docs: both variables and `viewer-timing` in getting-started; architecture.md's viewer row for ADR 0046; search.md for the throttle.
@@ -72,20 +72,20 @@ Targets are set from the baseline and the profile, then written into the milesto
 - `cargo xtask bench` before and after each fix, from the same commit's dist build, numbers in Notes.
 - The viewer's timings for the five scenarios, before and after, against the targets.
 - `cargo xtask oracle-test` for every supported version after any change to the library or the crates below it: a faster answer that differs from the game's is a failure.
-- Existing tests: tiles assembled into a view equal the view rendered at once ([render.md](../specs/render.md#testing)), and the viewer's pool computes what the library does.
+- Existing tests: tiles assembled into a view equal the view rendered at once ([render.md](../../specs/render.md#testing)), and the viewer's pool computes what the library does.
 
 ## Durable outputs
 
 - [x] The benchmark lines stay in `bench.rs`.
-- [x] Any ADR the fixes need: [0046](../adr/0046-the-viewers-search-yields-to-the-map.md).
-- [x] [render.md](../specs/render.md) or [terrain.md](../specs/terrain.md), if a fix changes what they say about how results are computed (not what they are). Also [density-functions.md](../specs/density-functions.md), for the y alignment.
-- [x] [architecture.md](../architecture.md): the viewer's row, if scheduling changes.
+- [x] Any ADR the fixes need: [0046](../../adr/0046-the-viewers-search-yields-to-the-map.md).
+- [x] [render.md](../../specs/render.md) or [terrain.md](../../specs/terrain.md), if a fix changes what they say about how results are computed (not what they are). Also [density-functions.md](../../specs/density-functions.md), for the y alignment.
+- [x] [architecture.md](../../architecture.md): the viewer's row, if scheduling changes.
 
 ## Notes
 
 Decisions, surprises and dead ends, newest first.
 
-- 2026-10-29: the search and the map. A search in another process barely slows the map (scenario 5: 9.3 s against 8.5 s), but in one process the cores are shared evenly: 48 tiles of heights on 15 workers take 8.8 s alone, 10.3 s beside a 4-thread search, 11.7 s beside 8, 16.2 s beside 15. A `SearchThrottle` now limits a running search's threads at work, taken up per batch of 16 seeds, and the viewer sets it to one while tiles are pending ([ADR 0046](../adr/0046-the-viewers-search-yields-to-the-map.md)). Throttled, the 15-thread search leaves the tiles at 9.05 s (8.44 s alone that run) and still evaluates seeds, 44,000 in that time against 322,000 unthrottled. An in-viewer search can't be started without a click, so the scenarios don't measure that case directly.
+- 2026-10-29: the search and the map. A search in another process barely slows the map (scenario 5: 9.3 s against 8.5 s), but in one process the cores are shared evenly: 48 tiles of heights on 15 workers take 8.8 s alone, 10.3 s beside a 4-thread search, 11.7 s beside 8, 16.2 s beside 15. A `SearchThrottle` now limits a running search's threads at work, taken up per batch of 16 seeds, and the viewer sets it to one while tiles are pending ([ADR 0046](../../adr/0046-the-viewers-search-yields-to-the-map.md)). Throttled, the 15-thread search leaves the tiles at 9.05 s (8.44 s alone that run) and still evaluates seeds, 44,000 in that time against 322,000 unthrottled. An in-viewer search can't be started without a click, so the scenarios don't measure that case directly.
 - 2026-10-29: textures on the UI thread take 0.2 to 0.5 ms each, so nothing outside the tile jobs matters yet; samply wasn't needed. The targets were set after the fixes, not before phase 3 as planned, since the profile pointed at clear fixes first.
 - 2026-10-29: the viewer's tiles are 128 pixels, not 256. With 256, 16 tiles filled a 1:4 window on 15 workers, so the last ran alone in a second round. At 128 the window is 48 jobs of a quarter the work, and less of it lies outside the window. The cache holds 1024 tiles, the same memory. Scenarios after the library fixes, at 256 and then at 128:
 

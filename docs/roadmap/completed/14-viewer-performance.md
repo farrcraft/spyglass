@@ -1,8 +1,8 @@
 # 14. Viewer performance
 
-- Status: In progress
-- Depends on: [13](completed/13-viewer-redesign.md)
-- Plans: [m14-viewer-performance](../plans/m14-viewer-performance.md)
+- Status: Completed
+- Depends on: [13](13-viewer-redesign.md)
+- Plans: [m14-viewer-performance](../../plans/completed/m14-viewer-performance.md)
 
 ## Goal
 
@@ -31,12 +31,12 @@ Not in scope:
 ## Exit criteria
 
 - [x] The baseline is recorded: the new benchmark lines and the viewer's time to a full window, at 1:4 with and without biomes at the surface, on the dev machine.
-- [ ] Targets for those numbers are set from the baseline and the profile, written here, and met.
+- [x] Targets for those numbers are set from the baseline and the profile, written here, and met.
   - A cold 1:4 window, biomes at y 64 (`cargo xtask viewer-timing 1`): full in 0.5 s or less.
   - A cold 1:4 window, biomes at the surface (scenarios 2 and 3): full in 12 s or less, half the baseline.
   - The same while the viewer searches on every other core: no more than 15% slower than without.
   - `cargo xtask bench`, biomes at the surface on one 1:4 tile in a new session: 6.5 s or less.
-- [ ] `cargo xtask oracle-test` passes for every supported version, as well as `cargo xtask check`.
+- [x] `cargo xtask oracle-test` passes for every supported version, as well as `cargo xtask check`.
 
 ## Baseline
 
@@ -54,7 +54,7 @@ On the dev machine (Ryzen 7 5800X, 8 cores, 16 threads), 26.3, a `dist` build, 2
 
 ## Results
 
-The same machine and settings, 2026-10-29, after the fixes ([the plan](../plans/m14-viewer-performance.md) has each one's numbers). Runs vary by up to about 20% on this machine.
+The same machine and settings, 2026-10-29, after the fixes ([the plan](../../plans/completed/m14-viewer-performance.md) has each one's numbers). Runs vary by up to about 20% on this machine.
 
 | Scenario                      | Baseline | Now            |
 | ----------------------------- | -------- | -------------- |

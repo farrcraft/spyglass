@@ -1,9 +1,9 @@
 # m13. Viewer redesign
 
-- Status: In progress
-- Milestone: [13. Viewer redesign](../roadmap/13-viewer-redesign.md)
+- Status: Completed
+- Milestone: [13. Viewer redesign](../../roadmap/completed/13-viewer-redesign.md)
 - Started: 2026-10-29
-- Completed:
+- Completed: 2026-10-29
 
 ## Goal
 
@@ -28,7 +28,7 @@ All of this is in `spyglass-viewer`, except where noted. The layout is egui's ow
   - **Locate:** today's `locate_section`, as a tab that shows a count when there are hits.
 - **Map overlays** (`app/map.rs`): go to (focused with `G`), the zoom stack showing `1:N`, centre on spawn, a scale bar with a round number of blocks, and a legend of the structures and highlighted biomes marked. For an opened search hit, a card listing its constraints, met or not, and each `within` radius drawn as a dashed circle.
 - **Status bar:** `x, y, z`, the chunk, the biome's swatch and name, and "Drawing N tiles" beside the spinner.
-- **Icons** (`icons.rs`, new, ADRs [0044](../adr/0044-the-viewer-draws-its-own-map-icons.md) and [0045](../adr/0045-viewer-icons-are-svgs.md)): one SVG per structure family in `crates/spyglass-viewer/icons/`, drawn by `egui_extras`.
+- **Icons** (`icons.rs`, new, ADRs [0044](../../adr/0044-the-viewer-draws-its-own-map-icons.md) and [0045](../../adr/0045-viewer-icons-are-svgs.md)): one SVG per structure family in `crates/spyglass-viewer/icons/`, drawn by `egui_extras`.
   - Families are keyed by structure id. Variants share a glyph (the five villages, seven ruined portals, both ocean ruins, both shipwrecks, both mineshafts, the abandoned camps); fortress and bastion get their own.
   - The badge is the set's `structure_colour`, the glyph dark or white for contrast. A candidate is the hollow badge with a lighter tint of the colour.
   - Three sizes by zoom: dots at 1:64 and out, small badges at 1:16 to 1:32, full badges at 1:8 and in.
@@ -38,10 +38,10 @@ All of this is in `spyglass-viewer`, except where noted. The layout is egui's ow
   - Each frame queues, before the visible tiles, the ancestor four scales coarser of each one not yet cached. At 1:4 that's 1:16, which is past `MAX_TERRAIN_SCALE`, so it has 16 times fewer pixels and needs no heights.
   - The existing fallback already scales an ancestor up until the tile is ready. It reaches 8× today, so 4× is covered.
   - Where even the coarse tile isn't ready, a faint diagonal hatch stands in for the flat background, so the gap reads as unfinished. Not a checker: the ties layer already means "tied biomes" by one.
-- **Names:** the status bar, tooltips and lists show `spyglass::display_name`, the id in words ("Cherry grove"), since bundles have no language files ([render.md](../specs/render.md#colours)).
+- **Names:** the status bar, tooltips and lists show `spyglass::display_name`, the id in words ("Cherry grove"), since bundles have no language files ([render.md](../../specs/render.md#colours)).
 - **Library additions:** `World::structure_set`, the set whose colour a structure's markers are, and `World::structure_generates`, so the lists show only what can generate in the dimension shown.
 
-Both decisions the icons needed are ADRs: the viewer draws them, and exports keep the spec's markers ([0044](../adr/0044-the-viewer-draws-its-own-map-icons.md)); they're SVGs drawn by `egui_extras` ([0045](../adr/0045-viewer-icons-are-svgs.md)).
+Both decisions the icons needed are ADRs: the viewer draws them, and exports keep the spec's markers ([0044](../../adr/0044-the-viewer-draws-its-own-map-icons.md)); they're SVGs drawn by `egui_extras` ([0045](../../adr/0045-viewer-icons-are-svgs.md)).
 
 ## Tasks
 
@@ -60,7 +60,8 @@ Both decisions the icons needed are ADRs: the viewer draws them, and exports kee
 - [x] Icons: every family in each local bundle (26.2, 26.3, 26.4-snapshot-5 and -6), certain and candidate, three zoom sizes, unknown-set fallback.
 - [x] Hover and selection halo and label; locate pins; search match rings.
 - [x] Coarse-first loading and the hatch placeholder.
-- [ ] New screenshots of the before board's states, compared with it by the owner.
+- [x] New screenshots of the before board's states, compared with it by the owner (the canvas's "After" board).
+- [x] The End's void drawn wherever heights are, found in review.
 - [x] `cargo xtask check`.
 - [x] `cargo xtask oracle-test`: passed for 26.2, 26.3, 26.4-snapshot-5, 26.4-snapshot-6 and 26.4-snapshot-6+testpack.
 - [x] Docs: architecture.md's viewer row, README screenshots, CHANGELOG.
@@ -79,11 +80,13 @@ Both decisions the icons needed are ADRs: the viewer draws them, and exports kee
 ## Durable outputs
 
 - [x] The two ADRs.
-- [x] [render.md](../specs/render.md#layers): the viewer draws its own icons at the markers' pixels; `display_name` under Colours.
-- [x] [architecture.md](../architecture.md): the viewer's row.
+- [x] [render.md](../../specs/render.md#layers): the viewer draws its own icons at the markers' pixels; `display_name` under Colours.
+- [x] [architecture.md](../../architecture.md): the viewer's row.
 
 ## Notes
 
+- 2026-10-29: completed. The owner checked the new screenshots against the before board.
+- 2026-10-29: in review, the End looked wrong: a solid disc to 1,024 blocks with islands right after it. The biomes were right (the game gives `the_end` to every column that close) and so were the heights; nothing drew the void. [render.md](../../specs/render.md#layers) gained a Void step: wherever heights are drawn, a column with no blocks is `#0b0b12`, in exports too. Its test needs a fixture without the Overworld's lava below y −54, which would fill an empty column.
 - 2026-10-29: the first `oracle-test` run failed only on the test-pack bundle: its `spyglass_test:village` got the generic icon, which is the intended fallback for another namespace. The family test now checks only `minecraft:` structures.
 - 2026-10-29: with coarse-first loading, a cold start at 1:4 with biomes at the surface fills the window in about 5 seconds; the detailed tiles follow. While a search runs, it takes every core but one, so tiles and markers wait until it ends. That's milestone 14's to look at.
 - 2026-10-29: egui's default fonts have no ★, ⏵ or ⌖, and draw ✔, 📋 and 🎲 from the colour emoji font, which ignores the label's colour. Controls use words ("Copy", "Random", "Settings", "Met"/"Maybe"/"No", "18 kinds") or shapes the viewer draws itself (the spawn button). Bundling Inter and JetBrains Mono was dropped: egui's fonts read well at these sizes, and it saves two font files and their licences.

@@ -250,6 +250,17 @@ impl App {
         if !terrain {
             style::hint(ui, far);
         }
+        let void_shown = terrain && (self.settings.surface || self.settings.relief);
+        if self
+            .world
+            .is_some_and(|w| w.dimension_kind() == Dimension::End)
+            && !void_shown
+        {
+            style::hint(
+                ui,
+                "The void between the End's islands shows at 1:4 or closer, with biomes at the                  surface or relief: the biome alone is the same over it.",
+            );
+        }
         ui.checkbox(&mut self.settings.ties, "Tied biome cells").on_hover_text(
             "Where the game's biome depends on lookup history, show a checker of the biomes it may give.",
         );

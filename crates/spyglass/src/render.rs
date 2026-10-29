@@ -34,6 +34,8 @@ pub const MAX_TERRAIN_SCALE: u32 = 4;
 pub const MARKER_REACH: u32 = 5;
 
 const BACKGROUND: [u8; 3] = [0x20, 0x20, 0x20];
+/// A column with no blocks, where heights are drawn: the void (`docs/specs/render.md#layers`).
+const VOID: [u8; 3] = [0x0b, 0x0b, 0x12];
 const SLIME: [u8; 3] = [0x40, 0xe0, 0x40];
 const SLIME_ALPHA: u32 = 128;
 const BLACK: [u8; 3] = [0, 0, 0];
@@ -379,6 +381,12 @@ impl HeightMap {
             .clamp(-SHADE_LIMIT, SHADE_LIMIT)
     }
 
+    /// Whether pixel `(i, j)`'s column has no blocks: its height is the level's lowest y, as an
+    /// empty column's is (`docs/specs/terrain.md`). The End's void.
+    fn is_void(&self, i: u32, j: u32) -> bool {
+        self.height([i, j]) <= self.level[0]
+    }
+
     /// The image of the heights alone: each pixel grey by its height above the level's bottom.
     pub fn elevation(&self) -> Image {
         let [min_y, height] = self.level;
@@ -519,6 +527,20 @@ impl Image {
             for i in 0..self.size[0] {
                 let shade = heights.shade(i64::from(i), i64::from(j));
                 self.set([i, j], shaded(self.pixel([i, j]), shade));
+            }
+        }
+    }
+
+    /// Draws the columns of `heights`' area that have no blocks as the void, so islands stand out
+    /// from the space around them (`docs/specs/render.md#layers`). The image must be the area's
+    /// size.
+    pub fn mark_void(&mut self, heights: &HeightMap) {
+        assert_eq!(self.size, heights.area.size, "an image of the area");
+        for j in 0..self.size[1] {
+            for i in 0..self.size[0] {
+                if heights.is_void(i, j) {
+                    self.set([i, j], VOID);
+                }
             }
         }
     }
@@ -774,6 +796,9 @@ impl Session<'_> {
         };
         if let (Some(heights), true) = (&heights, layers.relief) {
             image.shade(heights);
+        }
+        if let Some(heights) = &heights {
+            image.mark_void(heights);
         }
         image.draw_features(area, &features);
         Ok(image)

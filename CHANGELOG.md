@@ -19,6 +19,7 @@ Changes go under **Unreleased** as they're made. `cargo xtask release` turns tha
 - The viewer no longer opens a console window beside its own on Windows, and no longer tells you to run `cargo`.
 - The viewer fills the window in seconds: coarse tiles are drawn first while the detailed ones are computed, so the edges of the map no longer stay empty for half a minute with biomes at the surface. What isn't drawn yet is hatched.
 - The viewer lists only the structures that can generate in the dimension shown.
+- **The End's void shows:** with relief or biomes at the surface, columns with no blocks are drawn near-black, so the main island and the outer islands stand out from the space between them. The biome map alone can't show it: the game gives the same biome to everything within 1,024 blocks of the origin. This applies to exported images with those layers too ([render.md](docs/specs/render.md#layers)).
 
 ## [0.1.0] - 2026-10-29
 

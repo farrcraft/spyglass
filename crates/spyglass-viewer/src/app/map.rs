@@ -688,6 +688,10 @@ impl App {
                 {
                     image.shade(heights);
                 }
+                // As `Session::render` does wherever it has heights.
+                if let Some(heights) = &data.heights {
+                    image.mark_void(heights);
+                }
                 if style.slime_chunks {
                     image.draw_features(data.biomes.area(), &slime_features(data));
                 }

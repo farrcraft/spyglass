@@ -70,6 +70,40 @@ fn sloped_terrain() -> (String, serde_json::Value) {
     )
 }
 
+/// Noise settings with no blocks at all west of about x = −40, solid ground to the top of the
+/// noise east of about x = 40, and air for fluid: the End's islands and void, in an Overworld. A
+/// sea level below the level keeps the fluid picker's lava (below `min(−54, sea level)`) out of
+/// it too, so the empty columns are empty, as the End's are.
+fn void_terrain() -> (String, serde_json::Value) {
+    let gradient = |axis: &str, from: i32, to: i32, from_value: f64, to_value: f64| {
+        json!({"type": "minecraft:gradient", "axis": axis, "from_coordinate": from,
+            "from_value": from_value, "to_coordinate": to, "to_value": to_value})
+    };
+    let constant = |v: f64| json!({"type": "minecraft:constant", "value": v});
+    resource(
+        "worldgen/noise_settings",
+        "overworld",
+        json!({
+            "sea_level": -100,
+            "noise": {"min_y": -64, "height": 384},
+            "default_block": "minecraft:stone",
+            "default_fluid": "minecraft:air",
+            "noise_router": {
+                "final_density": {"type": "minecraft:add",
+                    "left": gradient("x", -40, 40, -1.0, 1.0),
+                    "right": gradient("y", 0, 100, 0.4, -0.4)},
+                "temperature": constant(0.0),
+                "vegetation": constant(0.0),
+                "continents": constant(0.0),
+                "erosion": "minecraft:zero",
+                "depth": 0.0,
+                "ridges": 0.0
+            },
+            "spawn_target": [{"minecraft:zero": [-1.0, 1.0]}]
+        }),
+    )
+}
+
 fn layers(world: &World, slime: bool) -> Layers {
     Layers {
         biomes: true,
@@ -201,6 +235,68 @@ fn terrain_layers_show_the_heights_at_their_corner() {
         }
     }
     assert!(lit > 3);
+}
+
+#[test]
+fn columns_with_no_blocks_are_the_void() {
+    const VOID: [u8; 3] = [0x0b, 0x0b, 0x12];
+    // The fixture's level starts at y −64, so an empty column's height is −64.
+    const BOTTOM: i32 = -64;
+    let fixture = fixtures::overworld(&[void_terrain()], false);
+    let world = World::open(fixture.path()).unwrap();
+    let session = world.session(3).unwrap();
+    for scale in [1, 4] {
+        let area = MapArea::centred_on([0, 0], [160 / scale, 4], scale, 64).unwrap();
+        let heights = session.height_map(&area).unwrap();
+        let with = [
+            Layers {
+                biomes: true,
+                relief: true,
+                ..Layers::default()
+            },
+            Layers {
+                biomes: true,
+                surface: true,
+                ..Layers::default()
+            },
+            Layers {
+                biomes: false,
+                relief: true,
+                ..Layers::default()
+            },
+        ];
+        for layers in &with {
+            let image = session.render(&area, layers).unwrap();
+            let (mut void, mut ground) = (0, 0);
+            for j in 0..area.size[1] {
+                for i in 0..area.size[0] {
+                    if heights.height([i, j]) <= BOTTOM {
+                        assert_eq!(image.pixel([i, j]), VOID, "({i}, {j}) at 1:{scale}");
+                        void += 1;
+                    } else {
+                        assert_ne!(image.pixel([i, j]), VOID, "({i}, {j}) at 1:{scale}");
+                        ground += 1;
+                    }
+                }
+            }
+            assert!(void > 0 && ground > 0, "both kinds of column at 1:{scale}");
+        }
+        // Without heights, nothing knows where the void is: the biome shows everywhere.
+        let biomes = session
+            .render(
+                &area,
+                &Layers {
+                    biomes: true,
+                    ..Layers::default()
+                },
+            )
+            .unwrap();
+        for j in 0..area.size[1] {
+            for i in 0..area.size[0] {
+                assert_ne!(biomes.pixel([i, j]), VOID);
+            }
+        }
+    }
 }
 
 #[test]

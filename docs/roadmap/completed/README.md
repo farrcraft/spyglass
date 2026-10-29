@@ -14,3 +14,6 @@ Milestones whose exit criteria are met. See [development-process.md](../../devel
 | 08  | [Nether, End and multiple versions](08-dimensions-and-versions.md)  | 2026-10-27, two criteria carried as [follow-ups](../README.md#follow-ups) |
 | 09  | [Fast density evaluation](09-fast-density.md)                       | 2026-10-28                                                                |
 | 10  | [Hardening](10-hardening.md)                                        | 2026-10-28                                                                |
+| 11  | [Releases](11-releases.md)                                          | 2026-10-29, two criteria carried as [follow-ups](../README.md#follow-ups) |
+| 12  | [First run](12-first-run.md)                                        | 2026-10-29                                                                |
+| 13  | [Viewer redesign](13-viewer-redesign.md)                            | 2026-10-29                                                                |

@@ -21,3 +21,6 @@ Plans that have been fully implemented. See [development-process.md](../../devel
 | [m08-versions](m08-versions.md)                         | 08. Nether, End and multiple versions      | 2026-10-27 |
 | [m09-fast-density](m09-fast-density.md)                 | 09. Fast density evaluation                | 2026-10-28 |
 | [m10-hardening](m10-hardening.md)                       | 10. Hardening                              | 2026-10-28 |
+| [m11-releases](m11-releases.md)                         | 11. Releases                               | 2026-10-29 |
+| [m12-first-run](m12-first-run.md)                       | 12. First run                              | 2026-10-29 |
+| [m13-viewer-redesign](m13-viewer-redesign.md)           | 13. Viewer redesign                        | 2026-10-29 |

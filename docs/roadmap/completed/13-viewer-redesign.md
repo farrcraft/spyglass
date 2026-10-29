@@ -1,8 +1,8 @@
 # 13. Viewer redesign
 
-- Status: In progress
-- Depends on: [12](completed/12-first-run.md)
-- Plans: [m13-viewer-redesign](../plans/m13-viewer-redesign.md)
+- Status: Completed
+- Depends on: [12](12-first-run.md)
+- Plans: [m13-viewer-redesign](../../plans/completed/m13-viewer-redesign.md)
 
 ## Goal
 
@@ -26,7 +26,7 @@ Not in scope:
 
 ## Exit criteria
 
-- [ ] Each of the eight problems on the design pass's "before" board is fixed, checked against new screenshots of the same states.
-- [ ] Every structure set in each supported version's bundle has an icon. A set without one, from a newer version or a pack, still gets a badge in its hashed colour.
-- [ ] Opening a seed at 1:4 with biomes at the surface, no part of the map stays flat `#202020` once its coarse tile is drawn, and the status bar says how many tiles are still drawing.
-- [ ] `cargo xtask check` passes.
+- [x] Each of the eight problems on the design pass's "before" board is fixed, checked against new screenshots of the same states.
+- [x] Every structure set in each supported version's bundle has an icon. A set without one, from a newer version or a pack, still gets a badge in its hashed colour.
+- [x] Opening a seed at 1:4 with biomes at the surface, no part of the map stays flat `#202020` once its coarse tile is drawn, and the status bar says how many tiles are still drawing.
+- [x] `cargo xtask check` passes.

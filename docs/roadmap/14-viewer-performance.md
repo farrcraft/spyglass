@@ -1,7 +1,7 @@
 # 14. Viewer performance
 
 - Status: Planned
-- Depends on: [13](13-viewer-redesign.md)
+- Depends on: [13](completed/13-viewer-redesign.md)
 - Plans: [m14-viewer-performance](../plans/m14-viewer-performance.md)
 
 ## Goal

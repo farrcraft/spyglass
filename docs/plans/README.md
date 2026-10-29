@@ -7,5 +7,6 @@ Code must not reference plans. Anything durable a plan produces belongs in a spe
 ## Active
 
 - [m13-viewer-redesign](m13-viewer-redesign.md): the viewer's layout, map controls, icons and loading.
+- [m14-viewer-performance](m14-viewer-performance.md) (draft): measure, profile, then make the map's detailed tiles arrive sooner.
 
 The follow-ups of milestones 08 and 11 ([roadmap](../roadmap/README.md#follow-ups)) need no plan of their own.

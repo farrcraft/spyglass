@@ -2,7 +2,7 @@
 
 - Status: Planned
 - Depends on: [13](13-viewer-redesign.md)
-- Plans: none yet
+- Plans: [m14-viewer-performance](../plans/m14-viewer-performance.md)
 
 ## Goal
 

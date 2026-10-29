@@ -6,9 +6,14 @@ Changes go under **Unreleased** as they're made. `cargo xtask release` turns tha
 
 ## [Unreleased]
 
+### Added
+
+- **The viewer extracts game data itself:** with no data yet, it offers a place for it, a game version and an Extract button, with no terminal. **Add a game version** in the World section extracts more later.
+- A `bundles` folder beside the programs is found by all three, from any working directory, when it exists. The viewer puts its first bundle there unless you choose another place ([bundle-format.md](docs/specs/bundle-format.md#where-bundles-are)).
+
 ### Fixed
 
-- The viewer no longer opens a console window beside its own on Windows.
+- The viewer no longer opens a console window beside its own on Windows, and no longer tells you to run `cargo`.
 
 ## [0.1.0] - 2026-10-29
 

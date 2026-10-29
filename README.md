@@ -19,7 +19,7 @@ Not affiliated with or endorsed by Mojang or Microsoft.
 - **Your existing worlds.** Point spyglass at a local world save and it reads the seed, version and world settings, then answers "where is the nearest stronghold, ancient city or mushroom island from here?" for that world, not just for theoretical seeds.
 - **All three dimensions:** Overworld, Nether and End.
 - **Library first.** Everything is a Rust library. A command-line tool (JSON output, for scripts) and the GUI are both thin front ends over the same API, so anything the GUI can show, a script can compute.
-- **Local only.** No server, no account, no telemetry. The only network access is downloading the game's own server jar from Mojang, which the extractor does once per version.
+- **Local only.** No server, no account, no telemetry. The only network access is downloading the game's own server jar from Mojang, which the extractor (or the viewer, when asked to) does once per version.
 
 ## Why
 

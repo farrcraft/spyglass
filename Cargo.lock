@@ -3638,6 +3638,7 @@ dependencies = [
  "serde",
  "serde_json",
  "spyglass",
+ "spyglass-extract",
  "spyglass-oracle",
 ]
 

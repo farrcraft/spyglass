@@ -50,7 +50,15 @@ pub fn run_reports(
     // The working directory changes, so a relative jar path would break.
     let server_jar = std::path::absolute(server_jar).map_err(io_err(server_jar))?;
     let out = work_dir.join("generated");
-    let output = Command::new(java)
+    let mut command = Command::new(java);
+    #[cfg(windows)]
+    {
+        // No console window of its own: the viewer has none for it to share (ADR 0042).
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = command
         .arg(format!("-DbundlerMainClass={MAIN_CLASS}"))
         .arg("-jar")
         .arg(&server_jar)

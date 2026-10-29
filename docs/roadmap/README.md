@@ -17,6 +17,7 @@ The milestones build toward the goals in the [README](../../README.md#goals): co
 | 09  | [Fast density evaluation](completed/09-fast-density.md)                       | Cheap terrain: density programs where they pay.                    | Completed   |
 | 10  | [Hardening](completed/10-hardening.md)                                        | Safe on hostile saves and packs; prompt stops; accurate docs.      | Completed   |
 | 11  | [Releases](11-releases.md)                                                    | Downloadable, versioned builds for Windows, Linux and macOS.       | In progress |
+| 12  | [First run](12-first-run.md)                                                  | Game data from the viewer, beside the binaries, with no terminal.  | In progress |
 
 ## Follow-ups
 

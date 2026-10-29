@@ -72,6 +72,25 @@ pub struct JavaNotFound {
     pub searched: Vec<PathBuf>,
 }
 
+impl JavaNotFound {
+    /// What to do about it, for a person: where a matching runtime comes from on this OS.
+    pub fn advice(&self) -> String {
+        let n = self.required;
+        let example = if cfg!(windows) {
+            format!("winget install EclipseAdoptium.Temurin.{n}.JRE")
+        } else if cfg!(target_os = "macos") {
+            format!("brew install --cask temurin@{n}")
+        } else {
+            format!("your distro's openjdk-{n}-jre package")
+        };
+        format!(
+            "If you play this version, starting it once in your launcher downloads a matching \
+             runtime. Otherwise install a Java {n} runtime ({example}, or Eclipse Temurin from \
+             https://adoptium.net)."
+        )
+    }
+}
+
 fn display_paths(paths: &[PathBuf]) -> String {
     paths
         .iter()

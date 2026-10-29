@@ -58,7 +58,9 @@ pub use search::{
     SearchOutcome, SearchProgress, SearchQuery, SearchStop, SeedSource,
 };
 pub use spyglass_data::build;
-pub use spyglass_data::bundle::{BUNDLES_ENV, Kind, default_bundles_dir};
+pub use spyglass_data::bundle::{
+    BUNDLES_ENV, Kind, app_bundles_dir, default_bundles_dir, user_bundles_dir,
+};
 pub use spyglass_data::dimension::Dimension;
 pub use spyglass_data::versions::{CHECKED, Checked};
 pub use spyglass_structure::LOCATE_RADIUS;

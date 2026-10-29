@@ -233,7 +233,7 @@ The extractor downloads the server jar (about 60 MB, once, into your per-user ca
 
 If no matching Java is found, the error lists every place that was searched. Install a runtime of the right major version, or point `--java` at one. Jars and bundles stay on your machine: the cache is outside the repo, and `bundles/` is gitignored.
 
-The bundles folder is `bundles/` when you run from the repo's root, since it exists there. Elsewhere it's `SPYGLASS_BUNDLES` if set, or else a folder in your per-user data folder; `--help` shows which ([bundle-format.md](specs/bundle-format.md#where-bundles-are)). The extractor, the `spyglass` command and the viewer all pick it the same way.
+The bundles folder is `bundles/` when you run from the repo's root, since it exists there. Elsewhere it's `SPYGLASS_BUNDLES` if set, else a `bundles` folder beside the programs if one exists, or else a folder in your per-user data folder; `--help` shows which ([bundle-format.md](specs/bundle-format.md#where-bundles-are)). The extractor, the `spyglass` command and the viewer all pick it the same way.
 
 ## 9. The `spyglass` command
 
@@ -348,7 +348,7 @@ Answers are listed in the game's search order, which isn't always nearest first.
 cargo run --release -p spyglass-viewer
 ```
 
-The viewer opens the newest release in the bundles folder (or the newest snapshot if there's no release) (choose another folder from the side panel) and shows seed 0. Without a bundle it says how to extract one.
+The viewer opens the newest release in the bundles folder (or the newest snapshot if there's no release) (choose another folder from the side panel) and shows seed 0. Without a bundle it offers to extract one: pick where the data goes (beside the viewer, your per-user data folder or another folder), pick a game version and press Extract. It needs Java, as the extractor does. **Add a game version** in the side panel's World section extracts more later.
 
 ![The viewer's side panel and a biome map of seed 8675309 at 8 blocks per pixel, with villages, outposts, swamp huts, temples, mansions and monuments marked](images/viewer-overworld.png)
 

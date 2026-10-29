@@ -17,6 +17,7 @@ use spyglass::{
 };
 
 use crate::export::{Export, Source, visible_area};
+use crate::extract::{self, Offer};
 use crate::locate::{self, Found, Target};
 use crate::markers::{self, Picked};
 use crate::search::{self, Match, Running, SearchSettings};
@@ -25,6 +26,7 @@ use crate::tiles::{
 };
 use crate::view::{TILE, Tile, View};
 
+mod extract_panel;
 mod map;
 mod saves;
 mod search_panel;
@@ -252,6 +254,16 @@ pub struct App {
     /// The seed of the hit last opened, and what its constraints matched.
     opened: Option<(i64, Vec<Match>)>,
     search_error: Option<String>,
+    /// Game versions that can be extracted, listed when first wanted.
+    offers: Option<Result<Vec<Offer>, String>>,
+    offering: Option<Pending<Result<Vec<Offer>, String>>>,
+    /// The version picked to extract.
+    extract_version: Option<String>,
+    extracting: Option<extract::Running>,
+    /// The last extraction's outcome.
+    extract_note: Option<Result<String, String>>,
+    /// Whether the bundles folder couldn't be created, so the per-user one is offered.
+    offer_user_folder: bool,
 }
 
 /// A search and its query.
@@ -265,10 +277,9 @@ struct SearchRun {
 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        let settings: Settings = cc
-            .storage
-            .and_then(|s| eframe::get_value(s, SETTINGS))
-            .unwrap_or_default();
+        let stored: Option<Settings> = cc.storage.and_then(|s| eframe::get_value(s, SETTINGS));
+        let first_run = stored.is_none();
+        let settings = stored.unwrap_or_default();
         let ctx = cc.egui_ctx.clone();
         let mut app = App {
             settings: Settings {
@@ -313,8 +324,23 @@ impl App {
             opening: None,
             opened: None,
             search_error: None,
+            offers: None,
+            offering: None,
+            extract_version: None,
+            extracting: None,
+            extract_note: None,
+            offer_user_folder: false,
         };
         app.scan(&cc.egui_ctx);
+        // With nothing found on a first run, bundles go beside spyglass unless the user picks
+        // another place (ADR 0043).
+        if first_run
+            && app.bundles.as_ref().is_ok_and(Vec::is_empty)
+            && let Some(dir) = spyglass::app_bundles_dir()
+        {
+            app.settings.bundles = dir;
+            app.scan(&cc.egui_ctx);
+        }
         app
     }
 
@@ -590,6 +616,7 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.poll_loading();
         self.poll_tasks(ui.ctx());
+        self.poll_extract(ui.ctx());
         egui::Panel::left("side")
             .resizable(true)
             .default_size(260.0)

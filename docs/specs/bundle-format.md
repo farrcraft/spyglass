@@ -6,13 +6,14 @@ A version bundle holds every worldgen parameter spyglass needs for one game vers
 
 ## Where bundles are
 
-Bundles sit side by side in a bundles folder, one directory per version. When no folder is given (`--bundles`, the extractor's `--out`, or the viewer's choice), `spyglass_data::bundle::default_bundles_dir()` picks it, so every front end agrees ([ADR 0039](../adr/0039-where-installed-binaries-find-bundles.md)):
+Bundles sit side by side in a bundles folder, one directory per version. When no folder is given (`--bundles`, the extractor's `--out`, or the viewer's choice), `spyglass_data::bundle::default_bundles_dir()` picks it, so every front end agrees ([ADR 0039](../adr/0039-where-installed-binaries-find-bundles.md), [ADR 0043](../adr/0043-bundles-beside-the-executables.md)):
 
 1. `SPYGLASS_BUNDLES`, if it's set and not empty.
 2. `bundles` in the working directory, if it exists. A clone run from its root uses its own `bundles/`.
-3. `bundles` in the per-user local data folder: `%LOCALAPPDATA%\spyglass\data\bundles` on Windows, `~/Library/Application Support/spyglass/bundles` on macOS, and `$XDG_DATA_HOME/spyglass/bundles` (by default `~/.local/share/spyglass/bundles`) on Linux.
+3. `bundles` in the folder of the running executable, if it exists (`app_bundles_dir()`). A release unpacked into a folder of its own keeps its bundles there.
+4. `bundles` in the per-user local data folder: `%LOCALAPPDATA%\spyglass\data\bundles` on Windows, `~/Library/Application Support/spyglass/bundles` on macOS, and `$XDG_DATA_HOME/spyglass/bundles` (by default `~/.local/share/spyglass/bundles`) on Linux (`user_bundles_dir()`).
 
-If there's no per-user folder (no home directory), it's `bundles` in the working directory. The command-line tools show the folder chosen as the default in their `--help`.
+If there's no per-user folder (no home directory), it's `bundles` in the working directory. The command-line tools show the folder chosen as the default in their `--help`. The viewer, when it finds no bundles on its first run, uses the folder beside itself (3) and offers the per-user folder (4) or any other ([ADR 0042](../adr/0042-the-viewer-extracts-bundles-itself.md)).
 
 ## Checked versions
 

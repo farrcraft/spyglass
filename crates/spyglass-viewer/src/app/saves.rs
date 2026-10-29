@@ -141,6 +141,9 @@ impl App {
                 self.scan(ui.ctx());
             }
         });
+        egui::CollapsingHeader::new("Add a game version")
+            .default_open(self.extracting.is_some())
+            .show(ui, |ui| self.extract_section(ui));
     }
 
     /// Opening a world save, and what spyglass makes of the one shown.
@@ -228,8 +231,7 @@ impl App {
             .set_directory(&self.settings.bundles)
             .pick_folder()
         {
-            self.settings.bundles = dir;
-            self.scan(ctx);
+            self.set_bundles(ctx, dir);
         }
     }
 
@@ -251,30 +253,23 @@ impl App {
         ui.heading("No game data yet");
         ui.add_space(8.0);
         ui.label(
-            "spyglass reads world generation data extracted from your own copy of the game's \
-             server, one folder (a bundle) per game version. Extract one from the spyglass \
-             repository with:",
+            "spyglass reads world generation data from your own copy of the game's server, one \
+             folder (a bundle) per game version. It can download the server from Mojang and \
+             extract a bundle for you. That needs Java.",
         );
-        ui.add_space(4.0);
-        let command = "cargo run -p spyglass-extract -- 26.3";
-        ui.horizontal(|ui| {
-            ui.code(command);
-            if ui.small_button("Copy").clicked() {
-                ui.ctx().copy_text(command.to_string());
-            }
-        });
-        ui.add_space(4.0);
-        ui.label("Use latest for the newest release. It needs Java and downloads the server jar from Mojang.");
         ui.add_space(12.0);
-        match &self.bundles {
-            Ok(_) => ui.label(format!("No bundles in {}.", self.bundles_dir().display())),
-            Err(e) => ui.colored_label(ui.visuals().error_fg_color, e),
-        };
+        ui.strong("Where to keep game data");
+        self.bundles_folder_choice(ui);
+        if let Err(e) = &self.bundles {
+            ui.colored_label(ui.visuals().error_fg_color, e);
+        }
+        ui.add_space(12.0);
+        ui.strong("Game version");
+        self.extract_section(ui);
+        ui.add_space(12.0);
         ui.horizontal(|ui| {
-            if ui.button("Choose bundles folder…").clicked() {
-                self.choose_bundles(ui.ctx());
-            }
-            if ui.button("Look again").clicked() {
+            ui.weak("Or extract with the spyglass-extract command, then");
+            if ui.small_button("Look again").clicked() {
                 self.scan(ui.ctx());
             }
         });

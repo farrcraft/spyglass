@@ -21,6 +21,7 @@ mod oracle_test;
 mod release;
 mod smoke;
 mod version_diff;
+mod viewer_timing;
 
 #[derive(Parser)]
 #[command(about = "spyglass project commands")]
@@ -100,6 +101,9 @@ enum Cmd {
     /// Report what changed between two bundles in the data spyglass reads: ids added and
     /// removed, files changed, and new or gone JSON shapes (types, fields, value kinds).
     VersionDiff(version_diff::VersionDiff),
+    /// Time the dist viewer's cold start in fixed scenarios, from settings of its own: when the
+    /// map covers the window and when it's full, and each kind of tile job's time.
+    ViewerTiming(viewer_timing::ViewerTiming),
 }
 
 fn main() -> ExitCode {
@@ -122,6 +126,7 @@ fn main() -> ExitCode {
         Cmd::ReleaseNotes(args) => release::notes(&args),
         Cmd::Smoke(args) => smoke::run(&args),
         Cmd::VersionDiff(args) => version_diff::run(&args),
+        Cmd::ViewerTiming(args) => viewer_timing::run(&args),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

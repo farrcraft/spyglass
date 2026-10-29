@@ -15,6 +15,7 @@ use evaluate::Sessions;
 pub use evaluate::{ConstraintResult, Evaluation, Feature, Outcome};
 pub use spyglass_search::{
     Hit as RankedSeed, Progress as SearchProgress, SeedSource, Stop as SearchStop,
+    Throttle as SearchThrottle,
 };
 
 use crate::{BiomeQuery, Dimension, Error, Game, Result, StructureQuery, World};
@@ -434,6 +435,9 @@ pub struct SearchOptions {
     /// Stops the search from another thread, before its next seed. [`SearchStop::stop`] still
     /// evaluates the best seeds found; [`SearchStop::stop_now`] cuts that short too.
     pub stop: SearchStop,
+    /// Limits how many of its threads work at once, from another thread while it runs, to lend
+    /// its cores to other work: [`SearchThrottle::set`]. The seeds found don't depend on it.
+    pub throttle: SearchThrottle,
 }
 
 impl Default for SearchOptions {
@@ -449,6 +453,7 @@ impl Default for SearchOptions {
             certain: false,
             confirm: false,
             stop: SearchStop::new(),
+            throttle: SearchThrottle::new(),
         }
     }
 }
@@ -563,6 +568,7 @@ fn search(
         time: options.time,
         top: options.top,
         stop: options.stop.clone(),
+        throttle: options.throttle.clone(),
     };
     let progress = spyglass_search::run(&pool, &run, accepts, check, progress)?;
     let stop = || options.stop.is_stopped_now();

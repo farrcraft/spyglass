@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use spyglass::query::{Anchor, Constraint, ConstraintKind, Importance, Place, Query, Region};
 use spyglass::{
     Dimension, Evaluation, Feature, Game, SearchOptions, SearchOutcome, SearchProgress,
-    SearchQuery, SearchStop, SeedSource,
+    SearchQuery, SearchStop, SearchThrottle, SeedSource,
 };
 
 /// The search panel's settings, kept between runs.
@@ -97,6 +97,7 @@ impl SearchSettings {
             certain: self.certain,
             confirm: self.confirm,
             stop: SearchStop::new(),
+            throttle: SearchThrottle::new(),
         })
     }
 }
@@ -109,6 +110,7 @@ pub fn threads() -> usize {
 /// A search running on its own thread.
 pub struct Running {
     stop: SearchStop,
+    throttle: SearchThrottle,
     progress: Arc<Mutex<Option<SearchProgress>>>,
     done: Receiver<Result<SearchOutcome, String>>,
 }
@@ -121,7 +123,7 @@ impl Running {
         options: SearchOptions,
         repaint: impl Fn() + Send + 'static,
     ) -> Running {
-        let stop = options.stop.clone();
+        let (stop, throttle) = (options.stop.clone(), options.throttle.clone());
         let progress = Arc::new(Mutex::new(None));
         let (send, done) = channel();
         {
@@ -138,9 +140,16 @@ impl Running {
         }
         Running {
             stop,
+            throttle,
             progress,
             done,
         }
+    }
+
+    /// Lends the search's cores to the map while it has tiles to compute, keeping one thread
+    /// searching, and gives them back when it's done (ADR 0046).
+    pub fn yield_to_map(&self, busy: bool) {
+        self.throttle.set(busy.then_some(1));
     }
 
     /// Asks the search to stop before its next seed; the best seeds found are still

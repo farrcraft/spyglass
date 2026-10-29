@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use spyglass::{
     Feature, Game, Outcome, SearchOptions, SearchOutcome, SearchProgress, SearchQuery, SearchStop,
-    SeedSource,
+    SearchThrottle, SeedSource,
 };
 
 use crate::args::Search;
@@ -47,6 +47,7 @@ pub fn run(args: &Search) -> Result<()> {
         certain: args.certain,
         confirm: args.confirm,
         stop: SearchStop::new(),
+        throttle: SearchThrottle::new(),
     };
 
     {

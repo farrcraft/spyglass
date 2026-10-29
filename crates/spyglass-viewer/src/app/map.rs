@@ -701,32 +701,38 @@ impl App {
             && *made < TEXTURES_PER_FRAME
             && let Ok(data) = &entry.data
         {
-            let highlight: Vec<BiomeQuery> = style
-                .highlight
-                .iter()
-                .filter_map(|b| world.biome_query(b).ok())
-                .collect();
-            if let Ok(mut image) = data.biomes.colorize(world, style.ties, &highlight) {
-                if style.relief
-                    && let Some(heights) = &data.heights
-                {
-                    image.shade(heights);
-                }
-                // As `Session::render` does wherever it has heights.
-                if let Some(heights) = &data.heights {
-                    image.mark_void(heights);
-                }
-                if style.slime_chunks {
-                    image.draw_features(data.biomes.area(), &slime_features(data));
-                }
-                let texture = ctx.load_texture(
-                    format!("{key:?}"),
-                    color_image(&image),
-                    TextureOptions::NEAREST,
-                );
-                entry.texture = Some((style.clone(), texture));
-                *made += 1;
-            }
+            // On the UI thread: what every new tile costs the frame it's drawn in.
+            timing::job(
+                || "texture".to_string(),
+                || {
+                    let highlight: Vec<BiomeQuery> = style
+                        .highlight
+                        .iter()
+                        .filter_map(|b| world.biome_query(b).ok())
+                        .collect();
+                    if let Ok(mut image) = data.biomes.colorize(world, style.ties, &highlight) {
+                        if style.relief
+                            && let Some(heights) = &data.heights
+                        {
+                            image.shade(heights);
+                        }
+                        // As `Session::render` does wherever it has heights.
+                        if let Some(heights) = &data.heights {
+                            image.mark_void(heights);
+                        }
+                        if style.slime_chunks {
+                            image.draw_features(data.biomes.area(), &slime_features(data));
+                        }
+                        let texture = ctx.load_texture(
+                            format!("{key:?}"),
+                            color_image(&image),
+                            TextureOptions::NEAREST,
+                        );
+                        entry.texture = Some((style.clone(), texture));
+                        *made += 1;
+                    }
+                },
+            );
         }
         entry.texture.as_ref().map(|(_, t)| t.id())
     }

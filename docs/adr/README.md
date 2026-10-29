@@ -51,3 +51,4 @@ Start from [template.md](template.md). Files are named `NNNN-kebab-case-title.md
 | [0043](0043-bundles-beside-the-executables.md)                | Bundles beside the executables                                            | Accepted                                                             |
 | [0044](0044-the-viewer-draws-its-own-map-icons.md)            | The viewer draws its own map icons                                        | Accepted                                                             |
 | [0045](0045-viewer-icons-are-svgs.md)                         | The viewer's icons are SVGs, drawn by egui_extras                         | Accepted                                                             |
+| [0046](0046-the-viewers-search-yields-to-the-map.md)          | The viewer's search yields its cores to the map                           | Proposed                                                             |

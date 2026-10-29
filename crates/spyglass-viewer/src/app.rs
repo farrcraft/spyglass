@@ -506,6 +506,9 @@ impl App {
             run.running = None;
             run.outcome = Some(outcome);
         }
+        if let Some(running) = self.search_run.as_ref().and_then(|r| r.running.as_ref()) {
+            running.yield_to_map(self.pool.pending() > 0);
+        }
         if let Some(result) = self.opening.as_ref().and_then(Pending::poll) {
             self.opening = None;
             match result.unwrap_or_else(|()| Err("evaluating the seed failed".to_string())) {

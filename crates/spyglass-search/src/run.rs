@@ -3,7 +3,7 @@
 
 use std::ops::ControlFlow;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use rayon::prelude::*;
@@ -63,6 +63,84 @@ impl PartialEq for Stop {
 }
 
 impl Eq for Stop {}
+
+/// Limits how many of a search's threads work at once, from any thread, while it runs: so a
+/// program can lend the search's cores to other work for a while and give them back. Clones share
+/// one limit. The runner takes it up before each batch of seeds, so a new limit holds within a
+/// batch's checks. Which seeds are reported doesn't depend on it (ADR 0021); only how fast.
+#[derive(Debug, Clone, Default)]
+pub struct Throttle(Arc<ThrottleState>);
+
+#[derive(Debug, Default)]
+struct ThrottleState {
+    /// The most threads at work; 0 for no limit.
+    limit: AtomicUsize,
+    /// Threads at work now.
+    active: AtomicUsize,
+}
+
+/// How long a thread held back by a [`Throttle`] waits before looking again.
+const THROTTLED_WAIT: Duration = Duration::from_millis(2);
+
+impl Throttle {
+    /// A handle with no limit yet.
+    pub fn new() -> Self {
+        Throttle::default()
+    }
+
+    /// At most `threads` at work at once (at least one), from each thread's next batch;
+    /// `None` lifts the limit.
+    pub fn set(&self, threads: Option<usize>) {
+        let limit = threads.map_or(0, |n| n.max(1));
+        self.0.limit.store(limit, Ordering::Relaxed);
+    }
+
+    /// The limit, if there is one.
+    pub fn limit(&self) -> Option<usize> {
+        match self.0.limit.load(Ordering::Relaxed) {
+            0 => None,
+            n => Some(n),
+        }
+    }
+
+    /// Waits until this thread may work, or until `stop` is asked; held until dropped.
+    fn enter(&self, stop: &Stop) -> Working<'_> {
+        let state = &*self.0;
+        loop {
+            let active = state.active.load(Ordering::Relaxed);
+            let limit = state.limit.load(Ordering::Relaxed);
+            if (limit == 0 || active < limit || stop.is_stopped())
+                && state
+                    .active
+                    .compare_exchange_weak(active, active + 1, Ordering::Relaxed, Ordering::Relaxed)
+                    .is_ok()
+            {
+                return Working(state);
+            }
+            if limit != 0 && active >= limit {
+                std::thread::sleep(THROTTLED_WAIT);
+            }
+        }
+    }
+}
+
+/// A thread a [`Throttle`] counts as at work.
+struct Working<'a>(&'a ThrottleState);
+
+impl Drop for Working<'_> {
+    fn drop(&mut self) {
+        self.0.active.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+/// Two handles are equal when they share one limit.
+impl PartialEq for Throttle {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for Throttle {}
 
 /// The thread pool a search runs on: `threads` workers, or one per core.
 pub fn pool(threads: Option<usize>) -> Result<rayon::ThreadPool, rayon::ThreadPoolBuildError> {
@@ -137,6 +215,8 @@ pub struct RunOptions {
     pub top: usize,
     /// Stops the search when asked, part way through a round.
     pub stop: Stop,
+    /// How many threads may work at once, changed while it runs.
+    pub throttle: Throttle,
 }
 
 /// A reported seed.
@@ -318,6 +398,7 @@ pub fn run<E: Send>(
             batches
                 .par_iter()
                 .map(|&(a, b)| {
+                    let _working = options.throttle.enter(&options.stop);
                     let mut batch = Batch::default();
                     for index in a..b {
                         if cut(index) {
@@ -394,6 +475,7 @@ mod tests {
             time: None,
             top,
             stop: Stop::new(),
+            throttle: Throttle::new(),
         }
     }
 
@@ -442,6 +524,32 @@ mod tests {
             }
         }
         top
+    }
+
+    #[test]
+    fn a_throttle_limits_the_threads_at_work_but_not_the_results() {
+        let (at_work, most) = (AtomicUsize::new(0), AtomicUsize::new(0));
+        let check = |seed, threshold| {
+            let now = at_work.fetch_add(1, Ordering::SeqCst) + 1;
+            most.fetch_max(now, Ordering::SeqCst);
+            std::thread::sleep(Duration::from_micros(50));
+            at_work.fetch_sub(1, Ordering::SeqCst);
+            score(seed, threshold)
+        };
+        let source = SeedSource::Range {
+            first: 0,
+            last: 5000,
+        };
+        let o = options(source.clone(), 0, None, 10);
+        o.throttle.set(Some(1));
+        let out = run(&four(), &o, |_| true, check, |_| ControlFlow::Continue(())).unwrap();
+        assert_eq!(most.load(Ordering::SeqCst), 1);
+        assert_eq!(out.top, brute_force(&source, 0, 5001, 10));
+        // Lifted, the pool's threads work together again.
+        o.throttle.set(None);
+        assert_eq!(o.throttle.limit(), None);
+        run(&four(), &o, |_| true, check, |_| ControlFlow::Continue(())).unwrap();
+        assert!(most.load(Ordering::SeqCst) > 1);
     }
 
     #[test]

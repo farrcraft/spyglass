@@ -55,7 +55,7 @@ pub use save::{
 };
 pub use search::{
     ConstraintResult, Evaluation, Feature, Outcome, RankedSeed, SearchHit, SearchOptions,
-    SearchOutcome, SearchProgress, SearchQuery, SearchStop, SeedSource,
+    SearchOutcome, SearchProgress, SearchQuery, SearchStop, SearchThrottle, SeedSource,
 };
 pub use spyglass_data::build;
 pub use spyglass_data::bundle::{

@@ -1,6 +1,6 @@
 //! The viewer's own timings, for measuring it: with `SPYGLASS_VIEWER_TIMING=1`, each job's
-//! compute time and how long the map takes to fill the window go to stderr. Without it, nothing
-//! is measured or written.
+//! compute time, each texture's on the UI thread, and how long the map takes to fill the window
+//! go to stderr. Without it, nothing is measured or written.
 
 use std::collections::BTreeMap;
 use std::collections::hash_map::DefaultHasher;

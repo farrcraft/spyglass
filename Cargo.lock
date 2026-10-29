@@ -3479,7 +3479,7 @@ dependencies = [
 
 [[package]]
 name = "spyglass"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "png",
  "serde_json",
@@ -3496,7 +3496,7 @@ dependencies = [
 
 [[package]]
 name = "spyglass-biome"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "serde_json",
  "spyglass-data",
@@ -3508,7 +3508,7 @@ dependencies = [
 
 [[package]]
 name = "spyglass-cli"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -3523,7 +3523,7 @@ dependencies = [
 
 [[package]]
 name = "spyglass-data"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "directories",
  "flate2",
@@ -3536,7 +3536,7 @@ dependencies = [
 
 [[package]]
 name = "spyglass-density"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "serde_json",
  "spyglass-data",
@@ -3548,7 +3548,7 @@ dependencies = [
 
 [[package]]
 name = "spyglass-extract"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -3564,7 +3564,7 @@ dependencies = [
 
 [[package]]
 name = "spyglass-noise"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "serde_json",
  "spyglass-oracle",
@@ -3574,7 +3574,7 @@ dependencies = [
 
 [[package]]
 name = "spyglass-oracle"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3585,7 +3585,7 @@ dependencies = [
 
 [[package]]
 name = "spyglass-rng"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "md-5",
  "spyglass-oracle",
@@ -3593,7 +3593,7 @@ dependencies = [
 
 [[package]]
 name = "spyglass-search"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "rayon",
  "spyglass-data",
@@ -3603,7 +3603,7 @@ dependencies = [
 
 [[package]]
 name = "spyglass-structure"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "rayon",
  "serde_json",
@@ -3618,7 +3618,7 @@ dependencies = [
 
 [[package]]
 name = "spyglass-terrain"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "rayon",
  "serde_json",
@@ -3631,7 +3631,7 @@ dependencies = [
 
 [[package]]
 name = "spyglass-viewer"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "eframe",
  "rfd",
@@ -3643,7 +3643,7 @@ dependencies = [
 
 [[package]]
 name = "spyglass-world"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "directories",
  "flate2",
@@ -4927,7 +4927,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",

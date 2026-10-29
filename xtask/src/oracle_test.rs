@@ -210,6 +210,11 @@ const TESTS: &[(&str, &str, &[Input])] = &[
     ),
     ("spyglass", "each_dimension_opens", &[Input::Bundle]),
     ("spyglass", "a_game_spans_the_dimensions", &[Input::Bundle]),
+    (
+        "spyglass-viewer",
+        "icons::tests::every_bundled_structure_has_a_family",
+        &[Input::Bundle],
+    ),
     ("spyglass-cli", "structures", &[Input::Extracted]),
     ("spyglass-cli", "jigsaw_bounds", &[Input::Extracted]),
     ("spyglass-cli", "biomes", &[Input::Extracted]),

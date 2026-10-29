@@ -48,6 +48,29 @@ impl Tile {
     }
 }
 
+/// How much coarser the stand-in tiles drawn first are: four times the scale, so one covers 16
+/// of the view's tiles and, past `MAX_TERRAIN_SCALE`, needs no heights.
+pub const COARSE: u32 = 4;
+
+/// The coarser tiles containing `tiles`, each once, in the order first needed: what to draw
+/// first so the view fills quickly. None if the view is too coarse to have them.
+pub fn coarse(tiles: &[Tile]) -> Vec<Tile> {
+    let mut out: Vec<Tile> = Vec::new();
+    for &tile in tiles {
+        let Some((parent, _)) = tile.parent() else {
+            continue;
+        };
+        let Some((grandparent, _)) = parent.parent() else {
+            continue;
+        };
+        debug_assert_eq!(grandparent.scale, tile.scale * COARSE);
+        if !out.contains(&grandparent) {
+            out.push(grandparent);
+        }
+    }
+    out
+}
+
 /// The map's view.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct View {
@@ -267,6 +290,40 @@ mod tests {
             .area(64),
             None
         );
+    }
+
+    #[test]
+    fn coarse_tiles_contain_the_view_s_tiles() {
+        let view = View {
+            centre: [100.0, -3000.0],
+            scale: 4,
+            y: 64,
+        };
+        let tiles = view.tiles([1200.0, 800.0]);
+        let coarse = coarse(&tiles);
+        // Each coarse tile covers 4 × 4 of the view's, so far fewer are needed.
+        assert!(!coarse.is_empty() && coarse.len() * 4 <= tiles.len() + 8);
+        for tile in &tiles {
+            let side = |t: &Tile| i64::from(TILE) * i64::from(t.scale);
+            let inside = coarse.iter().filter(|c| {
+                [(tile.x, c.x), (tile.z, c.z)].iter().all(|&(t, c)| {
+                    let start = i64::from(t) * side(tile);
+                    let outer = i64::from(c) * side(&coarse[0]);
+                    (outer..outer + side(&coarse[0])).contains(&start)
+                })
+            });
+            assert_eq!(inside.count(), 1, "{tile:?}");
+        }
+        assert!(coarse.iter().all(|c| c.scale == 4 * COARSE));
+        // Nearest first, as the view's tiles are.
+        assert_eq!(coarse[0], super::coarse(&tiles[..1])[0]);
+        // No coarser tiles than the largest scale.
+        let far = Tile {
+            scale: MAX_SCALE,
+            x: 0,
+            z: 0,
+        };
+        assert!(super::coarse(&[far]).is_empty());
     }
 
     #[test]

@@ -132,9 +132,35 @@ pub fn structure_colour(set: &str) -> [u8; 3] {
     find(STRUCTURE_SETS, set).unwrap_or_else(|| hashed(set))
 }
 
+/// An id as a front end shows it (`docs/specs/render.md#colours`): `minecraft:cherry_grove` is
+/// "Cherry grove", and another namespace follows in brackets, `mod:ash_wood` "Ash wood (mod)".
+/// Bundles have no language files, so this is the id, not the game's translated name.
+pub fn display_name(id: &str) -> String {
+    let (namespace, path) = id.split_once(':').unwrap_or(("minecraft", id));
+    let mut chars = path.chars().map(|c| if c == '_' { ' ' } else { c });
+    let Some(first) = chars.next() else {
+        return id.to_string();
+    };
+    let name: String = first.to_uppercase().chain(chars).collect();
+    if namespace == "minecraft" {
+        name
+    } else {
+        format!("{name} ({namespace})")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn names_are_the_id_in_words() {
+        assert_eq!(display_name("minecraft:cherry_grove"), "Cherry grove");
+        assert_eq!(display_name("swamp"), "Swamp");
+        assert_eq!(display_name("mod:ash_wood"), "Ash wood (mod)");
+        assert_eq!(display_name("minecraft:"), "minecraft:");
+        assert_eq!(display_name(""), "");
+    }
 
     #[test]
     fn known_ids_use_the_table_and_others_hash() {

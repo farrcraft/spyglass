@@ -48,6 +48,8 @@ anyhow = "1.0.104"
 directories = "6.0.0"
 # The viewer's GUI (ADR 0019): egui on wgpu, with egui's own settings persistence.
 eframe = { version = "0.37.0", features = ["persistence"] }
+# The viewer's map icons are SVGs, rasterised by egui_extras' resvg loader (ADR 0045).
+egui_extras = { version = "0.37.0", default-features = false, features = ["svg"] }
 flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs"] }
 md-5 = "0.11.0"
 png = "0.18.1"

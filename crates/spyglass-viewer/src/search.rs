@@ -9,7 +9,7 @@ use std::thread;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use spyglass::query::{Anchor, ConstraintKind, Place, Query, Region};
+use spyglass::query::{Anchor, Constraint, ConstraintKind, Importance, Place, Query, Region};
 use spyglass::{
     Dimension, Evaluation, Feature, Game, SearchOptions, SearchOutcome, SearchProgress,
     SearchQuery, SearchStop, SeedSource,
@@ -238,36 +238,80 @@ pub fn structures(evaluation: &Evaluation) -> Vec<String> {
     ids
 }
 
-/// Where to centre the map on a hit: the first constraint's place, at `spawn` for a spawn
-/// anchor (the spawn in the first constraint's dimension).
-pub fn focus(query: &Query, spawn: [i32; 2]) -> [i32; 2] {
-    let centre = |place: &Place| match *place {
-        Place::Within {
-            anchor: Anchor::Point(p),
-            ..
-        } => p,
-        Place::Within {
-            anchor: Anchor::Spawn,
-            ..
-        } => spawn,
-        Place::Box { min, max } => {
-            [0, 1].map(|i| ((i64::from(min[i]) + i64::from(max[i])) / 2) as i32)
-        }
-    };
-    let Some(first) = query.constraints().first() else {
-        return spawn;
-    };
-    match &first.kind {
+/// The place a constraint is judged in: its disc or box.
+fn place(kind: &ConstraintKind) -> Place {
+    match kind {
         ConstraintKind::Structures { region, .. } | ConstraintKind::Slime { region, .. } => {
             match region {
-                Region::Place(p) | Region::NearStructure { place: p, .. } => centre(p),
+                Region::Place(p) | Region::NearStructure { place: p, .. } => *p,
             }
         }
         ConstraintKind::Cluster { place, .. }
         | ConstraintKind::Biome { place, .. }
         | ConstraintKind::Coverage { place, .. }
-        | ConstraintKind::Spawn { place } => centre(place),
+        | ConstraintKind::Spawn { place } => *place,
     }
+}
+
+/// Where a place is on the map, with `spawn` for a spawn anchor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Area {
+    Disc { centre: [i32; 2], radius: u32 },
+    Box { min: [i32; 2], max: [i32; 2] },
+}
+
+impl Area {
+    fn of(place: Place, spawn: [i32; 2]) -> Area {
+        match place {
+            Place::Within { radius, anchor } => Area::Disc {
+                centre: match anchor {
+                    Anchor::Point(p) => p,
+                    Anchor::Spawn => spawn,
+                },
+                radius,
+            },
+            Place::Box { min, max } => Area::Box { min, max },
+        }
+    }
+
+    fn centre(self) -> [i32; 2] {
+        match self {
+            Area::Disc { centre, .. } => centre,
+            Area::Box { min, max } => {
+                [0, 1].map(|i| ((i64::from(min[i]) + i64::from(max[i])) / 2) as i32)
+            }
+        }
+    }
+}
+
+/// A constraint's area, with `spawn` for a spawn anchor.
+pub fn area_of(constraint: &Constraint, spawn: [i32; 2]) -> Area {
+    Area::of(place(&constraint.kind), spawn)
+}
+
+/// Each constraint's area, in the query's order, with `spawn` for a spawn anchor.
+pub fn areas(query: &Query, spawn: [i32; 2]) -> Vec<Area> {
+    query
+        .constraints()
+        .iter()
+        .map(|c| area_of(c, spawn))
+        .collect()
+}
+
+/// Where to centre the map on a hit: the first constraint's place, at `spawn` for a spawn
+/// anchor (the spawn in the first constraint's dimension).
+pub fn focus(query: &Query, spawn: [i32; 2]) -> [i32; 2] {
+    areas(query, spawn).first().map_or(spawn, |a| a.centre())
+}
+
+/// How many of a query's constraints are required, and how many preferred.
+pub fn counts(query: &Query) -> (usize, usize) {
+    let required = query
+        .constraints()
+        .iter()
+        .filter(|c| c.importance == Importance::Required)
+        .count();
+    (required, query.constraints().len() - required)
 }
 
 #[cfg(test)]
@@ -370,5 +414,27 @@ mod tests {
             [300, 300]
         );
         assert_eq!(focus_of("prefer spawn within 50 of 1,2"), [1, 2]);
+    }
+
+    #[test]
+    fn areas_follow_the_constraints() {
+        let query = Query::parse(
+            "require igloo within 600 of spawn\nprefer biome plains in -10,0 to 20,-31",
+        )
+        .unwrap();
+        assert_eq!(
+            areas(&query, [7, 9]),
+            [
+                Area::Disc {
+                    centre: [7, 9],
+                    radius: 600
+                },
+                Area::Box {
+                    min: [-10, -31],
+                    max: [20, 0]
+                }
+            ]
+        );
+        assert_eq!(counts(&query), (1, 1));
     }
 }

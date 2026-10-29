@@ -1,15 +1,19 @@
-//! Structure and spawn markers drawn over the map, the same shapes and places as the library's
-//! `Image::draw_features` (`docs/specs/render.md#layers`): one tile pixel is one point, and a
-//! marker's centre is the pixel `floor(block / scale)` on the world-aligned grid.
+//! What's drawn over the map: structure icons, the spawn, locate pins and search rings, and
+//! jigsaw bounds. Markers sit where the library's `Image::draw_features` puts its own
+//! (`docs/specs/render.md#layers`): one tile pixel is one point, and a marker's centre is the
+//! pixel `floor(block / scale)` on the world-aligned grid. Their shapes are the viewer's own
+//! (ADR 0044), in the library's set colours.
 
-use eframe::egui::{self, Color32, Painter, Pos2, Rect, Stroke, Vec2};
+use eframe::egui::{
+    self, Align2, Color32, CornerRadius, FontId, Painter, Pos2, Rect, Shape, Stroke, StrokeKind,
+    Vec2,
+};
 use spyglass::{SpawnOrigin, StructureStart, structure_colour};
 
+use crate::icons;
 use crate::locate::Hit;
+use crate::style;
 use crate::view::View;
-
-/// How close, in points, the pointer must be to a marker's centre to pick it.
-const PICK: f32 = 6.0;
 
 /// The screen position of the centre of the pixel containing `block`.
 pub fn pixel_centre(view: &View, map_centre: Pos2, block: [i32; 2]) -> Pos2 {
@@ -19,37 +23,115 @@ pub fn pixel_centre(view: &View, map_centre: Pos2, block: [i32; 2]) -> Pos2 {
     map_centre + Vec2::new(at(0), at(1))
 }
 
-/// Pixels `from..=to` around `centre` (in pixels, either way) filled with `colour`.
-fn square(painter: &Painter, centre: Pos2, from: [f32; 2], to: [f32; 2], colour: Color32) {
-    let rect = Rect::from_min_max(
-        centre + Vec2::new(from[0] - 0.5, from[1] - 0.5),
-        centre + Vec2::new(to[0] + 0.5, to[1] + 0.5),
-    );
-    painter.rect_filled(rect, 0.0, colour);
+/// How big structure icons are drawn: dots when they're too many and small to read, badges
+/// with their glyph up close.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Size {
+    Dot,
+    Small,
+    Full,
 }
 
-/// The ring of pixels at Chebyshev distance `d` from the centre.
-fn ring(painter: &Painter, centre: Pos2, d: f32, colour: Color32) {
-    square(painter, centre, [-d, -d], [d, -d], colour);
-    square(painter, centre, [-d, d], [d, d], colour);
-    square(painter, centre, [-d, 1.0 - d], [-d, d - 1.0], colour);
-    square(painter, centre, [d, 1.0 - d], [d, d - 1.0], colour);
-}
-
-fn rgb([r, g, b]: [u8; 3]) -> Color32 {
-    Color32::from_rgb(r, g, b)
-}
-
-/// A 9 × 9 square with a black border, in the set's colour; a candidate's middle 3 × 3 is left
-/// showing the map.
-pub fn structure(painter: &Painter, centre: Pos2, start: &StructureStart) {
-    let colour = rgb(structure_colour(&start.set));
-    ring(painter, centre, 4.0, Color32::BLACK);
-    ring(painter, centre, 3.0, colour);
-    ring(painter, centre, 2.0, colour);
-    if start.certain {
-        square(painter, centre, [-1.0, -1.0], [1.0, 1.0], colour);
+impl Size {
+    /// The size at `scale` blocks per pixel.
+    pub fn at(scale: u32) -> Size {
+        match scale {
+            64.. => Size::Dot,
+            16.. => Size::Small,
+            _ => Size::Full,
+        }
     }
+
+    fn side(self) -> f32 {
+        match self {
+            Size::Dot => 7.0,
+            Size::Small => 14.0,
+            Size::Full => 22.0,
+        }
+    }
+
+    /// How close, in points, the pointer must be to a marker's centre to pick it.
+    pub fn reach(self) -> f32 {
+        self.side() / 2.0 + 3.0
+    }
+}
+
+/// A structure start's icon: its family's glyph on a badge in its set's colour, filled if it's
+/// certain and hollow if it's a candidate. The hovered one is drawn larger, with a halo and its
+/// name.
+pub fn structure(
+    ui: &egui::Ui,
+    painter: &Painter,
+    centre: Pos2,
+    start: &StructureStart,
+    size: Size,
+    hovered: bool,
+) {
+    let badge = icons::badge(&start.set);
+    if size == Size::Dot && !hovered {
+        let (fill, stroke) = if start.certain {
+            (badge.fill, Stroke::new(1.5, style::GROUND))
+        } else {
+            (style::GROUND, Stroke::new(1.5, badge.tint))
+        };
+        painter.circle(centre, size.side() / 2.0, fill, stroke);
+        return;
+    }
+    let side = if hovered { 28.0 } else { size.side() };
+    let rect = Rect::from_center_size(centre, Vec2::splat(side));
+    let radius = CornerRadius::same((side / 3.5) as u8);
+    if hovered {
+        painter.rect_stroke(
+            rect.expand(2.0),
+            radius,
+            Stroke::new(2.0, Color32::WHITE),
+            StrokeKind::Outside,
+        );
+    }
+    let ink = if start.certain {
+        painter.rect(
+            rect,
+            radius,
+            badge.fill,
+            Stroke::new(1.5, style::GROUND),
+            StrokeKind::Inside,
+        );
+        badge.ink
+    } else {
+        painter.rect(
+            rect,
+            radius,
+            style::GROUND.gamma_multiply(0.88),
+            Stroke::new(2.0, badge.tint),
+            StrokeKind::Inside,
+        );
+        badge.tint
+    };
+    let id = start.structures.first().map_or("", String::as_str);
+    icons::glyph(id)
+        .tint(ink)
+        .paint_at(ui, Rect::from_center_size(centre, Vec2::splat(side * 0.68)));
+    if hovered {
+        let name = start
+            .structures
+            .iter()
+            .map(|s| spyglass::display_name(s))
+            .collect::<Vec<_>>()
+            .join(" or ");
+        label(painter, centre + Vec2::new(side / 2.0 + 8.0, 0.0), &name);
+    }
+}
+
+/// `text` on a dark chip, starting at `left` and centred on its height.
+pub fn label(painter: &Painter, left: Pos2, text: &str) {
+    let galley = painter.layout_no_wrap(text.to_string(), FontId::proportional(12.5), style::TEXT);
+    let rect = Align2::LEFT_CENTER.anchor_size(left, galley.size() + Vec2::new(12.0, 6.0));
+    painter.rect_filled(
+        rect,
+        CornerRadius::same(4),
+        style::GROUND.gamma_multiply(0.92),
+    );
+    painter.galley(rect.min + Vec2::new(6.0, 3.0), galley, style::TEXT);
 }
 
 /// The screen rectangle covering blocks `min..=max` (x and z).
@@ -69,41 +151,80 @@ pub fn block_rect(view: &View, map_centre: Pos2, min: [i32; 2], max: [i32; 2]) -
 
 /// A structure's bounds: an outline in its set's colour over a black one.
 pub fn bounds(painter: &Painter, rect: Rect, set: &str) {
-    let colour = rgb(structure_colour(set));
+    let [r, g, b] = structure_colour(set);
     painter.rect_stroke(
         rect,
         0.0,
         Stroke::new(3.0, Color32::BLACK),
-        egui::StrokeKind::Inside,
+        StrokeKind::Inside,
     );
     painter.rect_stroke(
         rect.shrink(1.0),
         0.0,
-        Stroke::new(1.0, colour),
-        egui::StrokeKind::Inside,
+        Stroke::new(1.0, Color32::from_rgb(r, g, b)),
+        StrokeKind::Inside,
     );
 }
 
-/// A white cross reaching 4 pixels over a black one 3 wide reaching 5.
+/// The world spawn: a white disc with a dark cross, the library's cross inverted.
 pub fn spawn(painter: &Painter, centre: Pos2) {
-    square(painter, centre, [-5.0, -1.0], [5.0, 1.0], Color32::BLACK);
-    square(painter, centre, [-1.0, -5.0], [1.0, 5.0], Color32::BLACK);
-    square(painter, centre, [-4.0, 0.0], [4.0, 0.0], Color32::WHITE);
-    square(painter, centre, [0.0, -4.0], [0.0, 4.0], Color32::WHITE);
+    spawn_sized(painter, centre, 9.0);
 }
 
-/// A locate hit: a ring, yellow if the game certainly stops there.
-pub fn hit(painter: &Painter, centre: Pos2, certain: bool) {
-    let colour = if certain {
-        Color32::from_rgb(0xff, 0xd0, 0x40)
+/// The spawn's marker with radius `r`, for the legend and buttons too.
+pub fn spawn_sized(painter: &Painter, centre: Pos2, r: f32) {
+    painter.circle(
+        centre,
+        r,
+        Color32::WHITE,
+        Stroke::new(r / 4.5, style::GROUND),
+    );
+    let stroke = Stroke::new(r / 4.0, style::GROUND);
+    let arm = r * 0.6;
+    painter.line_segment([centre - Vec2::X * arm, centre + Vec2::X * arm], stroke);
+    painter.line_segment([centre - Vec2::Y * arm, centre + Vec2::Y * arm], stroke);
+}
+
+/// A locate hit: a pin with its point on the block, yellow if the game certainly stops there.
+pub fn pin(painter: &Painter, tip: Pos2, certain: bool) {
+    // A circle of radius `r` whose centre is `d` above the tip, and the two tangents to it from
+    // the tip: a convex teardrop.
+    let (r, d) = (7.5_f32, 15.0_f32);
+    let head = tip - Vec2::Y * d;
+    let spread = (r / d).acos();
+    let down = std::f32::consts::FRAC_PI_2;
+    let steps = 18;
+    let mut points = vec![tip];
+    for i in 0..=steps {
+        let a = down + spread + (std::f32::consts::TAU - 2.0 * spread) * i as f32 / steps as f32;
+        points.push(head + Vec2::angled(a) * r);
+    }
+    let (fill, line, dot) = if certain {
+        (
+            Color32::from_rgb(0xff, 0xd0, 0x40),
+            style::GROUND,
+            style::GROUND,
+        )
     } else {
-        Color32::WHITE
+        (style::GROUND, Color32::WHITE, Color32::WHITE)
     };
-    painter.circle_stroke(centre, 8.0, Stroke::new(4.0, Color32::BLACK));
-    painter.circle_stroke(centre, 8.0, Stroke::new(2.0, colour));
+    painter.add(Shape::convex_polygon(points, fill, Stroke::new(2.0, line)));
+    painter.circle_filled(head, 3.0, dot);
+}
+
+/// Something a search hit's constraint matched: a ring around it, white if certain.
+pub fn ring(painter: &Painter, centre: Pos2, certain: bool) {
+    let colour = if certain {
+        Color32::WHITE
+    } else {
+        style::MUTED
+    };
+    painter.circle_stroke(centre, 15.0, Stroke::new(4.0, style::GROUND));
+    painter.circle_stroke(centre, 15.0, Stroke::new(2.0, colour));
 }
 
 /// Something on the map the pointer can point at.
+#[derive(Clone)]
 pub enum Picked<'a> {
     Structure(&'a StructureStart),
     Spawn(&'a SpawnOrigin),
@@ -112,17 +233,18 @@ pub enum Picked<'a> {
     Match(&'a crate::search::Match),
 }
 
-/// The marker nearest `pointer` within reach, from markers at screen positions.
+/// The marker nearest `pointer` within its reach, from markers at screen positions.
 pub fn pick<'a>(
     pointer: Pos2,
-    markers: impl IntoIterator<Item = (Pos2, Picked<'a>)>,
-) -> Option<Picked<'a>> {
+    markers: impl IntoIterator<Item = (Pos2, f32, Picked<'a>)>,
+) -> Option<(usize, Picked<'a>)> {
     markers
         .into_iter()
-        .map(|(at, what)| ((at - pointer).length(), what))
-        .filter(|(d, _)| *d <= PICK)
+        .enumerate()
+        .map(|(i, (at, reach, what))| ((at - pointer).length(), reach, i, what))
+        .filter(|(d, reach, _, _)| d <= reach)
         .min_by(|a, b| a.0.total_cmp(&b.0))
-        .map(|(_, what)| what)
+        .map(|(_, _, i, what)| (i, what))
 }
 
 #[cfg(test)]
@@ -177,14 +299,32 @@ mod tests {
     }
 
     #[test]
+    fn icons_shrink_as_the_map_zooms_out() {
+        assert_eq!(Size::at(1), Size::Full);
+        assert_eq!(Size::at(8), Size::Full);
+        assert_eq!(Size::at(16), Size::Small);
+        assert_eq!(Size::at(32), Size::Small);
+        assert_eq!(Size::at(64), Size::Dot);
+        assert_eq!(Size::at(spyglass::MAX_SCALE), Size::Dot);
+        assert!(Size::Dot.reach() < Size::Small.reach());
+        assert!(Size::Small.reach() < Size::Full.reach());
+    }
+
+    #[test]
     fn the_nearest_marker_within_reach_is_picked() {
         // Any spawn will do; a hand-written world has one.
         let fixture = spyglass_oracle::fixtures::structured_overworld(false);
         let world = spyglass::World::open(fixture.path()).unwrap();
         let spawn = world.session(0).unwrap().spawn_origin();
-        let near = [(Pos2::new(10.0, 10.0), Picked::Spawn(&spawn))];
+        let near = [(Pos2::new(10.0, 10.0), 6.0, Picked::Spawn(&spawn))];
         assert!(pick(Pos2::new(13.0, 14.0), near).is_some());
-        let far = [(Pos2::new(10.0, 10.0), Picked::Spawn(&spawn))];
+        let far = [(Pos2::new(10.0, 10.0), 6.0, Picked::Spawn(&spawn))];
         assert!(pick(Pos2::new(20.0, 10.0), far).is_none());
+        // A bigger marker reaches further, and the nearer of two wins.
+        let two = [
+            (Pos2::new(10.0, 10.0), 14.0, Picked::Spawn(&spawn)),
+            (Pos2::new(30.0, 10.0), 14.0, Picked::Spawn(&spawn)),
+        ];
+        assert_eq!(pick(Pos2::new(22.0, 10.0), two).map(|(i, _)| i), Some(1));
     }
 }

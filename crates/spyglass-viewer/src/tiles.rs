@@ -139,10 +139,10 @@ impl Pool {
         wake.notify_all();
     }
 
-    /// Whether anything is being computed or waiting.
-    pub fn busy(&self) -> bool {
+    /// How many jobs are being computed or waiting.
+    pub fn pending(&self) -> usize {
         let queue = self.queue.0.lock().unwrap_or_else(PoisonError::into_inner);
-        !queue.waiting.is_empty() || !queue.running.is_empty()
+        queue.waiting.len() + queue.running.len()
     }
 
     /// The jobs waiting, most wanted first.
@@ -419,7 +419,7 @@ mod tests {
         );
         pool.want(vec![biomes(2)]);
         assert_eq!(pool.waiting(), [JobKey::Biomes(key(2))]);
-        assert!(pool.busy());
+        assert!(pool.pending() > 0);
     }
 
     #[test]
@@ -466,7 +466,7 @@ mod tests {
                 )
             );
         }
-        assert!(!pool.busy());
+        assert_eq!(pool.pending(), 0);
     }
 
     #[test]

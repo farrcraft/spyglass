@@ -37,6 +37,8 @@ A chunk's heights cost a few milliseconds, so height maps are limited to scales 
 
 Biome colours come from a built-in table keyed by biome id ([ADR 0018](../adr/0018-biome-palette.md)); structure-set marker colours from a second table keyed by set id. An id missing from a table gets a hashed colour: the 32-bit FNV-1a hash of its UTF-8 bytes, with bytes 0, 1 and 2 (least significant first) as red, green and blue, each mapped to `48 + byte·176 / 255` (integer division). New ids should be added to the tables when a version adds them.
 
+Front ends name an id with `display_name`: the id's path with underscores as spaces and the first letter capitalised, so `minecraft:cherry_grove` is "Cherry grove", followed by the namespace in brackets if it isn't `minecraft`. Bundles have no language files, so these aren't the game's translated names.
+
 All compositing is integer arithmetic. Blending colour `s` over `d` with alpha `a` (0–255) gives `(s·a + d·(255 − a) + 127) / 255` per channel. Every output pixel is opaque.
 
 ## Layers
@@ -50,6 +52,8 @@ Drawn in this order, each over the last:
 2. **Slime chunks**: each slime chunk's pixels blended with `#40e040` at alpha 128. Only at scales up to 16, where a chunk is at least a pixel; asking for them at a larger scale is an error.
 3. **Structures**: a marker at each start `Session::structures_in` finds for the chosen structures and tags, [confirmed](locate.md#confirmed-mode) if `Layers::confirm` is on (it's off by default), at the start's `position` (x and z). The marker's centre pixel is `floor((position − min) / scale)`. A certain start is a 9 × 9 square: a 1-pixel black border around the set's colour. A candidate is the same square with its middle 3 × 3 left showing the map, so it reads as hollow. Markers are drawn in order of set id, then chunk z, then chunk x, so overlaps resolve the same way in every area.
 4. **Spawn**: a cross centred on `SpawnOrigin::position`, or on the centre of its chunk when there's no position: a white cross 1 pixel wide reaching 4 pixels from the centre, over a black one 3 pixels wide reaching 5.
+
+The viewer draws its own icons in place of these markers ([ADR 0044](../adr/0044-the-viewer-draws-its-own-map-icons.md)): at the same centre pixels, in the same set colours, filled for a certain start and hollow for a candidate. Exports, from the library, the CLI or the viewer, draw the markers above.
 
 Markers have a fixed size in pixels at every scale. A marker can overlap an area while its position is outside it, so an area includes every feature whose centre pixel is within 5 pixels of it; markers near an edge are cut off, and a tile shows the same pixels as the larger view it's part of.
 

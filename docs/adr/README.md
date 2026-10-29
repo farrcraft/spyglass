@@ -49,3 +49,5 @@ Start from [template.md](template.md). Files are named `NNNN-kebab-case-title.md
 | [0041](0041-ci-runs-what-a-change-can-affect.md)              | CI runs what a change can affect, in jobs that fit an hour                | Accepted                                                             |
 | [0042](0042-the-viewer-extracts-bundles-itself.md)            | The viewer extracts bundles itself                                        | Accepted                                                             |
 | [0043](0043-bundles-beside-the-executables.md)                | Bundles beside the executables                                            | Accepted                                                             |
+| [0044](0044-the-viewer-draws-its-own-map-icons.md)            | The viewer draws its own map icons                                        | Accepted                                                             |
+| [0045](0045-viewer-icons-are-svgs.md)                         | The viewer's icons are SVGs, drawn by egui_extras                         | Accepted                                                             |

@@ -9,7 +9,7 @@ use std::io;
 
 use spyglass_biome::{BiomeId, Lookup};
 
-pub use palette::{biome_colour, structure_colour};
+pub use palette::{biome_colour, display_name, structure_colour};
 
 use crate::{
     BiomeAt, BiomeQuery, Dimension, Error, Heightmap, Result, Session, SpawnOrigin, StructureQuery,

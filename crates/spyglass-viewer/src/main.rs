@@ -9,9 +9,11 @@ use eframe::egui;
 mod app;
 mod export;
 mod extract;
+mod icons;
 mod locate;
 mod markers;
 mod search;
+mod style;
 mod tiles;
 mod view;
 

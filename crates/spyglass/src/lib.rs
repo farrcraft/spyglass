@@ -46,7 +46,7 @@ use spyglass_terrain::{Terrain, TerrainSettings};
 pub use game::{Game, GameSession};
 pub use render::{
     BiomeMap, DEFAULT_MAP_Y, HeightMap, Image, Layers, MARKER_REACH, MAX_PIXELS, MAX_SCALE,
-    MAX_SIDE, MAX_SLIME_SCALE, MAX_TERRAIN_SCALE, MapArea, MapFeatures, biome_colour,
+    MAX_SIDE, MAX_SLIME_SCALE, MAX_TERRAIN_SCALE, MapArea, MapFeatures, biome_colour, display_name,
     structure_colour,
 };
 pub use save::{
@@ -533,6 +533,38 @@ impl World {
     /// Every structure the dimension's structure sets name, possible or not.
     pub fn structures(&self) -> impl Iterator<Item = &str> {
         self.sets.structures().iter().map(|s| s.id.as_str())
+    }
+
+    /// The first structure set that places `structure`, by full id: whose colour its markers are
+    /// drawn in. `None` if no set names it.
+    pub fn structure_set(&self, structure: &str) -> Option<&str> {
+        let index = self
+            .sets
+            .structures()
+            .iter()
+            .position(|s| s.id == structure)?;
+        self.sets
+            .sets()
+            .iter()
+            .find(|set| set.entries.iter().any(|e| e.structure == index))
+            .map(|set| set.id.as_str())
+    }
+
+    /// Whether `structure`, by full id, can generate in this dimension: some set naming it is
+    /// possible here (`ChunkGeneratorStructureState.hasBiomesForStructureSet`).
+    pub fn structure_generates(&self, structure: &str) -> bool {
+        let Some(index) = self
+            .sets
+            .structures()
+            .iter()
+            .position(|s| s.id == structure)
+        else {
+            return false;
+        };
+        self.sets
+            .sets()
+            .iter()
+            .any(|set| set.possible && set.entries.iter().any(|e| e.structure == index))
     }
 
     /// This world for `seed`.

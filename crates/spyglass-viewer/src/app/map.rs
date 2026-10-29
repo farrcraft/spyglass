@@ -1,6 +1,22 @@
-//! The map: tiles drawn as textures, markers, picking, going to a position, and the status bar.
+//! The map: tiles drawn as textures (coarse ones first, so the view fills quickly), markers,
+//! picking, the controls over the map, and the status bar.
 
+use spyglass::Outcome;
+
+use super::search_panel::Opened;
 use super::*;
+use crate::markers::Size;
+use crate::search::Area;
+use crate::style;
+use crate::view;
+
+/// What the map shows behind tiles not drawn yet: faint diagonal lines, so a gap reads as
+/// unfinished. Not a checker, which means tied biomes.
+const HATCH: Color32 = Color32::from_rgb(0x2a, 0x2a, 0x2a);
+/// Points between the hatch's lines.
+const HATCH_GAP: f32 = 14.0;
+/// The scale bar's longest length, in points.
+const SCALE_BAR: f32 = 120.0;
 
 impl App {
     pub(super) fn map(&mut self, ui: &mut egui::Ui) {
@@ -34,6 +50,7 @@ impl App {
                 self.scrolled -= SCROLL_PER_STEP.copysign(self.scrolled);
             }
         }
+        let mut focus_goto = false;
         if ui.memory(|m| m.focused().is_none()) {
             ui.input(|i| {
                 for (key, delta) in [
@@ -52,11 +69,23 @@ impl App {
                 if i.key_pressed(Key::Minus) {
                     view.zoom(false, [0.0, 0.0]);
                 }
+                focus_goto = i.key_pressed(Key::G);
             });
         }
 
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 0.0, EMPTY);
+        let mut x = -rect.height();
+        while x < rect.width() {
+            painter.line_segment(
+                [
+                    Pos2::new(rect.left() + x, rect.bottom()),
+                    Pos2::new(rect.left() + x + rect.height(), rect.top()),
+                ],
+                egui::Stroke::new(1.0, HATCH),
+            );
+            x += HATCH_GAP;
+        }
         let (Some(shown), Some(world)) = (&self.shown, self.world) else {
             return;
         };
@@ -122,10 +151,18 @@ impl App {
             session: session.clone(),
             structures: self.selection.queries.clone(),
         };
-        // Biomes first, then markers, each nearest the centre first.
-        let mut jobs: Vec<Job> = tiles
+        // The coarse tiles over the view's missing ones first: a sixteenth of the pixels each,
+        // and no heights past `MAX_TERRAIN_SCALE`, so the view fills in seconds. Then the
+        // view's own biomes and markers, each nearest the centre first.
+        let missing: Vec<Tile> = tiles
             .iter()
-            .map(|&t| key(t))
+            .copied()
+            .filter(|&t| !self.cache.contains(&key(t)))
+            .collect();
+        let mut jobs: Vec<Job> = view::coarse(&missing)
+            .into_iter()
+            .chain(missing.iter().copied())
+            .map(key)
             .filter(|k| !self.cache.contains(k))
             .map(|k| job(JobKey::Biomes(k)))
             .collect();
@@ -191,10 +228,10 @@ impl App {
                     ),
                     half,
                 );
-                if let Some(entry) = self.cache.get(&key(parent))
-                    && let Some((_, texture)) = &entry.texture
+                // The coarse tile may not have a texture yet: make one, in the frame's budget.
+                if let Some(texture) = self.texture(ui.ctx(), world, key(parent), &style, &mut made)
                 {
-                    painter.image(texture.id(), tile_rect, uv, Color32::WHITE);
+                    painter.image(texture, tile_rect, uv, Color32::WHITE);
                     break;
                 }
                 if parent.scale >= view.scale * 8 {
@@ -205,6 +242,19 @@ impl App {
         }
         if made >= TEXTURES_PER_FRAME {
             ui.ctx().request_repaint();
+        }
+
+        // What the open search hit's constraints were judged in, under everything else.
+        if let Some(opened) = &self.opened
+            && opened.seed == session.seed()
+        {
+            for c in opened
+                .constraints
+                .iter()
+                .filter(|c| c.dimension == world.dimension_kind())
+            {
+                draw_area(&painter, &view, centre, c.area);
+            }
         }
 
         // Bounds under the markers, over every tile.
@@ -219,8 +269,8 @@ impl App {
             }
         }
 
-        // Markers over every tile, so none is hidden under a neighbouring tile.
-        let mut shown_markers: Vec<(Pos2, Picked<'_>)> = Vec::new();
+        // Markers over every tile, so none is hidden under a neighbouring tile. The one under
+        // the pointer is found first, so it's drawn large, last, with its name.
         let mut starts: Vec<StructureStart> = Vec::new();
         if marking {
             for &tile in &tiles {
@@ -230,51 +280,90 @@ impl App {
             }
         }
         self.too_many_markers = starts.len() > MAX_MARKERS;
-        if !self.too_many_markers {
-            for start in &starts {
-                let at =
-                    markers::pixel_centre(&view, centre, [start.position[0], start.position[2]]);
-                if rect.expand(8.0).contains(at) {
-                    markers::structure(&painter, at, start);
-                    shown_markers.push((at, Picked::Structure(start)));
+        if self.too_many_markers {
+            starts.clear();
+        }
+        let size = Size::at(view.scale);
+        let mut placed: Vec<(Pos2, f32, Picked<'_>)> = Vec::new();
+        let mut in_view: HashMap<String, usize> = HashMap::new();
+        for start in &starts {
+            let at = markers::pixel_centre(&view, centre, [start.position[0], start.position[2]]);
+            if rect.expand(12.0).contains(at) {
+                placed.push((at, size.reach(), Picked::Structure(start)));
+                for id in &start.structures {
+                    *in_view.entry(id.clone()).or_default() += 1;
                 }
             }
         }
-        if self.settings.spawn && self.spawn_allowed() {
-            let at = markers::pixel_centre(&view, centre, spawn.map_block());
-            markers::spawn(&painter, at);
-            shown_markers.push((at, Picked::Spawn(&spawn)));
+        self.in_view = in_view;
+        let spawn_at = (self.settings.spawn && self.spawn_allowed())
+            .then(|| markers::pixel_centre(&view, centre, spawn.map_block()));
+        if let Some(at) = spawn_at {
+            placed.push((at, 10.0, Picked::Spawn(&spawn)));
         }
         if let Some(Ok(found)) = &self.found {
             for hit in &found.hits {
                 let at = markers::pixel_centre(&view, centre, [hit.x, hit.z]);
-                markers::hit(&painter, at, hit.certain);
-                shown_markers.push((at, Picked::Hit(hit)));
+                placed.push((at, 10.0, Picked::Hit(hit)));
             }
         }
-        if let Some((seed, matches)) = &self.opened
-            && *seed == session.seed()
+        if let Some(opened) = &self.opened
+            && opened.seed == session.seed()
         {
-            for m in matches
+            for m in opened
+                .matches
                 .iter()
                 .filter(|m| m.dimension == world.dimension_kind())
             {
                 let at = markers::pixel_centre(&view, centre, m.at);
-                markers::hit(&painter, at, m.certain);
-                shown_markers.push((at, Picked::Match(m)));
+                placed.push((at, 15.0, Picked::Match(m)));
             }
         }
-        if let Some(pointer) = response.hover_pos()
-            && !response.dragged()
-            && let Some(picked) = markers::pick(pointer, shown_markers)
-        {
+        let hovered = response
+            .hover_pos()
+            .filter(|_| !response.dragged())
+            .and_then(|pointer| {
+                markers::pick(
+                    pointer,
+                    placed
+                        .iter()
+                        .map(|(at, reach, what)| (*at, *reach, what.clone())),
+                )
+            })
+            .map(|(i, _)| i);
+        // Rings first, so the icons they surround stay readable; then icons, the spawn, pins.
+        for (at, _, what) in &placed {
+            if let Picked::Match(m) = what {
+                markers::ring(&painter, *at, m.certain);
+            }
+        }
+        for (i, (at, _, what)) in placed.iter().enumerate() {
+            match what {
+                Picked::Structure(start) if Some(i) != hovered => {
+                    markers::structure(ui, &painter, *at, start, size, false);
+                }
+                Picked::Spawn(_) => markers::spawn(&painter, *at),
+                Picked::Hit(hit) => markers::pin(&painter, *at, hit.certain),
+                _ => {}
+            }
+        }
+        if let Some(i) = hovered {
+            let (at, _, what) = &placed[i];
+            if let Picked::Structure(start) = what {
+                markers::structure(ui, &painter, *at, start, size, true);
+            }
             response
                 .clone()
-                .on_hover_ui_at_pointer(|ui| describe(ui, &picked));
+                .on_hover_ui_at_pointer(|ui| describe(ui, what));
         }
         self.cursor = response
             .hover_pos()
             .map(|hover| view.block_at(offset(hover)).map(|b| b.floor() as i32));
+
+        let spawn_block = spawn.map_block();
+        self.map_controls(ui, rect, spawn_block, focus_goto);
+        self.map_legend(ui, rect, world);
+        scale_bar(&painter, rect, view.scale);
 
         if response.secondary_clicked()
             && let Some(p) = response.interact_pointer_pos()
@@ -286,18 +375,18 @@ impl App {
         };
         let mut action = None;
         response.context_menu(|ui| {
-            ui.weak(format!("{bx}, {bz}"));
+            ui.label(style::mono(format!("{bx}, {bz}")).color(style::MUTED));
             ui.menu_button("Nearest structure", |ui| {
                 egui::ScrollArea::vertical()
                     .max_height(320.0)
                     .show(ui, |ui| {
-                        let mut ids: Vec<&str> = world.structures().collect();
-                        ids.sort_unstable();
+                        let mut ids: Vec<&str> = world
+                            .structures()
+                            .filter(|id| world.structure_generates(id))
+                            .collect();
+                        ids.sort_unstable_by_key(|id| spyglass::display_name(id));
                         for id in ids {
-                            if ui
-                                .button(id.strip_prefix("minecraft:").unwrap_or(id))
-                                .clicked()
-                            {
+                            if ui.button(spyglass::display_name(id)).clicked() {
                                 action = Some(Action::Locate(Target::Structure(id.to_string())));
                                 ui.close();
                             }
@@ -309,12 +398,9 @@ impl App {
                     .max_height(320.0)
                     .show(ui, |ui| {
                         let mut ids: Vec<&String> = world.biomes().iter().collect();
-                        ids.sort_unstable();
+                        ids.sort_unstable_by_key(|id| spyglass::display_name(id));
                         for id in ids {
-                            if ui
-                                .button(id.strip_prefix("minecraft:").unwrap_or(id))
-                                .clicked()
-                            {
+                            if ui.button(spyglass::display_name(id)).clicked() {
                                 action = Some(Action::Locate(Target::Biome(id.clone())));
                                 ui.close();
                             }
@@ -331,11 +417,220 @@ impl App {
             }
         });
         match action {
-            Some(Action::Locate(target)) => self.locate(ui.ctx(), target, [bx, view.y, bz]),
+            Some(Action::Locate(target)) => {
+                self.locate(ui.ctx(), target, [bx, view.y, bz]);
+                self.tab = Tab::Locate;
+            }
             Some(Action::Centre) => {
                 self.settings.view.centre = [f64::from(bx) + 0.5, f64::from(bz) + 0.5];
             }
             None => {}
+        }
+    }
+
+    /// The controls over the map: go to (top left), the open search hit's card under it, and
+    /// zoom and centre on spawn (top right).
+    fn map_controls(&mut self, ui: &mut egui::Ui, rect: Rect, spawn: [i32; 2], focus_goto: bool) {
+        let inner = rect.shrink(12.0);
+        ui.scope_builder(
+            egui::UiBuilder::new()
+                .max_rect(inner)
+                .layout(egui::Layout::top_down(egui::Align::Min)),
+            |ui| {
+                style::overlay().show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        let edit = ui.add(
+                            egui::TextEdit::singleline(&mut self.goto)
+                                .font(egui::TextStyle::Monospace)
+                                .hint_text("Go to x z  or  x y z")
+                                .frame(egui::Frame::NONE)
+                                .desired_width(220.0),
+                        );
+                        if focus_goto {
+                            edit.request_focus();
+                        }
+                        ui.label(egui::RichText::new("G").size(11.0).color(style::MUTED))
+                            .on_hover_text("Press G to type a position");
+                        if edit.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
+                            match parse_goto(&self.goto) {
+                                Some((x, y, z)) => {
+                                    self.settings.view.centre =
+                                        [f64::from(x) + 0.5, f64::from(z) + 0.5];
+                                    if let Some(y) = y {
+                                        self.settings.view.y = y;
+                                    }
+                                    self.goto_error = false;
+                                }
+                                None => self.goto_error = true,
+                            }
+                        }
+                    });
+                    if self.goto_error {
+                        ui.colored_label(style::ERROR, "Type x z or x y z, in blocks.");
+                    }
+                });
+                if let Some(opened) = &self.opened
+                    && self
+                        .shown
+                        .as_ref()
+                        .is_some_and(|s| s.session.seed() == opened.seed)
+                {
+                    ui.add_space(8.0);
+                    hit_card(ui, opened);
+                }
+            },
+        );
+        ui.scope_builder(
+            egui::UiBuilder::new()
+                .max_rect(inner)
+                .layout(egui::Layout::top_down(egui::Align::Max)),
+            |ui| {
+                style::overlay()
+                    .inner_margin(egui::Margin::same(4))
+                    .show(ui, |ui| {
+                        ui.set_width(36.0);
+                        ui.vertical_centered(|ui| {
+                            let view = &mut self.settings.view;
+                            if ui
+                                .add(
+                                    egui::Button::new("+")
+                                        .frame(false)
+                                        .min_size(egui::vec2(32.0, 28.0)),
+                                )
+                                .on_hover_text("Zoom in (+)")
+                                .clicked()
+                            {
+                                view.zoom(true, [0.0, 0.0]);
+                            }
+                            ui.label(style::mono(format!("1:{}", view.scale)).size(11.0))
+                                .on_hover_text(format!(
+                                    "1 pixel = {} block{}",
+                                    view.scale,
+                                    if view.scale == 1 { "" } else { "s" }
+                                ));
+                            if ui
+                                .add(
+                                    egui::Button::new("−")
+                                        .frame(false)
+                                        .min_size(egui::vec2(32.0, 28.0)),
+                                )
+                                .on_hover_text("Zoom out (−)")
+                                .clicked()
+                            {
+                                view.zoom(false, [0.0, 0.0]);
+                            }
+                        });
+                    });
+                ui.add_space(6.0);
+                style::overlay()
+                    .inner_margin(egui::Margin::same(4))
+                    .show(ui, |ui| {
+                        ui.set_width(36.0);
+                        let (r, response) =
+                            ui.allocate_exact_size(egui::vec2(36.0, 28.0), Sense::click());
+                        if response.hovered() {
+                            ui.painter().rect_filled(r, 5.0, style::RAISED);
+                        }
+                        markers::spawn_sized(ui.painter(), r.center(), 7.0);
+                        if response.on_hover_text("Centre on the spawn").clicked() {
+                            self.settings.view.centre =
+                                [f64::from(spawn[0]) + 0.5, f64::from(spawn[1]) + 0.5];
+                        }
+                    });
+            },
+        );
+    }
+
+    /// What's marked, bottom right: the structure families chosen, highlighted biomes and the
+    /// spawn. Painted, not laid out, so it takes only the room its rows need.
+    fn map_legend(&self, ui: &egui::Ui, rect: Rect, world: &World) {
+        /// A legend row's swatch.
+        enum Key<'a> {
+            Structure(&'a str),
+            Biome(&'a str),
+            Spawn,
+            /// Families past the first few, unlisted.
+            More,
+        }
+        const MAX_ROWS: usize = 8;
+        // One row per family chosen, with the first of its structures for the icon.
+        let mut families: Vec<(String, &str)> = Vec::new();
+        for id in self
+            .settings
+            .structures
+            .iter()
+            .filter(|id| world.structure_generates(id))
+        {
+            let name = icons::family_name(id);
+            if !families.iter().any(|(n, _)| *n == name) {
+                families.push((name, id));
+            }
+        }
+        families.sort();
+        let mut rows: Vec<(Key<'_>, String)> = Vec::new();
+        let more = families.len().saturating_sub(MAX_ROWS);
+        for (name, id) in families.into_iter().take(MAX_ROWS) {
+            rows.push((Key::Structure(id), name));
+        }
+        if more > 0 {
+            rows.push((Key::More, format!("and {more} more")));
+        }
+        for id in self.settings.highlight.iter().take(MAX_ROWS) {
+            rows.push((Key::Biome(id), spyglass::display_name(id)));
+        }
+        if self.settings.spawn && self.spawn_allowed() {
+            rows.push((Key::Spawn, "World spawn".to_string()));
+        }
+        if rows.is_empty() {
+            return;
+        }
+        let painter = ui.painter_at(rect);
+        let font = egui::FontId::proportional(12.5);
+        let galleys: Vec<_> = rows
+            .iter()
+            .map(|(_, text)| painter.layout_no_wrap(text.clone(), font.clone(), style::TEXT))
+            .collect();
+        let (swatch, gap, row, pad) = (14.0, 8.0, 20.0, 10.0);
+        let width = galleys.iter().map(|g| g.size().x).fold(0.0, f32::max) + swatch + gap;
+        let size = Vec2::new(width + 2.0 * pad, row * rows.len() as f32 + 2.0 * pad - 6.0);
+        let frame = Rect::from_min_size(rect.right_bottom() - Vec2::splat(12.0) - size, size);
+        painter.rect(
+            frame,
+            8.0,
+            style::OVERLAY,
+            egui::Stroke::new(1.0, style::BORDER),
+            egui::StrokeKind::Inside,
+        );
+        for (i, ((key, _), galley)) in rows.iter().zip(galleys).enumerate() {
+            let top = frame.top() + pad + row * i as f32;
+            let r = Rect::from_min_size(Pos2::new(frame.left() + pad, top), Vec2::splat(swatch));
+            match key {
+                Key::Structure(id) => {
+                    if let Some(badge) = world.structure_set(id).map(icons::badge) {
+                        painter.rect(
+                            r,
+                            egui::CornerRadius::same(4),
+                            badge.fill,
+                            egui::Stroke::new(1.0, style::GROUND),
+                            egui::StrokeKind::Inside,
+                        );
+                        icons::glyph(id).tint(badge.ink).paint_at(ui, r.shrink(2.5));
+                    }
+                }
+                Key::Biome(id) => {
+                    let [cr, cg, cb] = spyglass::biome_colour(id);
+                    painter.rect_filled(r.shrink(1.5), 2.0, Color32::from_rgb(cr, cg, cb));
+                }
+                Key::Spawn => markers::spawn_sized(&painter, r.center(), 6.5),
+                Key::More => {}
+            }
+            let colour = if matches!(key, Key::More) {
+                style::MUTED
+            } else {
+                style::TEXT
+            };
+            let at = Pos2::new(r.right() + gap, r.center().y - galley.size().y / 2.0);
+            painter.galley(at, galley, colour);
         }
     }
 
@@ -382,6 +677,7 @@ impl App {
 
     pub(super) fn status_bar(&self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 16.0;
             if let (Some([x, z]), Some(shown)) = (self.cursor, &self.shown) {
                 let session = &shown.session;
                 let height = session.height_at([x, z], Heightmap::WorldSurfaceWg);
@@ -393,37 +689,173 @@ impl App {
                 } else {
                     session.biome_at([x, self.settings.view.y, z])
                 };
-                ui.monospace(format!(
-                    "x {x:>9}  z {z:>9}  chunk {:>7} {:>7}  height {height:>4}",
-                    x >> 4,
-                    z >> 4
-                ));
-                ui.separator();
-                if at.tied.is_empty() {
-                    ui.label(&at.biome);
-                } else {
-                    ui.label(format!("{} (tied: {})", at.biome, at.tied.join(", ")));
-                }
+                ui.label(style::mono(format!("{x}, {height}, {z}")))
+                    .on_hover_text("x, terrain height, z");
+                ui.label(style::mono(format!("chunk {}, {}", x >> 4, z >> 4)).color(style::MUTED));
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    let [r, g, b] = spyglass::biome_colour(&at.biome);
+                    let (swatch, _) =
+                        ui.allocate_exact_size(egui::vec2(10.0, 10.0), Sense::hover());
+                    ui.painter()
+                        .rect_filled(swatch, 2.0, Color32::from_rgb(r, g, b));
+                    let name = spyglass::display_name(&at.biome);
+                    if at.tied.is_empty() {
+                        ui.label(name).on_hover_text(&at.biome);
+                    } else {
+                        let tied: Vec<String> =
+                            at.tied.iter().map(|b| spyglass::display_name(b)).collect();
+                        ui.label(format!("{name} (tied: {})", tied.join(", ")));
+                    }
+                });
             } else {
-                ui.weak("Drag to move, scroll to zoom.");
+                ui.label(
+                    egui::RichText::new("Drag to move · scroll to zoom · right-click to locate")
+                        .color(style::MUTED),
+                );
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if let Some(world) = self.world {
-                    ui.weak(format!(
-                        "{}, Minecraft {}",
-                        dimension_label(world.dimension_kind()),
-                        world.version()
-                    ));
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{} · {}",
+                            dimension_label(world.dimension_kind()),
+                            world.version()
+                        ))
+                        .color(style::MUTED),
+                    );
                 }
-                if self.pool.busy() {
+                let pending = self.pool.pending();
+                if pending > 0 {
+                    ui.label(
+                        egui::RichText::new(format!("Drawing, {pending} left")).color(style::MUTED),
+                    );
                     ui.spinner();
                 }
                 if self.too_many_markers {
-                    ui.label("Too many structures to show here; zoom in.");
+                    ui.colored_label(style::WARN, "Too many structures to show here; zoom in.");
                 }
             });
         });
     }
+}
+
+/// The open search hit: its seed, and each constraint with its outcome.
+fn hit_card(ui: &mut egui::Ui, opened: &Opened) {
+    style::overlay().show(ui, |ui| {
+        ui.set_max_width(460.0);
+        ui.horizontal(|ui| {
+            ui.strong("Search hit");
+            ui.label(style::mono(opened.seed.to_string()).color(style::MUTED));
+            if ui.small_button("Copy seed").clicked() {
+                ui.ctx().copy_text(opened.seed.to_string());
+            }
+        });
+        for c in &opened.constraints {
+            ui.horizontal(|ui| {
+                let (mark, colour, what) = match c.outcome {
+                    Outcome::Met => ("Met", style::GOOD, "It holds whatever is undecided."),
+                    Outcome::PossiblyMet => (
+                        "Maybe",
+                        style::WARN,
+                        "It holds only in the best case: it depends on terrain, a tied biome or                          the platform.",
+                    ),
+                    Outcome::Failed => ("No", style::MUTED, "It doesn't hold."),
+                };
+                ui.add_sized(
+                    egui::vec2(40.0, 16.0),
+                    egui::Label::new(egui::RichText::new(mark).size(11.5).strong().color(colour)),
+                )
+                .on_hover_text(what);
+                ui.add(egui::Label::new(style::mono(&c.line).size(12.0)).truncate());
+            });
+        }
+    });
+}
+
+/// A constraint's area: a dashed disc or box in the accent colour.
+fn draw_area(painter: &egui::Painter, view: &View, centre: Pos2, area: Area) {
+    let stroke = egui::Stroke::new(2.0, style::ACCENT);
+    let fill = style::ACCENT.gamma_multiply(0.07);
+    let points: Vec<Pos2> = match area {
+        Area::Disc { centre: at, radius } => {
+            let c = markers::pixel_centre(view, centre, at);
+            let r = radius as f32 / view.scale as f32;
+            painter.circle_filled(c, r, fill);
+            let steps = ((r * 0.5) as usize).clamp(24, 256);
+            (0..=steps)
+                .map(|i| c + Vec2::angled(std::f32::consts::TAU * i as f32 / steps as f32) * r)
+                .collect()
+        }
+        Area::Box { min, max } => {
+            let r = markers::block_rect(view, centre, min, max);
+            painter.rect_filled(r, 0.0, fill);
+            vec![
+                r.left_top(),
+                r.right_top(),
+                r.right_bottom(),
+                r.left_bottom(),
+                r.left_top(),
+            ]
+        }
+    };
+    painter.extend(egui::Shape::dashed_line(&points, stroke, 8.0, 6.0));
+}
+
+/// A scale bar, bottom left: a round number of blocks.
+fn scale_bar(painter: &egui::Painter, rect: Rect, scale: u32) {
+    let (blocks, length) = bar_length(scale, SCALE_BAR);
+    let text = format!("{} blocks", thousands(blocks));
+    let galley = painter.layout_no_wrap(text, egui::FontId::monospace(11.0), style::TEXT);
+    let width = length.max(galley.size().x);
+    let frame = Rect::from_min_size(
+        Pos2::new(rect.left() + 12.0, rect.bottom() - 12.0 - 30.0),
+        Vec2::new(width + 20.0, 30.0),
+    );
+    painter.rect_filled(frame, 6.0, style::OVERLAY);
+    let y = frame.top() + 9.0;
+    let (x0, x1) = (frame.left() + 10.0, frame.left() + 10.0 + length);
+    let line = egui::Stroke::new(2.0, style::TEXT);
+    painter.line_segment([Pos2::new(x0, y), Pos2::new(x1, y)], line);
+    painter.line_segment([Pos2::new(x0, y - 4.0), Pos2::new(x0, y)], line);
+    painter.line_segment([Pos2::new(x1, y - 4.0), Pos2::new(x1, y)], line);
+    painter.galley(Pos2::new(x0, y + 4.0), galley, style::TEXT);
+}
+
+/// A scale bar's length at `scale` blocks per point: the largest 1, 2 or 5 times a power of ten
+/// blocks at most `max` points long, and its length in points.
+fn bar_length(scale: u32, max: f32) -> (u32, f32) {
+    let mut best = 1;
+    let mut step: u32 = 1;
+    'search: loop {
+        for m in [1, 2, 5] {
+            let Some(blocks) = step.checked_mul(m) else {
+                break 'search;
+            };
+            if blocks as f32 / scale as f32 > max {
+                break 'search;
+            }
+            best = blocks;
+        }
+        let Some(next) = step.checked_mul(10) else {
+            break;
+        };
+        step = next;
+    }
+    (best, best as f32 / scale as f32)
+}
+
+/// `n` with commas between thousands.
+fn thousands(n: u32) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
 }
 
 /// What the map's context menu asked for.
@@ -437,13 +869,20 @@ pub(super) fn describe(ui: &mut egui::Ui, picked: &Picked<'_>) {
     match picked {
         Picked::Structure(start) => {
             let [x, _, z] = start.position;
-            ui.strong(start.structures.join(" or "));
-            ui.label(format!(
-                "{x}, {z} (chunk {}, {})",
+            let names: Vec<String> = start
+                .structures
+                .iter()
+                .map(|s| spyglass::display_name(s))
+                .collect();
+            ui.strong(names.join(" or "));
+            ui.label(style::mono(format!(
+                "{x}, {z} · chunk {}, {}",
                 start.chunk[0], start.chunk[1]
-            ));
-            ui.weak(&start.set);
-            if !start.certain {
+            )));
+            ui.label(egui::RichText::new(&start.set).color(style::MUTED));
+            if start.certain {
+                ui.colored_label(style::GOOD, "Certain");
+            } else {
                 ui.label(
                     "Candidate: whether it generates depends on terrain (unless confirmed), a \
                      tied biome or a platform-dependent ring position.",
@@ -467,18 +906,18 @@ pub(super) fn describe(ui: &mut egui::Ui, picked: &Picked<'_>) {
         Picked::Hit(hit) => {
             ui.strong(&hit.what);
             let y = hit.y.map_or("~".to_string(), |y| y.to_string());
-            ui.label(format!(
-                "{} {y} {}, {} blocks away",
+            ui.label(style::mono(format!(
+                "{} {y} {} · {} blocks away",
                 hit.x, hit.z, hit.blocks_away
-            ));
+            )));
             if !hit.certain {
                 ui.label("Candidate: the game's answer is the first of these it confirms.");
             }
         }
         Picked::Match(m) => {
             ui.strong(&m.what);
-            ui.label(format!("{}, {}", m.at[0], m.at[1]));
-            ui.weak(&m.constraint);
+            ui.label(style::mono(format!("{}, {}", m.at[0], m.at[1])));
+            ui.label(egui::RichText::new(&m.constraint).color(style::MUTED));
             if !m.certain {
                 ui.label("Possible: it depends on terrain, a tied biome or the platform.");
             }
@@ -493,51 +932,6 @@ pub(super) fn full_uv() -> Rect {
 pub(super) fn color_image(image: &Image) -> egui::ColorImage {
     let [w, h] = image.size();
     egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], image.rgba())
-}
-
-/// A filtered checklist of ids, with the chosen ones in `chosen`. Returns whether it changed.
-pub(super) fn pick_list(
-    ui: &mut egui::Ui,
-    salt: &str,
-    ids: &[&str],
-    chosen: &mut Vec<String>,
-    filter: &mut String,
-) -> bool {
-    let mut changed = false;
-    ui.horizontal(|ui| {
-        ui.add(
-            egui::TextEdit::singleline(filter)
-                .hint_text("filter")
-                .desired_width(140.0),
-        );
-        if ui
-            .add_enabled(!chosen.is_empty(), egui::Button::new("Clear"))
-            .clicked()
-        {
-            chosen.clear();
-            changed = true;
-        }
-    });
-    let needle = filter.to_lowercase();
-    egui::ScrollArea::vertical()
-        .id_salt(salt)
-        .max_height(220.0)
-        .show(ui, |ui| {
-            for id in ids.iter().filter(|id| id.to_lowercase().contains(&needle)) {
-                let mut on = chosen.iter().any(|c| c == id);
-                let name = id.strip_prefix("minecraft:").unwrap_or(id);
-                if ui.checkbox(&mut on, name).changed() {
-                    if on {
-                        chosen.push((*id).to_string());
-                        chosen.sort();
-                    } else {
-                        chosen.retain(|c| c != id);
-                    }
-                    changed = true;
-                }
-            }
-        });
-    changed
 }
 
 /// `x z` or `x y z`, in blocks, separated by spaces or commas.
@@ -566,5 +960,30 @@ mod tests {
         assert_eq!(parse_goto("1"), None);
         assert_eq!(parse_goto("a b"), None);
         assert_eq!(parse_goto("1 2 3 4"), None);
+    }
+
+    #[test]
+    fn the_scale_bar_is_a_round_length_at_every_zoom() {
+        let mut scale = 1;
+        while scale <= spyglass::MAX_SCALE {
+            let (blocks, points) = bar_length(scale, SCALE_BAR);
+            let mut lead = blocks;
+            while lead >= 10 && lead % 10 == 0 {
+                lead /= 10;
+            }
+            assert!(matches!(lead, 1 | 2 | 5), "{blocks} at 1:{scale}");
+            // At most the longest, and never less than 40% of it: the next round length up
+            // would be at most 2.5 times longer.
+            assert!(
+                (SCALE_BAR * 0.4..=SCALE_BAR).contains(&points),
+                "{points} at 1:{scale}"
+            );
+            assert_eq!(points, blocks as f32 / scale as f32);
+            scale *= 2;
+        }
+        assert_eq!(bar_length(4, SCALE_BAR), (200, 50.0));
+        assert_eq!(thousands(200_000), "200,000");
+        assert_eq!(thousands(5), "5");
+        assert_eq!(thousands(1000), "1,000");
     }
 }

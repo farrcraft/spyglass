@@ -26,6 +26,25 @@ fn each_dimension_opens() {
     assert_eq!(nether.coordinate_scale(), 8.0);
     assert_eq!(nether.biomes().len(), 5);
     assert!(nether.structures().any(|s| s == "minecraft:fortress"));
+    // Fortresses and bastions share one set; every structure has a set.
+    assert_eq!(
+        nether.structure_set("minecraft:fortress"),
+        Some("minecraft:nether_complexes")
+    );
+    assert_eq!(
+        nether.structure_set("minecraft:bastion_remnant"),
+        Some("minecraft:nether_complexes")
+    );
+    assert!(
+        nether
+            .structures()
+            .all(|s| nether.structure_set(s).is_some())
+    );
+    assert_eq!(nether.structure_set("minecraft:no_such_thing"), None);
+    // The sets are every dimension's, but only the Nether's can generate there.
+    assert!(nether.structure_generates("minecraft:fortress"));
+    assert!(!nether.structure_generates("minecraft:village_plains"));
+    assert!(!nether.structure_generates("minecraft:no_such_thing"));
     let end = World::open_dimension(bundle(), Dimension::End).unwrap();
     assert_eq!(end.dimension_kind(), Dimension::End);
     assert_eq!(end.coordinate_scale(), 1.0);

@@ -8,12 +8,17 @@ Changes go under **Unreleased** as they're made. `cargo xtask release` turns tha
 
 ### Added
 
-- **The viewer extracts game data itself:** with no data yet, it offers a place for it, a game version and an Extract button, with no terminal. **Add a game version** in the World section extracts more later.
+- **A redesigned viewer:** the seed, version, dimension and save are in a toolbar, the side panel has Layers, Search and Locate tabs, and where game data is kept moves to **Settings**. Zoom, go to, centre on spawn, a scale bar and a legend are on the map. Biomes and structures are shown by name, such as "Cherry grove".
+- **Map icons:** each kind of structure has its own icon on a badge in its colour, filled when it certainly generates and hollow when it's a candidate. They shrink to dots when zoomed out. The marker under the pointer is enlarged and named, locate answers are pins, and an opened search hit rings what it matched and outlines each constraint's area. Exported images keep their square markers ([ADR 0044](docs/adr/0044-the-viewer-draws-its-own-map-icons.md)).
+- **The viewer extracts game data itself:** with no data yet, it offers a place for it, a game version and an Extract button, with no terminal. **Add a game version** in Settings extracts more later.
+- `display_name`, `World::structure_set` and `World::structure_generates` in the library: an id as a front end shows it, the set whose colour a structure's markers are, and whether it can generate in a dimension.
 - A `bundles` folder beside the programs is found by all three, from any working directory, when it exists. The viewer puts its first bundle there unless you choose another place ([bundle-format.md](docs/specs/bundle-format.md#where-bundles-are)).
 
 ### Fixed
 
 - The viewer no longer opens a console window beside its own on Windows, and no longer tells you to run `cargo`.
+- The viewer fills the window in seconds: coarse tiles are drawn first while the detailed ones are computed, so the edges of the map no longer stay empty for half a minute with biomes at the surface. What isn't drawn yet is hatched.
+- The viewer lists only the structures that can generate in the dimension shown.
 
 ## [0.1.0] - 2026-10-29
 

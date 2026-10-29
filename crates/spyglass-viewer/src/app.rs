@@ -1,6 +1,7 @@
 //! The viewer window: its state, and the loading and background work behind it. What it draws
-//! is in the child modules: the side panel's sections (`side_panel`, `saves`, `search_panel`)
-//! and the map with its status bar (`map`).
+//! is in the child modules: the toolbar and settings (`toolbar`), the side panel's tabs
+//! (`side_panel`, `search_panel`), the map with its controls and status bar (`map`), and the
+//! screen shown until there's a bundle (`saves`, `extract_panel`).
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -18,9 +19,11 @@ use spyglass::{
 
 use crate::export::{Export, Source, visible_area};
 use crate::extract::{self, Offer};
+use crate::icons;
 use crate::locate::{self, Found, Target};
 use crate::markers::{self, Picked};
 use crate::search::{self, Match, Running, SearchSettings};
+use crate::style;
 use crate::tiles::{
     Cache, Entry, Job, JobKey, LayoutKey, MarkerKey, Output, Pool, Style, TileKey, slime_features,
 };
@@ -31,6 +34,10 @@ mod map;
 mod saves;
 mod search_panel;
 mod side_panel;
+mod toolbar;
+
+use search_panel::Opened;
+use side_panel::Tab;
 
 /// The key settings are saved under.
 const SETTINGS: &str = "spyglass";
@@ -251,8 +258,8 @@ pub struct App {
     search_run: Option<SearchRun>,
     /// A live hit being evaluated before it opens.
     opening: Option<Pending<Result<(i64, Evaluation), String>>>,
-    /// The seed of the hit last opened, and what its constraints matched.
-    opened: Option<(i64, Vec<Match>)>,
+    /// The hit last opened: its seed, and what its constraints matched and where.
+    opened: Option<Opened>,
     search_error: Option<String>,
     /// Game versions that can be extracted, listed when first wanted.
     offers: Option<Result<Vec<Offer>, String>>,
@@ -264,6 +271,13 @@ pub struct App {
     extract_note: Option<Result<String, String>>,
     /// Whether the bundles folder couldn't be created, so the per-user one is offered.
     offer_user_folder: bool,
+    /// The side panel's tab.
+    tab: Tab,
+    settings_open: bool,
+    /// How many starts of each structure the map showed last frame, for the Layers tab.
+    in_view: HashMap<String, usize>,
+    /// The structure families opened to their variants in the Layers tab.
+    expanded: std::collections::HashSet<String>,
 }
 
 /// A search and its query.
@@ -280,6 +294,8 @@ impl App {
         let stored: Option<Settings> = cc.storage.and_then(|s| eframe::get_value(s, SETTINGS));
         let first_run = stored.is_none();
         let settings = stored.unwrap_or_default();
+        style::apply(&cc.egui_ctx);
+        egui_extras::install_image_loaders(&cc.egui_ctx);
         let ctx = cc.egui_ctx.clone();
         let mut app = App {
             settings: Settings {
@@ -330,6 +346,10 @@ impl App {
             extracting: None,
             extract_note: None,
             offer_user_folder: false,
+            tab: Tab::default(),
+            settings_open: false,
+            in_view: HashMap::new(),
+            expanded: std::collections::HashSet::new(),
         };
         app.scan(&cc.egui_ctx);
         // With nothing found on a first run, bundles go beside spyglass unless the user picks
@@ -617,19 +637,43 @@ impl eframe::App for App {
         self.poll_loading();
         self.poll_tasks(ui.ctx());
         self.poll_extract(ui.ctx());
-        egui::Panel::left("side")
-            .resizable(true)
-            .default_size(260.0)
-            .size_range(200.0..=420.0)
-            .show(ui, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| self.side_panel(ui));
-            });
-        egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
+        let ready = self.bundles.as_ref().is_ok_and(|found| !found.is_empty());
+        if ready {
+            egui::Panel::top("toolbar")
+                .frame(
+                    egui::Frame::new()
+                        .fill(style::PANEL)
+                        .inner_margin(egui::Margin::symmetric(12, 6))
+                        .stroke(egui::Stroke::new(1.0, style::BORDER)),
+                )
+                .show(ui, |ui| self.toolbar(ui));
+            egui::Panel::left("side")
+                .resizable(true)
+                .default_size(300.0)
+                .size_range(260.0..=460.0)
+                .frame(
+                    egui::Frame::new()
+                        .fill(style::PANEL)
+                        .inner_margin(egui::Margin::symmetric(14, 8)),
+                )
+                .show(ui, |ui| self.side_panel(ui));
+            egui::Panel::bottom("status")
+                .frame(
+                    egui::Frame::new()
+                        .fill(style::PANEL)
+                        .inner_margin(egui::Margin::symmetric(12, 4)),
+                )
+                .show(ui, |ui| self.status_bar(ui));
+        }
+        self.settings_window(ui.ctx());
         egui::CentralPanel::default()
-            .frame(egui::Frame::NONE)
-            .show(ui, |ui| match &self.bundles {
-                Ok(found) if !found.is_empty() => self.map(ui),
-                _ => self.no_bundle(ui),
+            .frame(egui::Frame::NONE.fill(style::GROUND))
+            .show(ui, |ui| {
+                if ready {
+                    self.map(ui);
+                } else {
+                    self.no_bundle(ui);
+                }
             });
     }
 

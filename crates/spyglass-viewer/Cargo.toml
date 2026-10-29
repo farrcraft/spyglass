@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 eframe.workspace = true
+egui_extras.workspace = true
 rfd.workspace = true
 serde.workspace = true
 spyglass.workspace = true

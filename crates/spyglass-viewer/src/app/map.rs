@@ -429,7 +429,7 @@ impl App {
     }
 
     /// The controls over the map: go to (top left), the open search hit's card under it, and
-    /// zoom and centre on spawn (top right).
+    /// centre on spawn and zoom in a row (top right).
     fn map_controls(&mut self, ui: &mut egui::Ui, rect: Rect, spawn: [i32; 2], focus_goto: bool) {
         let inner = rect.shrink(12.0);
         ui.scope_builder(
@@ -437,20 +437,29 @@ impl App {
                 .max_rect(inner)
                 .layout(egui::Layout::top_down(egui::Align::Min)),
             |ui| {
-                style::overlay().show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        let edit = ui.add(
-                            egui::TextEdit::singleline(&mut self.goto)
-                                .font(egui::TextStyle::Monospace)
-                                .hint_text("Go to x z  or  x y z")
-                                .frame(egui::Frame::NONE)
-                                .desired_width(220.0),
-                        );
+                // The field is the whole box, its text centred in it; G focuses it.
+                style::overlay()
+                    .inner_margin(egui::Margin::same(0))
+                    .show(ui, |ui| {
+                        let edit = ui
+                            .add(
+                                egui::TextEdit::singleline(&mut self.goto)
+                                    .font(egui::TextStyle::Monospace)
+                                    .hint_text("Go to x z  or  x y z")
+                                    // The field's padding is its frame's, so an empty frame
+                                    // with a margin.
+                                    .frame(
+                                        egui::Frame::NONE
+                                            .inner_margin(egui::Margin::symmetric(14, 0)),
+                                    )
+                                    .align(egui::Align2::LEFT_CENTER)
+                                    .min_size(egui::vec2(240.0, 34.0))
+                                    .desired_width(240.0),
+                            )
+                            .on_hover_text("Press G to type a position, then Enter");
                         if focus_goto {
                             edit.request_focus();
                         }
-                        ui.label(egui::RichText::new("G").size(11.0).color(style::MUTED))
-                            .on_hover_text("Press G to type a position");
                         if edit.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
                             match parse_goto(&self.goto) {
                                 Some((x, y, z)) => {
@@ -464,11 +473,15 @@ impl App {
                                 None => self.goto_error = true,
                             }
                         }
+                        if self.goto_error {
+                            ui.add(egui::Label::new(
+                                egui::RichText::new("Type x z or x y z, in blocks.")
+                                    .size(12.0)
+                                    .color(style::ERROR),
+                            ));
+                            ui.add_space(6.0);
+                        }
                     });
-                    if self.goto_error {
-                        ui.colored_label(style::ERROR, "Type x z or x y z, in blocks.");
-                    }
-                });
                 if let Some(opened) = &self.opened
                     && self
                         .shown
@@ -480,54 +493,69 @@ impl App {
                 }
             },
         );
+        // Top right, in one row: centre on spawn, then zoom as − 1:N +. Right to left, so the
+        // zoom is in the corner.
         ui.scope_builder(
             egui::UiBuilder::new()
                 .max_rect(inner)
-                .layout(egui::Layout::top_down(egui::Align::Max)),
+                .layout(egui::Layout::right_to_left(egui::Align::Min)),
             |ui| {
+                // Each part as wide as its text plus a little padding, so the control is as
+                // wide as the scale it shows.
+                const HEIGHT: f32 = 28.0;
+                const PAD: f32 = 7.0;
+                let text_width = |text: &str, font: egui::FontId| {
+                    ui.painter()
+                        .layout_no_wrap(text.to_string(), font, style::TEXT)
+                        .size()
+                        .x
+                };
+                let symbol = egui::FontId::proportional(17.0);
+                let number = egui::FontId::monospace(11.5);
+                let scale_text = format!("1:{}", self.settings.view.scale);
+                let minus = egui::vec2(text_width("−", symbol.clone()) + 2.0 * PAD, HEIGHT);
+                let plus = egui::vec2(text_width("+", symbol.clone()) + 2.0 * PAD, HEIGHT);
+                let scale = egui::vec2(text_width(&scale_text, number.clone()) + PAD, HEIGHT);
+                let button = egui::vec2(HEIGHT, HEIGHT);
                 style::overlay()
                     .inner_margin(egui::Margin::same(4))
                     .show(ui, |ui| {
-                        ui.set_width(36.0);
-                        ui.vertical_centered(|ui| {
-                            let view = &mut self.settings.view;
-                            if ui
-                                .add(
-                                    egui::Button::new("+")
-                                        .frame(false)
-                                        .min_size(egui::vec2(32.0, 28.0)),
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(minus.x + scale.x + plus.x, HEIGHT),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.spacing_mut().item_spacing.x = 0.0;
+                                let view = &mut self.settings.view;
+                                let zoom = |ui: &mut egui::Ui, text: &str, size, hint: &str| {
+                                    let text = egui::RichText::new(text).font(symbol.clone());
+                                    ui.add(egui::Button::new(text).frame(false).min_size(size))
+                                        .on_hover_text(hint)
+                                        .clicked()
+                                };
+                                if zoom(ui, "−", minus, "Zoom out (−)") {
+                                    view.zoom(false, [0.0, 0.0]);
+                                }
+                                ui.add_sized(
+                                    scale,
+                                    egui::Label::new(
+                                        egui::RichText::new(scale_text).font(number.clone()),
+                                    ),
                                 )
-                                .on_hover_text("Zoom in (+)")
-                                .clicked()
-                            {
-                                view.zoom(true, [0.0, 0.0]);
-                            }
-                            ui.label(style::mono(format!("1:{}", view.scale)).size(11.0))
                                 .on_hover_text(format!(
                                     "1 pixel = {} block{}",
                                     view.scale,
                                     if view.scale == 1 { "" } else { "s" }
                                 ));
-                            if ui
-                                .add(
-                                    egui::Button::new("−")
-                                        .frame(false)
-                                        .min_size(egui::vec2(32.0, 28.0)),
-                                )
-                                .on_hover_text("Zoom out (−)")
-                                .clicked()
-                            {
-                                view.zoom(false, [0.0, 0.0]);
-                            }
-                        });
+                                if zoom(ui, "+", plus, "Zoom in (+)") {
+                                    view.zoom(true, [0.0, 0.0]);
+                                }
+                            },
+                        );
                     });
-                ui.add_space(6.0);
                 style::overlay()
                     .inner_margin(egui::Margin::same(4))
                     .show(ui, |ui| {
-                        ui.set_width(36.0);
-                        let (r, response) =
-                            ui.allocate_exact_size(egui::vec2(36.0, 28.0), Sense::click());
+                        let (r, response) = ui.allocate_exact_size(button, Sense::click());
                         if response.hovered() {
                             ui.painter().rect_filled(r, 5.0, style::RAISED);
                         }

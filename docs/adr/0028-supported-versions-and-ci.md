@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-26
-- See also: [0008](0008-game-derived-test-values-stay-local.md), [0026](0026-how-game-versions-coexist.md), [0027](0027-oracle-harness-across-versions.md)
+- See also: [0008](0008-game-derived-test-values-stay-local.md), [0026](0026-how-game-versions-coexist.md), [0027](0027-oracle-harness-across-versions.md), [0041](0041-ci-runs-what-a-change-can-affect.md), which amends point 4
 
 ## Context
 

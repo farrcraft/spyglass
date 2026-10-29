@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-28
-- See also: [0028](0028-supported-versions-and-ci.md), [0038](0038-how-release-archives-are-built.md)
+- See also: [0028](0028-supported-versions-and-ci.md), [0038](0038-how-release-archives-are-built.md), [0040](0040-releases-are-drafted-from-main.md), which amends point 3
 
 ## Context
 

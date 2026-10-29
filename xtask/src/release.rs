@@ -1,9 +1,12 @@
-//! `cargo xtask release <version>`: the release commit and tag, made locally and never pushed
-//! (docs/adr/0037-versions-and-releases.md). docs/releasing.md has the whole process.
+//! `cargo xtask release <version>`, the files a release changes, and `cargo xtask release-notes`,
+//! the release workflow's first step (docs/adr/0040-releases-are-drafted-from-main.md).
+//! docs/releasing.md has the whole process.
 //!
-//! It sets the workspace version, turns the changelog's Unreleased section into the release's,
-//! with the game versions this build was checked against, runs every check, then commits and
-//! tags. A pre-release (`0.1.0-rc.1`) leaves the changelog alone: its notes are Unreleased.
+//! `release` sets the workspace version and turns the changelog's Unreleased section into the
+//! release's, with the game versions this build was checked against. A pre-release
+//! (`0.1.0-rc.1`) leaves the changelog alone: its notes are Unreleased. It doesn't touch git: the
+//! change ships in a pull request like any other, and the release workflow, run on `main`, makes
+//! the tag and the draft.
 
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -30,34 +33,13 @@ pub fn run(args: &Release) -> Result<()> {
         version.core > current.core || (version.core == current.core && current.pre.is_some()),
         "{version} isn't after the current version, {current}"
     );
-    let git = |args: &[&str]| -> Result<String> {
-        let out = command("git")
-            .args(args)
-            .output()
-            .context("failed to run git")?;
-        ensure!(out.status.success(), "git {} failed", args.join(" "));
-        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
-    };
-    ensure!(
-        git(&["status", "--porcelain"])?.is_empty(),
-        "the tree has uncommitted changes"
-    );
-    ensure!(
-        git(&["rev-parse", "--abbrev-ref", "HEAD"])? == "main",
-        "releases are made on main"
-    );
-    let tag = format!("v{version}");
-    ensure!(
-        git(&["tag", "--list", &tag])?.is_empty(),
-        "the tag {tag} already exists"
-    );
-
     let changelog_path = repo_root().join("CHANGELOG.md");
     let changelog = std::fs::read_to_string(&changelog_path)?.replace("\r\n", "\n");
     ensure!(
         unreleased(&changelog).is_some_and(|text| !text.trim().is_empty()),
         "CHANGELOG.md's Unreleased section is empty; a release needs something in it"
     );
+
     if version.pre.is_none() {
         let checked: Vec<&str> = CHECKED.iter().map(|c| c.id).collect();
         let released = release_changelog(&changelog, &version.to_string(), &today(), &checked)?;
@@ -75,31 +57,17 @@ pub fn run(args: &Release) -> Result<()> {
         .status()?;
     ensure!(status.success(), "cargo update --workspace failed");
 
-    println!("Running every check, as CI does...");
-    if let Err(err) = crate::check() {
-        bail!(
-            "{err:#}\nThe version and changelog changes are left uncommitted; fix the checks and \
-             run this again after `git checkout .`, or commit and tag by hand."
-        );
-    }
-    git(&[
-        "commit",
-        "--all",
-        "--quiet",
-        "-m",
-        &format!("Release {version}"),
-    ])?;
-    git(&[
-        "tag",
-        "--annotate",
-        &tag,
-        "-m",
-        &format!("spyglass {version}"),
-    ])?;
+    let changed = if version.pre.is_none() {
+        "Cargo.toml, Cargo.lock and CHANGELOG.md"
+    } else {
+        "Cargo.toml and Cargo.lock"
+    };
     println!(
-        "Committed and tagged {tag}. Nothing is pushed. To release:\n\n    \
-         git push --atomic origin main {tag}\n\n\
-         The release workflow then builds a draft release to publish (docs/releasing.md)."
+        "Set the version to {version} in {changed}. Next:\n\n\
+         1. Commit that and ship it in a pull request like any change.\n\
+         2. Once it's merged, run the Release workflow on main (Actions > Release > Run \
+         workflow). It builds v{version} from main's head and leaves a draft to publish.\n\n\
+         (docs/releasing.md)"
     );
     Ok(())
 }
@@ -184,41 +152,45 @@ fn section<'a>(changelog: &'a str, name: &str) -> Option<&'a str> {
 
 #[derive(clap::Args)]
 pub struct ReleaseNotes {
-    /// The release's tag, e.g. `v0.1.0`.
-    #[arg(long)]
-    tag: String,
     /// Where to write the notes.
     #[arg(long)]
     out: PathBuf,
 }
 
-/// Checks a pushed tag and writes its release notes: the release's changelog section, or
-/// Unreleased for a pre-release, with relative links made absolute to the tag.
+/// Checks that this commit's version can be released, writes its release notes, and prints its
+/// tag (`v0.1.0`) on stdout. The notes are the version's changelog section, or Unreleased for a
+/// pre-release, with relative links made absolute to the tag. The tag mustn't exist on origin
+/// yet: publishing a release makes it.
 pub fn notes(args: &ReleaseNotes) -> Result<()> {
-    let tag = &args.tag;
-    let version = tag
-        .strip_prefix('v')
-        .with_context(|| format!("the tag {tag:?} isn't v<version>"))?;
-    let parsed = Version::parse(version)?;
-    let workspace = toml_string("Cargo.toml", &["workspace", "package", "version"])?;
-    ensure!(
-        workspace == version,
-        "the tag {tag} doesn't match the workspace version, {workspace}"
-    );
-    let on_main = command("git")
-        .args(["merge-base", "--is-ancestor", "HEAD", "origin/main"])
-        .status()
+    let version = toml_string("Cargo.toml", &["workspace", "package", "version"])?;
+    let parsed = Version::parse(&version)?;
+    let tag = format!("v{version}");
+    let out = command("git")
+        .args(["ls-remote", "--tags", "origin", &format!("refs/tags/{tag}")])
+        .output()
         .context("failed to run git")?;
-    ensure!(on_main.success(), "{tag}'s commit isn't on origin/main");
+    ensure!(
+        out.status.success(),
+        "git ls-remote failed: {}",
+        String::from_utf8_lossy(&out.stderr).trim()
+    );
+    ensure!(
+        out.stdout.is_empty(),
+        "{tag} is already released (the tag exists); set a new version with cargo xtask release"
+    );
     let changelog =
         std::fs::read_to_string(repo_root().join("CHANGELOG.md"))?.replace("\r\n", "\n");
     let text = match parsed.pre {
         Some(_) => unreleased(&changelog),
-        None => section(&changelog, version),
+        None => section(&changelog, &version),
     }
     .filter(|text| !text.trim().is_empty())
     .with_context(|| format!("CHANGELOG.md has nothing for {version}"))?;
-    std::fs::write(&args.out, format!("{}\n", absolute_links(text.trim(), tag)))?;
+    std::fs::write(
+        &args.out,
+        format!("{}\n", absolute_links(text.trim(), &tag)),
+    )?;
+    println!("{tag}");
     Ok(())
 }
 

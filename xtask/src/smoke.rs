@@ -173,7 +173,10 @@ mod tests {
     #[test]
     fn rust_folders_are_found() {
         assert!(is_rust_dir(Path::new("/home/me/.cargo/bin")));
-        assert!(is_rust_dir(Path::new("C:\\Users\\Me\\.Cargo\\bin")));
         assert!(!is_rust_dir(Path::new("/usr/bin")));
+        // Backslashes separate folders only on Windows.
+        if cfg!(windows) {
+            assert!(is_rust_dir(Path::new("C:\\Users\\Me\\.Cargo\\bin")));
+        }
     }
 }

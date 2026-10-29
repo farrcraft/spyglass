@@ -319,8 +319,11 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
 /// Every golden file: probes, structures, spawn, heights, and the biome grids.
 fn golden(common: &Common, threads: Option<usize>) -> Result<()> {
     let harness = build(common)?;
-    all_but_heights(&harness, threads)?;
+    harness.probe()?;
+    harness.structures()?;
+    harness.spawn()?;
     harness.heights(threads, GOLDEN_SEEDS)?;
+    harness.golden_biomes(threads)?;
     println!(
         "golden files in {}",
         repo_root()
@@ -331,23 +334,8 @@ fn golden(common: &Common, threads: Option<usize>) -> Result<()> {
     Ok(())
 }
 
-/// The golden set without the height files: probes, structures, spawn and biome grids. CI runs
-/// it apart from the heights, which are slow for some versions.
-pub(crate) fn golden_but_heights(common: &Common, threads: Option<usize>) -> Result<()> {
-    all_but_heights(&build(common)?, threads)
-}
-
-/// The golden height files for `seeds`, some of the golden seeds. CI splits them between jobs
-/// where a version's heights are slow.
-pub(crate) fn golden_heights(
-    common: &Common,
-    threads: Option<usize>,
-    seeds: &[&str],
-) -> Result<()> {
-    build(common)?.heights(threads, seeds)
-}
-
-/// Shard `shard` of `of` of the golden seeds, every `of`th from the `shard`th.
+/// Shard `shard` of `of` of the golden seeds, every `of`th from the `shard`th. CI splits a
+/// version's heights between jobs this way where they're slow.
 pub(crate) fn golden_seed_shard(shard: usize, of: usize) -> Vec<&'static str> {
     GOLDEN_SEEDS
         .iter()
@@ -356,21 +344,6 @@ pub(crate) fn golden_seed_shard(shard: usize, of: usize) -> Vec<&'static str> {
         .filter(|(i, _)| i % of == shard - 1)
         .map(|(_, seed)| seed)
         .collect()
-}
-
-fn all_but_heights(harness: &Harness, threads: Option<usize>) -> Result<()> {
-    harness.probe()?;
-    harness.structures()?;
-    harness.spawn()?;
-    // Leave nothing from an earlier seed or region set for tests to pick up.
-    let biomes = repo_root()
-        .join("oracle-out")
-        .join(&harness.version)
-        .join("biomes");
-    if biomes.exists() {
-        fs::remove_dir_all(&biomes)?;
-    }
-    harness.biomes(&golden_jobs(&biomes), threads)
 }
 
 /// One job per golden dimension, seed and region, writing under `biomes/<dimension>/<seed>/`.
@@ -453,7 +426,7 @@ impl Harness {
     }
 
     /// Writes `oracle-out/<version>/probe/`, replacing what was there.
-    fn probe(&self) -> Result<()> {
+    pub(crate) fn probe(&self) -> Result<()> {
         let dir = repo_root()
             .join("oracle-out")
             .join(&self.version)
@@ -468,19 +441,19 @@ impl Harness {
 
     /// Writes `oracle-out/<version>/structures/<dimension>/` for each golden dimension, replacing
     /// what was there.
-    fn structures(&self) -> Result<()> {
+    pub(crate) fn structures(&self) -> Result<()> {
         self.per_dimension("structures", &[], GOLDEN_SEEDS)
     }
 
     /// Writes `oracle-out/<version>/spawn/<dimension>/` for each golden dimension, replacing
     /// what was there.
-    fn spawn(&self) -> Result<()> {
+    pub(crate) fn spawn(&self) -> Result<()> {
         self.per_dimension("spawn", &[], GOLDEN_SEEDS)
     }
 
     /// Writes `oracle-out/<version>/heights/<dimension>/` for each golden dimension, replacing
     /// what was there.
-    fn heights(&self, threads: Option<usize>, seeds: &[&str]) -> Result<()> {
+    pub(crate) fn heights(&self, threads: Option<usize>, seeds: &[&str]) -> Result<()> {
         let mut extra: Vec<OsString> = Vec::new();
         if let Some(threads) = threads {
             extra.extend(["--threads".into(), threads.to_string().into()]);
@@ -510,6 +483,19 @@ impl Harness {
             self.run(&args)?;
         }
         Ok(())
+    }
+
+    /// The golden biome grids, after removing any from an earlier seed or region set, so tests
+    /// don't pick them up.
+    pub(crate) fn golden_biomes(&self, threads: Option<usize>) -> Result<()> {
+        let biomes = repo_root()
+            .join("oracle-out")
+            .join(&self.version)
+            .join("biomes");
+        if biomes.exists() {
+            fs::remove_dir_all(&biomes)?;
+        }
+        self.biomes(&golden_jobs(&biomes), threads)
     }
 
     fn biomes(&self, jobs: &[Job], threads: Option<usize>) -> Result<()> {
@@ -548,7 +534,7 @@ impl Harness {
     }
 }
 
-fn build(common: &Common) -> Result<Harness> {
+pub(crate) fn build(common: &Common) -> Result<Harness> {
     let resolved = extract::resolve(&common.game_version)?;
     let (server, major) = (&resolved.download, resolved.java_major);
 

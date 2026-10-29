@@ -140,11 +140,11 @@ jobs:
           "$env:USERPROFILE\.local\bin" >> $env:GITHUB_PATH
       - run: cargo xtask check
 
-  # One job per version and part: `heights` (the height golden files and their test) and `rest`
-  # (everything else), each making only the oracle outputs it tests. Where a version's heights
-  # don't fit an hour, they're split by seed (`--shard`) (ADR 0041).
+  # Two jobs per version: `--only heights` (the height golden files and their test) and
+  # `--exclude heights` (everything else), each making only the oracle outputs its tests read.
+  # Where a version's heights don't fit an hour, they're split by seed (`--shard`) (ADR 0041).
   oracle:
-    name: oracle ${{ matrix.version }} ${{ matrix.part }}${{ matrix.shard && format(' {0}', matrix.shard) || '' }}
+    name: oracle ${{ matrix.version }} ${{ matrix.select }} heights${{ matrix.shard && format(' {0}', matrix.shard) || '' }}
     needs: scope
     if: needs.scope.outputs.oracle == 'true'
     runs-on: ubuntu-24.04
@@ -158,18 +158,18 @@ jobs:
           - "26.3"
           - "26.4-snapshot-5"
           - "26.4-snapshot-6"
-        part: [heights, rest]
+        select: [only, exclude]
         # 26.2's game takes 8 to 12 minutes per Overworld heights file on a hosted runner, about
         # 45 minutes for all ten seeds: two jobs of five seeds each.
         exclude:
           - version: "26.2"
-            part: heights
+            select: only
         include:
           - version: "26.2"
-            part: heights
+            select: only
             shard: "1/2"
           - version: "26.2"
-            part: heights
+            select: only
             shard: "2/2"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -185,7 +185,7 @@ jobs:
       # `oracle locate` runs Mojang's dedicated server; this accepts the Minecraft EULA for it
       # (https://aka.ms/MinecraftEULA, ADR 0033).
       - run: >-
-          cargo xtask ci --game-version '${{ matrix.version }}' --part ${{ matrix.part }}
+          cargo xtask ci --game-version '${{ matrix.version }}' --${{ matrix.select }} heights
           ${{ matrix.shard && format('--shard {0}', matrix.shard) || '' }}
         env:
           SPYGLASS_ACCEPT_EULA: "1"

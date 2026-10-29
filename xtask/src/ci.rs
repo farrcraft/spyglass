@@ -1,9 +1,9 @@
 //! `cargo xtask ci --game-version <v>`: one version's CI job, the same steps in the same order
 //! as the workflow runs them (ADR 0028). Everything game-derived is made fresh: the bundle is
-//! re-extracted and every oracle output regenerated, then every comparison must run and pass.
-//! CI runs it in parts (`--part heights`, `--part rest`), heights split by seed where they're
-//! slow, so each job fits its hour (ADR 0041); each part makes its own inputs, so nothing
-//! game-derived passes between jobs (ADR 0008).
+//! re-extracted and the oracle outputs regenerated, then every comparison must run and pass.
+//! CI splits a version between jobs with `--only` and `--exclude`, and heights by seed where
+//! they're slow, so each job fits its hour (ADR 0041). Each job makes the outputs its tests
+//! read, so nothing game-derived passes between jobs (ADR 0008).
 
 use anyhow::{Result, bail};
 use spyglass_extract::cache::JarCache;
@@ -13,18 +13,6 @@ use crate::oracle::{self, Common, OracleCmd};
 use crate::oracle_test::{self, Input};
 use crate::repo_root;
 
-/// What extraction, the golden set and `oracle locate` make: every input.
-const MADE: &[Input] = &[
-    Input::Bundle,
-    Input::Extracted,
-    Input::Probe,
-    Input::Biomes,
-    Input::Structures,
-    Input::Spawn,
-    Input::Locate,
-    Input::Heights,
-];
-
 /// What `oracle test-pack` makes for `<version>+testpack`.
 const MADE_BY_TEST_PACK: &[Input] = &[Input::Bundle, Input::Probe, Input::Structures];
 
@@ -33,13 +21,17 @@ pub struct Ci {
     /// Game version: an id, `latest` or `latest-snapshot`.
     #[arg(long)]
     game_version: String,
-    /// Run only part of the job: `heights` (the height golden files and their test) or `rest`
-    /// (everything else). CI runs the parts as separate jobs, since some versions' heights take
-    /// most of an hour. Without it, everything runs.
-    #[arg(long, value_enum)]
-    part: Option<Part>,
-    /// With `--part heights`: only shard `I` of `N` of the golden seeds, written `I/N`.
-    #[arg(long, value_parser = shard, requires = "part")]
+    /// Make only these oracle outputs, comma-separated, and run only the tests that read them.
+    /// CI runs a version as several jobs this way, since some versions' heights take most of an
+    /// hour.
+    #[arg(long, value_enum, value_delimiter = ',', conflicts_with = "exclude")]
+    only: Vec<Output>,
+    /// Make every oracle output but these, and run every test that doesn't read them, including
+    /// the ones that need only the bundle, and the test pack's.
+    #[arg(long, value_enum, value_delimiter = ',')]
+    exclude: Vec<Output>,
+    /// With `--only heights`: only shard `I` of `N` of the golden seeds, written `I/N`.
+    #[arg(long, value_parser = shard)]
     shard: Option<(usize, usize)>,
     /// Parallel jobs for the golden files. Defaults to the number of CPUs.
     #[arg(long)]
@@ -50,10 +42,38 @@ pub struct Ci {
     accept_eula: bool,
 }
 
+/// An oracle output, named as `cargo xtask oracle` names its subcommands.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, clap::ValueEnum)]
-enum Part {
+enum Output {
+    Probe,
+    Biomes,
+    Structures,
+    Spawn,
     Heights,
-    Rest,
+    Locate,
+}
+
+impl Output {
+    const ALL: [Output; 6] = [
+        Output::Probe,
+        Output::Biomes,
+        Output::Structures,
+        Output::Spawn,
+        Output::Heights,
+        Output::Locate,
+    ];
+
+    /// The test input it is.
+    fn input(self) -> Input {
+        match self {
+            Output::Probe => Input::Probe,
+            Output::Biomes => Input::Biomes,
+            Output::Structures => Input::Structures,
+            Output::Spawn => Input::Spawn,
+            Output::Heights => Input::Heights,
+            Output::Locate => Input::Locate,
+        }
+    }
 }
 
 /// `I/N`, a shard of N, counted from 1.
@@ -64,39 +84,80 @@ fn shard(text: &str) -> Result<(usize, usize), String> {
         .ok_or_else(|| format!("expected I/N with 1 <= I <= N, got {text:?}"))
 }
 
-fn needs_heights(inputs: &[Input]) -> bool {
-    inputs.contains(&Input::Heights)
+/// The outputs to make: `only`, or all but `exclude`.
+fn selected(only: &[Output], exclude: &[Output]) -> Vec<Output> {
+    Output::ALL
+        .into_iter()
+        .filter(|o| {
+            if only.is_empty() {
+                !exclude.contains(o)
+            } else {
+                only.contains(o)
+            }
+        })
+        .collect()
 }
 
-fn without_heights(inputs: &[Input]) -> bool {
-    !needs_heights(inputs)
+/// Whether a test with `inputs` runs: its oracle outputs are all `made`. A test that reads no
+/// oracle output, only the bundle, runs unless `only` limits the job to particular outputs, so
+/// each such test runs in exactly one of a version's jobs.
+fn runs(inputs: &[Input], made: &[Input], only: bool) -> bool {
+    let mut outputs = inputs
+        .iter()
+        .filter(|i| !matches!(i, Input::Bundle | Input::Extracted))
+        .peekable();
+    if outputs.peek().is_none() {
+        !only
+    } else {
+        outputs.all(|i| made.contains(i))
+    }
+}
+
+/// The bundle, and what `outputs` make, as test inputs.
+fn made(outputs: &[Output]) -> Vec<Input> {
+    let mut made = vec![Input::Bundle, Input::Extracted];
+    made.extend(outputs.iter().map(|o| o.input()));
+    made
 }
 
 pub fn run(args: &Ci) -> Result<()> {
-    if args.shard.is_some() && args.part != Some(Part::Heights) {
-        bail!("--shard splits only --part heights");
+    let only = !args.only.is_empty();
+    if args.shard.is_some() && args.only != [Output::Heights] {
+        bail!("--shard splits only --only heights");
     }
-    let heights = args.part != Some(Part::Rest);
-    let rest = args.part != Some(Part::Heights);
+    let outputs = selected(&args.only, &args.exclude);
     // Asked first, so a job doesn't fail at `oracle locate` after minutes of work.
-    if rest {
+    if outputs.contains(&Output::Locate) {
         crate::locate::require_eula(args.accept_eula)?;
     }
     let version = step("extract the bundle", || extract_bundle(&args.game_version))?;
     let common = || Common::for_version(&version);
-    if rest {
-        step("oracle golden (all but heights)", || {
-            oracle::golden_but_heights(&common(), args.threads)
+    let golden: Vec<Output> = outputs
+        .iter()
+        .copied()
+        .filter(|&o| o != Output::Locate)
+        .collect();
+    if !golden.is_empty() {
+        step(&format!("oracle golden: {golden:?}"), || {
+            let harness = oracle::build(&common())?;
+            for output in &golden {
+                match output {
+                    Output::Probe => harness.probe()?,
+                    Output::Structures => harness.structures()?,
+                    Output::Spawn => harness.spawn()?,
+                    Output::Heights => {
+                        let (i, n) = args.shard.unwrap_or((1, 1));
+                        println!("heights for golden seeds shard {i}/{n}");
+                        harness.heights(args.threads, &oracle::golden_seed_shard(i, n))?;
+                    }
+                    Output::Biomes => harness.golden_biomes(args.threads)?,
+                    Output::Locate => {}
+                }
+            }
+            Ok(())
         })?;
     }
-    if heights {
-        let (i, n) = args.shard.unwrap_or((1, 1));
-        let seeds = oracle::golden_seed_shard(i, n);
-        step(&format!("oracle golden heights (seeds {i}/{n})"), || {
-            oracle::golden_heights(&common(), args.threads, &seeds)
-        })?;
-    }
-    if rest {
+    if outputs.contains(&Output::Locate) {
         step("oracle locate", || {
             oracle::run(OracleCmd::Locate {
                 common: common(),
@@ -108,27 +169,21 @@ pub fn run(args: &Ci) -> Result<()> {
     let data_version =
         spyglass_data::bundle::read_manifest(&repo_root().join("bundles").join(&version))?
             .data_version;
-    let test_pack = rest && oracle::test_pack_covers(data_version)?;
+    // Like the bundle-only tests: in exactly one of a version's jobs.
+    let test_pack = !only && oracle::test_pack_covers(data_version)?;
     if test_pack {
         step("oracle test-pack", || {
             oracle::run(OracleCmd::TestPack(common()))
         })?;
     }
-    let (made, keep): (&[Input], oracle_test::Keep) = match args.part {
-        None => (MADE, |_| true),
-        Some(Part::Heights) => (
-            &[Input::Bundle, Input::Extracted, Input::Heights],
-            needs_heights,
-        ),
-        Some(Part::Rest) => (MADE, without_heights),
-    };
+    let made = made(&outputs);
     step("oracle-test", || {
-        oracle_test::run_made(&version, made, keep)
+        oracle_test::run_made(&version, &made, &|inputs| runs(inputs, &made, only))
     })?;
     if test_pack {
         let variant = format!("{version}+testpack");
         step("oracle-test (test pack)", || {
-            oracle_test::run_made(&variant, MADE_BY_TEST_PACK, |_| true)
+            oracle_test::run_made(&variant, MADE_BY_TEST_PACK, &|_| true)
         })?;
     }
     println!("ci: {version} passed");
@@ -169,6 +224,37 @@ fn extract_bundle(version: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn selections() {
+        use Output::*;
+        assert_eq!(selected(&[], &[]), Output::ALL);
+        assert_eq!(selected(&[Heights], &[]), [Heights]);
+        assert_eq!(
+            selected(&[], &[Heights]),
+            [Probe, Biomes, Structures, Spawn, Locate]
+        );
+    }
+
+    /// `--only heights` and `--exclude heights` together run every test exactly once.
+    #[test]
+    fn two_jobs_run_each_test_once() {
+        let heights = made(&selected(&[Output::Heights], &[]));
+        let others = made(&selected(&[], &[Output::Heights]));
+        let tests: &[&[Input]] = &[
+            &[Input::Heights, Input::Bundle],
+            &[Input::Probe, Input::Bundle],
+            &[Input::Locate, Input::Bundle],
+            &[Input::Bundle],
+            &[Input::Extracted],
+        ];
+        for inputs in tests {
+            assert!(
+                runs(inputs, &heights, true) != runs(inputs, &others, false),
+                "{inputs:?}"
+            );
+        }
+    }
 
     #[test]
     fn shards() {

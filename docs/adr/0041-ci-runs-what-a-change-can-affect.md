@@ -24,7 +24,7 @@ GitHub can skip a whole workflow by path (`paths:` on the trigger), but a skippe
    Jobs are skipped by condition, never by a workflow path filter.
 
 2. **Everything runs on a push to `main` and in the release workflow,** whatever changed. A rule that skips too much on a pull request shows on the merge that follows.
-3. **Each version's oracle work runs in parts.** `cargo xtask ci --part heights` makes the height goldens and runs their test; `--part rest` makes and tests everything else. Each part makes its own inputs, so nothing game-derived passes between jobs. Where a version's heights don't fit an hour, `--shard I/N` splits them by golden seed. 26.2's heights run as two shards of five seeds each. Locally, `cargo xtask ci` without `--part` still runs the whole job.
+3. **Each version's oracle work runs as two jobs.** `cargo xtask ci` takes `--only` or `--exclude` with oracle outputs, named as `cargo xtask oracle` names them (`probe`, `biomes`, `structures`, `spawn`, `heights`, `locate`). CI runs `--only heights`, which makes the height goldens and runs their test, and `--exclude heights`, which makes and tests everything else. Tests that read no oracle output, and the test pack, run with `--exclude`, so every test runs in exactly one job. Each job makes the outputs its tests read, so nothing game-derived passes between jobs. Where a version's heights don't fit an hour, `--shard I/N` splits them by golden seed. 26.2's heights run as two shards of five seeds each. Locally, `cargo xtask ci` without either flag still runs the whole job.
 
 ## Consequences
 

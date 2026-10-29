@@ -45,4 +45,4 @@ Start from [template.md](template.md). Files are named `NNNN-kebab-case-title.md
 | [0037](0037-versions-and-releases.md)                         | Versions and releases                                                     | Accepted                                                             |
 | [0038](0038-how-release-archives-are-built.md)                | How release archives are built                                            | Accepted                                                             |
 | [0039](0039-where-installed-binaries-find-bundles.md)         | Where installed binaries find bundles, and which game versions they trust | Accepted                                                             |
-| [0040](0040-releases-go-through-a-pull-request.md)            | Releases go through a pull request                                        | Accepted                                                             |
+| [0040](0040-releases-are-drafted-from-main.md)                | Releases are drafted from main by a workflow run by hand                  | Accepted                                                             |

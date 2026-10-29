@@ -7,14 +7,14 @@
 
 ## Goal
 
-Versioned release archives, built by CI from a tag, for people who don't build from source. Covers every exit criterion of milestone 11.
+Versioned release archives, built by CI from `main`, for people who don't build from source. Covers every exit criterion of milestone 11.
 
 ## Approach
 
 ### Versions and tags
 
 - One SemVer version for the whole workspace, in `[workspace.package]`, starting at `0.1.0`. Crates stay `publish = false`. The version describes the binaries and the public API together. While it's `0.x`, a minor bump may break the API, the CLI's flags or its `--json` output.
-- Tags are `vX.Y.Z` on `main`. The tag must equal the workspace version, and the release workflow checks it.
+- Tags are `vX.Y.Z` on `main`, equal to the workspace version. GitHub makes each when its draft release is published ([ADR 0040](../adr/0040-releases-are-drafted-from-main.md)).
 - Adding a game version is a minor release, not a patch. It changes what the binaries accept.
 - `CHANGELOG.md` at the root, in Keep a Changelog form, with an `Unreleased` section that changes add to. A release's notes are its section, copied by the workflow. Each section lists the game versions the release supports.
 
@@ -62,19 +62,17 @@ Switch ranges are open-ended ([ADR 0026](../adr/0026-how-game-versions-coexist.m
 
 ### `cargo xtask release <version>`
 
-Local preparation, never pushes:
+Changes files only, for an ordinary pull request ([ADR 0040](../adr/0040-releases-are-drafted-from-main.md)):
 
-1. Checks that the tree is clean, the branch is `main`, and `Unreleased` has entries.
+1. Checks that the version is after the current one and `Unreleased` has entries.
 2. Sets the workspace version and refreshes `Cargo.lock`.
-3. Turns `Unreleased` into `[<version>] - <date>` with the supported game versions, and opens a new `Unreleased`.
-4. Runs `cargo xtask check`.
-5. Commits as `Release <version>`, tags `v<version>` (annotated), and prints the `git push` commands.
+3. Turns `Unreleased` into `[<version>] - <date>` with the supported game versions, and opens a new `Unreleased`. A pre-release leaves the changelog alone.
 
 ### Release workflow (`.github/workflows/release.yml`)
 
-On a pushed `v*` tag:
+Run by hand (`workflow_dispatch`), on `main` only:
 
-1. **verify:** the tag matches the workspace version and is on `main`, and `CHANGELOG.md` has its section.
+1. **verify:** the version in `main`'s `Cargo.toml` has no tag yet, and `CHANGELOG.md` has its section.
 2. **ci:** calls `ci.yml`, which gains a `workflow_call` trigger: every check and every oracle job, so a release is never built from a commit that failed any of them.
 3. **build:** a matrix of targets, each running `cargo xtask dist --target <t>` and uploading the archive as a workflow artifact. It holds only spyglass's binaries, nothing game-derived, so ADR 0008 allows it:
 
@@ -86,7 +84,7 @@ On a pushed `v*` tag:
    | `x86_64-apple-darwin`      | `macos-15`     | Cross-compiled; smoke-tested under Rosetta.                            |
 
 4. **smoke:** on each target's runner, unpacks the archive into a clean folder outside the checkout, with no Rust on `PATH`, and runs `--version` and `--help` for all three. On Linux it also extracts 26.3 with the packaged extractor and runs one `locate` and one `render` against it. Nothing it extracts is uploaded.
-5. **publish:** downloads the archives, writes `SHA256SUMS`, attests each archive with `actions/attest-build-provenance`, and creates a **draft** release with `gh release create --draft`, the changelog section as notes and the archives attached. Only this job gets `contents: write`, `id-token: write` and `attestations: write`; every other job keeps `contents: read`.
+5. **publish:** downloads the archives, writes `SHA256SUMS`, attests each archive with `actions/attest-build-provenance`, and creates a **draft** release with `gh release create --draft --target <commit>`, replacing an earlier draft for the version, with the changelog section as notes and the archives attached. Only this job gets `contents: write`, `id-token: write` and `attestations: write`; every other job keeps `contents: read`.
 
 Every action is pinned by commit SHA, as `ci.yml` does. The workflow only calls `cargo xtask` and `gh`, so the steps run locally too.
 
@@ -119,7 +117,7 @@ Every action is pinned by commit SHA, as `ci.yml` does. The workflow only calls 
 - [x] `GETTING-STARTED.txt` for the archive, written for someone with no Rust and no clone.
 - [x] `cargo xtask release <version>`.
 - [x] `ci.yml` gains `workflow_call`. `release.yml` with verify, ci, build, smoke and publish. The release notes' relative links are made absolute to the tag (`https://github.com/farrcraft/spyglass/blob/vX.Y.Z/...`), since they don't resolve on the release page.
-- [ ] A dry run: push a `v0.1.0-rc.1` tag to a fork, or run the workflow by `workflow_dispatch` with publishing off. Fix what it finds.
+- [ ] A dry run: set `0.1.0-rc.1` through a pull request, run the Release workflow on `main`, check the draft pre-release and delete it. Fix what it finds.
 - [ ] A reproducibility check: build the same tag twice and compare hashes. Record the result in ADR 0038. Windows done (identical, see the notes); Linux and macOS in the workflow's dry run.
 - [ ] Manual check on a clean Windows, macOS and Linux machine, by the first-run guide only.
 - [x] `docs/releasing.md`: cutting a release, what to do when a step fails, deleting a bad draft. Links from the README, CONTRIBUTING (changelog entries) and getting-started.
@@ -143,7 +141,7 @@ Every action is pinned by commit SHA, as `ci.yml` does. The workflow only calls 
 
 ## Notes
 
-- 2026-10-28: `main` got a ruleset when the repo was published (pull requests only, no bypass), so `cargo xtask release` now commits on a `release/v<version>` branch for a pull request, and `cargo xtask release-tag` tags the merged commit ([ADR 0040](../adr/0040-releases-go-through-a-pull-request.md)). Rehearsed end to end against a local bare repository standing in for GitHub.
+- 2026-10-28: `main` got a ruleset when the repo was published (pull requests only, no bypass). A first answer, a release branch from `cargo xtask release` and a `release-tag` command to tag the merged commit, worked in a rehearsal against a local bare repository, but was replaced the same day: `cargo xtask release` now only edits `Cargo.toml`, `Cargo.lock` and the changelog for an ordinary pull request, and the release workflow runs by hand on `main` and drafts a release whose tag GitHub makes on publishing ([ADR 0040](../adr/0040-releases-are-drafted-from-main.md)). The rehearsal also found that bumping the version before running the checks makes a hook rebuild the running xtask.exe, which Windows refuses; the release command no longer runs the checks at all.
 - 2026-10-28: the workflow's steps are `cargo xtask` commands: `release-notes` (checks the tag and writes the notes) and `smoke` (unpacks an archive outside the repo and runs it with Rust's folders off PATH; with `--extract`, on Linux only, also extracts and answers). The viewer gained `--version`, so it can be checked on a runner with no display. The dry run needs no `workflow_dispatch`: a pre-release tag makes a draft pre-release, which nothing publishes. The IDE's Actions extension flags the pinned action SHAs as unresolvable; the GitHub API finds every one, so that's the extension.
 - 2026-10-28: `cargo xtask release` takes pre-releases too (`0.1.0-rc.1`), for the workflow's dry run: they set the version and tag but leave the changelog alone, so their notes are Unreleased. The changelog gets Keep a Changelog's link definitions at the end, and markdownlint's MD024 is now `siblings_only`, since every release repeats headings like "Added" and "Game versions". The command refuses before changing anything if the version isn't after the current one, the tree is dirty, the branch isn't `main`, the tag exists or Unreleased is empty; if the checks fail after it has changed the version and changelog, it leaves them uncommitted and says so.
 - 2026-10-28: `cargo xtask dist` works on Windows. What it took:

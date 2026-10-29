@@ -1,15 +1,21 @@
-# Release (ADRs 0037 and 0038; docs/releasing.md): a pushed v<version> tag, made by
-# `cargo xtask release`, becomes a draft GitHub release with an archive per target, SHA256SUMS
-# and a provenance attestation for each archive. The owner publishes the draft by hand.
+# Release (ADRs 0037, 0038 and 0040; docs/releasing.md): run by hand on main, it builds the
+# version in main's Cargo.toml, set by `cargo xtask release` in an earlier pull request, into a
+# draft GitHub release with an archive per target, SHA256SUMS and a provenance attestation for
+# each archive. The draft records main's commit; GitHub makes the v<version> tag there when the
+# owner publishes it. Until then nothing is public, not even the tag.
 #
-# Every check and oracle job runs first, on the tagged commit. The archives hold only spyglass's
-# own binaries and docs; nothing derived from the game is uploaded (ADR 0008): the smoke test's
+# Every check and oracle job runs first, on that commit. The archives hold only spyglass's own
+# binaries and docs; nothing derived from the game is uploaded (ADR 0008): the smoke test's
 # bundle stays on its runner. Each step calls `cargo xtask`, so it runs the same locally.
 name: Release
 
 on:
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
+
+# One release at a time; a second run waits rather than racing the first to the draft.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -19,15 +25,21 @@ env:
 
 jobs:
   verify:
-    name: Tag and release notes
+    name: Version and release notes
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    outputs:
+      tag: ${{ steps.notes.outputs.tag }}
     steps:
+      - name: Only from main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "Run the release workflow on main, not $GITHUB_REF_NAME." >&2
+          exit 1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          # release-notes checks that the tagged commit is on main.
-          fetch-depth: 0
-      - run: cargo xtask release-notes --tag "$GITHUB_REF_NAME" --out notes.md
+      # Checks that the version isn't released yet, and that the changelog has its notes.
+      - id: notes
+        run: echo "tag=$(cargo xtask release-notes --out notes.md)" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: notes
@@ -104,7 +116,7 @@ jobs:
 
   publish:
     name: Draft release
-    needs: build
+    needs: [verify, build]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     # The only job that can write: the release, and the attestations with their signing token.
@@ -127,14 +139,23 @@ jobs:
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/spyglass-*
-      # A draft, so nothing is public until the owner publishes it. A tag with a pre-release
-      # (v0.1.0-rc.1) makes a pre-release.
+      # A draft, so nothing is public until the owner publishes it; publishing makes the tag, on
+      # this run's commit. A rerun after a failure replaces this version's earlier draft, but
+      # never a published release. A pre-release version (0.1.0-rc.1) makes a pre-release.
       - name: Create the draft
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ needs.verify.outputs.tag }}
         run: |
+          draft=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft \
+            2>/dev/null || true)
+          if [ "$draft" = false ]; then
+            echo "$TAG is already published." >&2
+            exit 1
+          elif [ "$draft" = true ]; then
+            gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes
+          fi
           prerelease=""
           case "$TAG" in *-*) prerelease="--prerelease" ;; esac
-          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --verify-tag $prerelease \
-            --title "spyglass ${TAG#v}" --notes-file notes.md dist/*
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --target "$GITHUB_SHA" \
+            $prerelease --title "spyglass ${TAG#v}" --notes-file notes.md dist/*

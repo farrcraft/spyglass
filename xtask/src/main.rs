@@ -84,13 +84,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: oracle::OracleCmd,
     },
-    /// Prepare a release: run every check, then on a `release/v<version>` branch set the version,
-    /// date the changelog and commit, for a pull request. Never pushes (docs/releasing.md).
+    /// Set the version for a release and date the changelog, for a pull request. Doesn't touch
+    /// git; the Release workflow tags and drafts it from main (docs/releasing.md).
     Release(release::Release),
-    /// Tag a merged release: the commit on origin/main that set the version. Never pushes.
-    ReleaseTag(release::ReleaseTag),
-    /// Check a pushed tag against the workspace version and main, and write its release notes
-    /// from the changelog. The release workflow's first step.
+    /// Check that this commit's version isn't released yet, write its release notes from the
+    /// changelog, and print its tag. The Release workflow's first step.
     ReleaseNotes(release::ReleaseNotes),
     /// Unpack a release archive outside the repo and run what's in it, as a user without Rust
     /// would; with `--extract`, also extract a game version and answer from it.
@@ -117,7 +115,6 @@ fn main() -> ExitCode {
         Cmd::OracleTest { game_version } => oracle_test::run(game_version.as_deref()),
         Cmd::Release(args) => release::run(&args),
         Cmd::ReleaseNotes(args) => release::notes(&args),
-        Cmd::ReleaseTag(args) => release::tag(&args),
         Cmd::Smoke(args) => smoke::run(&args),
         Cmd::VersionDiff(args) => version_diff::run(&args),
     };

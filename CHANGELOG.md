@@ -6,6 +6,12 @@ Changes go under **Unreleased** as they're made. `cargo xtask release` turns tha
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-29
+
+### Game versions
+
+Checked against the game for 26.2, 26.3, 26.4-snapshot-5, 26.4-snapshot-6.
+
 The first release.
 
 ### Added
@@ -23,3 +29,6 @@ The first release.
 - Bundles go in a per-user folder by default, or the folder `SPYGLASS_BUNDLES` names ([bundle-format.md](docs/specs/bundle-format.md#where-bundles-are)).
 - A warning for a game version this build wasn't checked against. Its answers may differ from the game's ([bundle-format.md](docs/specs/bundle-format.md#checked-versions)).
 - `--version` names the build and the game versions it was checked against.
+
+[Unreleased]: https://github.com/farrcraft/spyglass/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/farrcraft/spyglass/releases/tag/v0.1.0

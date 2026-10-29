@@ -6,6 +6,6 @@ Code must not reference plans. Anything durable a plan produces belongs in a spe
 
 ## Active
 
-None. The next milestone's plan goes here.
+- [m13-viewer-redesign](m13-viewer-redesign.md): the viewer's layout, map controls, icons and loading.
 
 The follow-ups of milestones 08 and 11 ([roadmap](../roadmap/README.md#follow-ups)) need no plan of their own.

@@ -1,7 +1,10 @@
-# CI (ADR 0028): every check, and one oracle job per supported game version. Each oracle job
-# downloads its server jar from Mojang, extracts the bundle and regenerates every oracle output
-# in a fresh runner; nothing derived from the game is cached or uploaded (ADR 0008). The jobs
-# only call `cargo xtask`, so they run the same locally.
+# CI (ADR 0028): every check, and the oracle jobs for every supported game version. Each oracle
+# job downloads its server jar from Mojang, extracts the bundle and regenerates the oracle outputs
+# it tests in a fresh runner; nothing derived from the game is cached or uploaded (ADR 0008). The
+# jobs only call `cargo xtask`, so they run the same locally.
+#
+# A pull request runs only the jobs its files can affect, which `cargo xtask ci-scope` decides;
+# a push to main and the release workflow run everything (ADR 0041).
 name: CI
 
 # Pushes to main, and pull requests: a branch with a pull request runs once, not twice.
@@ -24,8 +27,53 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  scope:
+    name: What to run
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      check: ${{ steps.scope.outputs.check }}
+      windows: ${{ steps.scope.outputs.windows }}
+      oracle: ${{ steps.scope.outputs.oracle }}
+      docs: ${{ steps.scope.outputs.docs }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The base branch, to diff against.
+          fetch-depth: 0
+      - id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            cargo xtask ci-scope --base "origin/$GITHUB_BASE_REF" >> "$GITHUB_OUTPUT"
+          else
+            echo "check=true" >> "$GITHUB_OUTPUT"
+            echo "windows=true" >> "$GITHUB_OUTPUT"
+            echo "oracle=true" >> "$GITHUB_OUTPUT"
+            echo "docs=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # A pull request that changes only docs: the commit-stage hooks (links, formatting, spelling)
+  # instead of the whole check. cargo-shear is skipped: it reads Rust, and isn't installed here.
+  docs:
+    name: docs
+    needs: scope
+    if: needs.scope.outputs.docs == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Keep the version in step with the setup scripts; an xtask test checks it.
+      - run: pipx install pre-commit==4.7.0
+      - run: pre-commit run --all-files
+        env:
+          SKIP: cargo-shear
+
   check:
     name: cargo xtask check
+    needs: scope
+    if: needs.scope.outputs.check == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -60,6 +108,8 @@ jobs:
   # The oracle jobs stay on Linux, since their results don't depend on the OS.
   check-windows:
     name: cargo xtask check (Windows)
+    needs: scope
+    if: needs.scope.outputs.windows == 'true'
     runs-on: windows-2025
     timeout-minutes: 90
     steps:
@@ -90,8 +140,13 @@ jobs:
           "$env:USERPROFILE\.local\bin" >> $env:GITHUB_PATH
       - run: cargo xtask check
 
+  # One job per version and part: `heights` (the height golden files and their test) and `rest`
+  # (everything else), each making only the oracle outputs it tests. Where a version's heights
+  # don't fit an hour, they're split by seed (`--shard`) (ADR 0041).
   oracle:
-    name: oracle ${{ matrix.version }}
+    name: oracle ${{ matrix.version }} ${{ matrix.part }}${{ matrix.shard && format(' {0}', matrix.shard) || '' }}
+    needs: scope
+    if: needs.scope.outputs.oracle == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
@@ -103,6 +158,19 @@ jobs:
           - "26.3"
           - "26.4-snapshot-5"
           - "26.4-snapshot-6"
+        part: [heights, rest]
+        # 26.2's game takes 8 to 12 minutes per Overworld heights file on a hosted runner, about
+        # 45 minutes for all ten seeds: two jobs of five seeds each.
+        exclude:
+          - version: "26.2"
+            part: heights
+        include:
+          - version: "26.2"
+            part: heights
+            shard: "1/2"
+          - version: "26.2"
+            part: heights
+            shard: "2/2"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: The JDK major ${{ matrix.version }} needs
@@ -116,6 +184,8 @@ jobs:
           java-version: ${{ steps.jdk.outputs.major }}
       # `oracle locate` runs Mojang's dedicated server; this accepts the Minecraft EULA for it
       # (https://aka.ms/MinecraftEULA, ADR 0033).
-      - run: cargo xtask ci --game-version '${{ matrix.version }}'
+      - run: >-
+          cargo xtask ci --game-version '${{ matrix.version }}' --part ${{ matrix.part }}
+          ${{ matrix.shard && format('--shard {0}', matrix.shard) || '' }}
         env:
           SPYGLASS_ACCEPT_EULA: "1"

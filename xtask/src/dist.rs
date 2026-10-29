@@ -518,6 +518,30 @@ mod tests {
         assert!(pins.iter().all(|(_, v)| *v == pins[0].1), "{pins:?}");
     }
 
+    /// The setup scripts and CI's docs job install the same pre-commit.
+    #[test]
+    fn one_pre_commit_version() {
+        let pins: Vec<(&str, String)> = [
+            "scripts/setup.sh",
+            "scripts/setup.ps1",
+            ".github/workflows/ci.yml",
+        ]
+        .into_iter()
+        .map(|file| {
+            let text = std::fs::read_to_string(repo_root().join(file)).unwrap();
+            let (_, rest) = text
+                .split_once("pre-commit==")
+                .unwrap_or_else(|| panic!("{file} doesn't install pre-commit==<version>"));
+            let version: String = rest
+                .chars()
+                .take_while(|c| c.is_ascii_digit() || *c == '.')
+                .collect();
+            (file, version)
+        })
+        .collect();
+        assert!(pins.iter().all(|(_, v)| *v == pins[0].1), "{pins:?}");
+    }
+
     #[test]
     fn about_accepts_what_deny_allows() {
         assert_eq!(

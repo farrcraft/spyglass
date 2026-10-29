@@ -67,6 +67,9 @@ impl Input {
     }
 }
 
+/// Which tests to run, by their inputs.
+pub(crate) type Keep = fn(&[Input]) -> bool;
+
 /// Every ignored test that checks against the game or a bundle: package, test name, inputs.
 /// Tests that read this machine's saves or download the server jar aren't here.
 const TESTS: &[(&str, &str, &[Input])] = &[
@@ -259,7 +262,7 @@ pub fn run(version: Option<&str>) -> Result<()> {
     let mut outcomes = Vec::new();
     for version in &versions {
         println!("== {version}");
-        let outcome = run_version(root, version, &[])?;
+        let outcome = run_version(root, version, &[], |_| true)?;
         outcomes.push((version, outcome));
     }
     println!("oracle tests by version:");
@@ -300,8 +303,8 @@ fn bundled_versions(root: &Path) -> Vec<String> {
 
 /// Runs `version`'s tests as `cargo xtask ci` does, after making `made`: a test that needs one of
 /// those and finds it missing is an error, not a skip, and so is a run with no test.
-pub(crate) fn run_made(version: &str, made: &[Input]) -> Result<()> {
-    match run_version(repo_root(), version, made)? {
+pub(crate) fn run_made(version: &str, made: &[Input], keep: Keep) -> Result<()> {
+    match run_version(repo_root(), version, made, keep)? {
         Outcome::Passed(n) => {
             println!("{version}: passed ({n} tests)");
             Ok(())
@@ -311,12 +314,12 @@ pub(crate) fn run_made(version: &str, made: &[Input]) -> Result<()> {
     }
 }
 
-/// Runs the tests whose inputs `version` has, in one cargo invocation. A test missing any of
-/// `made`, which the caller just made, is an error.
-fn run_version(root: &Path, version: &str, made: &[Input]) -> Result<Outcome> {
+/// Runs the tests whose inputs `version` has, of those whose inputs `keep` accepts, in one cargo
+/// invocation. A test missing any of `made`, which the caller just made, is an error.
+fn run_version(root: &Path, version: &str, made: &[Input], keep: Keep) -> Result<Outcome> {
     let mut packages = Vec::new();
     let mut names = Vec::new();
-    for &(package, name, inputs) in TESTS {
+    for &(package, name, inputs) in TESTS.iter().filter(|(_, _, inputs)| keep(inputs)) {
         if let Some(&(_, pinned)) = PINNED.iter().find(|(n, _)| *n == name)
             && pinned != version
         {

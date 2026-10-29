@@ -18,7 +18,7 @@ cargo run -p spyglass-viewer                  # run the viewer
 cargo xtask check                             # every check, whole repo (as CI)
 cargo xtask oracle golden                     # regenerate the game's answers (oracle --help for the rest)
 cargo xtask oracle-test                       # ignored comparisons with the game, where inputs exist
-cargo xtask ci --game-version <v>             # one version's CI job: extract, regenerate, compare
+cargo xtask ci --game-version <v>             # one version's CI job: extract, regenerate, compare (--part, --shard split it)
 cargo xtask bench                             # time the public API's main operations
 cargo xtask dist [--target <triple>]          # one target's release archive, in target/archives/
 cargo xtask release <version>                 # set the version and date the changelog, for a PR

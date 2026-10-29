@@ -9,6 +9,7 @@ use clap::{Parser, Subcommand};
 use spyglass_extract::{java, manifest};
 
 mod ci;
+mod ci_scope;
 mod code_diff;
 mod dist;
 mod fuzz;
@@ -40,6 +41,9 @@ enum Cmd {
     /// Run one game version's CI job: extract its bundle, regenerate every oracle output
     /// (goldens, locate and, where it loads, the test pack), and run every comparison.
     Ci(ci::Ci),
+    /// Print which CI jobs a pull request needs, from the files it changes, as lines for
+    /// $GITHUB_OUTPUT.
+    CiScope(ci_scope::CiScope),
     /// Build one target's release archive into `target/archives/`: the binaries in a `dist`
     /// build, the docs and the third-party licenses (docs/adr/0038-how-release-archives-are-built.md).
     Dist(dist::Dist),
@@ -104,6 +108,7 @@ fn main() -> ExitCode {
         Cmd::Bench { bundle } => bench(bundle.as_deref()),
         Cmd::Check => check(),
         Cmd::Ci(args) => ci::run(&args),
+        Cmd::CiScope(args) => ci_scope::run(&args),
         Cmd::Dist(args) => dist::run(&args),
         Cmd::Doctor { game_version, java } => doctor(&game_version, java.as_deref()),
         Cmd::Fuzz(args) => fuzz::run(&args),

@@ -767,7 +767,7 @@ fn hit_card(ui: &mut egui::Ui, opened: &Opened) {
                     egui::Label::new(egui::RichText::new(mark).size(11.5).strong().color(colour)),
                 )
                 .on_hover_text(what);
-                ui.add(egui::Label::new(style::mono(&c.line).size(12.0)).truncate());
+                ui.add(egui::Label::new(super::search_panel::highlight(&c.line, 12.0)).truncate());
             });
         }
     });

@@ -31,7 +31,7 @@ impl App {
         let s = &mut self.settings.search;
         style::heading(ui, "Query");
         let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap: f32| {
-            let mut job = highlight(text.as_str());
+            let mut job = highlight(text.as_str(), 13.0);
             job.wrap.max_width = wrap;
             ui.fonts_mut(|f| f.layout_job(job))
         };
@@ -379,10 +379,11 @@ impl App {
     }
 }
 
-/// A query's text coloured by kind of word: keywords, ids, numbers, the rest.
-fn highlight(text: &str) -> egui::text::LayoutJob {
+/// A query's text coloured by kind of word, in monospace of `size`: keywords, ids, numbers,
+/// the rest. The hit card on the map colours its constraints' lines the same way.
+pub(super) fn highlight(text: &str, size: f32) -> egui::text::LayoutJob {
     let mut job = egui::text::LayoutJob::default();
-    let font = egui::FontId::monospace(13.0);
+    let font = egui::FontId::monospace(size);
     let keywords = [
         "require",
         "prefer",

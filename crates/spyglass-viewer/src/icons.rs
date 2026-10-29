@@ -274,16 +274,17 @@ mod tests {
         assert!(lightness([huts.tint.r(), huts.tint.g(), huts.tint.b()]) >= DARK);
     }
 
-    /// Every structure in the oracle's bundle has a family of its own. Bundles are made locally,
-    /// so this is ignored unless asked for (`cargo xtask oracle-test`).
+    /// Every game structure in the oracle's bundle has a family of its own; a data pack's, in
+    /// another namespace, gets the generic icon by design. Bundles are made locally, so this is
+    /// ignored unless asked for (`cargo xtask oracle-test`).
     #[test]
     #[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
     fn every_bundled_structure_has_a_family() {
         let game = spyglass::Game::open(spyglass_oracle::bundle_dir()).expect("a bundle");
         for dimension in spyglass::Dimension::ALL {
             let world = game.world(dimension).expect("a world");
-            for id in world.structures() {
-                assert_ne!(family(id), UNKNOWN, "{id} in {}", world.version());
+            for id in world.structures().filter(|id| id.starts_with("minecraft:")) {
+                assert_ne!(family(id).0, UNKNOWN.0, "{id} in {}", world.version());
             }
         }
     }

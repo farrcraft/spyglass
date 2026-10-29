@@ -62,7 +62,7 @@ Both decisions the icons needed are ADRs: the viewer draws them, and exports kee
 - [x] Coarse-first loading and the hatch placeholder.
 - [ ] New screenshots of the before board's states, compared with it by the owner.
 - [x] `cargo xtask check`.
-- [ ] `cargo xtask oracle-test` (its new viewer test and `each_dimension_opens` were run by hand for every local bundle).
+- [x] `cargo xtask oracle-test`: passed for 26.2, 26.3, 26.4-snapshot-5, 26.4-snapshot-6 and 26.4-snapshot-6+testpack.
 - [x] Docs: architecture.md's viewer row, README screenshots, CHANGELOG.
 
 ## Verification
@@ -84,6 +84,7 @@ Both decisions the icons needed are ADRs: the viewer draws them, and exports kee
 
 ## Notes
 
+- 2026-10-29: the first `oracle-test` run failed only on the test-pack bundle: its `spyglass_test:village` got the generic icon, which is the intended fallback for another namespace. The family test now checks only `minecraft:` structures.
 - 2026-10-29: with coarse-first loading, a cold start at 1:4 with biomes at the surface fills the window in about 5 seconds; the detailed tiles follow. While a search runs, it takes every core but one, so tiles and markers wait until it ends. That's milestone 14's to look at.
 - 2026-10-29: egui's default fonts have no ★, ⏵ or ⌖, and draw ✔, 📋 and 🎲 from the colour emoji font, which ignores the label's colour. Controls use words ("Copy", "Random", "Settings", "Met"/"Maybe"/"No", "18 kinds") or shapes the viewer draws itself (the spawn button). Bundling Inter and JetBrains Mono was dropped: egui's fonts read well at these sizes, and it saves two font files and their licences.
 - 2026-10-29: the structure list groups variants by family (one row for the 18 abandoned camps), with a checkbox that's partly ticked when only some variants are chosen. The legend lists families too.

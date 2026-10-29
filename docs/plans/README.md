@@ -6,7 +6,6 @@ Code must not reference plans. Anything durable a plan produces belongs in a spe
 
 ## Active
 
-- [m11-releases](m11-releases.md): versioned release archives built by CI from a tag ([milestone 11](../roadmap/11-releases.md)).
-- [m12-first-run](m12-first-run.md): extracting game data from the viewer, into a folder beside the binaries ([milestone 12](../roadmap/12-first-run.md)).
+None. The next milestone's plan goes here.
 
-Milestone 08's follow-ups ([roadmap](../roadmap/README.md#follow-ups)) need no plan of their own.
+The follow-ups of milestones 08 and 11 ([roadmap](../roadmap/README.md#follow-ups)) need no plan of their own.

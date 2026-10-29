@@ -27,7 +27,11 @@ Existing seed tools either hand-port per-version tables and fall behind new rele
 
 Mojang's data and code are never committed or redistributed. The extractor runs locally against a server jar you download yourself.
 
-## Quick start
+## Install
+
+Download the archive for your system from the [releases page](https://github.com/farrcraft/spyglass/releases/latest): Windows, Linux, or macOS (Apple silicon or Intel). Unpack it into a folder of its own and start `spyglass-viewer`. With no game data yet, it extracts some for you, into a `bundles` folder beside it; that needs a Java runtime matching the game version. `GETTING-STARTED.txt` in the archive covers the rest, including the `spyglass` command and the warnings unsigned programs get on Windows and macOS. No Rust is needed.
+
+## Build from source
 
 ```sh
 # Windows (PowerShell)

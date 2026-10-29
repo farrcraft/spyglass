@@ -1,9 +1,9 @@
 # m11. Releases
 
-- Status: In progress
-- Milestone: [11. Releases](../roadmap/11-releases.md)
+- Status: Completed, with two tasks carried as milestone follow-ups
+- Milestone: [11. Releases](../../roadmap/completed/11-releases.md)
 - Started: 2026-10-28
-- Completed: YYYY-MM-DD
+- Completed: 2026-10-29
 
 ## Goal
 
@@ -14,7 +14,7 @@ Versioned release archives, built by CI from `main`, for people who don't build 
 ### Versions and tags
 
 - One SemVer version for the whole workspace, in `[workspace.package]`, starting at `0.1.0`. Crates stay `publish = false`. The version describes the binaries and the public API together. While it's `0.x`, a minor bump may break the API, the CLI's flags or its `--json` output.
-- Tags are `vX.Y.Z` on `main`, equal to the workspace version. GitHub makes each when its draft release is published ([ADR 0040](../adr/0040-releases-are-drafted-from-main.md)).
+- Tags are `vX.Y.Z` on `main`, equal to the workspace version. GitHub makes each when its draft release is published ([ADR 0040](../../adr/0040-releases-are-drafted-from-main.md)).
 - Adding a game version is a minor release, not a patch. It changes what the binaries accept.
 - `CHANGELOG.md` at the root, in Keep a Changelog form, with an `Unreleased` section that changes add to. A release's notes are its section, copied by the workflow. Each section lists the game versions the release supports.
 
@@ -27,11 +27,11 @@ Today `--bundles` and the extractor's `--out` default to `bundles`, relative to 
   2. `./bundles`, if it exists, so a clone works as it does now;
   3. the per-user data folder (`directories::ProjectDirs::data_dir()/bundles`).
 - The CLI, extractor and viewer use it when no folder is given. Their help text shows the folder chosen.
-- The rules go in [bundle-format.md](../specs/bundle-format.md). The extractor's jar cache already uses `ProjectDirs` (`crates/spyglass-extract/src/cache.rs`), so no new dependency is needed.
+- The rules go in [bundle-format.md](../../specs/bundle-format.md). The extractor's jar cache already uses `ProjectDirs` (`crates/spyglass-extract/src/cache.rs`), so no new dependency is needed.
 
 ### Which game versions a build knows
 
-Switch ranges are open-ended ([ADR 0026](../adr/0026-how-game-versions-coexist.md)). So a binary from today, given a bundle for a version released next year, would silently answer with today's behavior. A release has to say what it was checked against.
+Switch ranges are open-ended ([ADR 0026](../../adr/0026-how-game-versions-coexist.md)). So a binary from today, given a bundle for a version released next year, would silently answer with today's behavior. A release has to say what it was checked against.
 
 - `spyglass_data::versions::CHECKED`: the data versions in the CI oracle matrix, with their ids. A test keeps it equal to the matrix in `.github/workflows/ci.yml`.
 - Loading a bundle whose data version isn't in `CHECKED` succeeds with a warning: an error in the API's result type, a stderr line in the CLI and `"unchecked_version"` in `--json`, and a banner in the viewer. "Newer than this build" and "between checked versions" get different wording.
@@ -62,7 +62,7 @@ Switch ranges are open-ended ([ADR 0026](../adr/0026-how-game-versions-coexist.m
 
 ### `cargo xtask release <version>`
 
-Changes files only, for an ordinary pull request ([ADR 0040](../adr/0040-releases-are-drafted-from-main.md)):
+Changes files only, for an ordinary pull request ([ADR 0040](../../adr/0040-releases-are-drafted-from-main.md)):
 
 1. Checks that the version is after the current one and `Unreleased` has entries.
 2. Sets the workspace version and refreshes `Cargo.lock`.
@@ -117,11 +117,11 @@ Every action is pinned by commit SHA, as `ci.yml` does. The workflow only calls 
 - [x] `GETTING-STARTED.txt` for the archive, written for someone with no Rust and no clone.
 - [x] `cargo xtask release <version>`.
 - [x] `ci.yml` gains `workflow_call`. `release.yml` with verify, ci, build, smoke and publish. The release notes' relative links are made absolute to the tag (`https://github.com/farrcraft/spyglass/blob/vX.Y.Z/...`), since they don't resolve on the release page.
-- [ ] A dry run: set `0.1.0-rc.1` through a pull request, run the Release workflow on `main`, check the draft pre-release and delete it. Fix what it finds.
-- [ ] A reproducibility check: build the same tag twice and compare hashes. Record the result in ADR 0038. Windows done (identical, see the notes); Linux and macOS in the workflow's dry run.
-- [ ] Manual check on a clean Windows, macOS and Linux machine, by the first-run guide only.
+- [x] A dry run: set `0.1.0-rc.1` through a pull request, run the Release workflow on `main`, check the draft pre-release and delete it. Fix what it finds. Replaced by the v0.1.0 release itself (see the notes).
+- [ ] A reproducibility check: build the same tag twice and compare hashes. Record the result in ADR 0038. Windows done (identical, see the notes); Linux and macOS carried as a follow-up.
+- [ ] Manual check on a clean Windows, macOS and Linux machine, by the first-run guide only. Windows done by the owner with a `cargo xtask dist` build on 2026-10-29; macOS and Linux carried as a follow-up.
 - [x] `docs/releasing.md`: cutting a release, what to do when a step fails, deleting a bad draft. Links from the README, CONTRIBUTING (changelog entries) and getting-started.
-- [ ] README "Install" section pointing at the releases page, ahead of building from source.
+- [x] README "Install" section pointing at the releases page, ahead of building from source.
 
 ## Verification
 
@@ -133,15 +133,16 @@ Every action is pinned by commit SHA, as `ci.yml` does. The workflow only calls 
 ## Durable outputs
 
 - [x] ADRs 0037, 0038, 0039.
-- [x] [bundle-format.md](../specs/bundle-format.md): the default bundles folder.
-- [x] A spec section on checked versions and the warning, in [bundle-format.md](../specs/bundle-format.md#checked-versions).
+- [x] [bundle-format.md](../../specs/bundle-format.md): the default bundles folder.
+- [x] A spec section on checked versions and the warning, in [bundle-format.md](../../specs/bundle-format.md#checked-versions).
 - [x] `docs/releasing.md`.
 - [x] `CHANGELOG.md`.
-- [ ] README, getting-started, CONTRIBUTING and SECURITY updated.
+- [x] README, getting-started, CONTRIBUTING and SECURITY updated.
 
 ## Notes
 
-- 2026-10-28: `main` got a ruleset when the repo was published (pull requests only, no bypass). A first answer, a release branch from `cargo xtask release` and a `release-tag` command to tag the merged commit, worked in a rehearsal against a local bare repository, but was replaced the same day: `cargo xtask release` now only edits `Cargo.toml`, `Cargo.lock` and the changelog for an ordinary pull request, and the release workflow runs by hand on `main` and drafts a release whose tag GitHub makes on publishing ([ADR 0040](../adr/0040-releases-are-drafted-from-main.md)). The rehearsal also found that bumping the version before running the checks makes a hook rebuild the running xtask.exe, which Windows refuses; the release command no longer runs the checks at all.
+- 2026-10-29: completed. The Release workflow's run on `main` drafted v0.1.0 with all four archives, `SHA256SUMS` and provenance (`gh attestation verify` passes for the Windows zip), and it was published; that run stood in for the `0.1.0-rc.1` dry run. Still open, as milestone follow-ups: reproducibility on Linux and macOS, and the clean-machine check on macOS and Linux.
+- 2026-10-28: `main` got a ruleset when the repo was published (pull requests only, no bypass). A first answer, a release branch from `cargo xtask release` and a `release-tag` command to tag the merged commit, worked in a rehearsal against a local bare repository, but was replaced the same day: `cargo xtask release` now only edits `Cargo.toml`, `Cargo.lock` and the changelog for an ordinary pull request, and the release workflow runs by hand on `main` and drafts a release whose tag GitHub makes on publishing ([ADR 0040](../../adr/0040-releases-are-drafted-from-main.md)). The rehearsal also found that bumping the version before running the checks makes a hook rebuild the running xtask.exe, which Windows refuses; the release command no longer runs the checks at all.
 - 2026-10-28: the workflow's steps are `cargo xtask` commands: `release-notes` (checks the tag and writes the notes) and `smoke` (unpacks an archive outside the repo and runs it with Rust's folders off PATH; with `--extract`, on Linux only, also extracts and answers). The viewer gained `--version`, so it can be checked on a runner with no display. The dry run needs no `workflow_dispatch`: a pre-release tag makes a draft pre-release, which nothing publishes. The IDE's Actions extension flags the pinned action SHAs as unresolvable; the GitHub API finds every one, so that's the extension.
 - 2026-10-28: `cargo xtask release` takes pre-releases too (`0.1.0-rc.1`), for the workflow's dry run: they set the version and tag but leave the changelog alone, so their notes are Unreleased. The changelog gets Keep a Changelog's link definitions at the end, and markdownlint's MD024 is now `siblings_only`, since every release repeats headings like "Added" and "Game versions". The command refuses before changing anything if the version isn't after the current one, the tree is dirty, the branch isn't `main`, the tag exists or Unreleased is empty; if the checks fail after it has changed the version and changelog, it leaves them uncommitted and says so.
 - 2026-10-28: `cargo xtask dist` works on Windows. What it took:

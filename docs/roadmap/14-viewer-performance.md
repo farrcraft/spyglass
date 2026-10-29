@@ -1,6 +1,6 @@
 # 14. Viewer performance
 
-- Status: Planned
+- Status: In progress
 - Depends on: [13](completed/13-viewer-redesign.md)
 - Plans: [m14-viewer-performance](../plans/m14-viewer-performance.md)
 
@@ -30,6 +30,20 @@ Not in scope:
 
 ## Exit criteria
 
-- [ ] The baseline is recorded: the new benchmark lines and the viewer's time to a full window, at 1:4 with and without biomes at the surface, on the dev machine.
+- [x] The baseline is recorded: the new benchmark lines and the viewer's time to a full window, at 1:4 with and without biomes at the surface, on the dev machine.
 - [ ] Targets for those numbers are set from the baseline and the profile, written here, and met.
 - [ ] `cargo xtask oracle-test` passes for every supported version, as well as `cargo xtask check`.
+
+## Baseline
+
+On the dev machine (Ryzen 7 5800X, 8 cores, 16 threads), 26.3, a `dist` build, 2026-10-29. The viewer's time to a full window from a cold start, seed 0 at the origin, window 1280 × 800, with `SPYGLASS_VIEWER_TIMING=1`:
+
+| Scenario                      | Window full |
+| ----------------------------- | ----------- |
+| 1:4, biomes at y 64           | 0.43 s      |
+| 1:4, biomes at the surface    | 23.65 s     |
+| 1:4, surface, relief and huts | 23.98 s     |
+| 1:16, villages unconfirmed    | 0.45 s      |
+| 1:4, surface, while searching | 28.70 s     |
+
+`cargo xtask bench`, one 256 × 256 tile in a new session: heights at 1:4 9.1 s, biomes at the surface 9.2 s, biomes at y 64 148 ms at 1:4 and 146 ms at 1:16, structure markers 0.4 to 27 ms.

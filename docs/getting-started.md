@@ -362,6 +362,8 @@ The viewer opens the newest release in the bundles folder (or the newest snapsho
 
 Rendering runs in the background on all but one core, so the map stays responsive while tiles fill in. Settings are kept between runs.
 
+Two environment variables are for measuring the viewer. `SPYGLASS_VIEWER_TIMING=1` writes each tile job's time to stderr, and how long the map takes to cover the window and to fill it, after anything changes what it shows (on Windows, redirect stderr to see it). `SPYGLASS_VIEWER_SETTINGS=<file>` keeps settings in that file instead of the per-user one, so a measurement can start from known settings.
+
 Up close, with **Relief** and **Biomes at the surface** on, and the bounds of a plains village drawn:
 
 ![A close-up at 1 block per pixel: shaded terrain, rivers, and a village's outline](images/viewer-relief.png)

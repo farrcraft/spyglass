@@ -96,15 +96,23 @@ fn check(path: &Path) -> (Vec<String>, usize) {
                     (i, terrain.base_height(x, z, heightmap))
                 })
                 .collect();
-            // A sparse grid, as maps sample terrain: every 5th column from the second.
-            let xs: Vec<i32> = (x0 + 1..x0 + size).step_by(5).collect();
-            let zs: Vec<i32> = (z0 + 1..z0 + size).step_by(5).collect();
-            let grid = terrain.base_heights_on(&xs, &zs, heightmap);
-            let sparse = grid.iter().enumerate().map(|(i, &h)| {
-                let (x, z) = (xs[i % xs.len()], zs[i / xs.len()]);
-                (((z - z0) * size + (x - x0)) as usize, h)
-            });
-            checked += want.len() + alone.len() + grid.len();
+            // Sparse grids, as maps sample terrain: every 5th column from the second, and every
+            // 4th on multiples of 4, as at 4 blocks per pixel, where each is on a cell's corner.
+            let corner = |v: i32| (v + 3) & !3;
+            let grids = [(x0 + 1, z0 + 1, 5), (corner(x0), corner(z0), 4)];
+            let sparse: Vec<(usize, i32)> = grids
+                .into_iter()
+                .flat_map(|(gx, gz, step)| {
+                    let xs: Vec<i32> = (gx..x0 + size).step_by(step).collect();
+                    let zs: Vec<i32> = (gz..z0 + size).step_by(step).collect();
+                    let grid = terrain.base_heights_on(&xs, &zs, heightmap);
+                    grid.into_iter().enumerate().map(move |(i, h)| {
+                        let (x, z) = (xs[i % xs.len()], zs[i / xs.len()]);
+                        (((z - z0) * size + (x - x0)) as usize, h)
+                    })
+                })
+                .collect();
+            checked += want.len() + alone.len() + sparse.len();
             let found = got.iter().copied().enumerate();
             for (i, g) in found.chain(alone).chain(sparse) {
                 let w = want[i];

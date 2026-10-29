@@ -157,3 +157,62 @@ fn surface_levels_over_a_volume_are_their_points() {
         }
     }
 }
+
+/// A column's heights are scanned from the top in parts (`docs/specs/terrain.md#the-column`),
+/// which only gives the column's own answers if each part's blocks have the column's values.
+/// They do when each part starts on the final density's y alignment: bit for bit, in each
+/// dimension, at cell corners and between them.
+#[test]
+#[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
+fn a_column_in_parts_is_the_column() {
+    let bundle = bundle();
+    for (noise, dimension) in [
+        ("minecraft:overworld", "minecraft:overworld"),
+        ("minecraft:nether", "minecraft:the_nether"),
+        ("minecraft:end", "minecraft:the_end"),
+    ] {
+        let settings = TerrainSettings::load(&bundle, noise, dimension).unwrap();
+        if settings.router_v1_21().is_some() {
+            // 26.2 scans its columns through a `NoiseChunk`, whole.
+            return;
+        }
+        let min_y = settings.min_y.max(settings.level_min_y);
+        let top =
+            (settings.min_y + settings.height).min(settings.level_min_y + settings.level_height);
+        for seed in [0, 1, -4_893_098_694_207_956_070] {
+            let terrain = settings.bind(seed).unwrap();
+            let density = &terrain.final_density;
+            let align = density
+                .y_alignment()
+                .unwrap_or_else(|| panic!("{noise}'s final density has no y alignment"));
+            let splits: Vec<i32> = (min_y + 2..top - 1)
+                .filter(|y| y.rem_euclid(align) == 0)
+                .collect();
+            assert!(!splits.is_empty(), "{noise}: nowhere to split");
+            for (x, z) in [
+                (0, 0),
+                (1, 2),
+                (-37, 1001),
+                (4096, -4093),
+                (1_000_003, -2_000_000),
+            ] {
+                let column = |from: i32, to: i32| {
+                    density.sample_volume(&Volume::blocks([1, to - from, 1], [x, from, z]))
+                };
+                let whole = column(min_y, top);
+                for &split in &splits {
+                    let parts = [column(min_y, split), column(split, top)].concat();
+                    let differs = whole
+                        .iter()
+                        .zip(&parts)
+                        .position(|(w, p)| w.to_bits() != p.to_bits());
+                    assert_eq!(
+                        differs.map(|i| min_y + i as i32),
+                        None,
+                        "{noise} seed {seed} at ({x}, {z}), split at y {split}: the first block that differs"
+                    );
+                }
+            }
+        }
+    }
+}

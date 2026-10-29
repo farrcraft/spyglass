@@ -41,8 +41,8 @@ use side_panel::Tab;
 
 /// The key settings are saved under.
 const SETTINGS: &str = "spyglass";
-/// Tiles kept: about 64 MB of textures and 16 MB of biome maps at 256 × 256.
-const CACHE_TILES: usize = 256;
+/// Tiles kept: about 64 MB of textures and 16 MB of biome maps at 128 × 128.
+const CACHE_TILES: usize = 1024;
 /// Textures made per frame, so restyling a full screen doesn't stall one frame.
 const TEXTURES_PER_FRAME: usize = 12;
 /// Points of scrolling per zoom step.
@@ -278,6 +278,8 @@ pub struct App {
     in_view: HashMap<String, usize>,
     /// The structure families opened to their variants in the Layers tab.
     expanded: std::collections::HashSet<String>,
+    /// How long the map takes to fill the window, with `SPYGLASS_VIEWER_TIMING`.
+    fill: crate::timing::Fill,
 }
 
 /// A search and its query.
@@ -350,6 +352,7 @@ impl App {
             settings_open: false,
             in_view: HashMap::new(),
             expanded: std::collections::HashSet::new(),
+            fill: crate::timing::Fill::default(),
         };
         app.scan(&cc.egui_ctx);
         // With nothing found on a first run, bundles go beside spyglass unless the user picks

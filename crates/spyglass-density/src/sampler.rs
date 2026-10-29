@@ -46,6 +46,8 @@ pub struct Sampler {
     /// Whether its value over a volume, at each position, depends only on the position, not on
     /// the volume's extent, so values from different volumes can be shared.
     pub(crate) position_only: bool,
+    /// See [`Sampler::y_alignment`].
+    pub(crate) y_align: Option<i32>,
     /// The [`Binder`] that made it, which numbered its slots.
     binder: u64,
     /// Where its value is remembered, or [`NO_SLOT`] for constants.
@@ -414,9 +416,16 @@ impl<'n> Binder<'n> {
             self.slots += 1;
             self.slots - 1
         };
+        let depends_on_y = node.depends_on_y();
         Sampler {
-            depends_on_y: node.depends_on_y(),
+            depends_on_y,
             position_only: node.position_only(),
+            // Over a volume, a node that can't depend on y is sampled at y 0 whatever its y.
+            y_align: if depends_on_y {
+                node.y_align()
+            } else {
+                Some(1)
+            },
             node: Arc::new(node),
             binder: self.id,
             slot,
@@ -1057,6 +1066,15 @@ impl Sampler {
         self.depends_on_y
     }
 
+    /// The y its volumes can start on without changing values: over two volumes at the same x
+    /// and z positions, with the same steps, more than one position high, whose lowest y are
+    /// both multiples of it, a position in both has the same value in each. The least common
+    /// multiple of the y cell sizes of the interpolation and upscaling inside it, or `None` if
+    /// something inside it, a domain warp, has no such y (`docs/specs/density-functions.md`).
+    pub fn y_alignment(&self) -> Option<i32> {
+        self.y_align
+    }
+
     /// `sampleValue` at block `(x, y, z)`.
     ///
     /// Values are remembered per thread while calls stay in one column: sampling a column top to
@@ -1563,6 +1581,72 @@ impl Node {
         }
     }
 
+    /// [`Sampler::y_alignment`] for a node that can depend on y, from the children's. An
+    /// interpolated or upscaled block depends on where the volume's lowest y falls in its cell,
+    /// and its input is sampled over a corner volume that starts on a cell's corner.
+    fn y_align(&self) -> Option<i32> {
+        let all = |samplers: &[&Sampler]| {
+            samplers
+                .iter()
+                .try_fold(1, |a, s| s.y_align.and_then(|b| lcm(a, b)))
+        };
+        match self {
+            Node::DomainWarp { .. } => None,
+            Node::Interpolated { input, cell_y, .. } => all(&[input]).and_then(|a| lcm(a, *cell_y)),
+            Node::Upscale(u) => all(&[&u.input]).and_then(|a| lcm(a, u.axes[1].cell_size)),
+            Node::UpscaleNearest { input, cell } => all(&[input]).and_then(|a| lcm(a, cell[1])),
+            Node::Constant(_)
+            | Node::Noise { .. }
+            | Node::SmearedNoise { .. }
+            | Node::ShiftA(_)
+            | Node::ShiftB(_)
+            | Node::Shift(_)
+            | Node::Gradient { .. }
+            | Node::GradientRepeat { .. }
+            | Node::DistanceToPoint { .. }
+            | Node::EndIslands(_) => Some(1),
+            Node::NoiseShiftedXz { sx, sz, .. } => all(&[sx, sz]),
+            Node::NoiseShiftedXyz { sx, sy, sz, .. } => all(&[sx, sy, sz]),
+            Node::Add(a, b)
+            | Node::Sub(a, b)
+            | Node::Mul(a, b)
+            | Node::Div(a, b)
+            | Node::Min(a, b, _)
+            | Node::Max(a, b, _)
+            | Node::Round(_, a, b)
+            | Node::Pow(a, b) => all(&[a, b]),
+            Node::MulConst(a, _)
+            | Node::ConstDiv(_, a)
+            | Node::MinConst(a, _)
+            | Node::MaxConst(a, _)
+            | Node::Unary(_, a)
+            | Node::RoundInteger(_, a)
+            | Node::Clamp(a, _, _)
+            | Node::MathClamp(a, _, _)
+            | Node::PowConstBase(_, a)
+            | Node::PowConstExponent(a, _) => all(&[a]),
+            Node::Lerp {
+                alpha,
+                first,
+                second,
+            } => all(&[alpha, first, second]),
+            Node::RangeChoice {
+                input,
+                when_in_range,
+                when_out_of_range,
+                ..
+            } => all(&[input, when_in_range, when_out_of_range]),
+            Node::IntervalSelect {
+                input, samplers, ..
+            } => samplers
+                .iter()
+                .try_fold(all(&[input])?, |a, s| s.y_align.and_then(|b| lcm(a, b))),
+            Node::Slice { input, .. } => all(&[input]),
+            Node::FindTopSurface { upper_bound, .. } => all(&[upper_bound]),
+            Node::Spline(spline) => spline.y_align(),
+        }
+    }
+
     /// Whether the value can depend on y, from the children's flags.
     ///
     /// A noise's y input only reaches the noise as `wrap(y * frequency) + offset`, with an offset
@@ -1633,6 +1717,17 @@ impl Node {
             Node::DomainWarp { axes, .. } => axes & AXIS_Y != 0,
         }
     }
+}
+
+/// The least common multiple of two positive numbers, or `None` if it overflows.
+fn lcm(a: i32, b: i32) -> Option<i32> {
+    let gcd = |mut a: i32, mut b: i32| {
+        while b != 0 {
+            (a, b) = (b, a % b);
+        }
+        a
+    };
+    (a / gcd(a, b)).checked_mul(b)
 }
 
 /// `FindTopSurfaceFunction.Sampler.findSurfaceFrom`: from the cell below `upper` down to
@@ -1738,6 +1833,17 @@ impl BoundSpline {
             BoundSpline::Multipoint {
                 coordinate, values, ..
             } => coordinate.position_only && values.iter().all(BoundSpline::position_only),
+        }
+    }
+
+    fn y_align(&self) -> Option<i32> {
+        match self {
+            BoundSpline::Constant(_) => Some(1),
+            BoundSpline::Multipoint {
+                coordinate, values, ..
+            } => values.iter().try_fold(coordinate.y_align?, |a, v| {
+                v.y_align().and_then(|b| lcm(a, b))
+            }),
         }
     }
 

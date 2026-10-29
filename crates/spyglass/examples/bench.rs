@@ -1,13 +1,18 @@
 //! Times the public API's main operations, for comparing changes: `cargo xtask bench`, or
-//! `cargo run --profile dist -p spyglass --example bench -- [bundle dir or version]`. Needs a bundle:
-//! a directory, a version in `bundles/`, or by default the newest release there. Each line is
-//! the median of several runs.
+//! `cargo run --profile dist -p spyglass --example bench -- [bundle dir or version] [--only text]`.
+//! Needs a bundle: a directory, a version in `bundles/`, or by default the newest release there.
+//! Each line is the median of several runs; `--only` runs just the lines whose names contain
+//! the text.
 
 use std::hint::black_box;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-use spyglass::{Dimension, Game, World};
+use spyglass::{Dimension, Game, Layers, MapArea, Session, World};
+
+/// The text a line's name must contain to run, from `--only`.
+static ONLY: OnceLock<Option<String>> = OnceLock::new();
 
 const SEEDS: [i64; 5] = [
     0,
@@ -18,7 +23,18 @@ const SEEDS: [i64; 5] = [
 ];
 
 fn main() -> spyglass::Result<()> {
-    let dir: PathBuf = match std::env::args().nth(1) {
+    let mut bundle = None;
+    let mut only = None;
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        if arg == "--only" {
+            only = args.next();
+        } else {
+            bundle = Some(arg);
+        }
+    }
+    ONLY.set(only).expect("set once");
+    let dir: PathBuf = match bundle {
         Some(arg) if Path::new(&arg).join("bundle.json").is_file() => arg.into(),
         version => spyglass::find_bundle("bundles", version.as_deref())?.dir,
     };
@@ -132,6 +148,7 @@ fn main() -> spyglass::Result<()> {
             },
         );
     }
+    viewer_tiles(&world, &mut seeds)?;
     let view = spyglass::MapArea::centred_on([0, 0], [1024, 1024], 16, 64)?;
     let layers = spyglass::Layers {
         structures: vec![villages.clone(), stronghold.clone()],
@@ -347,6 +364,64 @@ fn main() -> spyglass::Result<()> {
     Ok(())
 }
 
+/// The work the viewer asks for: one 256 × 256 tile, in a new session and then for the tile
+/// east of it in the same session, since the viewer's workers share one session per seed.
+fn viewer_tiles<'a>(
+    world: &World,
+    seeds: &mut impl Iterator<Item = &'a i64>,
+) -> spyglass::Result<()> {
+    let tile = |scale: u32, x: i32| MapArea {
+        min: [x * 256 * scale as i32, 0],
+        size: [256, 256],
+        scale,
+        y: 64,
+    };
+    let mut both = |name: &str, scales: &[u32], runs: usize, f: &dyn Fn(&Session<'_>, &MapArea)| {
+        for &scale in scales {
+            for (place, warm) in [("new session", false), ("next tile", true)] {
+                report_after(
+                    &format!("tile {name} at 1:{scale}, {place}"),
+                    runs,
+                    || {
+                        let session = world.session(*seeds.next().unwrap()).unwrap();
+                        if warm {
+                            f(&session, &tile(scale, 0));
+                        }
+                        session
+                    },
+                    |session| f(session, &tile(scale, 1)),
+                );
+            }
+        }
+    };
+    both("biomes at y 64", &[4, 16], 5, &|session, area| {
+        black_box(session.biome_map(area).unwrap());
+    });
+    both("relief", &[4], 3, &|session, area| {
+        black_box(session.height_map(area).unwrap());
+    });
+    both("biomes at the surface", &[4], 3, &|session, area| {
+        let heights = session.height_map(area).unwrap();
+        black_box(session.surface_biome_map(&heights).unwrap());
+    });
+    for id in ["minecraft:swamp_hut", "#minecraft:village"] {
+        let query = world.structure_query(id)?;
+        for confirm in [false, true] {
+            let mode = if confirm { "confirmed" } else { "unconfirmed" };
+            let layers = Layers {
+                biomes: false,
+                structures: vec![query.clone()],
+                confirm,
+                ..Layers::default()
+            };
+            both(&format!("{id} {mode}"), &[4, 16], 3, &|session, area| {
+                black_box(session.map_features(area, &layers).unwrap());
+            });
+        }
+    }
+    Ok(())
+}
+
 /// [`rate`] for a search in one world.
 fn rate_world(
     world: &World,
@@ -373,6 +448,9 @@ fn rate(
     confirm: bool,
     search: impl Fn(&spyglass::SearchOptions) -> spyglass::SearchOutcome,
 ) {
+    if !wanted(name) {
+        return;
+    }
     let options = spyglass::SearchOptions {
         source,
         seeds: Some(count),
@@ -392,12 +470,28 @@ fn rate(
     );
 }
 
+/// Whether `--only` lets the line `name` run.
+fn wanted(name: &str) -> bool {
+    ONLY.get()
+        .and_then(Option::as_deref)
+        .is_none_or(|only| name.contains(only))
+}
+
 /// Runs `f` `runs` times and prints the median.
 fn report(name: &str, runs: usize, mut f: impl FnMut()) {
+    report_after(name, runs, || (), |()| f());
+}
+
+/// Runs `f` on what `setup` gives, `runs` times, and prints the median time of `f` alone.
+fn report_after<T>(name: &str, runs: usize, mut setup: impl FnMut() -> T, mut f: impl FnMut(&T)) {
+    if !wanted(name) {
+        return;
+    }
     let mut times: Vec<Duration> = (0..runs)
         .map(|_| {
+            let input = setup();
             let start = Instant::now();
-            f();
+            f(&input);
             start.elapsed()
         })
         .collect();

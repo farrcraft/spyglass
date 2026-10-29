@@ -15,6 +15,7 @@ mod markers;
 mod search;
 mod style;
 mod tiles;
+mod timing;
 mod view;
 
 fn main() -> eframe::Result {
@@ -32,6 +33,9 @@ fn main() -> eframe::Result {
             .with_min_inner_size([640.0, 400.0]),
         // The map is exact colours; dithering would nudge them by one here and there.
         dithering: false,
+        // Another settings file than the per-user one, for measuring the viewer from known
+        // settings without touching its user's.
+        persistence_path: std::env::var_os("SPYGLASS_VIEWER_SETTINGS").map(Into::into),
         ..Default::default()
     };
     eframe::run_native(

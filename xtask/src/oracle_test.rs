@@ -110,6 +110,11 @@ const TESTS: &[(&str, &str, &[Input])] = &[
     ),
     (
         "spyglass-terrain",
+        "a_column_in_parts_is_the_column",
+        &[Input::Bundle],
+    ),
+    (
+        "spyglass-terrain",
         "every_height_matches_the_game",
         &[Input::Heights, Input::Bundle],
     ),

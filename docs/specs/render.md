@@ -31,7 +31,7 @@ Where a cell is tied ([biome-lookup.md](biome-lookup.md#ties)), the pixel's biom
 
 `Session::height_map(area)` is the terrain height at each pixel's corner block: `Session::height_at` with `WORLD_SURFACE_WG` ([terrain.md](terrain.md)), one above the highest block that isn't air, so water counts. It also holds the heights one pixel beyond the area's west and north edges, which relief compares against; the first of those may be one pixel past the edge of block coordinates, and is then clamped to `i32::MIN`. Heights are sampled chunk by chunk, each chunk's density volume only as large as the box around its sampled columns, which gives each column the same answer as its own ([terrain.md](terrain.md)).
 
-A chunk's heights cost a few milliseconds, so height maps are limited to scales up to `MAX_TERRAIN_SCALE`, 4; larger scales are an error. For 26.3 (release, one thread), a 256 × 256 tile takes about 1.3 s at scale 1 and 11 s at scale 4.
+A chunk's heights cost a few milliseconds, so height maps are limited to scales up to `MAX_TERRAIN_SCALE`, 4; larger scales are an error. For 26.3 (a `dist` build, one thread), a 256 × 256 tile takes about 0.9 s at scale 1 and 5 s at scale 4, where each column is on its own cell corner and shares nothing with its neighbours ([terrain.md](terrain.md#the-column)).
 
 ## Colours
 

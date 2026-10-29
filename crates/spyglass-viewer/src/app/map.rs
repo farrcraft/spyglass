@@ -8,6 +8,7 @@ use super::*;
 use crate::markers::Size;
 use crate::search::Area;
 use crate::style;
+use crate::timing;
 use crate::view;
 
 /// What the map shows behind tiles not drawn yet: faint diagonal lines, so a gap reads as
@@ -208,12 +209,16 @@ impl App {
 
         let style = self.style();
         let mut made = 0;
+        // Tiles drawn at all, and drawn at their own scale.
+        let (mut covered, mut detailed) = (0, 0);
         for &tile in &tiles {
             let at = view.tile_offset(tile);
             let tile_rect =
                 Rect::from_min_size(centre + Vec2::new(at[0], at[1]), Vec2::splat(TILE as f32));
             if let Some(texture) = self.texture(ui.ctx(), world, key(tile), &style, &mut made) {
                 painter.image(texture, tile_rect, full_uv(), Color32::WHITE);
+                covered += 1;
+                detailed += 1;
                 continue;
             }
             // A coarser tile, scaled up, until this one is ready.
@@ -232,6 +237,7 @@ impl App {
                 if let Some(texture) = self.texture(ui.ctx(), world, key(parent), &style, &mut made)
                 {
                     painter.image(texture, tile_rect, uv, Color32::WHITE);
+                    covered += 1;
                     break;
                 }
                 if parent.scale >= view.scale * 8 {
@@ -242,6 +248,24 @@ impl App {
         }
         if made >= TEXTURES_PER_FRAME {
             ui.ctx().request_repaint();
+        }
+        if timing::enabled() {
+            let marked = !marking || tiles.iter().all(|&t| self.markers.contains(&marker_key(t)));
+            let laid_out = layout_keys.iter().all(|(k, _)| self.layouts.contains(k));
+            let shown = (
+                (source, selection, confirm, marking, relief, surface),
+                (
+                    view.centre.map(f64::to_bits),
+                    view.scale,
+                    view.y,
+                    self.map_size,
+                ),
+            );
+            self.fill.frame(
+                shown,
+                covered == tiles.len(),
+                detailed == tiles.len() && marked && laid_out,
+            );
         }
 
         // What the open search hit's constraints were judged in, under everything else.

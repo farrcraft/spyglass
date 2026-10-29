@@ -19,6 +19,7 @@ use spyglass::{
     StructureLayout, StructureQuery, StructureStart,
 };
 
+use crate::timing;
 use crate::view::{TILE, Tile};
 
 /// A tile's biomes: the world and seed, the height, what terrain it needs, and its place.
@@ -196,16 +197,18 @@ fn compute(job: &Job) -> Result<Output, String> {
                 .structures()
                 .nth(key.structure)
                 .ok_or("no such structure")?;
-            return job
-                .session
-                .structure_layout(structure, key.chunk)
-                .map(Output::Layout)
-                .map_err(|e| e.to_string());
+            return timing::job(
+                || "layout".to_string(),
+                || job.session.structure_layout(structure, key.chunk),
+            )
+            .map(Output::Layout)
+            .map_err(|e| e.to_string());
         }
     };
     let area = tile
         .area(y)
         .ok_or("the tile is outside block coordinates")?;
+    let kind = |what: &'static str| move || format!("{what} 1:{}", tile.scale);
     let features = |layers: Layers| {
         job.session
             .map_features(&area, &layers)
@@ -214,14 +217,15 @@ fn compute(job: &Job) -> Result<Output, String> {
     match job.key {
         JobKey::Biomes(key) => {
             let heights = if key.heights {
-                Some(job.session.height_map(&area).map_err(|e| e.to_string())?)
+                let heights = timing::job(kind("heights"), || job.session.height_map(&area));
+                Some(heights.map_err(|e| e.to_string())?)
             } else {
                 None
             };
-            let biomes = match &heights {
+            let biomes = timing::job(kind("biomes"), || match &heights {
                 Some(heights) if key.surface => job.session.surface_biome_map(heights),
                 _ => job.session.biome_map(&area),
-            }
+            })
             .map_err(|e| e.to_string())?;
             let slime = Layers {
                 biomes: false,
@@ -242,13 +246,13 @@ fn compute(job: &Job) -> Result<Output, String> {
             }))
         }
         JobKey::Markers(key) => {
-            let mut starts = features(Layers {
+            let layers = Layers {
                 biomes: false,
                 structures: job.structures.to_vec(),
                 confirm: key.confirm,
                 ..Layers::default()
-            })?
-            .structures;
+            };
+            let mut starts = timing::job(kind("markers"), || features(layers))?.structures;
             // Each marker belongs to the tile its centre is on, so it's drawn once.
             let inside = 0..i64::from(TILE);
             starts.retain(|s| {
@@ -457,7 +461,7 @@ mod tests {
                 assert_eq!(data.biomes, session.biome_map(&area).unwrap());
                 assert_eq!(data.heights, None);
             }
-            let side = 256 * key.tile.scale as i32;
+            let side = (TILE * key.tile.scale) as i32;
             assert_eq!(
                 data.slime_chunks,
                 session.slime_chunks(
@@ -500,12 +504,14 @@ mod tests {
             })
             .collect();
         // Together, exactly the starts in the blocks the tiles cover.
+        let side = (TILE * 2) as i32;
         let query = session.world().structure_query("minecraft:tower").unwrap();
         let mut expected = session
             .structures_in(&query, [-200, -10], [10, 200], false)
             .unwrap();
-        expected
-            .retain(|s| (-1536..0).contains(&s.position[0]) && (0..1024).contains(&s.position[2]));
+        expected.retain(|s| {
+            (-3 * side..0).contains(&s.position[0]) && (0..2 * side).contains(&s.position[2])
+        });
         let order = |s: &StructureStart| (s.chunk[1], s.chunk[0]);
         found.sort_by_key(order);
         expected.sort_by_key(order);

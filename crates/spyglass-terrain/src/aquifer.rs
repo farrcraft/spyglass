@@ -360,18 +360,30 @@ impl<'s> Aquifer<'s> {
             .flat_map(|iz| (0..volume.size[0]).map(move |ix| (ix, iz)))
             .map(|(ix, iz)| (volume.block_x(ix), volume.block_z(iz)))
             .collect();
-        // Every level already known to the seed: nothing to sample.
+        // Levels already known to the seed aren't sampled again. If some are, the rest are
+        // sampled at points, which gives the same levels as the volume: neighbouring regions'
+        // boxes overlap, so most share part of theirs.
         if let Some(shared) = self.shared {
-            let known = shared.lock();
-            if let Some(levels) = keys
-                .iter()
-                .map(|k| known.get(k).copied())
-                .collect::<Option<Vec<i32>>>()
-            {
-                drop(known);
-                self.surface_levels
-                    .extend(keys.iter().copied().zip(levels.iter().copied()));
-                return levels.into_iter().max().unwrap_or(i32::MIN);
+            let known: Vec<Option<i32>> = {
+                let known = shared.lock();
+                keys.iter().map(|k| known.get(k).copied()).collect()
+            };
+            if known.iter().any(Option::is_some) {
+                let mut highest = i32::MIN;
+                let mut sampled = Vec::new();
+                for (&(x, z), level) in keys.iter().zip(known) {
+                    let level = level.unwrap_or_else(|| {
+                        let level = mth::floor(f64::from(samplers.surface_level.sample(x, 0, z)));
+                        sampled.push(((x, z), level));
+                        level
+                    });
+                    self.surface_levels.insert((x, z), level);
+                    highest = highest.max(level);
+                }
+                if !sampled.is_empty() {
+                    shared.lock().extend(sampled);
+                }
+                return highest;
             }
         }
         #[cfg(feature = "timing")]
@@ -398,7 +410,7 @@ impl<'s> Aquifer<'s> {
 
     /// `surfaceLevel(int, int)`: at the quart column holding `(x, z)`, remembered, sampled at a
     /// point at y 0 if the region's volume didn't cover it.
-    fn surface_level(&mut self, x: i32, z: i32) -> i32 {
+    pub(crate) fn surface_level(&mut self, x: i32, z: i32) -> i32 {
         let samplers = match self.inputs {
             Inputs::Functions(samplers) => samplers,
             // `NoiseChunk.preliminarySurfaceLevel`, which snaps and remembers.

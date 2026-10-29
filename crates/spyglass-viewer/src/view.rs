@@ -4,8 +4,9 @@
 use serde::{Deserialize, Serialize};
 use spyglass::{DEFAULT_MAP_Y, MAX_SCALE, MapArea};
 
-/// A tile's side in pixels. One tile pixel is drawn as one point.
-pub const TILE: u32 = 256;
+/// A tile's side in pixels. One tile pixel is drawn as one point. Small enough that a window
+/// up close is many jobs, so the last ones to finish are short.
+pub const TILE: u32 = 128;
 /// How far from 0 the centre may go, in blocks: past the world border, short of overflowing
 /// block coordinates.
 const MAX_CENTRE: f64 = 1_000_000_000.0;
@@ -239,13 +240,15 @@ mod tests {
             y: 64,
         };
         let tiles = view.tiles([600.0, 300.0]);
-        // x from -300 to 300 points: tiles -2..=1; z from -150 to 150: tiles -1..=0.
-        assert_eq!(tiles.len(), 8);
+        // x from -300 to 300 points: tiles -3..=2; z from -150 to 150: tiles -2..=1.
+        assert_eq!(TILE, 128);
+        assert_eq!(tiles.len(), 24);
         assert!(tiles[..4].iter().all(|t| (-1..=0).contains(&t.x)));
+        let side = TILE as f32;
         for t in &tiles {
             let [x, z] = view.tile_offset(*t);
             assert!(
-                x < 300.0 && x + 256.0 > -300.0 && z < 150.0 && z + 256.0 > -150.0,
+                x < 300.0 && x + side > -300.0 && z < 150.0 && z + side > -150.0,
                 "{t:?}"
             );
         }
@@ -259,7 +262,8 @@ mod tests {
             z: 2,
         };
         let area = tile.area(70).unwrap();
-        assert_eq!(area.min, [-3072, 2048]);
+        let side = TILE as i32 * 4;
+        assert_eq!(area.min, [-3 * side, 2 * side]);
         assert_eq!(area.y, 70);
         assert_eq!(
             tile.parent(),
@@ -284,7 +288,7 @@ mod tests {
         assert_eq!(
             Tile {
                 scale: 256,
-                x: 40_000,
+                x: 80_000,
                 z: 0
             }
             .area(64),

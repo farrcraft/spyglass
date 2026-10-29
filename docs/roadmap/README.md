@@ -23,7 +23,6 @@ The milestones build toward the goals in the [README](../../README.md#goals): co
 
 Open items from completed milestones, too small for a plan:
 
-- **08:** the first green CI run on GitHub, once the repository is published there (exit criterion 2). Every supported version passes `cargo xtask ci` locally.
 - **08:** each new 26.4 snapshot, pre-release, release candidate and the release, added by [the guide](../adding-a-version.md). The first, likely 26.4-snapshot-7, is the first addition from the guide as written (exit criterion 3).
 - **11:** the first-run guide followed on a clean macOS and Linux machine (exit criterion 2).
 - **11:** reproducibility on Linux and macOS: two builds of one commit compared, the result recorded in [ADR 0038](../adr/0038-how-release-archives-are-built.md) (exit criterion 3).

@@ -3719,6 +3719,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "spyglass-feature"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "spyglass-biome",
+ "spyglass-data",
+ "spyglass-density",
+ "spyglass-oracle",
+ "spyglass-terrain",
+]
+
+[[package]]
 name = "spyglass-noise"
 version = "0.1.0"
 dependencies = [

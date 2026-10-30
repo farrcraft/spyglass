@@ -147,6 +147,21 @@ const TESTS: &[(&str, &str, &[Input])] = &[
         &[Input::Blocks, Input::Bundle],
     ),
     (
+        "spyglass-blocks",
+        "probes_and_veins_are_the_chunks",
+        &[Input::Bundle],
+    ),
+    (
+        "spyglass-blocks",
+        "carvings_hold_every_carved_block",
+        &[Input::Bundle],
+    ),
+    (
+        "spyglass-feature",
+        "every_dimension_sorts",
+        &[Input::Bundle],
+    ),
+    (
         "spyglass",
         "blocks_through_the_api_are_the_game_s",
         &[Input::Blocks, Input::BlocksNoCarvers, Input::Bundle],

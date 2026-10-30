@@ -1,7 +1,7 @@
 # m18. The material rule and ore veins
 
 - Status: Completed
-- Milestone: [18. Surface rules, ore veins, caves and carvers](../../roadmap/18-surface-veins-and-carvers.md)
+- Milestone: [18. Surface rules, ore veins, caves and carvers](../../roadmap/completed/18-surface-veins-and-carvers.md)
 - Started: 2026-10-29
 - Completed: 2026-10-30
 
@@ -118,4 +118,4 @@ From the plan:
   - steep read lazily;
   - icebergs that go on with `top` and `bottom` at 0.
 - 2026-10-30: **API and CLI.** `Session::chunk_blocks`, `block_at` and `block_column` take `Carvers`, whose only variant is `Off` (non-exhaustive, so `On` can be added). `World` loads the block settings on the first block query, and a session binds its chunk generator on its first. Every query generates its whole chunk. `spyglass blocks` requires `--no-carvers` until carvers are ported, and 26.4 is an error naming its missing `default_block`. The fixture world gained a material rule (sand, stone, deepslate), system noises and biome temperatures for the CLI tests.
-- 2026-10-30: **Cost.** `chunk_blocks without carvers, bound` takes 42 ms in 26.3 and 55 ms in 26.2. A throwaway split put the 256 columns alone at 11 ms in 26.3 and 31 ms in 26.2, so 26.3's time is mostly the rule, not the fill. The likely cause is the ore vein functions, sampled at each stone block one point at a time. A chunk-wise column fill would save little in 26.3, so neither is done here: [m18-layers](../m18-layers.md) sets its scale limits from measured cost, and is where volume sampling of the rule's functions would pay off.
+- 2026-10-30: **Cost.** `chunk_blocks without carvers, bound` takes 42 ms in 26.3 and 55 ms in 26.2. A throwaway split put the 256 columns alone at 11 ms in 26.3 and 31 ms in 26.2, so 26.3's time is mostly the rule, not the fill. The likely cause is the ore vein functions, sampled at each stone block one point at a time. A chunk-wise column fill would save little in 26.3, so neither is done here: [m18-layers](m18-layers.md) sets its scale limits from measured cost, and is where volume sampling of the rule's functions would pay off.

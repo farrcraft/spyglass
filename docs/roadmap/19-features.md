@@ -1,12 +1,12 @@
 # 19. Features
 
 - Status: Planned
-- Depends on: [18](18-surface-veins-and-carvers.md)
+- Depends on: [18](completed/18-surface-veins-and-carvers.md)
 - Plans: none yet
 
 ## Goal
 
-Locate and draw the features players look for: dungeons, amethyst geodes, desert wells, fossils and lava lakes. Each answer is certain or a candidate, as structures are. Chunkbase marks dungeons and geodes as often wrong, because they depend on the blocks around them. With [18](18-surface-veins-and-carvers.md)'s blocks, spyglass can say which ones really generate.
+Locate and draw the features players look for: dungeons, amethyst geodes, desert wells, fossils and lava lakes. Each answer is certain or a candidate, as structures are. Chunkbase marks dungeons and geodes as often wrong, because they depend on the blocks around them. With [18](completed/18-surface-veins-and-carvers.md)'s blocks, spyglass can say which ones really generate.
 
 ## Scope
 

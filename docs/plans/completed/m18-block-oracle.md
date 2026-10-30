@@ -1,7 +1,7 @@
 # m18. Block golden files
 
 - Status: Completed
-- Milestone: [18. Surface rules, ore veins, caves and carvers](../../roadmap/18-surface-veins-and-carvers.md)
+- Milestone: [18. Surface rules, ore veins, caves and carvers](../../roadmap/completed/18-surface-veins-and-carvers.md)
 - Started: 2026-10-29
 - Completed: 2026-10-29
 

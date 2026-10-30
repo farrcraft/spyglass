@@ -13,8 +13,9 @@ use eframe::egui::{self, Color32, Key, Pos2, Rect, Sense, TextureOptions, Vec2};
 use serde::{Deserialize, Serialize};
 use spyglass::{
     BiomeQuery, BundleInfo, Dimension, Evaluation, FindOutcome, Game, Heightmap, Image,
-    LauncherSave, Layers, MAX_TERRAIN_SCALE, SaveReport, Scan, SearchOutcome, SearchQuery, Session,
-    SpawnOrigin, StructureLayout, StructureQuery, StructureStart, World,
+    LauncherSave, Layers, MAX_TERRAIN_SCALE, MAX_UNDERGROUND_SCALE, SaveReport, Scan,
+    SearchOutcome, SearchQuery, Session, SpawnOrigin, StructureLayout, StructureQuery,
+    StructureStart, World,
 };
 
 use crate::export::{Export, Source, visible_area};
@@ -25,7 +26,8 @@ use crate::markers::{self, Picked};
 use crate::search::{self, FindRun, Match, Running, SearchSettings, SeedRun};
 use crate::style;
 use crate::tiles::{
-    Cache, Entry, Job, JobKey, LayoutKey, MarkerKey, Output, Pool, Style, TileKey, slime_features,
+    Cache, Entry, Job, JobKey, LayoutKey, MarkerKey, Output, Pool, Style, TileKey, Underground,
+    slime_features,
 };
 use crate::userdata::{Marker, Store, WorldKey};
 use crate::view::{TILE, Tile, View};
@@ -86,6 +88,12 @@ struct Settings {
     relief: bool,
     /// Biomes at the surface, up close.
     surface: bool,
+    /// Ore veins at the view's height, up close.
+    veins: bool,
+    /// Noise caves at the view's height, up close.
+    noise_caves: bool,
+    /// Carvers' caves and ravines at the view's height, up close.
+    carvers: bool,
     /// Structure ids to mark.
     structures: Vec<String>,
     /// Biome ids to keep bright.
@@ -112,6 +120,9 @@ impl Default for Settings {
             confirm: true,
             relief: false,
             surface: false,
+            veins: false,
+            noise_caves: false,
+            carvers: false,
             structures: Vec::new(),
             highlight: Vec::new(),
             search: SearchSettings::default(),
@@ -705,6 +716,23 @@ impl App {
             relief: true,
             ..Layers::default()
         })
+    }
+
+    /// Whether ore veins are drawn in the dimension shown.
+    fn veins_allowed(&self) -> bool {
+        self.allows(Layers {
+            veins: true,
+            ..Layers::default()
+        })
+    }
+
+    /// The underground layers on, where the dimension shown has them, at any scale.
+    fn underground(&self) -> Underground {
+        Underground {
+            veins: self.settings.veins && self.veins_allowed(),
+            noise_caves: self.settings.noise_caves,
+            carvers: self.settings.carvers,
+        }
     }
 
     fn style(&self) -> Style {

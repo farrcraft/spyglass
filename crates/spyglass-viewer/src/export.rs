@@ -3,7 +3,9 @@
 
 use std::path::PathBuf;
 
-use spyglass::{Dimension, MAX_SLIME_SCALE, MAX_TERRAIN_SCALE, MapArea, Pin};
+use spyglass::{
+    Dimension, MAX_SLIME_SCALE, MAX_TERRAIN_SCALE, MAX_UNDERGROUND_SCALE, MapArea, Pin,
+};
 
 use crate::view::View;
 
@@ -40,6 +42,9 @@ pub struct Export {
     pub confirm: bool,
     pub relief: bool,
     pub surface: bool,
+    pub veins: bool,
+    pub noise_caves: bool,
+    pub carvers: bool,
     /// The user's markers in view.
     pub pins: Vec<Pin>,
 }
@@ -110,6 +115,17 @@ impl Export {
         if self.surface && terrain {
             args.push("--surface".to_string());
         }
+        if self.area.scale <= MAX_UNDERGROUND_SCALE {
+            for (on, flag) in [
+                (self.veins, "--veins"),
+                (self.noise_caves, "--caves"),
+                (self.carvers, "--carvers"),
+            ] {
+                if on {
+                    args.push(flag.to_string());
+                }
+            }
+        }
         for pin in &self.pins {
             let [r, g, b] = pin.colour;
             let [x, z] = pin.position;
@@ -170,9 +186,13 @@ mod tests {
             confirm: true,
             relief: true,
             surface: false,
+            veins: true,
+            noise_caves: true,
+            carvers: true,
             pins: Vec::new(),
         };
-        // Terrain layers aren't drawn past scale 4, so the command doesn't ask for them.
+        // Terrain and underground layers aren't drawn past scale 4, so the command doesn't ask
+        // for them.
         assert_eq!(
             export.command("map.png"),
             "spyglass render --seed -5 --game-version 26.3 --centre 1000,-336 --size 1013x775 \
@@ -185,11 +205,9 @@ mod tests {
             surface: true,
             ..export.clone()
         };
-        assert!(
-            close
-                .command("map.png")
-                .ends_with("--ties --slime --spawn --relief --surface -o map.png")
-        );
+        assert!(close.command("map.png").ends_with(
+            "--ties --slime --spawn --relief --surface --veins --caves --carvers -o map.png"
+        ));
         // The CLI centres --centre with `centred_on`, which gives back the same area.
         assert_eq!(
             MapArea::centred_on([1000, -336], area.size, 8, 70).unwrap(),
@@ -211,6 +229,9 @@ mod tests {
             confirm: false,
             relief: false,
             surface: false,
+            veins: false,
+            noise_caves: false,
+            carvers: false,
             pins: vec![
                 Pin {
                     position: [-3, 4],

@@ -121,6 +121,9 @@ impl App {
             confirm: self.settings.confirm,
             relief: self.settings.relief && terrain,
             surface: self.settings.surface && terrain,
+            veins: self.underground().veins,
+            noise_caves: self.underground().noise_caves,
+            carvers: self.underground().carvers,
             pins: if self.settings.export_markers {
                 self.export_pins(world.dimension_kind(), &area)
             } else {
@@ -178,6 +181,9 @@ impl App {
                 confirm: export.confirm,
                 relief: export.relief && export.area.scale <= MAX_TERRAIN_SCALE,
                 surface: export.surface && export.area.scale <= MAX_TERRAIN_SCALE,
+                veins: export.veins && export.area.scale <= MAX_UNDERGROUND_SCALE,
+                noise_caves: export.noise_caves && export.area.scale <= MAX_UNDERGROUND_SCALE,
+                carvers: export.carvers && export.area.scale <= MAX_UNDERGROUND_SCALE,
                 pins: export.pins.clone(),
             };
             let image = session
@@ -245,6 +251,73 @@ impl App {
         }
     }
 
+    /// The height biomes and the underground layers are drawn at: a slider over the level, and
+    /// presets for the surface at the view's centre, y 0, and just above the bottom.
+    fn height_row(&mut self, ui: &mut egui::Ui) {
+        let [min_y, height] = self.world.map_or([-64, 384], |w| w.level());
+        let top = min_y + height - 1;
+        ui.horizontal(|ui| {
+            ui.label("Height");
+            ui.add(
+                egui::Slider::new(&mut self.settings.view.y, min_y..=top)
+                    .clamping(egui::SliderClamping::Always),
+            )
+            .on_hover_text("Biomes and the underground layers are drawn at this y: a slice.");
+        });
+        ui.horizontal(|ui| {
+            let centre = self.settings.view.centre.map(|c| c.floor() as i32);
+            if let Some(shown) = &self.shown
+                && ui
+                    .small_button("Surface")
+                    .on_hover_text("The terrain's top block at the centre of the view.")
+                    .clicked()
+            {
+                let h = shown.session.height_at(centre, Heightmap::WorldSurfaceWg);
+                self.settings.view.y = (h - 1).clamp(min_y, top);
+            }
+            if ui
+                .small_button("Underground")
+                .on_hover_text("y 0.")
+                .clicked()
+            {
+                self.settings.view.y = 0.clamp(min_y, top);
+            }
+            if ui
+                .small_button("Bottom")
+                .on_hover_text("8 above the level's bottom.")
+                .clicked()
+            {
+                self.settings.view.y = (min_y + 8).min(top);
+            }
+        });
+    }
+
+    /// The underground layers: ore veins, noise caves and carvers at the view's height.
+    fn underground_section(&mut self, ui: &mut egui::Ui) {
+        style::heading(ui, "Underground");
+        let close = self.settings.view.scale <= MAX_UNDERGROUND_SCALE;
+        let veins_here = self.veins_allowed();
+        ui.add_enabled(
+            veins_here,
+            egui::Checkbox::new(&mut self.settings.veins, "Ore veins"),
+        )
+        .on_hover_text("Copper and iron veins: bright where ore is, faint where filler is.");
+        if !veins_here {
+            style::hint(ui, "Only where the dimension has ore veins.");
+        }
+        ui.checkbox(&mut self.settings.noise_caves, "Noise caves")
+            .on_hover_text("Caves in the terrain itself: air and fluid with ground above.");
+        ui.checkbox(&mut self.settings.carvers, "Carver caves and ravines")
+            .on_hover_text("What carvers cut: caves in yellow, ravines in magenta.");
+        if self.underground().any() {
+            if close {
+                style::hint(ui, "At the height above. Slow to draw.");
+            } else {
+                style::hint(ui, "Zoom to 1:4 or closer to see them.");
+            }
+        }
+    }
+
     /// What's drawn on the map: biomes, overlays, structures, and whether to confirm with
     /// terrain.
     pub(super) fn layers_tab(&mut self, ui: &mut egui::Ui) {
@@ -257,15 +330,10 @@ impl App {
         };
 
         style::heading(ui, "Biomes");
-        ui.add_enabled_ui(!(self.settings.surface && terrain), |ui| {
-            ui.horizontal(|ui| {
-                ui.label("Height");
-                ui.add(
-                    egui::Slider::new(&mut self.settings.view.y, -64..=319)
-                        .clamping(egui::SliderClamping::Always),
-                )
-                .on_hover_text("Biomes are drawn at this y: a slice, not the surface.");
-            });
+        // The height is the underground layers' too, so it stays usable for them.
+        let deep = self.underground().any();
+        ui.add_enabled_ui(!(self.settings.surface && terrain) || deep, |ui| {
+            self.height_row(ui);
         });
         ui.add_enabled(
             terrain,
@@ -326,6 +394,9 @@ impl App {
         } else {
             style::hint(ui, far);
         }
+
+        ui.add_space(6.0);
+        self.underground_section(ui);
 
         ui.add_space(6.0);
         self.structure_list(ui);

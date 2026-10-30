@@ -22,6 +22,9 @@ pub struct Flags {
     pub confirm: bool,
     pub relief: bool,
     pub surface: bool,
+    pub veins: bool,
+    pub caves: bool,
+    pub carvers: bool,
 }
 
 impl Default for Flags {
@@ -34,6 +37,9 @@ impl Default for Flags {
             confirm: true,
             relief: false,
             surface: false,
+            veins: false,
+            caves: false,
+            carvers: false,
         }
     }
 }
@@ -47,6 +53,9 @@ impl Flags {
             (self.confirm, "confirm"),
             (self.relief, "relief"),
             (self.surface, "surface"),
+            (self.veins, "veins"),
+            (self.caves, "caves"),
+            (self.carvers, "carvers"),
         ]
         .into_iter()
         .filter_map(|(on, name)| on.then_some(name))
@@ -198,6 +207,9 @@ impl SharedView {
                         confirm: false,
                         relief: false,
                         surface: false,
+                        veins: false,
+                        caves: false,
+                        carvers: false,
                     };
                     for name in value.split(',') {
                         match name {
@@ -207,6 +219,9 @@ impl SharedView {
                             "confirm" => flags.confirm = true,
                             "relief" => flags.relief = true,
                             "surface" => flags.surface = true,
+                            "veins" => flags.veins = true,
+                            "caves" => flags.caves = true,
+                            "carvers" => flags.carvers = true,
                             // Empty (no layers), or a layer from a later viewer.
                             _ => {}
                         }
@@ -295,6 +310,19 @@ mod tests {
             ..sample()
         };
         assert_eq!(SharedView::decode(&bare.encode()), Ok(bare));
+        let deep = SharedView {
+            y: -40,
+            flags: Flags {
+                veins: true,
+                caves: true,
+                carvers: true,
+                ..Flags::default()
+            },
+            ..sample()
+        };
+        let text = deep.encode();
+        assert!(text.ends_with(";y=-40;st=village_plains,#village,pack:ruin;hl=river;l=spawn,confirm,veins,caves,carvers"), "{text}");
+        assert_eq!(SharedView::decode(&text), Ok(deep));
     }
 
     /// Texts each format has written. Never change these: they must open as they did.
@@ -339,7 +367,28 @@ mod tests {
                 },
             ),
         ];
-        for (text, view) in format_1 {
+        let deep = (
+            "spyglass:1;s=7;y=0;l=veins,caves,carvers",
+            SharedView {
+                seed: 7,
+                version: None,
+                dimension: Dimension::Overworld,
+                centre: [0, 0],
+                scale: 4,
+                y: 0,
+                structures: Vec::new(),
+                highlight: Vec::new(),
+                flags: Flags {
+                    spawn: false,
+                    confirm: false,
+                    veins: true,
+                    caves: true,
+                    carvers: true,
+                    ..Flags::default()
+                },
+            },
+        );
+        for (text, view) in format_1.into_iter().chain([deep]) {
             assert_eq!(SharedView::decode(text), Ok(view), "{text}");
         }
     }

@@ -267,3 +267,45 @@ fn bad_requests_fail_without_writing() {
         assert!(!file.exists(), "{args:?}");
     }
 }
+
+#[test]
+fn underground_layers_are_the_library_s() {
+    let fixture = bundle();
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("map.png");
+    let args = |extra: &[&'static str]| {
+        let mut args = vec!["--seed", "3", "--size", "24x16", "--scale", "1", "--y", "0"];
+        args.extend_from_slice(extra);
+        args.extend_from_slice(&["-o", file.to_str().unwrap(), "--json"]);
+        args
+    };
+    let out = spyglass(
+        &fixture.path(),
+        &args(&["--caves", "--carvers", "--no-biomes"]),
+    );
+    let answer: Value = serde_json::from_slice(ok(&out)).unwrap();
+    let world = World::open(fixture.path()).unwrap();
+    let layers = Layers {
+        biomes: false,
+        noise_caves: true,
+        carvers: true,
+        ..Layers::default()
+    };
+    let area = MapArea::centred_on([0, 0], [24, 16], 1, 0).unwrap();
+    let mut expected = Vec::new();
+    world
+        .session(3)
+        .unwrap()
+        .render(&area, &layers)
+        .unwrap()
+        .write_png(&mut expected)
+        .unwrap();
+    assert_eq!(std::fs::read(&file).unwrap(), expected);
+    for (layer, on) in [("veins", false), ("noise_caves", true), ("carvers", true)] {
+        assert_eq!(answer["layers"][layer], on, "{layer}");
+    }
+    // The fixture's material rule has no ore veins.
+    let out = spyglass(&fixture.path(), &args(&["--veins"]));
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("ore veins"));
+}

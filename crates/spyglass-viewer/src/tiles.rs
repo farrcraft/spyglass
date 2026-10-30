@@ -1,6 +1,7 @@
 //! Map tiles: computed on worker threads, cached on the UI thread.
 //!
-//! Workers do the slow parts: a tile's biome map, heights and slime chunks, separately the
+//! Workers do the slow parts: a tile's biome map, heights, underground layers and slime
+//! chunks (keeping each tile's carving map across heights), separately the
 //! structure starts on a tile for the structures chosen, and the layouts of jigsaw structures
 //! shown up close. The UI thread turns biome maps into textures with the current style (ties,
 //! highlight, slime, relief) through the library's `BiomeMap::colorize`, `Image::shade` and
@@ -15,8 +16,8 @@ use std::thread;
 
 use eframe::egui;
 use spyglass::{
-    BiomeMap, DEFAULT_MAP_Y, HeightMap, Layers, MAX_SLIME_SCALE, MapFeatures, Session,
-    StructureLayout, StructureQuery, StructureStart,
+    BiomeMap, CarvingMap, DEFAULT_MAP_Y, HeightMap, Layers, MAX_SLIME_SCALE, MapFeatures, Session,
+    StructureLayout, StructureQuery, StructureStart, UndergroundMap,
 };
 
 use crate::timing;
@@ -32,8 +33,39 @@ pub struct TileKey {
     pub heights: bool,
     /// Biomes at the surface rather than at `y`; needs `heights`.
     pub surface: bool,
+    /// The underground layers to compute at `y`.
+    pub underground: Underground,
     pub tile: Tile,
 }
+
+/// Which underground layers a tile has.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct Underground {
+    pub veins: bool,
+    pub noise_caves: bool,
+    pub carvers: bool,
+}
+
+impl Underground {
+    pub fn any(self) -> bool {
+        self.veins || self.noise_caves || self.carvers
+    }
+
+    /// The library's layers for these.
+    pub fn layers(self) -> Layers {
+        Layers {
+            biomes: false,
+            veins: self.veins,
+            noise_caves: self.noise_caves,
+            carvers: self.carvers,
+            ..Layers::default()
+        }
+    }
+}
+
+/// Carving maps kept across heights, by world and seed and tile.
+const CARVING_TILES: usize = 256;
+type Carvings = Mutex<Cache<(u64, Tile), Arc<CarvingMap>>>;
 
 /// A tile's structure markers: the world and seed, the structures chosen, whether terrain
 /// decides them, and its place.
@@ -60,6 +92,8 @@ pub struct TileData {
     pub biomes: BiomeMap,
     /// Heights, where the key asked for them.
     pub heights: Option<HeightMap>,
+    /// The underground layers, where the key asked for them.
+    pub underground: Option<Box<UndergroundMap>>,
     /// Slime chunks, at scales where they're drawn.
     pub slime_chunks: Vec<[i32; 2]>,
 }
@@ -70,6 +104,17 @@ pub enum JobKey {
     Biomes(TileKey),
     Markers(MarkerKey),
     Layout(LayoutKey),
+}
+
+impl Job {
+    /// The app's number for the job's world and seed.
+    fn session_id(&self) -> u64 {
+        match self.key {
+            JobKey::Biomes(k) => k.source,
+            JobKey::Markers(k) => k.source,
+            JobKey::Layout(k) => k.source,
+        }
+    }
 }
 
 /// Something to compute.
@@ -116,11 +161,13 @@ impl Pool {
         let queue = Arc::new((Mutex::new(Queue::default()), Condvar::new()));
         let (send, done) = channel();
         let wake = Arc::new(wake);
+        let carvings: Arc<Carvings> = Arc::new(Mutex::new(Cache::new(CARVING_TILES)));
         for i in 0..threads {
             let (queue, send, wake) = (queue.clone(), send.clone(), wake.clone());
+            let carvings = carvings.clone();
             thread::Builder::new()
                 .name(format!("tiles-{i}"))
-                .spawn(move || work(&queue, &send, &*wake))
+                .spawn(move || work(&queue, &send, &*wake, &carvings))
                 .expect("a tile worker thread");
         }
         Pool { queue, done }
@@ -159,7 +206,12 @@ impl Pool {
     }
 }
 
-fn work(queue: &(Mutex<Queue>, Condvar), send: &Sender<Done>, wake: &(dyn Fn() + Send + Sync)) {
+fn work(
+    queue: &(Mutex<Queue>, Condvar),
+    send: &Sender<Done>,
+    wake: &(dyn Fn() + Send + Sync),
+    carvings: &Carvings,
+) {
     let (lock, signal) = queue;
     loop {
         let job = {
@@ -173,8 +225,9 @@ fn work(queue: &(Mutex<Queue>, Condvar), send: &Sender<Done>, wake: &(dyn Fn() +
         };
         // A panic in the library is a bug, but it fails one tile: the worker lives on, and the
         // job leaves `running`, so the tile isn't waited on forever.
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compute(&job)))
-            .unwrap_or_else(|_| Err("spyglass failed on this tile".to_string()));
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compute(&job, carvings)))
+                .unwrap_or_else(|_| Err("spyglass failed on this tile".to_string()));
         lock.lock()
             .unwrap_or_else(PoisonError::into_inner)
             .running
@@ -186,7 +239,7 @@ fn work(queue: &(Mutex<Queue>, Condvar), send: &Sender<Done>, wake: &(dyn Fn() +
     }
 }
 
-fn compute(job: &Job) -> Result<Output, String> {
+fn compute(job: &Job, carvings: &Carvings) -> Result<Output, String> {
     let (tile, y) = match job.key {
         JobKey::Biomes(key) => (key.tile, key.y),
         JobKey::Markers(key) => (key.tile, DEFAULT_MAP_Y),
@@ -227,6 +280,20 @@ fn compute(job: &Job) -> Result<Output, String> {
                 _ => job.session.biome_map(&area),
             })
             .map_err(|e| e.to_string())?;
+            let underground = if key.underground.any() {
+                let carved = if key.underground.carvers {
+                    Some(carving_map(job, carvings, key.tile, &area)?)
+                } else {
+                    None
+                };
+                let map = timing::job(kind("underground"), || {
+                    job.session
+                        .underground_map(&area, &key.underground.layers(), carved.as_deref())
+                });
+                Some(Box::new(map.map_err(|e| e.to_string())?))
+            } else {
+                None
+            };
             let slime = Layers {
                 biomes: false,
                 slime_chunks: true,
@@ -242,6 +309,7 @@ fn compute(job: &Job) -> Result<Output, String> {
             Ok(Output::Biomes(TileData {
                 biomes,
                 heights,
+                underground,
                 slime_chunks,
             }))
         }
@@ -263,6 +331,35 @@ fn compute(job: &Job) -> Result<Output, String> {
         }
         JobKey::Layout(_) => unreachable!("layouts are computed above"),
     }
+}
+
+/// The tile's carving map, kept across heights: carving a tile is most of its underground
+/// layers' cost.
+fn carving_map(
+    job: &Job,
+    carvings: &Carvings,
+    tile: Tile,
+    area: &spyglass::MapArea,
+) -> Result<Arc<CarvingMap>, String> {
+    let key = (job.session_id(), tile);
+    {
+        let mut kept = carvings.lock().unwrap_or_else(PoisonError::into_inner);
+        kept.next_frame();
+        if let Some(map) = kept.get(&key) {
+            return Ok(map.clone());
+        }
+    }
+    let map = timing::job(
+        || format!("carvers 1:{}", tile.scale),
+        || job.session.carving_map(area),
+    )
+    .map_err(|e| e.to_string())?;
+    let map = Arc::new(map);
+    carvings
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(key, map.clone());
+    Ok(map)
 }
 
 /// How tiles are coloured.
@@ -363,6 +460,7 @@ mod tests {
             y: 64,
             heights: false,
             surface: false,
+            underground: Underground::default(),
             tile: Tile { scale: 4, x, z: 0 },
         }
     }
@@ -386,6 +484,8 @@ mod tests {
             ],
             true,
         );
+        // Kept for the test's life: the world reads its block settings when first asked.
+        let fixture = Box::leak(Box::new(fixture));
         let world: &'static spyglass::World =
             Box::leak(Box::new(spyglass::World::open(fixture.path()).unwrap()));
         Arc::new(world.session(9).unwrap())
@@ -471,6 +571,48 @@ mod tests {
             );
         }
         assert_eq!(pool.pending(), 0);
+    }
+
+    #[test]
+    fn underground_tiles_are_the_library_s_at_every_height() {
+        let session = session();
+        let (wake, woken) = channel();
+        let pool = Pool::with_threads(1, move || {
+            let _ = wake.send(());
+        });
+        let underground = Underground {
+            veins: false,
+            noise_caves: true,
+            carvers: true,
+        };
+        let deep = |y| TileKey {
+            y,
+            underground,
+            tile: Tile {
+                scale: 1,
+                x: -1,
+                z: 0,
+            },
+            ..key(0)
+        };
+        // One worker, so the second height finds the first's carving map kept.
+        pool.want(vec![
+            job(&session, JobKey::Biomes(deep(0))),
+            job(&session, JobKey::Biomes(deep(-30))),
+        ]);
+        for (key, result) in run(&pool, &woken, 2) {
+            if let Err(e) = &result {
+                panic!("{e}");
+            }
+            let (JobKey::Biomes(key), Ok(Output::Biomes(data))) = (key, result) else {
+                panic!("a biome tile");
+            };
+            let area = key.tile.area(key.y).unwrap();
+            let expected = session
+                .underground_map(&area, &underground.layers(), None)
+                .unwrap();
+            assert_eq!(data.underground.as_deref(), Some(&expected), "y {}", key.y);
+        }
     }
 
     #[test]

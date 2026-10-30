@@ -1,8 +1,8 @@
 # m18. Underground map layers
 
-- Status: Draft
+- Status: In progress
 - Milestone: [18. Surface rules, ore veins, caves and carvers](../roadmap/18-surface-veins-and-carvers.md)
-- Started: YYYY-MM-DD
+- Started: 2026-10-30
 - Completed: YYYY-MM-DD
 
 ## Goal
@@ -27,18 +27,24 @@ Each layer is a tint over the biome map, like slime chunks, so the biomes stay r
 
 The slider stays the exact control. `spyglass render` takes `--y` as now.
 
-**Cost and scale.** A pixel needs its chunk's blocks at one y. At scale 1, every chunk in view is computed whole. At larger scales, only one column in s² is sampled, but carvers need the chunk's mask whatever the scale. The plan measures the cost per 128 × 128 tile at scales 1, 2, 4, 8 and 16 with `cargo xtask bench`, then sets `MAX_UNDERGROUND_SCALE` where a tile takes at most about as long as relief at scale 4. Past that, the layers are off with a hint, as terrain layers are. The viewer keeps chunk results in a cache shared across y, so moving the slider doesn't recompute carvers.
+**Cost and scale.** A whole chunk takes about 42 ms, so a 128 × 128 tile of whole chunks would take seconds even at scale 1. Instead each pixel is sampled at its corner block alone (see the notes):
+
+- **Noise caves and 26.2's veins:** `Terrain::probes_on`, the noise fill's block at one y in each column, scanned from the top down to y, batched by chunk as `base_heights_on` is. It also says whether a solid block is above.
+- **Veins from 26.3:** the material rule followed at the position alone (`BoundMaterial::vein_at`). The rule stops at the first condition that needs the column. Vanilla's veins come right after the bedrock floor, so the answer is exact.
+- **Carvers:** each chunk's carving mask, split by the kind of the first carver to carve each position (`ChunkGenerator::carvings`), with no material rule and no aquifer. A `CarvingMap` holds an area's carved runs at every height, so the viewer keeps one per tile and doesn't carve again when the height changes.
+
+The plan measures the cost per 128 × 128 tile at scales 1, 2, 4, 8 and 16 with `cargo xtask bench`, then sets `MAX_UNDERGROUND_SCALE` where a tile takes at most about as long as relief at scale 4. Past that, the layers are off with a hint, as terrain layers are.
 
 **Tiling.** As every layer: a pixel depends only on its own block, so a view equals its tiles. The render spec's tiling test (`a_view_equals_its_tiles`) gains the new layers, on fixtures.
 
 ## Tasks
 
-- [ ] **Library:** `Layers::veins`, `noise_caves`, `carvers`, and their colours and drawing order in render.md. `MAX_UNDERGROUND_SCALE` from the bench. Errors where a layer isn't drawn (scale, and the dimensions without veins).
-- [ ] **Tiling tests** on fixtures, extending `a_view_equals_its_tiles`, and exact-pixel tests for each layer's colours.
-- [ ] **CLI:** `spyglass render --veins --caves --carvers`, cli-json.md, and the export command's flags in the viewer.
-- [ ] **Viewer:** the layer toggles, the height presets, a chunk cache across y, the hint past the largest scale, and the shared view text's `l` names (`veins`, `caves`, `carvers`). The text's format stays 1, since only names are added ([user-data.md](../specs/user-data.md#compatibility)).
+- [x] **Library:** `Layers::veins`, `noise_caves`, `carvers`, and their colours and drawing order in render.md. `MAX_UNDERGROUND_SCALE` from the bench. Errors where a layer isn't drawn (scale, and the dimensions without veins).
+- [x] **Tiling tests** on fixtures, extending `a_view_equals_its_tiles`, and exact-pixel tests for each layer's colours.
+- [x] **CLI:** `spyglass render --veins --caves --carvers`, cli-json.md, and the export command's flags in the viewer.
+- [x] **Viewer:** the layer toggles, the height presets, a chunk cache across y, the hint past the largest scale, and the shared view text's `l` names (`veins`, `caves`, `carvers`). The text's format stays 1, since only names are added ([user-data.md](../specs/user-data.md#compatibility)).
 - [ ] **Cost:** `cargo xtask bench` lines per layer at each scale; the chosen limit and its times here. Check the viewer by eye with `run-viewer`: it stays responsive while the layers fill (pan and zoom), and the search still yields to the map ([ADR 0046](../adr/0046-the-viewers-search-yields-to-the-map.md)).
-- [ ] **Docs:** render.md, getting-started (the layers and presets), the changelog.
+- [x] **Docs:** render.md, getting-started (the layers and presets), the changelog.
 - [ ] `cargo xtask check` and `cargo xtask oracle-test`. Complete the plan, and the milestone once all four plans are complete.
 
 ## Verification
@@ -49,8 +55,24 @@ The slider stays the exact control. `spyglass render` takes `--y` as now.
 
 ## Durable outputs
 
-- [ ] render.md: the underground layers, their colours, order and limits.
-- [ ] user-data.md: the new layer names in the view text.
-- [ ] cli-json.md: the new `render` layers.
+- [x] render.md: the underground layers, their colours, order and limits.
+- [x] user-data.md: the new layer names in the view text.
+- [x] cli-json.md: the new `render` layers.
 
 ## Notes
+
+- 2026-10-30: **Sampling, not chunks.** A chunk's blocks take 42 ms in 26.3, so whole chunks would put a 128 × 128 tile at about 2.7 s at scale 1, and far more beyond. Each layer is sampled at its pixel's block instead. The noise fill comes from a probe scanned down to y. Veins come from the rule at the position, which is exact because vanilla's vein rules come straight after the bedrock floor (26.3, 26.4-snapshot-5 and -6 alike). Carvers come from the carving mask by kind, without the aquifer or the rule. `spyglass-blocks/tests/layers.rs` checks all three against whole chunks in every version.
+- 2026-10-30: **Cost** (`cargo xtask bench --only "128 x 128"`, 26.3, `dist`, one thread, y 0, run with the limit raised to 16 to see past it). Relief at 1:4 takes 1,247 ms.
+
+  | Scale | Veins | Noise caves | Carvers | All three | Carvers, kept map |
+  | ----- | ----- | ----------- | ------- | --------- | ----------------- |
+  | 1:1   | 211   | 189         | 78      | 278       | 0.08              |
+  | 1:2   | 1,169 | 1,161       | 469     | 1,465     | 0.10              |
+  | 1:4   | 1,424 | 1,443       | 1,030   | 2,353     | 0.14              |
+  | 1:8   | 1,554 | 1,535       | 3,472   | 4,888     | 0.15              |
+  | 1:16  | 1,900 | 1,884       | 14,528  | 19,369    | 0.20              |
+
+  `MAX_UNDERGROUND_SCALE` is 4: each layer alone costs about what relief does there, and it matches the terrain layers' limit, so the viewer's hints agree. All three together cost about twice relief at 1:4. Carving grows quickly past 1:4, where each pixel's chunk is carved for one column. From 1:2, the noise fill's probes cost most, since each column is sampled on its own.
+
+- 2026-10-30: **By eye** (`run-viewer`, seed 12345, 26.3, every layer on): at 1:1, y 0, the view filled in under a second. Zooming out to 1:2 at y −40, the map moved at once while "Drawing, 24 left" counted down, and it filled in about 12 s. At 1:8 the layers are off with the hint. Surface gave y 62 (the sea's top at the centre), Bottom −56. Veins at alpha 96 filler and a pale iron barely showed, so filler is now alpha 128 and iron `#b8c4ff`. Not yet checked by eye: a seed search running while the layers fill.
+- 2026-10-30: `cargo xtask check` passes, and `cargo xtask oracle-test` passes for 26.2, 26.3, 26.4-snapshot-5, 26.4-snapshot-6 and the test pack. The plan stays open for the one check by eye left in the Cost task.

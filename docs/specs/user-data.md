@@ -175,17 +175,17 @@ field  = key "=" value
 
 ### Fields of format 1
 
-| Key  | Value                                                                                                                                                | When missing       |
-| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
-| `s`  | The seed: a decimal 64-bit signed integer. Required.                                                                                                 | An error.          |
-| `v`  | The game version, as a bundle names it.                                                                                                              | The version shown. |
-| `d`  | The dimension: `overworld`, `nether` or `end`.                                                                                                       | `overworld`.       |
-| `c`  | The centre block: `x,z`, integers within ±10⁹.                                                                                                       | `0,0`.             |
-| `sc` | The scale: a power of two from 1 to 256.                                                                                                             | 4.                 |
-| `y`  | The height biomes are drawn at, an integer.                                                                                                          | 64.                |
-| `st` | Structures shown: ids and `#`tags, separated by commas.                                                                                              | None.              |
-| `hl` | Highlighted biomes: ids, separated by commas.                                                                                                        | None.              |
-| `l`  | The layers on, separated by commas, from `ties`, `slime`, `spawn`, `confirm`, `relief`, `surface`. Any not listed is off. Unknown names are ignored. | `spawn,confirm`.   |
+| Key  | Value                                                                                                                                                                                              | When missing       |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
+| `s`  | The seed: a decimal 64-bit signed integer. Required.                                                                                                                                               | An error.          |
+| `v`  | The game version, as a bundle names it.                                                                                                                                                            | The version shown. |
+| `d`  | The dimension: `overworld`, `nether` or `end`.                                                                                                                                                     | `overworld`.       |
+| `c`  | The centre block: `x,z`, integers within ±10⁹.                                                                                                                                                     | `0,0`.             |
+| `sc` | The scale: a power of two from 1 to 256.                                                                                                                                                           | 4.                 |
+| `y`  | The height biomes and the underground layers are drawn at, an integer.                                                                                                                             | 64.                |
+| `st` | Structures shown: ids and `#`tags, separated by commas.                                                                                                                                            | None.              |
+| `hl` | Highlighted biomes: ids, separated by commas.                                                                                                                                                      | None.              |
+| `l`  | The layers on, separated by commas, from `ties`, `slime`, `spawn`, `confirm`, `relief`, `surface`, `veins`, `caves` (noise caves) and `carvers`. Any not listed is off. Unknown names are ignored. | `spawn,confirm`.   |
 
 - **Namespaces:** an id in `st` or `hl` without a namespace is `minecraft:`'s, and the viewer writes `minecraft:` ids without it. Tags keep their `#`.
 - **What the viewer writes:** the fields in the order `s`, `v`, `d`, `c`, `sc`, `y`, `st`, `hl`, `l`, leaving out `st` and `hl` when they're empty.

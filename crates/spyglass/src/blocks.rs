@@ -95,7 +95,7 @@ impl<'w> ChunkBlocks<'w> {
 
 impl<'w> Session<'w> {
     /// The seed's chunk generator, bound the first time it's asked for.
-    fn chunks(&self) -> Result<&ChunkGenerator<'w>> {
+    pub(crate) fn chunks(&self) -> Result<&ChunkGenerator<'w>> {
         if let Some(generator) = self.chunks.get() {
             return Ok(generator);
         }

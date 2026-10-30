@@ -305,6 +305,9 @@ pub struct RenderLayers<'a> {
     pub confirm: bool,
     pub relief: bool,
     pub surface: bool,
+    pub veins: bool,
+    pub noise_caves: bool,
+    pub carvers: bool,
 }
 
 /// A structure marker on a map.

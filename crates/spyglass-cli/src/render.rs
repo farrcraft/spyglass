@@ -55,6 +55,9 @@ pub fn run(args: &Render) -> Result<()> {
         confirm: args.confirm,
         relief: args.relief,
         surface: args.surface,
+        veins: args.veins,
+        noise_caves: args.caves,
+        carvers: args.carvers,
         pins: args.pins.clone(),
     };
     let features = session.map_features(&area, &layers)?;
@@ -100,6 +103,9 @@ pub fn run(args: &Render) -> Result<()> {
                     confirm: layers.confirm,
                     relief: layers.relief,
                     surface: layers.surface,
+                    veins: layers.veins,
+                    noise_caves: layers.noise_caves,
+                    carvers: layers.carvers,
                 },
                 structures,
                 slime_chunks: features.slime_chunks,

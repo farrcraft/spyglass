@@ -203,6 +203,7 @@ fn main() -> spyglass::Result<()> {
         );
     }
     viewer_tiles(&world, &mut seeds)?;
+    underground_tiles(&world, &mut seeds)?;
     let view = spyglass::MapArea::centred_on([0, 0], [1024, 1024], 16, 64)?;
     let layers = spyglass::Layers {
         structures: vec![villages.clone(), stronghold.clone()],
@@ -489,6 +490,80 @@ fn viewer_tiles<'a>(
                 black_box(session.map_features(area, &layers).unwrap());
             });
         }
+    }
+    Ok(())
+}
+
+/// The underground layers on one of the viewer's 128 × 128 tiles at y 0, in a session that
+/// has drawn the tile west of it, at each scale they're drawn at, beside relief at 1:4 on the
+/// same tile (`docs/specs/render.md#underground`).
+fn underground_tiles<'a>(
+    world: &World,
+    seeds: &mut impl Iterator<Item = &'a i64>,
+) -> spyglass::Result<()> {
+    let tile = |scale: u32, x: i32, y: i32| MapArea {
+        min: [x * 128 * scale as i32, 0],
+        size: [128, 128],
+        scale,
+        y,
+    };
+    let warm = |seeds: &mut dyn Iterator<Item = &'a i64>,
+                name: &str,
+                scale: u32,
+                f: &dyn Fn(&Session<'_>, &MapArea)| {
+        report_after(
+            &format!("128 x 128 tile {name} at 1:{scale}"),
+            3,
+            || {
+                let session = world.session(*seeds.next().unwrap()).unwrap();
+                f(&session, &tile(scale, 0, 0));
+                session
+            },
+            |session| f(session, &tile(scale, 1, 0)),
+        );
+    };
+    warm(seeds, "relief", 4, &|session, area| {
+        black_box(session.height_map(area).unwrap());
+    });
+    let layer = |veins, noise_caves, carvers| Layers {
+        biomes: false,
+        veins,
+        noise_caves,
+        carvers,
+        ..Layers::default()
+    };
+    let mut scale = 1;
+    while scale <= spyglass::MAX_UNDERGROUND_SCALE {
+        for (name, layers) in [
+            ("ore veins", layer(true, false, false)),
+            ("noise caves", layer(false, true, false)),
+            ("carvers", layer(false, false, true)),
+            ("all underground", layer(true, true, true)),
+        ] {
+            warm(seeds, name, scale, &|session, area| {
+                black_box(session.underground_map(area, &layers, None).unwrap());
+            });
+        }
+        // Another height, with the tile's carving map kept, as the viewer does.
+        report_after(
+            &format!("128 x 128 tile carvers at 1:{scale}, kept carving map"),
+            3,
+            || {
+                let session = world.session(*seeds.next().unwrap()).unwrap();
+                let carvings = session.carving_map(&tile(scale, 1, 0)).unwrap();
+                (session, carvings)
+            },
+            |(session, carvings)| {
+                let area = tile(scale, 1, -30);
+                let layers = layer(false, false, true);
+                black_box(
+                    session
+                        .underground_map(&area, &layers, Some(carvings))
+                        .unwrap(),
+                );
+            },
+        );
+        scale *= 2;
     }
     Ok(())
 }

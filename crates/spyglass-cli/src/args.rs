@@ -329,6 +329,16 @@ pub struct Render {
     /// Draw biomes at the surface instead of at `--y` (scales up to 4).
     #[arg(long, conflicts_with = "no_biomes")]
     pub surface: bool,
+    /// Tint copper and iron ore veins at `--y` (scales up to 4; the Overworld).
+    #[arg(long)]
+    pub veins: bool,
+    /// Tint noise caves at `--y`: the caves in the terrain itself, before carvers (scales up
+    /// to 4).
+    #[arg(long)]
+    pub caves: bool,
+    /// Tint the caves and ravines carvers cut at `--y` (scales up to 4).
+    #[arg(long)]
+    pub carvers: bool,
     /// A pin at block `x,z`, with a colour `#rrggbb` after another comma (amber if none).
     /// Repeat it for more; they're drawn last, in order.
     #[arg(long = "pin", allow_hyphen_values = true, value_parser = pin)]

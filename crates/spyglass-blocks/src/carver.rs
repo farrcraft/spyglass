@@ -407,6 +407,14 @@ impl Carver {
         self
     }
 
+    /// What the carver cuts.
+    pub fn kind(&self) -> CarverKind {
+        match self {
+            Carver::Cave(_) => CarverKind::Cave,
+            Carver::Canyon(_) => CarverKind::Canyon,
+        }
+    }
+
     /// `isStartChunk`: `nextFloat() ≤ probability`.
     pub fn is_start_chunk(&self, random: &mut LegacyRandomSource) -> bool {
         let p = match self {
@@ -444,6 +452,91 @@ pub trait Sink {
     fn column(&mut self) {}
     /// Carves `(x, y, z)`, x and z within the chunk.
     fn carve(&mut self, x: i32, y: i32, z: i32);
+}
+
+/// What a carver cuts: caves (the Nether's included) or canyons, the ravines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CarverKind {
+    /// `CaveWorldCarver` and `NetherWorldCarver`.
+    Cave,
+    /// `CanyonWorldCarver`.
+    Canyon,
+}
+
+/// A chunk's carved positions by the kind of carver that carved each first, from
+/// [`ChunkGenerator::carvings`](crate::ChunkGenerator::carvings).
+#[derive(Debug, Clone)]
+pub struct Carvings {
+    /// By [`CarverKind`]: caves, then canyons.
+    masks: [CarvingMask; 2],
+}
+
+impl Carvings {
+    /// Empty masks over `min_y..=max_y`.
+    pub fn new(min_y: i32, max_y: i32) -> Self {
+        Carvings {
+            masks: [
+                CarvingMask::new(min_y, max_y),
+                CarvingMask::new(min_y, max_y),
+            ],
+        }
+    }
+
+    /// The kind of carver that carved `(x, y, z)` first, with x and z within the chunk.
+    pub fn kind_at(&self, x: i32, y: i32, z: i32) -> Option<CarverKind> {
+        if self.masks[0].is_carved(x, y, z) {
+            Some(CarverKind::Cave)
+        } else if self.masks[1].is_carved(x, y, z) {
+            Some(CarverKind::Canyon)
+        } else {
+            None
+        }
+    }
+
+    /// Column `(x, z)`'s runs of positions one kind carved, bottom up, as `(min_y, max_y,
+    /// kind)`.
+    pub fn column_runs(&self, x: i32, z: i32) -> Vec<(i32, i32, CarverKind)> {
+        let mut runs: Vec<(i32, i32, CarverKind)> = Vec::new();
+        for y in self.masks[0].min_y..=self.masks[0].max_y {
+            if let Some(kind) = self.kind_at(x, y, z) {
+                match runs.last_mut() {
+                    Some(last) if last.1 == y - 1 && last.2 == kind => last.1 = y,
+                    _ => runs.push((y, y, kind)),
+                }
+            }
+        }
+        runs
+    }
+
+    /// A sink that carves for `kind`, where no carver has carved yet.
+    pub(crate) fn sink(&mut self, kind: CarverKind) -> KindSink<'_> {
+        KindSink {
+            carvings: self,
+            kind,
+        }
+    }
+}
+
+/// Carves one kind into [`Carvings`].
+pub(crate) struct KindSink<'c> {
+    carvings: &'c mut Carvings,
+    kind: CarverKind,
+}
+
+impl Sink for KindSink<'_> {
+    fn min_y(&self) -> i32 {
+        self.carvings.masks[0].min_y
+    }
+
+    fn max_y(&self) -> i32 {
+        self.carvings.masks[0].max_y
+    }
+
+    fn carve(&mut self, x: i32, y: i32, z: i32) {
+        if self.carvings.kind_at(x, y, z).is_none() {
+            self.carvings.masks[self.kind as usize].carve(x, y, z);
+        }
+    }
 }
 
 /// `CarvingMask`: the positions carvers carve in one chunk, between `min_y` and `max_y`.

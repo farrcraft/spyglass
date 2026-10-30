@@ -50,9 +50,10 @@ use spyglass_terrain::{Terrain, TerrainSettings};
 pub use blocks::{BlockAt, BlockColumn, Carvers, ChunkBlocks};
 pub use game::{Game, GameSession};
 pub use render::{
-    BiomeMap, DEFAULT_MAP_Y, HeightMap, Image, Layers, MARKER_REACH, MAX_PIXELS, MAX_SCALE,
-    MAX_SIDE, MAX_SLIME_SCALE, MAX_TERRAIN_SCALE, MapArea, MapFeatures, Pin, biome_colour,
-    display_name, structure_colour,
+    BiomeMap, CarverKind, CarvingMap, DEFAULT_MAP_Y, HeightMap, Image, Layers, MARKER_REACH,
+    MAX_PIXELS, MAX_SCALE, MAX_SIDE, MAX_SLIME_SCALE, MAX_TERRAIN_SCALE, MAX_UNDERGROUND_SCALE,
+    MapArea, MapFeatures, Pin, UndergroundMap, Vein, VeinPart, biome_colour, display_name,
+    structure_colour, vein_colour,
 };
 pub use save::{
     LauncherSave, PackConcern, SaveInfo, SaveInspector, SaveLocation, SaveReport, SaveWarning,
@@ -535,6 +536,12 @@ impl World {
     /// The dimension type's coordinate scale: 8 for the Nether, 1 for the others.
     pub fn coordinate_scale(&self) -> f64 {
         self.coordinate_scale
+    }
+
+    /// The level's lowest y and its height in blocks: the Overworld's are −64 and 384.
+    pub fn level(&self) -> [i32; 2] {
+        let level = self.sets.heights();
+        [level.level_min_y, level.level_height]
     }
 
     /// Whether the dimension type has a ceiling, as the Nether does. Its `WORLD_SURFACE_WG`

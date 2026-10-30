@@ -52,6 +52,28 @@ impl BlockColumn {
     }
 }
 
+/// A column's block at one y, from [`Terrain::probes_on`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Probe {
+    /// The block.
+    pub block: Block,
+    /// Whether a solid block (the default block, or 26.2's veins) is above it in the column.
+    pub covered: bool,
+}
+
+/// Runs of ascending coordinates in one chunk, as index ranges.
+fn chunk_runs(vs: &[i32]) -> Vec<std::ops::Range<usize>> {
+    let mut runs = Vec::new();
+    let mut first = 0;
+    for i in 1..=vs.len() {
+        if i == vs.len() || vs[i] >> 4 != vs[first] >> 4 {
+            runs.push(first..i);
+            first = i;
+        }
+    }
+    runs
+}
+
 /// How far below a column's preliminary surface level the first part of its scan starts.
 const SURFACE_MARGIN: i32 = 8;
 
@@ -387,19 +409,7 @@ impl Terrain {
                 return out;
             }
         };
-        // Runs of coordinates in one chunk, as index ranges.
-        let runs = |vs: &[i32]| {
-            let mut runs = Vec::new();
-            let mut first = 0;
-            for i in 1..=vs.len() {
-                if i == vs.len() || vs[i] >> 4 != vs[first] >> 4 {
-                    runs.push(first..i);
-                    first = i;
-                }
-            }
-            runs
-        };
-        let (x_runs, z_runs) = (runs(xs), runs(zs));
+        let (x_runs, z_runs) = (chunk_runs(xs), chunk_runs(zs));
         for zr in &z_runs {
             let (z0, z1) = (zs[zr.start], zs[zr.end - 1]);
             for xr in &x_runs {
@@ -436,6 +446,99 @@ impl Terrain {
                             )
                         };
                         out[j * xs.len() + i] = height.unwrap_or(self.empty_height);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// The column's block at `y` at every `(x, z)` with x in `xs` and z in `zs`, z outer and x
+    /// inner, and whether a solid block is above it: what [`base_column`](Self::base_column)
+    /// gives, scanned only from the top down to `y`. Both must be ascending. Chunk by chunk, as
+    /// [`base_heights_on`](Self::base_heights_on) is. Outside the column, air with nothing
+    /// above.
+    pub fn probes_on(&self, xs: &[i32], zs: &[i32], y: i32) -> Vec<Probe> {
+        debug_assert!(xs.is_sorted() && zs.is_sorted(), "ascending coordinates");
+        let empty = Probe {
+            block: Block::Air,
+            covered: false,
+        };
+        let mut out = vec![empty; xs.len() * zs.len()];
+        let top = self.min_y + self.height;
+        if self.height <= 0 || !(self.min_y..top).contains(&y) {
+            return out;
+        }
+        let (bound, levels) = match &self.family {
+            Bound::Volume { bound, levels } => (bound, levels),
+            Bound::V1_21(chunk) => {
+                let columns = zs.iter().enumerate().flat_map(|(j, &z)| {
+                    xs.iter()
+                        .enumerate()
+                        .map(move |(i, &x)| (x, z, j * xs.len() + i))
+                });
+                chunk.scan(columns, true, |i, at, block| {
+                    if at == y {
+                        out[i].block = block;
+                        return true;
+                    }
+                    out[i].covered |= matches!(block, Block::Default | Block::Vein(_));
+                    false
+                });
+                return out;
+            }
+        };
+        // From `y` down to the final density's alignment, more than one block high, so the
+        // blocks have the column's values; without one, the whole column.
+        let from = match bound.final_density.y_alignment() {
+            Some(align) => {
+                let mut from = y - y.rem_euclid(align);
+                while top - from < 2 {
+                    from -= align;
+                }
+                from.max(self.min_y)
+            }
+            None => self.min_y,
+        };
+        let depth = top - from;
+        let mut blocks = vec![Block::Air; depth as usize];
+        let mut probe = |x: i32, z: i32, density: &[f32], aquifer: Option<&mut Aquifer<'_>>| {
+            self.scan_with(x, z, from, density, aquifer, None, Some(&mut blocks));
+            let at = (y - from) as usize;
+            Probe {
+                block: blocks[at],
+                covered: blocks[at + 1..]
+                    .iter()
+                    .any(|b| matches!(b, Block::Default | Block::Vein(_))),
+            }
+        };
+        let (x_runs, z_runs) = (chunk_runs(xs), chunk_runs(zs));
+        for zr in &z_runs {
+            let (z0, z1) = (zs[zr.start], zs[zr.end - 1]);
+            for xr in &x_runs {
+                let (x0, x1) = (xs[xr.start], xs[xr.end - 1]);
+                let size = [x1 - x0 + 1, self.height, z1 - z0 + 1];
+                let tile = Volume::blocks(size, [x0, self.min_y, z0]);
+                let mut aquifer = Self::aquifer(bound, levels, &tile);
+                let part = Volume::blocks([size[0], depth, size[2]], [x0, from, z0]);
+                let sparse = part.len() / depth as usize > 2 * zr.len() * xr.len();
+                let density = if sparse {
+                    Vec::new()
+                } else {
+                    bound.final_density.sample_volume(&part)
+                };
+                for j in zr.clone() {
+                    for i in xr.clone() {
+                        let (x, z) = (xs[i], zs[j]);
+                        out[j * xs.len() + i] = if sparse {
+                            let column = Volume::blocks([1, depth, 1], [x, from, z]);
+                            let density = bound.final_density.sample_volume(&column);
+                            probe(x, z, &density, aquifer.as_mut())
+                        } else {
+                            let first = part.index(x - x0, 0, z - z0);
+                            let column = &density[first..first + depth as usize];
+                            probe(x, z, column, aquifer.as_mut())
+                        };
                     }
                 }
             }
@@ -689,6 +792,81 @@ mod tests {
         );
     }
 
+    /// Every probe of `t` on `xs` × `zs`, at each y from `ys`, is the column's block there, and
+    /// covered where a solid block is above it.
+    fn probes_answer_as_columns_do(
+        t: &Terrain,
+        xs: &[i32],
+        zs: &[i32],
+        ys: impl Iterator<Item = i32>,
+    ) {
+        for y in ys {
+            let probes = t.probes_on(xs, zs, y);
+            assert_eq!(probes.len(), xs.len() * zs.len());
+            for (i, probe) in probes.iter().enumerate() {
+                let column = t.base_column(xs[i % xs.len()], zs[i / xs.len()]);
+                let top = column.min_y + column.blocks.len() as i32;
+                let covered = (y + 1..top)
+                    .any(|above| matches!(column.at(above), Block::Default | Block::Vein(_)));
+                let expected = if (column.min_y..top).contains(&y) {
+                    Probe {
+                        block: column.at(y),
+                        covered,
+                    }
+                } else {
+                    Probe {
+                        block: Block::Air,
+                        covered: false,
+                    }
+                };
+                assert_eq!(*probe, expected, "column {i} at y {y}");
+            }
+        }
+    }
+
+    #[test]
+    fn probes_answer_as_columns_do_over_caves() {
+        let t = overworld();
+        let (xs, zs) = ([-33, -17, -16, -1, 0, 5, 40], [-4, 3, 12, 16]);
+        probes_answer_as_columns_do(
+            &t,
+            &xs,
+            &zs,
+            [-65, -64, -60, 0, 49, 50, 62, 63, 319, 320].into_iter(),
+        );
+        // A cave from y 40 to 60: |gradient| − 0.2 is negative there, with stone above it.
+        let gradient = json!({"type": "gradient", "axis": "y", "from_coordinate": 0,
+            "from_value": 1, "to_coordinate": 100, "to_value": -1});
+        let cave = {
+            let settings = json!({
+                "noise": {"min_y": -64, "height": 384},
+                "sea_level": 63,
+                "default_block": "minecraft:stone",
+                "default_fluid": {"Name": "minecraft:water", "Properties": {"level": "0"}},
+                "noise_router": {"final_density": {"type": "add",
+                    "left": {"type": "abs", "input": gradient}, "right": -0.2}},
+            });
+            let map: HashMap<String, Value> = [
+                ("worldgen/noise_settings/minecraft:t", settings),
+                (
+                    "dimension_type/minecraft:t",
+                    json!({"min_y": -64, "height": 384}),
+                ),
+                (
+                    "tags/block/minecraft:blocks_motion_in_heightmap",
+                    json!({"values": []}),
+                ),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect();
+            Terrain::new(&TerrainSettings::load(&map, "t", "t").unwrap(), 0).unwrap()
+        };
+        let probe = cave.probes_on(&[0], &[0], 45)[0];
+        assert!(probe.covered && probe.block != Block::Default, "{probe:?}");
+        probes_answer_as_columns_do(&cave, &xs, &zs, (-64..320).step_by(7));
+    }
+
     #[test]
     fn the_level_clamps_the_column() {
         // A level from 0 to 40: no water or air above it, so stone fills it to the top, and a
@@ -773,6 +951,7 @@ mod tests {
                 assert_eq!(*h, t.base_height(xs[i % 4], zs[i / 4], heightmap));
             }
         }
+        probes_answer_as_columns_do(&t, &[-5, 0, 3, 17], &[-2, 9], (-64..320).step_by(13));
         // Legacy randomness with ore veins isn't supported.
         let mut legacy = fixture::settings(&[], false, true);
         legacy

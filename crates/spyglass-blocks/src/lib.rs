@@ -16,11 +16,11 @@ use spyglass_data::bundle::Bundle;
 use spyglass_data::codec::LoadError;
 use spyglass_rng::LegacyRandomSource;
 use spyglass_rng::worldgen::large_feature;
-use spyglass_terrain::{Block, BlockColumn, Terrain, TerrainSettings, VeinBlock};
+use spyglass_terrain::{Block, BlockColumn, Probe, Terrain, TerrainSettings, VeinBlock};
 
-use carver::{Carver, CarverSettings, CarvingMask, Legacy, Sink};
+use carver::{Carver, CarverSettings, CarvingMask, Carvings, Legacy, Sink};
 pub use chunk::Chunk;
-use material::{BoundMaterial, ChunkBiomes, MaterialSettings, NoiseColumn, Slot};
+use material::{BoundMaterial, ChunkBiomes, MaterialSettings, NoiseColumn, Slot, VeinAt, VeinPart};
 pub use state::{Palette, State};
 use temperature::Climate;
 
@@ -135,6 +135,18 @@ impl BlockSettings {
         &self.terrain
     }
 
+    /// Whether the dimension has ore veins: in its material rule from 26.3, in its noise router
+    /// in 26.2.
+    pub fn has_veins(&self) -> bool {
+        if self.material.is_v1_21() {
+            self.terrain
+                .router_v1_21()
+                .is_some_and(|router| router.ore_veins_enabled())
+        } else {
+            self.material.has_ore_veins()
+        }
+    }
+
     /// Everything bound to `seed`, ready to make chunks.
     pub fn generator(&self, seed: i64) -> Result<ChunkGenerator<'_>, LoadError> {
         Ok(ChunkGenerator {
@@ -173,6 +185,59 @@ impl ChunkGenerator<'_> {
         self.biomes.biome_at(qx, qy, qz)
     }
 
+    /// The noise fill's block at `y` at every `(x, z)` with x in `xs` and z in `zs`, z outer
+    /// and x inner, and whether a solid block is above it ([`Terrain::probes_on`]).
+    pub fn probes_on(&self, xs: &[i32], zs: &[i32], y: i32) -> Vec<Probe> {
+        self.terrain.probes_on(xs, zs, y)
+    }
+
+    /// The ore vein's block at `pos`, if the chunk has one there, given the noise fill's block
+    /// at `pos`: in 26.2, the fill's own vein blocks; from 26.3, the material rule's veins at
+    /// the fill's solid positions ([`BoundMaterial::vein_at`]).
+    pub fn vein_at(&self, pos: [i32; 3], block: Block) -> Option<VeinAt> {
+        match block {
+            Block::Vein(v) => {
+                let i = vein_index(v);
+                let part = [VeinPart::Ore, VeinPart::RawOre, VeinPart::Filler][i % 3];
+                Some(VeinAt {
+                    ore: self.settings.veins[i - i % 3],
+                    part,
+                })
+            }
+            Block::Default if !self.settings.material.is_v1_21() => self.material.vein_at(pos),
+            _ => None,
+        }
+    }
+
+    /// The positions carvers carve in chunk `(cx, cz)`, by the kind of the first carver to
+    /// carve each, over the carving mask's range (`docs/specs/carvers.md`). Where a start
+    /// chunk's carver biome is tied, its first candidate's carvers.
+    pub fn carvings(&self, cx: i32, cz: i32) -> Carvings {
+        let (min_y, max_y) = self.mask_range();
+        let mut carvings = Carvings::new(min_y, max_y);
+        let mut doubt = CarvingMask::new(min_y, max_y);
+        let anchors = self.settings.terrain.anchors();
+        self.visit_starts([cx, cz], &mut doubt, |carver, _, random, start| {
+            let mut sink = carvings.sink(carver.kind());
+            carver.carve(anchors, random, [cx, cz], start, &mut sink);
+        });
+        carvings
+    }
+
+    /// The carving mask's range: the generation context without its bottom block and top
+    /// eight, or after 26.4-snapshot-5, the level without them (switch
+    /// `carving_mask_level_bounds`).
+    fn mask_range(&self) -> (i32, i32) {
+        let settings = self.settings;
+        let anchors = settings.terrain.anchors();
+        let (bottom, depth) = if settings.mask_level_bounds {
+            (settings.terrain.level_min_y, settings.terrain.level_height)
+        } else {
+            (anchors.min_y, anchors.height)
+        };
+        (bottom + 1, bottom + depth - 1 - 7)
+    }
+
     /// The chunk at chunk `(cx, cz)` after the noise fill and the material rule, without carvers.
     pub fn chunk(&self, cx: i32, cz: i32) -> Chunk {
         if self.settings.material.default_block().is_none() {
@@ -195,11 +260,10 @@ impl ChunkGenerator<'_> {
         let (mut chunk, region) = self.surface(cx, cz);
         let biomes = ChunkBiomes::new(&region, chunk.min_y, chunk.height);
         let anchors = settings.terrain.anchors();
-        // The mask leaves out the level's bottom block and its top eight.
-        let top = anchors.min_y + anchors.height - 1 - 7;
-        let mut mask = CarvingMask::new(anchors.min_y + 1, top);
+        let (min_y, max_y) = self.mask_range();
+        let mut mask = CarvingMask::new(min_y, max_y);
         // What a tied carver biome could carve instead.
-        let mut doubt = CarvingMask::new(anchors.min_y + 1, top);
+        let mut doubt = CarvingMask::new(min_y, max_y);
         let mut columns: HashMap<(i32, i32), BlockColumn> = HashMap::new();
         self.visit_starts(
             [cx, cz],
@@ -329,15 +393,9 @@ impl ChunkGenerator<'_> {
                 ];
             }
         }
-        // generateCarvingMask: the bottom block and the top eight are left out, of the level
-        // or, in 26.4-snapshot-5, of the anchors' context (switch `carving_mask_level_bounds`).
+        // generateCarvingMask.
         let anchors = settings.terrain.anchors();
-        let (bottom, depth) = if settings.mask_level_bounds {
-            (min_y, height)
-        } else {
-            (anchors.min_y, anchors.height)
-        };
-        let mask_range = (bottom + 1, bottom + depth - 1 - 7);
+        let mask_range = self.mask_range();
         let mut doubt = CarvingMask::new(mask_range.0, mask_range.1);
         let mask = carvers.then(|| {
             let mut mask = CarvingMask::new(mask_range.0, mask_range.1);

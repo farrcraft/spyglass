@@ -3,6 +3,7 @@
 //! `spyglass render` both draw through here, so they make the same image.
 
 mod palette;
+mod underground;
 
 use std::collections::BTreeMap;
 use std::io;
@@ -10,6 +11,9 @@ use std::io;
 use spyglass_biome::{BiomeId, Lookup};
 
 pub use palette::{biome_colour, display_name, structure_colour};
+pub use underground::{
+    CarverKind, CarvingMap, MAX_UNDERGROUND_SCALE, UndergroundMap, Vein, VeinPart, vein_colour,
+};
 
 use crate::{
     BiomeAt, BiomeQuery, Dimension, Error, Heightmap, Result, Session, SpawnOrigin, StructureQuery,
@@ -182,6 +186,15 @@ pub struct Layers {
     /// Sample biomes at the surface rather than at the area's `y`. Scales up to
     /// [`MAX_TERRAIN_SCALE`].
     pub surface: bool,
+    /// Ore veins at the area's `y`, in dimensions that have them. Scales up to
+    /// [`MAX_UNDERGROUND_SCALE`].
+    pub veins: bool,
+    /// Noise caves at the area's `y`: the density graph's caves, before carvers. Scales up to
+    /// [`MAX_UNDERGROUND_SCALE`].
+    pub noise_caves: bool,
+    /// The caves and ravines carvers cut, at the area's `y`. Scales up to
+    /// [`MAX_UNDERGROUND_SCALE`].
+    pub carvers: bool,
     /// Pins a front end puts on the map, drawn last, in this order.
     pub pins: Vec<Pin>,
 }
@@ -209,6 +222,9 @@ impl Default for Layers {
             confirm: false,
             relief: false,
             surface: false,
+            veins: false,
+            noise_caves: false,
+            carvers: false,
             pins: Vec::new(),
         }
     }
@@ -221,8 +237,8 @@ impl Layers {
     }
 
     /// Fails unless `world`'s dimension has every layer asked for
-    /// (`docs/specs/render.md#dimensions`): slime chunks and the spawn are the Overworld's, and
-    /// a dimension with a ceiling has no terrain layers.
+    /// (`docs/specs/render.md#dimensions`): slime chunks and the spawn are the Overworld's, a
+    /// dimension with a ceiling has no terrain layers, and one without ore veins no vein layer.
     pub fn check(&self, world: &World) -> Result<()> {
         let overworld = world.dimension_kind() == Dimension::Overworld;
         let refuse = |layer: &str| {
@@ -239,6 +255,9 @@ impl Layers {
         }
         if self.need_heights() && world.has_ceiling() {
             return refuse("terrain layers (relief, surface biomes)");
+        }
+        if self.veins && !world.block_settings()?.has_veins() {
+            return refuse("ore veins");
         }
         Ok(())
     }
@@ -512,6 +531,15 @@ impl Image {
         }
     }
 
+    /// Blends `colour` at `alpha` over one pixel (`docs/specs/render.md#colours`).
+    fn blend(&mut self, pixel: [u32; 2], colour: [u8; 3], alpha: u32) {
+        let below = self.pixel(pixel);
+        let mixed = [0, 1, 2].map(|c| {
+            ((u32::from(colour[c]) * alpha + u32::from(below[c]) * (255 - alpha) + 127) / 255) as u8
+        });
+        self.set(pixel, mixed);
+    }
+
     /// Blends `colour` at `alpha` over pixels `min..=max`, clipped.
     fn blend_rect(&mut self, min: [i64; 2], max: [i64; 2], colour: [u8; 3], alpha: u32) {
         let clip = |v: i64, n: u32| v.clamp(0, i64::from(n) - 1) as u32;
@@ -524,12 +552,7 @@ impl Image {
         }
         for j in clip(min[1], self.size[1])..=clip(max[1], self.size[1]) {
             for i in clip(min[0], self.size[0])..=clip(max[0], self.size[0]) {
-                let below = self.pixel([i, j]);
-                let mixed = [0, 1, 2].map(|c| {
-                    ((u32::from(colour[c]) * alpha + u32::from(below[c]) * (255 - alpha) + 127)
-                        / 255) as u8
-                });
-                self.set([i, j], mixed);
+                self.blend([i, j], colour, alpha);
             }
         }
     }
@@ -805,7 +828,9 @@ impl Session<'_> {
         Ok(features)
     }
 
-    /// `area` drawn with `layers` (`docs/specs/render.md`).
+    /// `area` drawn with `layers` (`docs/specs/render.md`). With an underground layer on,
+    /// [`Session::underground_map`] carves each chunk again: front ends that change the height
+    /// can keep a [`CarvingMap`] and draw the steps themselves.
     pub fn render(&self, area: &MapArea, layers: &Layers) -> Result<Image> {
         let features = self.map_features(area, layers)?;
         let heights = if layers.need_heights() {
@@ -822,6 +847,7 @@ impl Session<'_> {
                     .colorize(self.world, layers.ties, &layers.highlight)?
             }
             Some(heights) => heights.elevation(),
+            None if layers.need_underground() => Image::underground_background(area.size),
             None => Image::background(area.size),
         };
         if let (Some(heights), true) = (&heights, layers.relief) {
@@ -829,6 +855,9 @@ impl Session<'_> {
         }
         if let Some(heights) = &heights {
             image.mark_void(heights);
+        }
+        if layers.need_underground() {
+            image.draw_underground(&self.underground_map(area, layers, None)?, layers);
         }
         image.draw_features(area, &features);
         Ok(image)
@@ -839,6 +868,12 @@ impl Image {
     /// The background drawn when the biome layer is off.
     pub fn background(size: [u32; 2]) -> Image {
         Image::filled(size, BACKGROUND)
+    }
+
+    /// The background drawn when the biome layer and relief are off but an underground layer
+    /// is on: a mid grey the layers' tints show on.
+    pub fn underground_background(size: [u32; 2]) -> Image {
+        Image::filled(size, underground::UNDERGROUND_BACKGROUND)
     }
 
     /// Draws `features` over the image of `area`, which must be the image's size: slime chunks,

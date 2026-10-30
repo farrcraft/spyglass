@@ -176,6 +176,9 @@ impl App {
                 confirm: s.confirm,
                 relief: s.relief,
                 surface: s.surface,
+                veins: s.veins,
+                caves: s.noise_caves,
+                carvers: s.carvers,
             },
         })
     }
@@ -204,6 +207,9 @@ impl App {
                 s.confirm = view.flags.confirm;
                 s.relief = view.flags.relief;
                 s.surface = view.flags.surface;
+                s.veins = view.flags.veins;
+                s.noise_caves = view.flags.caves;
+                s.carvers = view.flags.carvers;
                 let centre = view.centre.map(|c| f64::from(c) + 0.5);
                 let shown = View {
                     centre,

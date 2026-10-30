@@ -114,7 +114,7 @@ fn find(table: &[(&str, [u8; 3])], id: &str) -> Option<[u8; 3]> {
 }
 
 /// The colour for an id no table has: bytes of its FNV-1a hash, kept away from black and white.
-fn hashed(id: &str) -> [u8; 3] {
+pub(super) fn hashed(id: &str) -> [u8; 3] {
     let hash = id.bytes().fold(0x811c_9dc5_u32, |h, b| {
         (h ^ u32::from(b)).wrapping_mul(0x0100_0193)
     });

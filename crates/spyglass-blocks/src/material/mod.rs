@@ -173,6 +173,11 @@ impl MaterialSettings {
         self.default_block
     }
 
+    /// Whether the rule has ore veins (26.3 on).
+    pub fn has_ore_veins(&self) -> bool {
+        self.rule.has_ore_vein()
+    }
+
     /// Whether these are 26.2's surface rules, of the 1.21 family.
     pub fn is_v1_21(&self) -> bool {
         self.chunk_surface_level.is_none()
@@ -529,6 +534,59 @@ fn make_bands(random: &mut Source, bands: &mut [State], base: i32, state: State)
             bands[start + j] = state;
         }
     }
+}
+
+/// A block an ore vein gives, from [`BoundMaterial::vein_at`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct VeinAt {
+    /// The vein's ore block, which names the vein: `minecraft:copper_ore` or
+    /// `minecraft:deepslate_iron_ore` in vanilla.
+    pub ore: State,
+    /// Which of the vein's blocks it is.
+    pub part: VeinPart,
+}
+
+/// Which of an ore vein's blocks a block is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum VeinPart {
+    /// The ore.
+    Ore,
+    /// The raw-ore block.
+    RawOre,
+    /// The filler stone.
+    Filler,
+}
+
+/// The rule at a position alone: a block, and the vein if one gives it; no block; or a
+/// condition that needs more than the position.
+enum Point {
+    Block(Option<VeinAt>),
+    Pass,
+    Unknown,
+}
+
+/// `VerticalGradientConditionSource`: true at and below one y, false at and above another, and
+/// in between by a positional random, with a chance falling linearly.
+fn vertical_gradient(
+    random: &World,
+    true_at_and_below: i32,
+    false_at_and_above: i32,
+    [x, y, z]: [i32; 3],
+) -> bool {
+    if y <= true_at_and_below {
+        return true;
+    }
+    if y >= false_at_and_above {
+        return false;
+    }
+    let chance = map(
+        f64::from(y),
+        f64::from(true_at_and_below),
+        f64::from(false_at_and_above),
+        1.0,
+        0.0,
+    );
+    f64::from(random.at(x, y, z).next_float()) < chance
 }
 
 /// A rule with its noises, random factories and functions bound.
@@ -948,22 +1006,12 @@ impl BoundMaterial {
                 random,
                 true_at_and_below,
                 false_at_and_above,
-            } => {
-                if c.y <= *true_at_and_below {
-                    return true;
-                }
-                if c.y >= *false_at_and_above {
-                    return false;
-                }
-                let chance = map(
-                    f64::from(c.y),
-                    f64::from(*true_at_and_below),
-                    f64::from(*false_at_and_above),
-                    1.0,
-                    0.0,
-                );
-                f64::from(random.at(c.x, c.y, c.z).next_float()) < chance
-            }
+            } => vertical_gradient(
+                random,
+                *true_at_and_below,
+                *false_at_and_above,
+                [c.x, c.y, c.z],
+            ),
             BoundCondition::YAbove {
                 y,
                 surface_depth_multiplier,
@@ -1044,6 +1092,97 @@ impl BoundMaterial {
         }
     }
 
+    /// The ore vein block the rule gives a solid position, as far as the rule can be followed
+    /// at the position alone (`docs/specs/render.md#underground`): up to the first condition
+    /// that needs the column, biome or surface. 26.3's and 26.4's rules have the veins right
+    /// after the bedrock floor, before any such condition, so this is the chunk's answer.
+    pub fn vein_at(&self, [x, y, z]: [i32; 3]) -> Option<VeinAt> {
+        match self.at_point(&self.rule, x, y, z) {
+            Point::Block(vein) => vein,
+            Point::Pass | Point::Unknown => None,
+        }
+    }
+
+    /// [`apply`](Self::apply) with no column: whether the rule gives a block and, if a vein
+    /// gives it, which.
+    fn at_point(&self, rule: &Bound, x: i32, y: i32, z: i32) -> Point {
+        match rule {
+            Bound::Block(_) | Bound::Bandlands => Point::Block(None),
+            Bound::Sequence(rules) => {
+                for r in rules {
+                    match self.at_point(r, x, y, z) {
+                        Point::Pass => {}
+                        found => return found,
+                    }
+                }
+                Point::Pass
+            }
+            Bound::Condition(condition, then) => match self.test_at_point(condition, x, y, z) {
+                Some(true) => self.at_point(then, x, y, z),
+                Some(false) => Point::Pass,
+                None => Point::Unknown,
+            },
+            Bound::OreVein(v) => match self.vein(v, x, y, z) {
+                Some((_, part)) => Point::Block(Some(VeinAt { ore: v.ore, part })),
+                None => Point::Pass,
+            },
+        }
+    }
+
+    /// [`test`](Self::test) for the conditions that need only the position; `None` for the
+    /// others.
+    fn test_at_point(&self, condition: &BoundCondition, x: i32, y: i32, z: i32) -> Option<bool> {
+        match condition {
+            BoundCondition::Noise {
+                noise,
+                min,
+                max,
+                is_3d,
+            } => {
+                let ny = if *is_3d { f64::from(y) } else { 0.0 };
+                let v = noise.get(f64::from(x), ny, f64::from(z));
+                Some(v >= *min && v <= *max)
+            }
+            BoundCondition::VerticalGradient {
+                random,
+                true_at_and_below,
+                false_at_and_above,
+            } => Some(vertical_gradient(
+                random,
+                *true_at_and_below,
+                *false_at_and_above,
+                [x, y, z],
+            )),
+            BoundCondition::Hole => Some(self.surface_depth(x, z) <= 0),
+            BoundCondition::Not(inner) => self.test_at_point(inner, x, y, z).map(|t| !t),
+            _ => None,
+        }
+    }
+
+    /// `OreVeinRule.apply`: the vein's block at `(x, y, z)` and which part it is, or `None`
+    /// outside the vein.
+    fn vein(&self, v: &BoundVein, x: i32, y: i32, z: i32) -> Option<(State, VeinPart)> {
+        let density = v.density.sample(x, y, z);
+        // fcmpg/ifgt: NaN goes on.
+        if density <= 0.0 {
+            return None;
+        }
+        let mut random = v.random.at(x, y, z);
+        // fcmpl/ifle: NaN goes on.
+        if random.next_float() > density {
+            return None;
+        }
+        let richness = v.richness.sample(x, y, z);
+        if random.next_float() < richness && v.filler_gap.sample(x, y, z) < 0.0 {
+            return Some(if random.next_float() < v.raw_ore_chance {
+                (v.raw_ore, VeinPart::RawOre)
+            } else {
+                (v.ore, VeinPart::Ore)
+            });
+        }
+        Some((v.filler, VeinPart::Filler))
+    }
+
     fn apply(&self, rule: &Bound, c: &Context<'_>) -> Option<State> {
         match rule {
             Bound::Block(s) => Some(*s),
@@ -1056,27 +1195,7 @@ impl BoundMaterial {
                 }
             }
             Bound::Bandlands => Some(self.band(c.x, c.y, c.z)),
-            Bound::OreVein(v) => {
-                let density = v.density.sample(c.x, c.y, c.z);
-                // fcmpg/ifgt: NaN goes on.
-                if density <= 0.0 {
-                    return None;
-                }
-                let mut random = v.random.at(c.x, c.y, c.z);
-                // fcmpl/ifle: NaN goes on.
-                if random.next_float() > density {
-                    return None;
-                }
-                let richness = v.richness.sample(c.x, c.y, c.z);
-                if random.next_float() < richness && v.filler_gap.sample(c.x, c.y, c.z) < 0.0 {
-                    return Some(if random.next_float() < v.raw_ore_chance {
-                        v.raw_ore
-                    } else {
-                        v.ore
-                    });
-                }
-                Some(v.filler)
-            }
+            Bound::OreVein(v) => self.vein(v, c.x, c.y, c.z).map(|(state, _)| state),
         }
     }
 

@@ -145,13 +145,22 @@ impl App {
             self.settings.relief && terrain_here,
             self.settings.surface && terrain_here,
         );
+        // The underground layers only on the view's own tiles: the coarser ones shown while
+        // they load would cost as much again.
+        let underground = self.underground();
         let key = |tile: Tile| {
             let terrain = tile.scale <= MAX_TERRAIN_SCALE;
+            let deep = tile.scale == view.scale && tile.scale <= MAX_UNDERGROUND_SCALE;
             TileKey {
                 source,
                 y: view.y,
                 heights: terrain && (relief || surface),
                 surface: terrain && surface,
+                underground: if deep {
+                    underground
+                } else {
+                    Underground::default()
+                },
                 tile,
             }
         };
@@ -298,7 +307,15 @@ impl App {
             let marked = !marking || tiles.iter().all(|&t| self.markers.contains(&marker_key(t)));
             let laid_out = layout_keys.iter().all(|(k, _)| self.layouts.contains(k));
             let shown = (
-                (source, selection, confirm, marking, relief, surface),
+                (
+                    source,
+                    selection,
+                    confirm,
+                    marking,
+                    relief,
+                    surface,
+                    underground,
+                ),
                 (
                     view.centre.map(f64::to_bits),
                     view.scale,
@@ -861,6 +878,10 @@ impl App {
                         // As `Session::render` does wherever it has heights.
                         if let Some(heights) = &data.heights {
                             image.mark_void(heights);
+                        }
+                        // The map has only the layers the key asked for.
+                        if let Some(underground) = &data.underground {
+                            image.draw_underground(underground, &key.underground.layers());
                         }
                         if style.slime_chunks {
                             image.draw_features(data.biomes.area(), &slime_features(data));

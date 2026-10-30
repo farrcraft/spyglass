@@ -1,5 +1,6 @@
-//! Chunks after the noise fill and the material rule against the oracle's block golden files
-//! without carvers (`docs/specs/oracle.md#block-golden-files`): every block of every chunk.
+//! Chunks after the noise fill and the material rule, without and with carvers, against the
+//! oracle's block golden files (`docs/specs/oracle.md#block-golden-files`): every block of every
+//! chunk.
 //!
 //! Needs `cargo xtask oracle blocks` and a bundle for the same version. Run with
 //! `cargo test --release -p spyglass-blocks --test material -- --ignored`.
@@ -24,8 +25,8 @@ struct Report {
     uncertain: usize,
 }
 
-/// Compares one file.
-fn check(path: &Path) -> Report {
+/// Compares one file, with carvers if `carvers`.
+fn check(path: &Path, carvers: bool) -> Report {
     let file = BlockFile::read(path).unwrap();
     let bundle = Bundle::open(spyglass_oracle::bundle_dir())
         .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {}", file.version));
@@ -40,7 +41,11 @@ fn check(path: &Path) -> Report {
     } = Report::default();
     for golden in &file.chunks {
         let [cx, cz] = golden.chunk;
-        let chunk = generator.chunk(cx, cz);
+        let chunk = if carvers {
+            generator.carved_chunk(cx, cz).unwrap()
+        } else {
+            generator.chunk(cx, cz)
+        };
         // Where a block depends on a tied biome, any answer is the game's for some history.
         if let Some(diff) = golden.first_difference(|p| {
             if chunk.is_certain(p) {
@@ -88,16 +93,15 @@ fn check(path: &Path) -> Report {
     }
 }
 
-#[test]
-#[ignore = "needs the oracle's block golden files and a bundle: cargo xtask oracle blocks"]
-fn chunks_without_carvers_match_the_game() {
-    let files = spyglass_oracle::blocks::files(false);
+/// Compares every file of the version, without or with carvers.
+fn compare(carvers: bool) {
+    let files = spyglass_oracle::blocks::files(carvers);
     assert!(
         !files.is_empty(),
         "no block files for {}; run cargo xtask oracle blocks",
         spyglass_oracle::version()
     );
-    let results: Vec<_> = files.par_iter().map(|p| check(p)).collect();
+    let results: Vec<_> = files.par_iter().map(|p| check(p, carvers)).collect();
     let checked: usize = results.iter().map(|r| r.checked).sum();
     let uncertain: usize = results.iter().map(|r| r.uncertain).sum();
     let failures: Vec<&String> = results.iter().flat_map(|r| &r.failures).collect();
@@ -129,4 +133,16 @@ fn chunks_without_carvers_match_the_game() {
             .collect::<Vec<_>>()
             .join("\n")
     );
+}
+
+#[test]
+#[ignore = "needs the oracle's block golden files and a bundle: cargo xtask oracle blocks"]
+fn chunks_without_carvers_match_the_game() {
+    compare(false);
+}
+
+#[test]
+#[ignore = "needs the oracle's block golden files and a bundle: cargo xtask oracle blocks"]
+fn chunks_with_carvers_match_the_game() {
+    compare(true);
 }

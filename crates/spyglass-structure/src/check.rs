@@ -443,8 +443,8 @@ impl<'a> Starts<'a> {
                     let column = self.column(&s.biomes, x, z, level_min_y, level_max_y);
                     return Found::pending(precondition(column));
                 };
-                let height = s.height.expect("nether fossils load their height");
-                let mut y = height.sample(&mut random, heights);
+                let height = s.height.as_ref().expect("nether fossils load their height");
+                let mut y = height.sample(&mut random, heights.anchors());
                 let column = t.base_column(x, z);
                 let sea_level = sets.sea_level();
                 while y > sea_level {

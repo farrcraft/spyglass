@@ -56,6 +56,16 @@ impl Palette {
         s
     }
 
+    /// How many states the palette has.
+    pub fn len(&self) -> usize {
+        self.names.len()
+    }
+
+    /// Whether the palette is empty, which it never is: it starts with air, water and lava.
+    pub fn is_empty(&self) -> bool {
+        self.names.is_empty()
+    }
+
     /// The state named `name`, if the palette has it.
     pub fn get(&self, name: &str) -> Option<State> {
         self.index.get(name).copied()

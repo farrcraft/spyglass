@@ -169,6 +169,10 @@ All products in `f64` unless marked:
 
    The draws come only when the earlier parts hold. The block is `snow_block` while `snow ≤ maxSnow` and `y > minSnowY` (then `snow += 1`), otherwise `packed_ice`.
 
+## Carvers
+
+Carvers cut caves and canyons after the rule ([carvers.md](carvers.md)). Where they carve grass or mycelium, the dirt under it gets the rule's top material.
+
 ## Queries
 
 `Session::chunk_blocks(chunk, Carvers::Off)` gives a chunk's blocks, each with whether it's [certain](#ties). `Session::block_at` and `Session::block_column` generate the chunk around the block or column and answer from it. `Carvers` has only `Off` until carvers are ported. The CLI's `spyglass blocks` answers the same ([cli-json.md](cli-json.md#blocks)). The block settings are loaded on a world's first block query, and the seed's chunk generator is bound on a session's.

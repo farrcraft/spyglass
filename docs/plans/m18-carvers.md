@@ -1,8 +1,8 @@
 # m18. Carvers
 
-- Status: Draft
+- Status: In progress
 - Milestone: [18. Surface rules, ore veins, caves and carvers](../roadmap/18-surface-veins-and-carvers.md)
-- Started: YYYY-MM-DD
+- Started: 2026-10-30
 - Completed: YYYY-MM-DD
 
 ## Goal
@@ -28,9 +28,9 @@ The caves and ravines that carvers cut after the material rule, exactly as the g
 
 ## Tasks
 
-- [ ] **Spike:** port the cave carver for 26.3 only, and compare one golden chunk's carved positions: the difference between its `terrain` and `no-carvers` runs.
-- [ ] **Data:** configured carvers, height providers and float providers for all versions. Typed loading and fixture tests.
-- [ ] **26.3:** the cave, canyon and nether cave carvers, the start check and seeding, the carving mask, and applying it through the aquifer and the material rule. The golden `terrain` chunks of 26.3 in all three dimensions.
+- [x] **Spike:** port the cave carver for 26.3 only, and compare one golden chunk's carved positions: the difference between its `terrain` and `no-carvers` runs.
+- [ ] **Data:** configured carvers, height providers and float providers for all versions (26.3 done: `spyglass_data::providers`, carvers in `spyglass-blocks`; 26.2's form remains). Typed loading and fixture tests.
+- [x] **26.3:** the cave, canyon and nether cave carvers, the start check and seeding, the carving mask, and applying it through the aquifer and the material rule. The golden `terrain` chunks of 26.3 in all three dimensions.
 - [ ] **26.4:** `ChunkTerrainBuilder`: the material rule interleaved with the carving mask, the switches, and both snapshots' golden chunks, with and without carvers. Add 26.4 to `PINNED` for `chunks_without_carvers_match_the_game` and `blocks_through_the_api_are_the_game_s`, and drop the 26.4 error in `MaterialSettings::load`.
 - [ ] **26.2:** carving into blocks (replaceable, lava level, surface fix-up), and 26.2's golden chunks.
 - [ ] **API and CLI:** carvers on by default, `--no-carvers`, and docs.
@@ -50,3 +50,10 @@ The caves and ravines that carvers cut after the material rule, exactly as the g
 - [ ] cli-json.md: what `--no-carvers` changes.
 
 ## Notes
+
+- 2026-10-30: **26.3 matches, spike and all.** The spike went straight to the whole port: both carver types, the start check and seeding, the mask and its application. Every block of 26.3's 960 golden chunks with carvers matches the game except 386 that depend on tied biomes, in all three dimensions; in the Overworld file checked by hand, carvers change 32,256 blocks, and spyglass the same.
+  - **26.3 rewrote carvers.** `CaveWorldCarver` is a record with `count`, `thickness`, `weird_thickness_bias` and `start_vertical_radius_multiplier`; the Nether's carver is a `cave`, and `nether_cave` is gone as a type. Configs lose `replaceable`, `lava_level`, `debug_settings` and `yScale`.
+  - **The carver biome** is the source's biome at quart y 0, uncached, not the chunk's stored biome.
+  - **26.3's `Mth.SIN`** has no exact quarter turns (`density`'s easing table is 26.4's), so carvers have their own.
+  - **Providers** moved to `spyglass_data::providers` (specs/providers.md), with every type the codecs register; structures use them too.
+  - Tag resolution is now `spyglass_terrain::tag`, for any registry, keeping entry order.

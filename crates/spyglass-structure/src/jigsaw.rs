@@ -8,7 +8,8 @@ use std::sync::{Arc, LazyLock};
 
 use serde_json::{Map, Value};
 use spyglass_data::anchor::AnchorHeights;
-pub use spyglass_data::anchor::VerticalAnchor;
+#[cfg(test)]
+pub(crate) use spyglass_data::anchor::VerticalAnchor;
 use spyglass_data::bundle::{Bundle, BundleError};
 use spyglass_data::codec;
 use spyglass_data::nbt::{self, Tag};
@@ -579,39 +580,7 @@ impl Pool {
     }
 }
 
-/// A height provider (`HeightProvider`), the kinds jigsaw starts and nether fossils use.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HeightProvider {
-    /// `constant`, or a bare anchor.
-    Constant(VerticalAnchor),
-    /// `uniform`: `Mth.randomBetweenInclusive(min, max)`; the minimum alone if the range is
-    /// empty.
-    Uniform(VerticalAnchor, VerticalAnchor),
-}
-
-impl HeightProvider {
-    /// `sample(random, context)`.
-    pub(crate) fn sample(
-        self,
-        random: &mut LegacyRandomSource,
-        heights: &GenerationHeights,
-    ) -> i32 {
-        let anchors = heights.anchors();
-        match self {
-            HeightProvider::Constant(a) => a.resolve(anchors),
-            HeightProvider::Uniform(lo, hi) => {
-                let (lo, hi) = (lo.resolve(anchors), hi.resolve(anchors));
-                if lo > hi {
-                    lo
-                } else {
-                    random
-                        .next_int_bounded(hi.wrapping_sub(lo).wrapping_add(1))
-                        .wrapping_add(lo)
-                }
-            }
-        }
-    }
-}
+pub use spyglass_data::providers::HeightProvider;
 
 /// A dimension's heights, as structures see them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -752,7 +721,7 @@ impl Jigsaw {
     ) -> Option<StartPiece<'_>> {
         let start = [
             chunk[0].wrapping_shl(4),
-            self.start_height.sample(random, heights),
+            self.start_height.sample(random, heights.anchors()),
             chunk[1].wrapping_shl(4),
         ];
         let rotation = Rotation::random(random);
@@ -918,7 +887,7 @@ impl<'a> JigsawLoader<'a> {
                     .collect::<LoadResult<_>>()?
             }
         };
-        let start_height = height_provider(
+        let start_height = HeightProvider::parse(
             obj.get("start_height")
                 .ok_or_else(|| at.error(LoadErrorKind::Missing("start_height")))?,
             &at.child("start_height"),
@@ -1298,34 +1267,6 @@ fn alias_binding(json: &Value, at: &At<'_>) -> LoadResult<AliasBinding> {
     }
 }
 
-/// `HeightProvider.CODEC` for the kinds jigsaw starts use: a bare anchor (constant),
-/// `{"type": "constant", "value": anchor}` or `{"type": "uniform", "min_inclusive",
-/// "max_inclusive"}`.
-pub(crate) fn height_provider(json: &Value, at: &At<'_>) -> LoadResult<HeightProvider> {
-    let obj = json
-        .as_object()
-        .ok_or_else(|| at.error(LoadErrorKind::Shape("a height provider")))?;
-    let Some(kind) = obj.get("type").and_then(Value::as_str) else {
-        return Ok(HeightProvider::Constant(VerticalAnchor::parse(json, at)?));
-    };
-    let field = |name: &'static str| {
-        obj.get(name)
-            .ok_or_else(|| at.error(LoadErrorKind::Missing(name)))
-            .and_then(|v| VerticalAnchor::parse(v, &at.child(name)))
-    };
-    match full_id(kind).as_str() {
-        "minecraft:constant" => Ok(HeightProvider::Constant(field("value")?)),
-        "minecraft:uniform" => Ok(HeightProvider::Uniform(
-            field("min_inclusive")?,
-            field("max_inclusive")?,
-        )),
-        _ => Err(at.child("type").error(LoadErrorKind::Unsupported {
-            what: "height provider type",
-            name: kind.to_string(),
-        })),
-    }
-}
-
 /// `SinglePoolElement.overrideLiquidSettingsCodec`, optional: how the element's blocks take
 /// waterlogging when placed. Only `place` reads it, so it changes no piece or bound, but a pool
 /// with another value doesn't load.
@@ -1509,7 +1450,10 @@ mod tests {
             HeightProvider::Uniform(VerticalAnchor::Absolute(-40), VerticalAnchor::Absolute(-20));
         let mut a = LegacyRandomSource::new(3);
         let mut b = LegacyRandomSource::new(3);
-        assert_eq!(h.sample(&mut a, &heights), b.next_int_bounded(21) - 40);
+        assert_eq!(
+            h.sample(&mut a, heights.anchors()),
+            b.next_int_bounded(21) - 40
+        );
         assert_eq!(VerticalAnchor::BelowTop(2).resolve(heights.anchors()), 317);
         assert_eq!(
             VerticalAnchor::AboveBottom(8).resolve(heights.anchors()),

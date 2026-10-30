@@ -1,0 +1,94 @@
+# Carvers
+
+Status: draft. Covers 26.3's carvers (`net.minecraft.world.level.levelgen.carver` and `NoiseBasedChunkGenerator.generateCarvers`): which carvers reach a chunk, the caves and canyons they carve into a mask, and how the mask is applied to the chunk after the [material rule](material.md). Implemented in `spyglass-blocks`. It's checked against the oracle's [block golden files](oracle.md#block-golden-files) with carvers: every block of 26.3's golden chunks matches, except the blocks that depend on a [tied biome](material.md#ties). 26.4 and 26.2 are [below](#versions), and are still being ported.
+
+Ported from the 26.3 bytecode.
+
+## Data
+
+A biome's `carvers` is a list of carvers: ids in `worldgen/carver`, inline carvers, or a `#tag` of `tags/worldgen/carver` (its ids in the order the tag first names them). A single id stands for a list of one. Its order matters: it numbers the carvers for their seeds.
+
+**`cave`:**
+
+| Field                              | Type                                                       |
+| ---------------------------------- | ---------------------------------------------------------- |
+| `probability`                      | float, 0 to 1                                              |
+| `y`                                | [height provider](providers.md#height-providers)           |
+| `count`                            | [int provider](providers.md#int-providers), at least 0     |
+| `thickness`                        | [float provider](providers.md#float-providers), at least 0 |
+| `weird_thickness_bias`             | bool, default false                                        |
+| `room_vertical_radius_multiplier`  | float provider                                             |
+| `horizontal_radius_multiplier`     | float provider                                             |
+| `vertical_radius_multiplier`       | float provider                                             |
+| `start_vertical_radius_multiplier` | float provider, default 1                                  |
+| `floor_level`                      | float provider, within −1 to 1                             |
+
+**`canyon`:** `probability`, `y`, `vertical_rotation` (float provider), and `shape`: `distance_factor`, `thickness`, `horizontal_radius_factor` and `y_scale` (float providers), `width_smoothness` (at least 1), `vertical_radius_default_factor` and `vertical_radius_center_factor` (floats).
+
+The Nether's carver is a `cave` in 26.3.
+
+## Which carvers reach a chunk
+
+For chunk `C`, `generateCarvers` visits every chunk `S` within 8 chunks of it, x outer and z inner, from −8 to 8:
+
+1. **Carver biome:** the biome source's biome at quart `(S.minX >> 2, 0, S.minZ >> 2)`, at y 0 and uncached (`getBiomeGenerationSettingsForCarver`). It isn't the biome the chunk stores there.
+2. **Each carver `i` of that biome, in order:** a `WorldgenRandom` over a legacy random gets `setLargeFeatureSeed(seed + i, S.x, S.z)`. If `isStartChunk` (`nextFloat() ≤ probability`), the carver carves from `S` into `C`'s mask with the same random.
+
+**The mask** (`CarvingMask`) covers `minY + 1` to `minY + genDepth − 1 − 7` of the generation context ([providers.md](providers.md#height-providers)), the chunk's 16 × 16 columns. A carver's ellipsoids never reach the mask's bottom y.
+
+## Shapes
+
+`Mth.sin` and `Mth.cos` read 26.3's table of 65,536 `(float) Math.sin(i / 10430.378350470453)`: `sin(x)` at `(int) ((long) (x · 10430.378350470453) & 65535)`, and `cos(x)` the same with 16,384 added before the cast. Angles are `f32`, widened to `f64` for the table.
+
+**`carveEllipsoid(C, x, y, z, h, v, skip)`:**
+
+1. If `|x − C.middleX|` or `|z − C.middleZ|` is above `16 + 2h`, nothing. NaN goes on.
+2. Local x from `max(floor(x − h) − C.minX − 1, 0)` to `min(floor(x + h) − C.minX, 15)`, and z likewise; y from `min(floor(y + v) + 1, mask max)` down to above `max(floor(y − v) − 1, mask min)`.
+3. With `fx = (blockX + 0.5 − x) / h` and `fz` likewise, columns where `fx² + fz² ≥ 1` are left out (NaN stays in). In the others, each y with `fy = (y − 0.5 − y₀) / v` is carved unless `skip(fx, fy, fz, y)`.
+
+**`canReach(C, x, z, step, count, thickness)`:** `dx² + dz² − (count − step)² ≤ (thickness + 2 + 16)²`, with `dx` and `dz` from `C`'s middle and the reach added in `f32`.
+
+### Caves
+
+`carve`, with `range = (4 · 2 − 1) · 16 = 112`:
+
+1. `count` caves. Each draws, in order: `x = S.minX + nextInt(16)`, `y` from the height provider, `z = S.minZ + nextInt(16)`, then the horizontal, vertical, start vertical radius multipliers and the floor level. `skip` is `fy ≤ floor`, or `fx² + fy² + fz² ≥ 1`.
+2. One tunnel. If `nextInt(4) == 0`, first a room: the room vertical multiplier `m`, `t = 1 + nextFloat() · 6`, and an ellipsoid at `(x + 1, y, z)` with `h = 1.5 + (double) (sin(1.5707963705062866) · t)` and `v = h · m`; then `nextInt(4)` more tunnels.
+3. Each tunnel draws `yaw = nextFloat() · 6.2831855f`, `pitch = (nextFloat() − 0.5) / 4`, its thickness, `steps = 112 − nextInt(28)` and a seed `nextLong()`, and runs from step 0 with the start vertical multiplier.
+
+**Thickness:** the provider's sample, times `nextFloat() · nextFloat() · 3 + 1` when `weird_thickness_bias` and `nextInt(10) == 0`.
+
+**A tunnel** (`createTunnel`, from `step` to `count`, vertical scale `s`) draws from a legacy random of its seed: `split = nextInt(count / 2) + count / 4`, and `steep = nextInt(6) == 0`. Then at each step `i`:
+
+1. `h = 1.5 + (double) (sin(π · i / count) · thickness)` and `v = h · s`.
+2. It moves by `(cos(yaw) · cos(pitch), sin(pitch), sin(yaw) · cos(pitch))`, the products in `f32`.
+3. `pitch` is multiplied by 0.92 if steep, else 0.7, then gets `pitchChange · 0.1`; `yaw` gets `yawChange · 0.1`; `pitchChange · 0.9` and `yawChange · 0.75`; then `pitchChange += (nextFloat() − nextFloat()) · nextFloat() · 2` and `yawChange += (…) · 4`.
+4. At `i = split`, if `thickness > 1`: two tunnels from here, each drawing a seed `nextLong()` then a thickness `nextFloat() · 0.5 + 0.5`, at `yaw ∓ 1.5707964f` and `pitch / 3`, from step `i`, vertical scale 1. Then this one ends.
+5. If `nextInt(4) != 0`: if it can't reach `C`, it ends; otherwise an ellipsoid with radii `h` and `v` times the horizontal and vertical multipliers.
+
+### Canyons
+
+`carve` draws `x`, `y`, `z` as caves do, `yaw = nextFloat() · 6.2831855f`, `pitch` from `vertical_rotation`, `y_scale`, `thickness`, `count = (int) (112 · distance_factor)`, then a seed `nextLong()`. From a legacy random of that seed (`doCarve`):
+
+- **Width factors:** one per y of the generation depth, from `f = 1`: at y 0, and wherever `nextInt(width_smoothness) == 0`, `f = 1 + nextFloat() · nextFloat()`; the factor is `f²`.
+- **Each step `i` from 0:** `h = 1.5 + (double) (sin(π · i / count) · thickness)`, `v = h · y_scale`, then `h` times `horizontal_radius_factor` and `v = (default + center · (1 − |0.5 − i / count| · 2)) · v · randomBetween(0.75, 1)`. It moves as a tunnel does, then `pitch · 0.7 + pitchChange · 0.05`, `yaw + yawChange · 0.05`, `pitchChange · 0.8`, `yawChange · 0.5`, and the same draws as a tunnel's. If `nextInt(4) != 0`: if it can't reach `C`, it ends; otherwise an ellipsoid, skipping where `(fx² + fz²) · widths[y − minY − 1] + fy² / 6 ≥ 1`.
+
+## Applying the mask
+
+`applyCarvingMask` visits the mask's runs of carved positions, columns by `(x << 4) + z`, and each run from the top down:
+
+1. A position whose block is in `#minecraft:uncarvable` is left alone.
+2. Carving grass or mycelium marks the run.
+3. The position gets the aquifer's substance at density 0 (`computeSubstance`, the [terrain column's](terrain.md#the-column) aquifer): air, water or lava.
+4. In a marked run, dirt under the position becomes the material rule's top material (`MaterialSystem.topMaterial`), if the rule gives one: the rule at the dirt with stone depths of 1 above and below, water above at `y + 1` if the substance is a fluid, and the chunk's current gradients.
+
+**Ties.** Where a start chunk's carver biome is tied and its candidates have different carvers, every position any candidate's carvers carve, and the one below it, is marked uncertain, as are top materials whose biome is tied.
+
+## Versions
+
+- **26.4:** not ported yet. The material rule and the carving mask are applied together, per column ([material.md](material.md#264)).
+- **26.2:** not ported yet. Its carvers have a `config` with `replaceable`, `lava_level` and `debug_settings`, and carve straight into the chunk's blocks.
+
+## Testing
+
+`spyglass-blocks`' `material` test compares every block of the golden chunks with carvers. In 26.3's golden set it matches all 73.4 million blocks but 386 that depend on tied biomes, as the run without carvers does.

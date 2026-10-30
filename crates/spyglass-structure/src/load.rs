@@ -14,7 +14,7 @@ use spyglass_noise::NormalNoiseParameters;
 
 use crate::biomes::{BiomeSet, Tags};
 use crate::corner::CornerSamplers;
-use crate::jigsaw::{GenerationHeights, HeightProvider, Jigsaw, JigsawLoader, height_provider};
+use crate::jigsaw::{GenerationHeights, HeightProvider, Jigsaw, JigsawLoader};
 use crate::placement::{
     ConcentricRings, ExclusionZone, FrequencyReduction, Placement, PlacementKind, RandomSpread,
     SpreadType,
@@ -476,7 +476,7 @@ impl SetLoader<'_> {
         let beached = kind == StructureType::Shipwreck
             && obj.get("is_beached").and_then(Value::as_bool) == Some(true);
         let height = match kind {
-            StructureType::NetherFossil => Some(height_provider(
+            StructureType::NetherFossil => Some(HeightProvider::parse(
                 field(obj, "height", &root)?,
                 &root.child("height"),
             )?),

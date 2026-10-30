@@ -174,6 +174,11 @@ impl MaterialSettings {
         self.default_block
     }
 
+    /// Whether these are 26.2's surface rules, of the 1.21 family.
+    pub fn is_v1_21(&self) -> bool {
+        self.chunk_surface_level.is_none()
+    }
+
     /// Binds the rule for `seed`: its noises, random factories and density functions, as the
     /// seed's `RandomState` holds them. `biomes` names the biome ids the dimension's source
     /// gives, and `climates` their climates, in the same order.
@@ -1074,6 +1079,45 @@ impl BoundMaterial {
                 Some(v.filler)
             }
         }
+    }
+
+    /// `MaterialSystem.topMaterial` (26.3 on): the rule's block at `pos` of `chunk` as the top
+    /// of the surface, with one block of stone above and below, and water above if
+    /// `fluid_above`, and whether it depends on a tied biome. The gradients are the chunk's
+    /// heights now.
+    pub fn top_material(
+        &self,
+        chunk: &Chunk,
+        biomes: &ChunkBiomes<'_>,
+        [x, y, z]: [i32; 3],
+        fluid_above: bool,
+    ) -> (Option<State>, bool) {
+        let (dx, dz) = (x & 15, z & 15);
+        let gradient = [
+            chunk.height_at((dx + 1).min(15), dz) - chunk.height_at((dx - 1).max(0), dz),
+            chunk.height_at(dx, (dz + 1).min(15)) - chunk.height_at(dx, (dz - 1).max(0)),
+        ];
+        let cell = Cell::new(None);
+        let c = Context {
+            system: self,
+            biomes,
+            terrain: None,
+            cell: &cell,
+            x,
+            z,
+            gradient: Cell::new(gradient),
+            gradient_read: Cell::new(true),
+            surface_depth: self.surface_depth(x, z),
+            surface_secondary: Cell::new(None),
+            min_surface_level: Cell::new(None),
+            y,
+            stone_depth_above: 1,
+            stone_depth_below: 1,
+            water_height: if fluid_above { y + 1 } else { i32::MIN },
+            biome: Cell::new(None),
+            tied: Cell::new(false),
+        };
+        (self.apply(&self.rule, &c), c.tied.get())
     }
 
     /// `MaterialSystem.buildSurface` (26.2's `SurfaceSystem.buildSurface`) on `chunk`, filled

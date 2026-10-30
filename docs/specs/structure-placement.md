@@ -147,7 +147,7 @@ Pieces are built after the check (`GenerationStub` builds them lazily), so their
 `JigsawStructure.findGenerationPoint` and `JigsawPlacement.addPieces`, up to the stub, draw from the context random in this order:
 
 1. `P = (minX, start_height.sample(random), minZ)`.
-   - `start_height` is a bare vertical anchor (`absolute`, `above_bottom` or `below_top`), `constant`, or `uniform`.
+   - `start_height` is a [height provider](providers.md#height-providers): a bare vertical anchor (`absolute`, `above_bottom` or `below_top`), `constant`, `uniform` or any other type.
    - `uniform` is `nextInt(max − min + 1) + min`, or `min` alone if the range is empty.
    - Anchors resolve against `WorldGenerationContext`: `above_bottom` is `minY + o`, and `below_top` is `minY + height − 1 − o`.
 2. The rotation is `Rotation.values()[nextInt(4)]`: none, clockwise 90, clockwise 180, counterclockwise 90.

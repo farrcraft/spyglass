@@ -55,3 +55,5 @@ Start from [template.md](template.md). Files are named `NNNN-kebab-case-title.md
 | [0047](0047-search-within-a-seed.md)                            | Search within a seed with `find` queries                                  | Accepted                                                             |
 | [0048](0048-the-viewer-keeps-user-data-in-a-file-of-its-own.md) | The viewer keeps user data in a file of its own                           | Accepted                                                             |
 | [0049](0049-the-oracle-generates-chunks-with-stand-ins.md)      | The oracle generates chunks through the generator's steps, with stand-ins | Accepted                                                             |
+| [0050](0050-blocks-in-their-own-crate.md)                       | A chunk's blocks in a crate of their own                                  | Accepted                                                             |
+| [0051](0051-sha-256-from-the-sha2-crate.md)                     | SHA-256 from the sha2 crate                                               | Accepted                                                             |

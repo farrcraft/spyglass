@@ -1,6 +1,7 @@
 //! `NoiseStack`: a weighted sum of noise layers at different frequencies.
 
 use crate::perlin::{PerlinNoise, SmearedPerlinNoise};
+use crate::simplex::SimplexNoise;
 use crate::volume::Volume;
 
 /// `Noise`: one octave a stack can hold.
@@ -115,6 +116,23 @@ impl NoiseStack<PerlinNoise> {
         self.layers.iter().fold(0.0, |sum, layer| {
             let f = layer.frequency;
             sum + layer.amplitude * layer.noise.get_2d(x * f, z * f)
+        })
+    }
+}
+
+impl NoiseStack<SimplexNoise> {
+    /// A stack of 2D simplex layers, as `NoiseStack.builder()` builds one from `SimplexNoise`s:
+    /// `Biome`'s frozen-temperature noise.
+    pub fn simplex(layers: Vec<Layer<SimplexNoise>>) -> Self {
+        NoiseStack { layers }
+    }
+
+    /// `get(double, double)`: `sum += amplitude * noise.get(x * f, z * f)` in layer order,
+    /// accumulated in `f32`.
+    pub fn get_2d(&self, x: f64, z: f64) -> f32 {
+        self.layers.iter().fold(0.0, |sum, layer| {
+            let f = layer.frequency;
+            sum + layer.amplitude * layer.noise.get(x * f, z * f)
         })
     }
 }

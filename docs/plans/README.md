@@ -9,7 +9,7 @@ Code must not reference plans. Anything durable a plan produces belongs in a spe
 For [18. Surface rules, ore veins, caves and carvers](../roadmap/18-surface-veins-and-carvers.md), in order:
 
 - [m18-block-oracle](completed/m18-block-oracle.md) (completed): the game's blocks for whole chunks, as golden files.
-- [m18-material-rule](m18-material-rule.md) (next): the material rule, ore veins and 26.2's surface rules.
+- [m18-material-rule](m18-material-rule.md) (in progress): the material rule, ore veins and 26.2's surface rules.
 - [m18-carvers](m18-carvers.md) (draft): caves and ravines.
 - [m18-layers](m18-layers.md) (draft): the map layers.
 

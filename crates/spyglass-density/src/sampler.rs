@@ -397,6 +397,12 @@ impl<'n> Binder<'n> {
         Ok(stack)
     }
 
+    /// `RandomState.getOrCreateNoise(id)`: the seed's noise `id`, made once per binder, for
+    /// code that samples noises itself, such as the material rule.
+    pub fn noise_stack(&mut self, id: &str) -> Result<Arc<NoiseStack>, LoadError> {
+        self.noise(id)
+    }
+
     /// `DensityFunction.range()`, remembered per function.
     pub(crate) fn range(&mut self, function: &Df) -> Result<Interval, LoadError> {
         let key = Arc::as_ptr(function);

@@ -64,6 +64,8 @@ serde = { version = "1.0.229", features = ["derive"] }
 # float_roundtrip makes derived f64 parsing correctly rounded (ADRs 0010, 0011).
 serde_json = { version = "1.0.154", features = ["arbitrary_precision", "float_roundtrip"] }
 sha1 = "0.11.0"
+# BiomeManager.obfuscateSeed, in spyglass-blocks (ADR 0051).
+sha2 = "0.11.1"
 # Release archives for macOS and Linux (ADR 0038).
 tar = { version = "0.4.46", default-features = false }
 tempfile = "3.27.0"

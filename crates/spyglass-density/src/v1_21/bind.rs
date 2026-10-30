@@ -777,6 +777,12 @@ impl<'n> Binder<'n> {
         self.slots
     }
 
+    /// `RandomState.getOrCreateNoise(id)`: the seed's noise `id`, made once per binder, for
+    /// code that samples noises itself, such as the surface rules.
+    pub fn normal_noise(&mut self, id: &str) -> Result<Arc<NormalNoise>, LoadError> {
+        self.noise(id)
+    }
+
     /// `visitNoise`: the Nether biome noises by their own rule, others by `getOrCreateNoise`.
     fn noise(&mut self, id: &str) -> Result<Arc<NormalNoise>, LoadError> {
         if let Some(n) = self.noises.get(id) {

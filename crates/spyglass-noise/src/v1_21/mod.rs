@@ -1,5 +1,5 @@
 //! The 1.21 family's noise, which 26.2 has: `ImprovedNoise`, the octave set `PerlinNoise`,
-//! `NormalNoise`, `SimplexNoise` and `BlendedNoise`, all in `f64` (ADR 0026, an algorithm family
+//! `NormalNoise`, `SimplexNoise`, `PerlinSimplexNoise` and `BlendedNoise`, all in `f64` (ADR 0026, an algorithm family
 //! of its own).
 //!
 //! Construction draws, seeding and the gradient table are 26.3's; the arithmetic isn't, and
@@ -10,10 +10,12 @@ mod blended;
 mod improved;
 mod normal;
 mod perlin;
+mod perlin_simplex;
 mod simplex;
 
 pub use blended::BlendedNoise;
 pub use improved::ImprovedNoise;
 pub use normal::{NoiseParameters, NormalNoise};
 pub use perlin::{PerlinNoise, wrap};
+pub use perlin_simplex::PerlinSimplexNoise;
 pub use simplex::SimplexNoise;

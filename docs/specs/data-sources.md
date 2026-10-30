@@ -69,7 +69,7 @@ java -DbundlerMainClass=net.minecraft.data.Main -jar server.jar --reports --outp
 
 - The bundler unpacks `libraries/` and `versions/` into the **working directory**, and the game writes `logs/` there, so run it in a scratch directory, never in the repo.
 - `--reports` is enough; `--server` would regenerate the worldgen JSON the jar already contains. For 26.3 the run takes a few seconds and writes 1,666 files under `<dir>/reports/` (plus a `<dir>/.cache/`).
-- The reports the bundle needs are `reports/biome_parameters/minecraft/overworld.json` (7,594 entries for 26.3) and `reports/biome_parameters/minecraft/nether.json`. These are the `multi_noise_biome_source_parameter_list` presets that the jar's JSON only names (`{"preset": "minecraft:overworld"}`). The End has no parameter list. The other reports (`blocks.json`, `registries.json`, `commands.json`, item components and so on) aren't needed yet.
+- The reports the bundle needs are `reports/biome_parameters/minecraft/overworld.json` (7,594 entries for 26.3) and `reports/biome_parameters/minecraft/nether.json`. These are the `multi_noise_biome_source_parameter_list` presets that the jar's JSON only names (`{"preset": "minecraft:overworld"}`). The End has no parameter list. `reports/blocks.json` (6.8 MB for 26.2) lists every block's properties and default state, which block states are named by ([material.md](material.md#the-chunk)). The other reports (`registries.json`, `commands.json`, item components and so on) aren't needed yet.
 
 Each report entry is `{"biome": id, "parameters": {temperature, humidity, continentalness, erosion, depth, weirdness, offset}}`, where the six climate parameters are `[min, max]` pairs or single numbers and `offset` is a number.
 
@@ -86,5 +86,5 @@ Mojang's data and code are never committed or redistributed. The extractor runs 
 ## Open questions
 
 - ~~Bundle format and layout on disk.~~ Specified in [bundle-format.md](bundle-format.md), decided in [ADR 0006](../adr/0006-bundle-format-raw-json-tree.md).
-- ~~Which data-generator reports are needed vs which can be read straight from the jar?~~ **Only the overworld and nether biome parameter lists** (see [Data generator](#data-generator)). Everything else comes from the jar's `data/minecraft/worldgen/` JSON.
+- ~~Which data-generator reports are needed vs which can be read straight from the jar?~~ **The overworld and nether biome parameter lists, and `blocks.json`** (see [Data generator](#data-generator)). Everything else comes from the jar's `data/minecraft/worldgen/` JSON.
 - ~~Does the extractor need a Java runtime?~~ **Yes.** The overworld biome parameter list isn't in the jar's JSON (`multi_noise_biome_source_parameter_list/overworld.json` is only `{"preset": "minecraft:overworld"}`). It is built in code by `OverworldBiomeBuilder`, so it has to come from the data generator. The required Java version comes from the version JSON's `javaVersion.majorVersion` (25 for 26.3).

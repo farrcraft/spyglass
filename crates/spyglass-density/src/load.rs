@@ -27,6 +27,12 @@ pub trait Resources {
     /// The JSON of the entry `id` in `registry` (a registry path, e.g. `worldgen/noise`).
     fn resource(&self, registry: &str, id: &str) -> Result<Value, BundleError>;
 
+    /// A data-generator report's JSON, by its path in the bundle, e.g. `reports/blocks.json`.
+    /// Hand-built resources have none unless they say otherwise.
+    fn report(&self, path: &str) -> Result<Value, BundleError> {
+        Err(BundleError::NotFound(path.to_string()))
+    }
+
     /// The behavior switches for the version the resources come from (ADR 0026). Hand-built
     /// resources are 26.3's shape, so by default every switch is off.
     fn behavior(&self) -> Behavior {
@@ -39,17 +45,27 @@ impl Resources for Bundle {
         Bundle::resource(self, registry, id)
     }
 
+    fn report(&self, path: &str) -> Result<Value, BundleError> {
+        Bundle::report(self, path)
+    }
+
     fn behavior(&self) -> Behavior {
         Behavior::of(self.manifest().data_version)
     }
 }
 
-/// Resources keyed `<registry>/<full id>`, e.g. `worldgen/noise/minecraft:temperature`: for
-/// tests and other hand-built data.
+/// Resources keyed `<registry>/<full id>`, e.g. `worldgen/noise/minecraft:temperature`, and
+/// reports by their path, e.g. `reports/blocks.json`: for tests and other hand-built data.
 impl Resources for HashMap<String, Value> {
     fn resource(&self, registry: &str, id: &str) -> Result<Value, BundleError> {
         let key = format!("{registry}/{id}");
         self.get(&key).cloned().ok_or(BundleError::NotFound(key))
+    }
+
+    fn report(&self, path: &str) -> Result<Value, BundleError> {
+        self.get(path)
+            .cloned()
+            .ok_or_else(|| BundleError::NotFound(path.to_string()))
     }
 }
 

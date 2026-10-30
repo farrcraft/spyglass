@@ -123,7 +123,7 @@ _Versions:_ 26.2 formats each octave the same way (`NoiseUtils` is byte-identica
 
 ## 26.2
 
-From the 26.2 bytecode (`net.minecraft.world.level.levelgen.synth`). 26.2 has the 1.18–1.21 noise: `ImprovedNoise`, the octave set `PerlinNoise`, `NormalNoise`, `SimplexNoise` and `BlendedNoise`. Every step is `f64`, samples included, and nothing is narrowed to `f32`. Construction draws, seeding and the gradient table are 26.3's. `Mth.smoothstep` and `Mth.lerp3` are the `double` overloads: `smoothstep(t) = ((t·t)·t) · ((t·((t·6.0) − 15.0)) + 10.0)`, and `lerp3` as in [Perlin](#perlin-perlinnoise-gradientnoise).
+From the 26.2 bytecode (`net.minecraft.world.level.levelgen.synth`). 26.2 has the 1.18–1.21 noise: `ImprovedNoise`, the octave set `PerlinNoise`, `NormalNoise`, `SimplexNoise`, `PerlinSimplexNoise` and `BlendedNoise`. Every step is `f64`, samples included, and nothing is narrowed to `f32`. Construction draws, seeding and the gradient table are 26.3's. `Mth.smoothstep` and `Mth.lerp3` are the `double` overloads: `smoothstep(t) = ((t·t)·t) · ((t·((t·6.0) − 15.0)) + 10.0)`, and `lerp3` as in [Perlin](#perlin-perlinnoise-gradientnoise).
 
 ### 26.2 improved noise (`ImprovedNoise`)
 
@@ -211,6 +211,15 @@ So each octave's weight is `amplitudes[i] · valF0 / 2^i`, applied inside its se
 No worldgen in spyglass's scope calls it; it's ported for completeness and checked by the probe.
 
 The End's islands use it through `DensityFunctions$EndIslandDensityFunction`, which compares the `f64` sample against `(double) −0.9f` ([density-functions.md](density-functions.md#end_outer_islands)).
+
+### 26.2 simplex octaves (`PerlinSimplexNoise`)
+
+`PerlinSimplexNoise(random, octaves)`, which 26.2's `Biome` uses for temperature ([material.md](material.md#262-surface-rules)), with `first` and `last` the lowest and highest octave and `count = last − first + 1`:
+
+1. Octave 0's `SimplexNoise` is drawn first, and goes at index `last` if octave 0 is listed.
+2. For each index `m` above `last`: a new `SimplexNoise` from `random` if octave `last − m` is listed, else `consumeCount(262)`.
+3. If `last > 0`, the lower indices, from `last − 1` down to 0, come the same way from a legacy random seeded by `(long) (octave0.getValue(xo, yo, zo) · 9.223372036854776E18)`.
+4. `getValue(x, z, false)` sums `level.getValue(x · e, z · e) · f` over the indices in order, from `e = 2^last` and `f = 1 / (2^count − 1)`, halving `e` and doubling `f` at each index, empty ones included.
 
 ### 26.2 blended noise (`BlendedNoise`)
 

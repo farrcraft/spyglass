@@ -14,7 +14,9 @@ use spyglass_rng::{
     PositionalRandomFactory, RandomSource, XoroshiroPositionalRandomFactory, XoroshiroRandomSource,
 };
 
-use crate::aquifer::{Aquifer, Block, FluidPicker, SurfaceLevels, VeinBlock, clamped_map};
+use crate::aquifer::{
+    Aquifer, Block, FluidPicker, SurfaceLevels, VeinBlock, chunk_surface_level, clamped_map,
+};
 
 /// `OreVeinifier.VeinType`: a vein's blocks and the y range it occurs in, both ends included.
 #[derive(Debug, Clone, Copy)]
@@ -158,6 +160,16 @@ impl ChunkTerrain {
             levels: SurfaceLevels::default(),
             corners: Arc::default(),
         })
+    }
+
+    /// `NoiseChunk.preliminarySurfaceLevel(x, z)`, shared with the aquifers' surface levels.
+    pub(crate) fn preliminary_surface_level(&self, x: i32, z: i32) -> i32 {
+        if let Some(&level) = self.levels.lock().get(&((x >> 2) << 2, (z >> 2) << 2)) {
+            return level;
+        }
+        let chunk = NoiseChunk::for_column(&self.state, x, z, self.level_min_y, self.level_height)
+            .sharing_corners(self.corners.clone());
+        chunk_surface_level(&chunk, &self.levels, x, z)
     }
 
     /// The column's range, whole cells: its lowest y and its height (`cellNoiseMinY ·

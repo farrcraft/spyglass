@@ -137,6 +137,11 @@ const TESTS: &[(&str, &str, &[Input])] = &[
         &[Input::BlocksNoCarvers, Input::Bundle],
     ),
     (
+        "spyglass-blocks",
+        "chunks_without_carvers_match_the_game",
+        &[Input::BlocksNoCarvers, Input::Bundle],
+    ),
+    (
         "spyglass-terrain",
         "carvers_only_carve",
         &[Input::Blocks, Input::BlocksNoCarvers],
@@ -265,13 +270,16 @@ const TESTS: &[(&str, &str, &[Input])] = &[
     ),
 ];
 
-/// Tests whose expected values are one version's, with that version: they run only for it.
-const PINNED: &[(&str, &str)] = &[
-    ("loads_every_overworld_structure_set", "26.3"),
-    ("a_default_world", "26.3"),
-    ("a_player_in_the_nether", "26.3"),
-    ("worlds_spyglass_cant_predict", "26.3"),
-    ("a_preset_world_is_named", "26.3"),
+/// Tests that run only for some versions, with those versions: tests whose expected values are
+/// one version's, and tests of behavior ported for some versions so far.
+const PINNED: &[(&str, &[&str])] = &[
+    ("loads_every_overworld_structure_set", &["26.3"]),
+    ("a_default_world", &["26.3"]),
+    ("a_player_in_the_nether", &["26.3"]),
+    ("worlds_spyglass_cant_predict", &["26.3"]),
+    ("a_preset_world_is_named", &["26.3"]),
+    // 26.4's material rule is interleaved with its carvers, and is ported with them.
+    ("chunks_without_carvers_match_the_game", &["26.2", "26.3"]),
 ];
 
 /// How one version's run went.
@@ -354,7 +362,7 @@ fn run_version(root: &Path, version: &str, made: &[Input], keep: Keep<'_>) -> Re
     let mut names = Vec::new();
     for &(package, name, inputs) in TESTS.iter().filter(|(_, _, inputs)| keep(inputs)) {
         if let Some(&(_, pinned)) = PINNED.iter().find(|(n, _)| *n == name)
-            && pinned != version
+            && !pinned.contains(&version)
         {
             continue;
         }

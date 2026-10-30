@@ -123,6 +123,16 @@ impl Terrain {
         }
     }
 
+    /// 26.2's `NoiseChunk.preliminarySurfaceLevel(x, z)`: `Mth.floor` of the router's
+    /// `preliminary_surface_level` at quart-aligned `(x, 0, z)`. `None` for settings evaluated as
+    /// volumes (26.3 on), whose material rule reads `chunk_surface_level` instead.
+    pub fn preliminary_surface_level(&self, x: i32, z: i32) -> Option<i32> {
+        match &self.family {
+            Bound::Volume { .. } => None,
+            Bound::V1_21(chunk) => Some(chunk.preliminary_surface_level(x, z)),
+        }
+    }
+
     /// Whether `heightmap` counts `block` (`Heightmap.Types.isOpaque`). Ore veins' blocks
     /// all block motion.
     pub fn counts(&self, heightmap: Heightmap, block: Block) -> bool {

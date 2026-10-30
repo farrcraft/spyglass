@@ -25,6 +25,7 @@ pub const JAR_DIRS: &[&str] = &[
 pub const REPORTS: &[&str] = &[
     "reports/biome_parameters/minecraft/overworld.json",
     "reports/biome_parameters/minecraft/nether.json",
+    "reports/blocks.json",
 ];
 
 /// Why a bundle couldn't be written.
@@ -290,7 +291,7 @@ mod tests {
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(path, format!("{{\"report\": \"{report}\"}}\n")).unwrap();
         }
-        fs::write(out.join("reports/blocks.json"), "not copied").unwrap();
+        fs::write(out.join("reports/items.json"), "not copied").unwrap();
         out
     }
 
@@ -328,6 +329,7 @@ mod tests {
                 "data/minecraft/worldgen/noise/a.json",
                 "reports/biome_parameters/minecraft/nether.json",
                 "reports/biome_parameters/minecraft/overworld.json",
+                "reports/blocks.json",
             ]
         );
         assert_eq!(

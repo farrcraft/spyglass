@@ -700,7 +700,12 @@ impl<'s> Aquifer<'s> {
 
 /// A 26.2 surface level (`preliminarySurfaceLevel`) remembered for the seed: `Mth.floor` of
 /// `preliminary_surface_level` at `SinglePointContext(x & ~3, 0, z & ~3)`.
-fn chunk_surface_level(chunk: &NoiseChunk, shared: &SurfaceLevels, x: i32, z: i32) -> i32 {
+pub(crate) fn chunk_surface_level(
+    chunk: &NoiseChunk,
+    shared: &SurfaceLevels,
+    x: i32,
+    z: i32,
+) -> i32 {
     let (x, z) = ((x >> 2) << 2, (z >> 2) << 2);
     if let Some(&level) = shared.lock().get(&(x, z)) {
         return level;

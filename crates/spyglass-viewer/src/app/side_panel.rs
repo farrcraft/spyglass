@@ -167,36 +167,18 @@ impl App {
                 ui.strong(found.target.name());
                 ui.label(egui::RichText::new(format!("from {x} {y} {z}")).color(style::MUTED));
                 ui.add_space(4.0);
-                egui::Grid::new("locate hits")
-                    .num_columns(3)
-                    .spacing([12.0, 4.0])
-                    .striped(true)
-                    .show(ui, |ui| {
-                        ui.label(egui::RichText::new("Where").size(11.0).color(style::MUTED));
-                        ui.label(egui::RichText::new("Away").size(11.0).color(style::MUTED));
-                        ui.label("");
-                        ui.end_row();
-                        for hit in &found.hits {
-                            let y = hit.y.map_or("~".to_string(), |y| y.to_string());
-                            if ui
-                                .selectable_label(
-                                    false,
-                                    style::mono(format!("{} {y} {}", hit.x, hit.z)),
-                                )
-                                .on_hover_text(&hit.what)
-                                .clicked()
-                            {
-                                go = Some([hit.x, hit.z]);
-                            }
-                            ui.label(style::mono(hit.blocks_away.to_string()));
-                            if hit.certain {
-                                ui.colored_label(style::GOOD, "Certain");
-                            } else {
-                                ui.colored_label(style::MUTED, "Candidate");
-                            }
-                            ui.end_row();
-                        }
-                    });
+                if found.nearest.is_empty() {
+                    if let Some(answer) = found.hits.iter().find_map(|h| h.answer) {
+                        ui.label(egui::RichText::new(answer).color(style::MUTED));
+                    }
+                    go = go.or(hit_table(ui, "locate hits", &found.hits));
+                } else {
+                    style::heading(ui, "Nearest");
+                    go = go.or(hit_table(ui, "nearest hits", &found.nearest));
+                    ui.add_space(6.0);
+                    style::heading(ui, "/locate gives");
+                    go = go.or(hit_table(ui, "locate hits", &found.hits));
+                }
                 if let Some(note) = &found.note {
                     style::hint(ui, note);
                 }
@@ -519,4 +501,38 @@ impl App {
             self.select();
         }
     }
+}
+
+/// A locate answer's hits as a table: where, how far, and whether certain. Returns the block
+/// of the hit clicked, to go to.
+fn hit_table(ui: &mut egui::Ui, id: &str, hits: &[locate::Hit]) -> Option<[i32; 2]> {
+    let mut go = None;
+    egui::Grid::new(id)
+        .num_columns(3)
+        .spacing([12.0, 4.0])
+        .striped(true)
+        .show(ui, |ui| {
+            ui.label(egui::RichText::new("Where").size(11.0).color(style::MUTED));
+            ui.label(egui::RichText::new("Away").size(11.0).color(style::MUTED));
+            ui.label("");
+            ui.end_row();
+            for hit in hits {
+                let y = hit.y.map_or("~".to_string(), |y| y.to_string());
+                if ui
+                    .selectable_label(false, style::mono(format!("{} {y} {}", hit.x, hit.z)))
+                    .on_hover_text(&hit.what)
+                    .clicked()
+                {
+                    go = Some([hit.x, hit.z]);
+                }
+                ui.label(style::mono(hit.blocks_away.to_string()));
+                if hit.certain {
+                    ui.colored_label(style::GOOD, "Certain");
+                } else {
+                    ui.colored_label(style::MUTED, "Candidate");
+                }
+                ui.end_row();
+            }
+        });
+    go
 }

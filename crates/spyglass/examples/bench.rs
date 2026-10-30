@@ -90,6 +90,33 @@ fn main() -> spyglass::Result<()> {
             );
         },
     );
+    // The nearest beside /locate's answer, confirmed, over the same seeds.
+    for target in [
+        "#minecraft:village",
+        "minecraft:ancient_city",
+        "minecraft:mansion",
+    ] {
+        let query = world.structure_query(target)?;
+        let options = spyglass::LocateOptions::default();
+        let mut seeds = SEEDS.iter().cycle();
+        report(&format!("locate_structure {target} confirmed"), 5, || {
+            let session = world.session(*seeds.next().unwrap()).unwrap();
+            black_box(
+                session
+                    .locate_structure(&query, [0, 64, 0], &options)
+                    .unwrap(),
+            );
+        });
+        let mut seeds = SEEDS.iter().cycle();
+        report(&format!("nearest_structure {target} confirmed"), 5, || {
+            let session = world.session(*seeds.next().unwrap()).unwrap();
+            black_box(
+                session
+                    .nearest_structure(&query, [0, 64, 0], &options)
+                    .unwrap(),
+            );
+        });
+    }
     report("structure_layout village_plains, bound", 5, || {
         black_box(
             session

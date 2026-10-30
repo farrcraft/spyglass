@@ -261,6 +261,7 @@ Or install it with `cargo install --path crates/spyglass-cli` and run `spyglass 
 | `--radius <n>`        | as `/locate`   | Placement-cell rings (structures), blocks (biomes) or chunks (slime).                     |
 | `--unconfirmed`       | off            | Structures: don't decide candidates with the seed's terrain. Faster, but less certain.    |
 | `--bounds`            | off            | Structures: each certain jigsaw structure's bounds and piece count.                       |
+| `--nearest`           | off            | Structures: the nearest start, not `/locate`'s answer, which isn't always the nearest.    |
 | `--game-version <id>` | newest release | Which bundle in `--bundles` to use. Snapshots are used only when named.                   |
 | `--bundle <dir>`      | none           | Use this bundle directory instead.                                                        |
 | `--bundles <dir>`     | bundles folder | Where bundles are ([§8](#8-game-data)).                                                   |
@@ -341,7 +342,7 @@ Most structures need terrain to confirm. Without `--confirm`, a constraint on th
 
 ### Reading the answers
 
-Answers are listed in the game's search order, which isn't always nearest first. `locate` decides each structure with the seed's terrain, as the game does, so its answers are almost always **certain**, and then exactly the game's `/locate` answer. A **candidate** is left where the game's choice depends on a tied biome cell, a platform-dependent stronghold ring position or a mineshaft spyglass can't place yet: the game's answer is the first of them it generates, usually the first one listed. Without terrain (`--unconfirmed`, and maps and searches unless they confirm), most surface structures (villages, temples, monuments) are candidates.
+Answers are listed in the game's search order, which isn't always nearest first: `/locate` can skip a nearer structure for one it scans first. `--nearest` answers with the nearest instead, and lists nearest first ([specs/locate.md](specs/locate.md#nearest)). `locate` decides each structure with the seed's terrain, as the game does, so its answers are almost always **certain**, and then exactly the game's `/locate` answer. A **candidate** is left where the game's choice depends on a tied biome cell, a platform-dependent stronghold ring position or a mineshaft spyglass can't place yet: the game's answer is the first of them it generates, usually the first one listed. Without terrain (`--unconfirmed`, and maps and searches unless they confirm), most surface structures (villages, temples, monuments) are candidates.
 
 ## 10. The viewer
 
@@ -357,7 +358,7 @@ The viewer opens the newest release in the bundles folder (or the newest snapsho
 - **Seed or save:** type a seed and press **Show**, or open a save from the launchers' list or any folder. A save opens on its player, in the player's dimension, with anything that makes its answers inexact listed.
 - **Dimension:** switch between the Overworld, the Nether and the End; each keeps its own view. Slime chunks and the spawn are the Overworld's, and terrain layers aren't drawn in the Nether, whose surface is its ceiling.
 - **Layers:** tied biome cells, slime chunks, the world spawn, structures to mark (hover a marker for what it is), and biomes to highlight. **Height** sets the y biomes are drawn at. Up close (4 blocks per pixel or less), **Relief** shades the map by terrain height and **Biomes at the surface** draws each column's biome at its height; both are slow to fill in. **Confirm with terrain** (on by default) decides structure markers and locates with the seed's terrain, and draws the bounds of villages and other jigsaw structures up close. The status bar shows the terrain height under the pointer.
-- **Locate:** right-click the map for the nearest structure or biome from there, as `/locate` would. Hits are listed in the side panel (click one to go there) and ringed on the map.
+- **Locate:** right-click the map for the nearest structure or biome from there, as `/locate` would. Hits are listed in the side panel (click one to go there) and pinned on the map. For a structure, where the nearest isn't `/locate`'s answer, both are listed and pinned, the nearest first.
 - **Export:** **Export image…** saves the view as a PNG, and **Copy command** copies the `spyglass render` command that draws the same image.
 - **Search:** type a query in the **Search** section, set a seed count or time limit (and **Confirm with terrain** to decide structures), and press **Search**. The best seeds appear as they're found; click one to open it, in its first constraint's dimension and centred on that constraint's place, with everything its constraints matched there ringed.
 

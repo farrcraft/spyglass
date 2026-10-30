@@ -119,6 +119,12 @@ fn tags_expand_in_order() {
             .flat_map(|h| &h.start.structures)
             .all(|s| s == "minecraft:tower" || s == "minecraft:hut")
     );
+    assert_eq!(
+        world.query_structures(&all).unwrap(),
+        ["minecraft:tower", "minecraft:hut"]
+    );
+    let hut = world.structure_query("minecraft:hut").unwrap();
+    assert_eq!(world.query_structures(&hut).unwrap(), ["minecraft:hut"]);
 }
 
 #[test]
@@ -190,6 +196,10 @@ fn queries_belong_to_their_world() {
         )
         .unwrap_err();
     assert!(matches!(err, Error::OtherWorld(_)), "{err}");
+    assert!(matches!(
+        wb.query_structures(&towers),
+        Err(Error::OtherWorld(_))
+    ));
     assert!(matches!(
         wa.structure_query("minecraft:nothing"),
         Err(Error::Unknown {
@@ -341,4 +351,181 @@ fn requests_past_the_limits_are_errors() {
         [0, 64, 0],
         MAX_LOCATE_BIOME_RADIUS + 1
     )));
+}
+
+/// The horizontal distance squared from `from` to a start's locate position.
+fn horizontal(from: [i32; 3], position: [i32; 3]) -> i128 {
+    let d = |i: usize| i128::from(position[i]) - i128::from(from[i]);
+    d(0) * d(0) + d(2) * d(2)
+}
+
+/// Checks `nearest_structure` against every start `structures_in` finds around `from`: the
+/// answer is a nearest certain start (the lowest chunk z, then x, among equals of one set),
+/// and the hits before it are exactly the candidates nearer than it, nearest first.
+fn check_nearest(
+    session: &spyglass::Session<'_>,
+    query: &spyglass::StructureQuery,
+    from: [i32; 3],
+    confirm: bool,
+) -> spyglass::StructureLocate {
+    let options = spyglass::LocateOptions {
+        radius: spyglass::LOCATE_RADIUS,
+        confirm,
+    };
+    let found = session.nearest_structure(query, from, &options).unwrap();
+    let context = format!("{} from {from:?}, confirm {confirm}", query.argument());
+    let distances: Vec<i128> = found
+        .hits
+        .iter()
+        .map(|h| horizontal(from, h.start.position))
+        .collect();
+    assert!(distances.is_sorted(), "{context}: {distances:?}");
+    let Some(answer) = found.certain_answer else {
+        return found;
+    };
+    assert!(found.complete, "{context}");
+    assert_eq!(answer, found.hits.len() - 1, "{context}");
+    let best = &found.hits[answer].start;
+    assert!(best.certain, "{context}");
+    assert!(found.hits[..answer].iter().all(|h| !h.start.certain));
+    // Every start within the answer's distance, from the chunks around it.
+    let reach = i32::try_from(distances[answer].isqrt() / 16 + 2).unwrap();
+    let (cx, cz) = (from[0] >> 4, from[2] >> 4);
+    let around = session
+        .structures_in(
+            query,
+            [cx.saturating_sub(reach), cz.saturating_sub(reach)],
+            [cx.saturating_add(reach), cz.saturating_add(reach)],
+            confirm,
+        )
+        .unwrap();
+    for start in &around {
+        let d = horizontal(from, start.position);
+        let listed = found.hits.iter().any(|h| h.start.chunk == start.chunk);
+        // A ring position that's tie- or platform-dependent is listed as a candidate, though
+        // structures_in counts its chunk as certain.
+        if start.certain && !listed {
+            let key = |s: &spyglass::StructureStart| (s.chunk[1], s.chunk[0]);
+            assert!(
+                d > distances[answer]
+                    || (d == distances[answer]
+                        && (start.set != best.set || key(start) >= key(best))),
+                "{context}: {start:?} is nearer than {best:?}"
+            );
+        } else if !start.certain && d < distances[answer] {
+            assert!(listed, "{context}: candidate {start:?} is missing");
+        }
+    }
+    found
+}
+
+#[test]
+fn nearest_is_the_nearest_certain_start() {
+    let fixture = fixtures::structured_overworld(false);
+    let world = World::open(fixture.path()).unwrap();
+    let towers = world.structure_query("minecraft:tower").unwrap();
+    let everything = world.structure_query("#minecraft:everything").unwrap();
+    let origins = (-3..3).flat_map(|i| (-2..2).map(move |j| [i * 1033 + 31, 64, j * 1399 - 13]));
+    let edge = [
+        [-29_999_000, 64, 29_999_000],
+        [-29_999_999, 64, -29_999_999],
+    ];
+    for seed in [7, 12345] {
+        let session = world.session(seed).unwrap();
+        for from in origins.clone().chain(edge) {
+            for confirm in [false, true] {
+                let found = check_nearest(&session, &towers, from, confirm);
+                assert!(found.certain_answer.is_some(), "seed {seed} from {from:?}");
+                check_nearest(&session, &everything, from, confirm);
+            }
+        }
+    }
+}
+
+#[test]
+fn nearest_can_differ_from_locate() {
+    let fixture = fixtures::structured_overworld(false);
+    let world = World::open(fixture.path()).unwrap();
+    let towers = world.structure_query("minecraft:tower").unwrap();
+    let options = spyglass::LocateOptions {
+        radius: spyglass::LOCATE_RADIUS,
+        confirm: false,
+    };
+    let mut differ = 0;
+    for seed in 0..20 {
+        let session = world.session(seed).unwrap();
+        for x in (-4000..0).step_by(250) {
+            let from = [x, 64, 0];
+            let game = session.locate_structure(&towers, from, &options).unwrap();
+            let near = session.nearest_structure(&towers, from, &options).unwrap();
+            let at =
+                |l: &spyglass::StructureLocate| l.certain_answer.map(|i| l.hits[i].start.position);
+            let (game, near) = (at(&game).unwrap(), at(&near).unwrap());
+            // Never farther than /locate's answer. Where they differ at the same distance, the
+            // tie order chose another start than /locate's scan order.
+            assert!(horizontal(from, near) <= horizontal(from, game));
+            if horizontal(from, near) < horizontal(from, game) {
+                differ += 1;
+            }
+        }
+    }
+    // The ring rule makes /locate's answer farther than the nearest now and then.
+    assert!(differ > 0);
+}
+
+#[test]
+fn nearest_candidates_stop_at_the_limit() {
+    let fixture = fixtures::structured_overworld(false);
+    let world = World::open(fixture.path()).unwrap();
+    let huts = world.structure_query("minecraft:hut").unwrap();
+    let session = world.session(7).unwrap();
+    let found = check_nearest(&session, &huts, [-5000, 64, 0], false);
+    // Huts depend on terrain, so none is certain, and the search gives up.
+    assert!(!found.complete);
+    assert_eq!(found.certain_answer, None);
+    assert_eq!(found.hits.len(), 32);
+}
+
+#[test]
+fn nearest_keep_is_on_the_rings() {
+    let fixture = fixtures::structured_overworld(false);
+    let world = World::open(fixture.path()).unwrap();
+    let keeps = world.structure_query("minecraft:keep").unwrap();
+    for seed in [0, 99] {
+        let session = world.session(seed).unwrap();
+        for from in [[0, 64, 0], [-900, 64, 400], [2000, 64, -2000]] {
+            let found = check_nearest(&session, &keeps, from, false);
+            assert!(found.certain_answer.is_some(), "seed {seed} from {from:?}");
+        }
+    }
+}
+
+#[test]
+fn nearest_checks_its_query_and_radius() {
+    let (a, b) = (
+        fixtures::structured_overworld(false),
+        fixtures::structured_overworld(false),
+    );
+    let (wa, wb) = (
+        World::open(a.path()).unwrap(),
+        World::open(b.path()).unwrap(),
+    );
+    let towers = wa.structure_query("minecraft:tower").unwrap();
+    let session = wb.session(0).unwrap();
+    let err = session
+        .nearest_structure(&towers, [0, 64, 0], &spyglass::LocateOptions::default())
+        .unwrap_err();
+    assert!(matches!(err, Error::OtherWorld(_)), "{err}");
+    let towers = wb.structure_query("minecraft:tower").unwrap();
+    let err = session
+        .nearest_structure(
+            &towers,
+            [0, 64, 0],
+            &spyglass::LocateOptions {
+                radius: spyglass::MAX_LOCATE_RADIUS + 1,
+                confirm: false,
+            },
+        )
+        .unwrap_err();
+    assert!(matches!(err, Error::TooLarge { .. }), "{err}");
 }

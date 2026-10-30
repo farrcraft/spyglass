@@ -20,6 +20,12 @@ The milestones build toward the goals in the [README](../../README.md#goals): co
 | 12  | [First run](completed/12-first-run.md)                                        | Game data from the viewer, beside the binaries, with no terminal.   | Completed |
 | 13  | [Viewer redesign](completed/13-viewer-redesign.md)                            | A designed layout, map controls and icons, and visible loading.     | Completed |
 | 14  | [Viewer performance](completed/14-viewer-performance.md)                      | A full map in less time, measured; faster rendering in the library. | Completed |
+| 15  | [Nearest locate](completed/15-nearest-locate.md)                              | The nearest structure, beside `/locate`'s answer.                   | Completed |
+| 16  | [Search within a seed](16-search-within-a-seed.md)                            | Places in one seed that fit a query, nearest first.                 | Planned   |
+| 17  | [Markers and saved seeds](17-markers-and-saved-seeds.md)                      | Your own pins, done structures, saved seeds and shared views.       | Planned   |
+| 18  | [Surface rules, ore veins, caves, carvers](18-surface-veins-and-carvers.md)   | A chunk's blocks before features, and layers to show them.          | Planned   |
+| 19  | [Features](19-features.md)                                                    | Dungeons, geodes, wells, fossils and lava lakes, certain or not.    | Planned   |
+| 20  | [Loot](20-loot.md)                                                            | What's in the chests, and searching for it.                         | Planned   |
 
 ## Follow-ups
 
@@ -33,9 +39,8 @@ Open items from completed milestones, too small for a plan:
 
 Work that completed milestones deferred, waiting for a milestone of its own:
 
-- **Surface rules** (in 26.3, the material rule): the blocks that replace stone at the surface. Deferred by 07; no height query needs them.
-- **Features:** decoration order and per-feature randomness over placed and configured features. Deferred by 07.
-- **The final spawn block:** needs generated blocks (the surface and features), not only the generator's heights ([spawn.md](../specs/spawn.md)).
+- **The final spawn block:** needs generated blocks (the surface and features), not only the generator's heights ([spawn.md](../specs/spawn.md)). Surface rules are now [18](18-surface-veins-and-carvers.md)'s and features [19](19-features.md)'s; what's left is for after them.
+- **More game versions:** Chunkbase covers Java back to 1.7 and Bedrock. Older 1.18+ versions are a matter of [the guide](../adding-a-version.md) and version switches; pre-1.18 and Bedrock stay out of scope (below).
 
 ## Stretch
 

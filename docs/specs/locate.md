@@ -2,7 +2,7 @@
 
 Status: stable. Covers `/locate structure` and `/locate biome` in the Default world preset's three dimensions, implemented in `spyglass-structure` and `spyglass-biome` and exposed by the `spyglass` crate ([ADR 0014](../adr/0014-public-api-world-and-session.md)). Checked against the real game's `/locate` ([ADR 0015](../adr/0015-locate-checks-on-a-real-server.md)) for 26.3, 26.2 and the 26.4 snapshots; their differences are in _Versions_ notes. Targets a version doesn't have, such as 26.3's `#minecraft:abandoned_camp` in 26.2, are rejected by both.
 
-`/locate` doesn't return the nearest structure or biome. It returns the first one its search order finds, so spyglass ports the search order and the distance measure exactly. Where spyglass can't decide whether the game generates a structure in a chunk, it returns every place the game's answer may be, in search order, each labelled `certain` or not. [Confirmed](#confirmed-mode), terrain decides nearly every chunk.
+`/locate` doesn't return the nearest structure or biome. It returns the first one its search order finds, so spyglass ports the search order and the distance measure exactly. Where spyglass can't decide whether the game generates a structure in a chunk, it returns every place the game's answer may be, in search order, each labelled `certain` or not. [Confirmed](#confirmed-mode), terrain decides nearly every chunk. For the structure that really is nearest, spyglass has a second search of its own: [nearest](#nearest).
 
 ## Text seeds
 
@@ -54,6 +54,22 @@ Unconfirmed, most surface structures' hits are all candidates, so lists run to t
 
 **Distance shown.** `/locate` prints `Mth.floor(Mth.sqrt((float) (dx·dx + dz·dz)))` for structures, horizontal and in `int` arithmetic. spyglass reports the same as `blocks_away`.
 
+### Nearest
+
+`/locate`'s answer is often not the nearest structure. A ring's first hit in scan order wins, even when another hit in the same ring is nearer. For seed 12345 in 26.3, `/locate minecraft:ancient_city` from the origin gives −288, −288, 407 blocks away: cells (−1, −1) and (0, −1) are both in ring 1, and `dx = −1` is scanned first. A city at 176, −176, 249 blocks away, generates too. In the golden locate cases, the nearest is nearer than `/locate`'s answer in about a third (96 of 276 for 26.3).
+
+`Session::nearest_structure` (`Starts::nearest` in `spyglass-structure`) is spyglass's own search, not the game's. It answers with the nearest start instead:
+
+- **Distance:** horizontal, from `pos` to the start's locate position, as `dx² + dz²` in 128-bit integers. That's the distance `/locate` prints, not the 3D `distSqr` its search compares.
+- **Ties**, at equal distances: the set that comes first among the targets' sets (in `/locate`'s order of first appearance), then the lower chunk z, then the lower chunk x. Where `/locate`'s scan order picks another start at the same distance, the two answers differ only by this rule.
+- **What's searched:** the same cells `/locate` searches with the same radius, per set. That's every concentric-ring position with its alternatives, and random-spread rings `0..=radius` around the cell of `pos`'s chunk, the cell holding chunk `(chunkX + spacing·dx, chunkZ + spacing·dz)` as above. The answer is the nearest start in those cells.
+- **Order of work:** ring positions first, then random-spread rings outward. In each batch, the chunks that pass the placement test (cheap: no terrain) are sorted by distance and the tie order. They're decided nearest first, only while no certain start is nearer, so terrain is asked about no more chunks than the answer needs. After ring `r`, the search stops if every cell of ring `r + 1` is farther than the best certain start. A cell's distance is from `pos` to the box its locate positions span: chunks `cell·spacing` to `cell·spacing + spacing − separation − 1` on each axis, times 16, plus the offset. A cell whose box would wrap in `int` arithmetic counts as distance 0.
+- **Answer:** `hits` are nearest first: every candidate nearer than the nearest certain start, then that start, at `certain_answer`. With no certain start, every candidate is listed. Candidates are decided as for `/locate` (confirmed or not), and ring alternatives and tie- or platform-dependent positions are candidates. `complete` is false if more than 32 candidates were nearer than any certain start, or a ring position's alternatives are unknown, as for `/locate`. Otherwise the nearest start that generates is one of the hits.
+
+Biome locate has no nearest mode. `/locate biome` already searches outward, column by column, though in a square spiral rather than by distance.
+
+The CLI's `locate structure --nearest` and the viewer's Locate tab use it. The viewer shows both answers when they differ.
+
 ## Biomes
 
 `LocateCommand` calls `ServerLevel.findClosestBiome3d(predicate, pos, 6400, 32, 64)`, which is `BiomeSource.findClosestBiome3d`:
@@ -84,4 +100,5 @@ More is `Error::TooLarge`, naming what was asked and the limit. Region sizes are
 
 - **Unit tests**: the spiral and `outFromOrigin` orders, text seeds, the shown distance, and the ring alternatives' rounding.
 - **The structure golden test** checks that every ring position where the game differs from spyglass is flagged, and that the game's chunk is spyglass's or one of its alternatives. For 26.3: 61 of 1,280 differ, all with the game's chunk among known alternatives.
+- **Nearest**, on fixture bundles: for origins across the fixture's plains and desert and at the world border, confirmed and not, the answer is the nearest certain start among everything `structures_in` finds around it. Every nearer candidate is listed, and hits are sorted by distance. The tests cover ring sets, mixed tags, the candidate cap, and that the answer is never farther than `/locate`'s. On the real bundles, an ignored test in `crates/spyglass/tests/locate.rs` checks every golden structure case of each version the same way, confirmed: no certain start is nearer than the answer unless it's listed as a candidate, and the game's own answer is never nearer. For 26.3, the answer is certain in all 276 cases. In 4, candidates come first: strongholds behind tie- or platform-dependent ring positions.
 - **The `/locate` comparison** `crates/spyglass/tests/locate.rs` runs every case in `oracle-out/<version>/locate/` ([oracle.md](oracle.md#locate-answers)). The game's answer must be among spyglass's hits, unless spyglass's list stopped at the candidate cap first. If the game finds nothing, spyglass must have no certain hit. Every case is run in its dimension. For 26.3: 480 cases (4 seeds; 3 positions per dimension; the Overworld's 18 structure arguments and 7 biomes, the Nether's 4 and 5, the End's 1 and 5) all agree, and in 452 the game's answer is spyglass's first hit. Every structure case is run again confirmed: where all of spyglass's hits are certain, its certain answer must be exactly the game's (or nothing where the game finds nothing). For 26.3 that's 272 of the 276 structure cases, all equal: every one of the Nether's 48 and the End's 12, and 212 of the Overworld's 216; the other 4 are strongholds behind tie- or platform-dependent ring positions. Run it with `cargo test --release -p spyglass --test locate -- --ignored --nocapture`.

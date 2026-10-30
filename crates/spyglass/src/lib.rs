@@ -40,7 +40,9 @@ use spyglass_data::anchor::AnchorHeights;
 use spyglass_data::bundle::{Bundle, BundleError};
 use spyglass_data::codec::{LoadError, full_id};
 use spyglass_data::versions::Checking;
-use spyglass_structure::{Assembly, JigsawPools, Placements, Starts, StructureSets};
+use spyglass_structure::{
+    Assembly, JigsawPools, Placements, Starts, StructureSearch, StructureSets,
+};
 use spyglass_terrain::{Terrain, TerrainSettings};
 
 pub use game::{Game, GameSession};
@@ -606,6 +608,17 @@ impl World {
         })
     }
 
+    /// The structures `query` names in this dimension, by full id: the structure itself, or a
+    /// tag's members, each once, in the order the tag lists them. Members that no structure set
+    /// here names are left out.
+    pub fn query_structures(&self, query: &StructureQuery) -> Result<Vec<&str>> {
+        if query.world != self.id {
+            return Err(Error::OtherWorld(query.argument.clone()));
+        }
+        let all = self.sets.structures();
+        Ok(query.targets.iter().map(|&i| all[i].id.as_str()).collect())
+    }
+
     /// Resolves a biome id for this world's sessions. A biome that exists but that this
     /// dimension can't have resolves, and is never found.
     pub fn biome_query(&self, biome: &str) -> Result<BiomeQuery> {
@@ -1010,6 +1023,34 @@ impl<'w> Session<'w> {
         )?;
         let starts = self.starts(options.confirm);
         let search = starts.locate(&query.targets, from, options.radius);
+        Ok(self.located(&search, from))
+    }
+
+    /// The start of a structure `query` names that's nearest to `from`, horizontally, among the
+    /// placement cells [`locate_structure`](Self::locate_structure) searches with the same
+    /// radius. Hits are nearest first: every candidate nearer than the nearest certain start,
+    /// then that start, at [`certain_answer`](StructureLocate::certain_answer). This isn't
+    /// always `/locate`'s answer, which is the first in its search order. See
+    /// `docs/specs/locate.md`.
+    pub fn nearest_structure(
+        &self,
+        query: &StructureQuery,
+        from: [i32; 3],
+        options: &LocateOptions,
+    ) -> Result<StructureLocate> {
+        self.check_world(query.world, &query.argument)?;
+        at_most(
+            "a structure locate radius of",
+            options.radius,
+            MAX_LOCATE_RADIUS,
+        )?;
+        let starts = self.starts(options.confirm);
+        let search = starts.nearest(&query.targets, from, options.radius);
+        Ok(self.located(&search, from))
+    }
+
+    /// A structure search's answer, with distances as `/locate` prints them.
+    fn located(&self, search: &StructureSearch, from: [i32; 3]) -> StructureLocate {
         let hits = search
             .hits
             .iter()
@@ -1027,11 +1068,11 @@ impl<'w> Session<'w> {
                 }
             })
             .collect();
-        Ok(StructureLocate {
+        StructureLocate {
             hits,
             complete: search.complete,
             certain_answer: search.certain_answer,
-        })
+        }
     }
 
     /// Every chunk in `min..=max` (chunk coordinates, inclusive) where a structure that `query`

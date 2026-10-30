@@ -113,6 +113,8 @@ pub struct Xyz {
 #[derive(Serialize)]
 pub struct StructureAnswer<'a> {
     pub target: &'a str,
+    /// `locate` (the game's `/locate` answer) or `nearest`.
+    pub mode: &'static str,
     pub from: [i32; 3],
     pub radius: i32,
     pub confirmed: bool,

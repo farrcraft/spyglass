@@ -12,10 +12,15 @@ pub fn structure(
     from: [i32; 3],
     options: &LocateOptions,
     bounds: bool,
+    nearest: bool,
 ) -> Result<()> {
     let session = out.session;
     let query = session.world().structure_query(target)?;
-    let found = session.locate_structure(&query, from, options)?;
+    let found = if nearest {
+        session.nearest_structure(&query, from, options)?
+    } else {
+        session.locate_structure(&query, from, options)?
+    };
     // Each hit's layout, where asked for and known.
     let layouts = found
         .hits
@@ -47,6 +52,7 @@ pub fn structure(
             "locate structure",
             json::StructureAnswer {
                 target,
+                mode: if nearest { "nearest" } else { "locate" },
                 from,
                 radius: options.radius,
                 confirmed: options.confirm,
@@ -56,7 +62,8 @@ pub fn structure(
             },
         );
     }
-    out!("{target}{}", out.context(Some(from)));
+    let mode = if nearest { "nearest " } else { "" };
+    out!("{mode}{target}{}", out.context(Some(from)));
     if found.hits.is_empty() {
         out!("  none within {} rings", options.radius);
         return Ok(());
@@ -108,10 +115,14 @@ pub fn structure(
         } else {
             "Candidates depend on terrain, which --unconfirmed leaves undecided, or a tied biome."
         };
-        out!(
-            "{why} The game's answer is the first of these it generates, usually the first \
-             listed{rest}"
-        );
+        if nearest {
+            out!("{why} The nearest is the first of these that generates{rest}");
+        } else {
+            out!(
+                "{why} The game's answer is the first of these it generates, usually the first \
+                 listed{rest}"
+            );
+        }
     }
     Ok(())
 }

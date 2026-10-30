@@ -326,7 +326,7 @@ impl App {
             placed.push((at, 10.0, Picked::Spawn(&spawn)));
         }
         if let Some(Ok(found)) = &self.found {
-            for hit in &found.hits {
+            for hit in found.hits.iter().chain(&found.nearest) {
                 let at = markers::pixel_centre(&view, centre, [hit.x, hit.z]);
                 placed.push((at, 10.0, Picked::Hit(hit)));
             }
@@ -972,6 +972,9 @@ pub(super) fn describe(ui: &mut egui::Ui, picked: &Picked<'_>) {
                 "{} {y} {} · {} blocks away",
                 hit.x, hit.z, hit.blocks_away
             )));
+            if let Some(answer) = hit.answer {
+                ui.label(answer);
+            }
             if !hit.certain {
                 ui.label("Candidate: the game's answer is the first of these it confirms.");
             }

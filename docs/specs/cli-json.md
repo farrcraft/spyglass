@@ -38,15 +38,18 @@ Each warning is `{kind, message}`: `message` is for people, `kind` one of `no_bu
 
 ## `locate structure`
 
-| Field            | Type        | Meaning                                                                                                                                           |
-| ---------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `target`         | string      | The argument as given: a structure id or `#tag`.                                                                                                  |
-| `from`           | `[x, y, z]` | Where the search ran from.                                                                                                                        |
-| `radius`         | int         | Rings of placement cells searched (100 is `/locate`'s).                                                                                           |
-| `confirmed`      | bool        | Whether terrain decided each candidate ([locate.md](locate.md#confirmed-mode)): true unless `--unconfirmed`.                                      |
-| `hits`           | array       | Where the game's answer may be, in its search order ([locate.md](locate.md#structures)).                                                          |
-| `complete`       | bool        | Whether the search ended where the game's does. If true, the game's answer is one of `hits` (or nothing, if every hit is a candidate it rejects). |
-| `certain_answer` | int or null | Index into `hits` of the game's answer if every candidate fails.                                                                                  |
+| Field            | Type        | Meaning                                                                                                                                             |
+| ---------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `target`         | string      | The argument as given: a structure id or `#tag`.                                                                                                    |
+| `mode`           | string      | `locate`, the game's `/locate` answer; or `nearest` with `--nearest` ([locate.md](locate.md#nearest)), which changes the meaning of the next three. |
+| `from`           | `[x, y, z]` | Where the search ran from.                                                                                                                          |
+| `radius`         | int         | Rings of placement cells searched (100 is `/locate`'s).                                                                                             |
+| `confirmed`      | bool        | Whether terrain decided each candidate ([locate.md](locate.md#confirmed-mode)): true unless `--unconfirmed`.                                        |
+| `hits`           | array       | Where the game's answer may be, in its search order ([locate.md](locate.md#structures)).                                                            |
+| `complete`       | bool        | Whether the search ended where the game's does. If true, the game's answer is one of `hits` (or nothing, if every hit is a candidate it rejects).   |
+| `certain_answer` | int or null | Index into `hits` of the game's answer if every candidate fails.                                                                                    |
+
+With `mode` `nearest`, `hits` are nearest first, ending at the nearest certain start, which `certain_answer` points at. `complete` means the nearest start that generates is one of `hits`.
 
 Each hit:
 

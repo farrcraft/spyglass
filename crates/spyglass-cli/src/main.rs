@@ -125,13 +125,15 @@ fn run_locate(what: &Locate) -> Result<()> {
             radius,
             unconfirmed,
             bounds,
+            nearest,
             ..
         } => {
             let options = spyglass::LocateOptions {
                 radius: *radius,
                 confirm: !unconfirmed,
             };
-            locate::structure(&out, target, out.origin(from.from)?, &options, *bounds)?;
+            let from = out.origin(from.from)?;
+            locate::structure(&out, target, from, &options, *bounds, *nearest)?;
         }
         Locate::Biome {
             biome,

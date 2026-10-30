@@ -576,6 +576,32 @@ impl App {
         let Some(world) = self.world else {
             return;
         };
+        // A tag (from settings written by hand or by `cargo xtask viewer-timing`) becomes its
+        // members, so the structure list shows what's marked and can turn each off. One with
+        // no members here is kept for the dimensions that have them.
+        let mut chosen: Vec<String> = Vec::new();
+        for s in &self.settings.structures {
+            let members = if s.starts_with('#') {
+                world
+                    .structure_query(s)
+                    .and_then(|q| {
+                        world
+                            .query_structures(&q)
+                            .map(|ids| ids.into_iter().map(str::to_string).collect())
+                    })
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            if members.is_empty() {
+                chosen.push(s.clone());
+            } else {
+                chosen.extend(members);
+            }
+        }
+        chosen.sort();
+        chosen.dedup();
+        self.settings.structures = chosen;
         let queries: Vec<StructureQuery> = self
             .settings
             .structures

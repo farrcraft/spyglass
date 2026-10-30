@@ -324,6 +324,10 @@ pub enum Locate {
         /// ancient cities, trial chambers and others). The first use loads the template pools.
         #[arg(long)]
         bounds: bool,
+        /// Answer with the nearest start, not `/locate`'s: the game's `/locate` takes the first
+        /// it finds in its search order, which isn't always the nearest.
+        #[arg(long)]
+        nearest: bool,
     },
     /// The nearest biome, searched in 3D from `--from`, as `/locate biome` does.
     Biome {

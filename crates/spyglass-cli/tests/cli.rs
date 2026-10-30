@@ -92,6 +92,22 @@ fn structures() {
     assert_eq!(v["complete"], true);
     assert_eq!(v["certain_answer"], 0);
     assert_eq!(v["hits"].as_array().unwrap().len(), 1);
+    assert_eq!(v["mode"], "locate");
+    // /locate takes the first city in its ring's scan order; another is nearer.
+    let args = ["locate", "structure", "ancient_city", "--seed", "12345"];
+    let v = json(&args);
+    assert_eq!(
+        v["hits"][0]["position"],
+        serde_json::json!({"x": -288, "z": -288})
+    );
+    let v = json(&[&args[..], &["--nearest"]].concat());
+    assert_eq!(v["mode"], "nearest");
+    assert_eq!(v["certain_answer"], 0);
+    assert_eq!(
+        v["hits"][0]["position"],
+        serde_json::json!({"x": 176, "z": -176})
+    );
+    assert_eq!(v["hits"][0]["blocks_away"], 248);
 
     let out = text(&game(&[
         "locate",

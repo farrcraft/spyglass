@@ -32,6 +32,8 @@ pub struct Hit {
     pub certain: bool,
     /// The distance `/locate` prints.
     pub blocks_away: i32,
+    /// Which answer a structure's certain hit is: "Nearest", "/locate's answer" or both.
+    pub answer: Option<&'static str>,
 }
 
 /// A locate's answer.
@@ -41,12 +43,33 @@ pub struct Found {
     pub from: [i32; 3],
     /// In the game's search order.
     pub hits: Vec<Hit>,
+    /// A structure's nearest start, with the candidates nearer than it, nearest first; empty
+    /// where it's `/locate`'s answer too, or for a biome.
+    pub nearest: Vec<Hit>,
     /// What to say about the answer as a whole, if anything.
     pub note: Option<String>,
 }
 
-/// Runs `/locate` for `target` from `from`, with the game's radius; structure candidates are
-/// decided with the seed's terrain if `confirm`.
+/// A structure search's hits as the viewer lists them, with `answer` on the certain one.
+fn structure_hits(found: &spyglass::StructureLocate, answer: &'static str) -> Vec<Hit> {
+    found
+        .hits
+        .iter()
+        .enumerate()
+        .map(|(i, h)| Hit {
+            x: h.start.position[0],
+            y: None,
+            z: h.start.position[2],
+            what: h.start.structures.join(" or "),
+            certain: h.start.certain,
+            blocks_away: h.blocks_away,
+            answer: (found.certain_answer == Some(i)).then_some(answer),
+        })
+        .collect()
+}
+
+/// Runs `/locate` for `target` from `from`, with the game's radius, and for a structure the
+/// nearest start too; structure candidates are decided with the seed's terrain if `confirm`.
 pub fn run(
     session: &Session<'_>,
     target: Target,
@@ -54,31 +77,32 @@ pub fn run(
     confirm: bool,
 ) -> Result<Found, String> {
     let world = session.world();
-    let (hits, note) = match &target {
+    let (hits, nearest, note) = match &target {
         Target::Structure(id) => {
             let query = world.structure_query(id).map_err(|e| e.to_string())?;
+            let options = spyglass::LocateOptions {
+                radius: LOCATE_RADIUS,
+                confirm,
+            };
             let found = session
-                .locate_structure(
-                    &query,
-                    from,
-                    &spyglass::LocateOptions {
-                        radius: LOCATE_RADIUS,
-                        confirm,
-                    },
-                )
+                .locate_structure(&query, from, &options)
                 .map_err(|e| e.to_string())?;
-            let hits = found
-                .hits
-                .iter()
-                .map(|h| Hit {
-                    x: h.start.position[0],
-                    y: None,
-                    z: h.start.position[2],
-                    what: h.start.structures.join(" or "),
-                    certain: h.start.certain,
-                    blocks_away: h.blocks_away,
-                })
-                .collect::<Vec<_>>();
+            let near = session
+                .nearest_structure(&query, from, &options)
+                .map_err(|e| e.to_string())?;
+            let at =
+                |l: &spyglass::StructureLocate| l.certain_answer.map(|i| l.hits[i].start.position);
+            let (hits, nearest) = if at(&found) == at(&near) {
+                (
+                    structure_hits(&found, "Nearest, and /locate's answer"),
+                    Vec::new(),
+                )
+            } else {
+                (
+                    structure_hits(&found, "/locate's answer"),
+                    structure_hits(&near, "Nearest"),
+                )
+            };
             let note = if hits.is_empty() {
                 Some(format!(
                     "None within {LOCATE_RADIUS} rings of placement cells."
@@ -99,10 +123,16 @@ pub fn run(
                      biome. The game's answer is the first of these it generates."
                         .to_string()
                 })
+            } else if !nearest.is_empty() {
+                Some(
+                    "/locate takes the first start in its search order, which isn't always the \
+                     nearest."
+                        .to_string(),
+                )
             } else {
                 None
             };
-            (hits, note)
+            (hits, nearest, note)
         }
         Target::Biome(id) => {
             let query = world.biome_query(id).map_err(|e| e.to_string())?;
@@ -123,6 +153,7 @@ pub fn run(
                     },
                     certain: h.certain,
                     blocks_away: h.blocks_away,
+                    answer: None,
                 })
                 .collect::<Vec<_>>();
             let note = if hits.is_empty() {
@@ -135,13 +166,14 @@ pub fn run(
             } else {
                 None
             };
-            (hits, note)
+            (hits, Vec::new(), note)
         }
     };
     Ok(Found {
         target,
         from,
         hits,
+        nearest,
         note,
     })
 }
@@ -198,6 +230,36 @@ mod tests {
             );
             assert_eq!(found.hits[0].blocks_away, first.blocks_away);
             assert_eq!(found.hits[0].certain, first.start.certain);
+
+            // The nearest is listed apart only where it isn't /locate's answer.
+            let near = session
+                .nearest_structure(
+                    &query,
+                    from,
+                    &spyglass::LocateOptions {
+                        radius: LOCATE_RADIUS,
+                        confirm,
+                    },
+                )
+                .unwrap();
+            let answer = |hits: &[Hit], label| {
+                hits.iter()
+                    .find(|h| h.answer == Some(label))
+                    .map(|h| [h.x, h.z])
+            };
+            let nearest = near.certain_answer.map(|i| {
+                let p = near.hits[i].start.position;
+                [p[0], p[2]]
+            });
+            if found.nearest.is_empty() {
+                assert_eq!(
+                    answer(&found.hits, "Nearest, and /locate's answer"),
+                    nearest
+                );
+            } else {
+                assert_eq!(answer(&found.nearest, "Nearest"), nearest);
+                assert!(answer(&found.hits, "/locate's answer").is_some());
+            }
         }
 
         let found = run(

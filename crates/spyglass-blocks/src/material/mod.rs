@@ -24,7 +24,9 @@ use spyglass_terrain::Terrain;
 
 pub use rule::{Condition, OreVein, Rule, RuleLoader};
 
+use crate::carver::CarvingMask;
 use crate::chunk::Chunk;
+use crate::state;
 use crate::state::{Palette, State};
 use crate::temperature::{Climate, Temperature};
 use crate::zoom::BiomeZoom;
@@ -57,14 +59,15 @@ struct Fixed {
     light_gray_terracotta: State,
     packed_ice: State,
     snow_block: State,
+    dirt: State,
 }
 
 /// A dimension's material rule and what `MaterialSystem` needs besides, seed-independent.
 #[derive(Debug, Clone)]
 pub struct MaterialSettings {
     rule: Rule,
-    /// `default_block`.
-    default_block: State,
+    /// `default_block`; 26.4's noise settings have none, and leave solid positions to the rule.
+    default_block: Option<State>,
     sea_level: i32,
     /// The router's `chunk_surface_level`, the material system's preliminary surface; `None` for
     /// 26.2's surface rules, whose preliminary surface is the terrain's.
@@ -92,19 +95,13 @@ impl MaterialSettings {
             .resource(NOISE_SETTINGS, &id)
             .map_err(|e| root.error(e.into()))?;
         let settings = object(&json, &root)?;
-        // 26.4's noise settings leave the default block to the rule, which its terrain builder
-        // runs with the carvers (`docs/specs/material.md#264`).
-        if !settings.contains_key("default_block") {
-            return Err(root.error(LoadErrorKind::Unsupported {
-                what: "noise settings without a default_block, as 26.4's, in",
-                name: "the material rule".to_string(),
-            }));
-        }
         let mut loader = RuleLoader::new(resources, palette);
-        let default_block = loader.state(
-            field(settings, "default_block", &root)?,
-            &root.child("default_block"),
-        )?;
+        // 26.4's noise settings leave solid positions to the rule, which its terrain builder runs
+        // with the carvers (`docs/specs/material.md#264`).
+        let default_block = match settings.get("default_block") {
+            None => None,
+            Some(json) => Some(loader.state(json, &root.child("default_block"))?),
+        };
         let sea_level = int(
             field(settings, "sea_level", &root)?,
             &root.child("sea_level"),
@@ -156,6 +153,7 @@ impl MaterialSettings {
             light_gray_terracotta: palette.state("minecraft:light_gray_terracotta"),
             packed_ice: palette.state("minecraft:packed_ice"),
             snow_block: palette.state("minecraft:snow_block"),
+            dirt: palette.state("minecraft:dirt"),
         };
         Ok(MaterialSettings {
             rule,
@@ -169,8 +167,9 @@ impl MaterialSettings {
         })
     }
 
-    /// The default block's state.
-    pub fn default_block(&self) -> State {
+    /// The default block's state; `None` for 26.4's, whose chunks are built by
+    /// [`BoundMaterial::build_terrain`].
+    pub fn default_block(&self) -> Option<State> {
         self.default_block
     }
 
@@ -719,7 +718,7 @@ pub struct BoundMaterial {
     family: Family,
     world: World,
     bands: Vec<State>,
-    default_block: State,
+    default_block: Option<State>,
     sea_level: i32,
     zoom: BiomeZoom,
     temperature: Temperature,
@@ -1229,7 +1228,7 @@ impl BoundMaterial {
                         // 26.2 tries the rule only on the default block itself, so the noise
                         // fill's ore veins stay; from 26.3, on every stone within the level.
                         let tried = if v1_21 {
-                            state == self.default_block
+                            Some(state) == self.default_block
                         } else {
                             (min_y..=max_y).contains(&y)
                         };
@@ -1249,7 +1248,8 @@ impl BoundMaterial {
                 }
                 if self.frozen_oceans.contains(&Some(biome)) {
                     let min_surface = c.min_surface_level();
-                    self.frozen_ocean_extension(chunk, palette, min_surface, biome, x, z, start);
+                    let column = [x, z, start];
+                    self.frozen_ocean_extension(chunk, palette, min_surface, biome, column, None);
                 }
             }
         }
@@ -1275,7 +1275,10 @@ impl BoundMaterial {
         if start > top {
             return;
         }
-        let default = palette.block_id(self.default_block);
+        let default_block = self
+            .default_block
+            .expect("noise settings filled by default block have one");
+        let default = palette.block_id(default_block);
         let mut y = top;
         while y >= chunk.min_y {
             let state = chunk.get([x, y, z]);
@@ -1289,23 +1292,22 @@ impl BoundMaterial {
         }
         let mut y = top;
         while y >= chunk.min_y && palette.is_air(chunk.get([x, y, z])) {
-            chunk.set(palette, [x, y, z], self.default_block);
+            chunk.set(palette, [x, y, z], default_block);
             y -= 1;
         }
     }
 
     /// `frozenOceanExtension`: an iceberg of packed ice, capped with snow, over and under the
     /// sea where the iceberg noises are high.
-    #[allow(clippy::too_many_arguments)]
+    /// From 26.4, the iceberg places nothing at positions `mask` carves.
     fn frozen_ocean_extension(
         &self,
         chunk: &mut Chunk,
         palette: &Palette,
         min_surface_level: i32,
         biome: BiomeId,
-        x: i32,
-        z: i32,
-        start: i32,
+        [x, z, start]: [i32; 3],
+        mask: Option<&CarvingMask>,
     ) {
         // dcmpg/ifgt: NaN goes on.
         let Some((pillar, roof)) = self.family.pillar(true, x, z, |p| p > 1.8 || p.is_nan()) else {
@@ -1350,13 +1352,281 @@ impl BoundMaterial {
                     && (!v1_21 || bottom != 0.0)
                     && random.next_double() > 0.15);
             if place {
-                if snow <= max_snow && y > min_snow_y {
-                    chunk.set(palette, [x, y, z], self.fixed.snow_block);
+                // 26.4's block column skips carved positions, after the draws and the count.
+                let carved = mask.is_some_and(|m| m.is_carved(x & 15, y, z & 15));
+                let block = if snow <= max_snow && y > min_snow_y {
                     snow += 1;
+                    self.fixed.snow_block
                 } else {
-                    chunk.set(palette, [x, y, z], self.fixed.packed_ice);
+                    self.fixed.packed_ice
+                };
+                if !carved {
+                    chunk.set(palette, [x, y, z], block);
                 }
             }
+            y -= 1;
+        }
+    }
+}
+
+/// What 26.4's `NoiseChunk.prepareColumn` gives at one y: the aquifer's answer, solid yet
+/// undecided, or a fluid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Slot {
+    /// `NoiseColumn.AIR`.
+    Air,
+    /// `NoiseColumn.SOLID`: the rule decides.
+    Solid,
+    /// A fluid state.
+    Fluid(State),
+}
+
+/// 26.4's `NoiseColumn`: one column of the chunk's noise, up to its top non-air y, with the
+/// surface gradients from the chunk's other columns' tops.
+#[derive(Debug, Clone)]
+pub struct NoiseColumn {
+    /// The y of index 0.
+    pub min_y: i32,
+    /// From `min_y` up.
+    pub slots: Vec<Slot>,
+    /// `topIndexY`: the top non-air index, or −1.
+    pub top: i32,
+    /// `surfaceGradientX` and `surfaceGradientZ`.
+    pub gradient: [i32; 2],
+}
+
+impl NoiseColumn {
+    /// `getBlock(y)`: air outside the column.
+    fn at(&self, y: i32) -> Slot {
+        usize::try_from(i64::from(y) - i64::from(self.min_y))
+            .ok()
+            .and_then(|i| self.slots.get(i).copied())
+            .unwrap_or(Slot::Air)
+    }
+
+    /// `setSolid(y)`, which raises the top.
+    fn set_solid(&mut self, y: i32) {
+        let i = y - self.min_y;
+        self.slots[i as usize] = Slot::Solid;
+        self.top = self.top.max(i);
+    }
+
+    /// `getCeilingBelowIndex(i)`: one above the first index below `i` that isn't solid, or
+    /// `WAY_BELOW_MIN_Y` if all are.
+    fn ceiling_below(&self, i: i32) -> i32 {
+        (0..i)
+            .rev()
+            .find(|&j| self.slots[j as usize] != Slot::Solid)
+            .map_or(WAY_BELOW_MIN_Y, |j| j + 1)
+    }
+}
+
+impl BoundMaterial {
+    /// 26.4's `ChunkTerrainBuilder.fillChunk`: each column of `columns` (by `(z << 4) + x`,
+    /// z outer) into the empty `chunk`, with the rule and, where `mask` carves, the carving.
+    /// `substance` is the aquifer's answer at a carved position at density 0: a state, or
+    /// `None` where it's solid. `uncarvable` is by state.
+    #[allow(clippy::too_many_arguments)]
+    pub fn build_terrain(
+        &self,
+        chunk: &mut Chunk,
+        palette: &Palette,
+        biomes: &ChunkBiomes<'_>,
+        columns: &mut [NoiseColumn],
+        mask: Option<&CarvingMask>,
+        uncarvable: &[bool],
+        substance: &mut dyn FnMut([i32; 3]) -> Option<State>,
+    ) {
+        let [cx, cz] = chunk.pos;
+        let (x0, z0) = (cx.wrapping_shl(4), cz.wrapping_shl(4));
+        let (min_y, max_y) = (chunk.min_y, chunk.min_y + chunk.height - 1);
+        for dz in 0..16 {
+            for dx in 0..16 {
+                let (x, z) = (x0 + dx, z0 + dz);
+                let column = &mut columns[(dz * 16 + dx) as usize];
+                let start = column.min_y + column.top + 1;
+                // ChunkAccess.getBiome: the stored biome, at y clamped to the level.
+                let start_pos = [x, start.clamp(min_y, max_y), z];
+                let (biome, start_tied) = self.biome_at(biomes, start_pos);
+                if start_tied {
+                    let candidates = biomes.candidates(self.zoom.quart(start_pos));
+                    let extended = |b: &BiomeId| {
+                        Some(*b) == self.eroded_badlands || self.frozen_oceans.contains(&Some(*b))
+                    };
+                    if candidates.iter().any(extended) {
+                        for y in min_y..=max_y {
+                            chunk.mark_uncertain([x, y, z]);
+                        }
+                    }
+                }
+                if Some(biome) == self.eroded_badlands {
+                    self.extend_eroded_badlands(column, x, z);
+                }
+                let frozen = self.frozen_oceans.contains(&Some(biome));
+                let min_surface = self.fill_column(
+                    chunk,
+                    biomes,
+                    column,
+                    [x, z],
+                    mask,
+                    uncarvable,
+                    substance,
+                    frozen,
+                );
+                if let Some(min_surface) = min_surface {
+                    self.frozen_ocean_extension(
+                        chunk,
+                        palette,
+                        min_surface,
+                        biome,
+                        [x, z, start],
+                        mask,
+                    );
+                }
+            }
+        }
+    }
+
+    /// `ChunkTerrainBuilder.fillColumn`: the column top down. Fluids go in as they are; each
+    /// solid position in the level gets the rule's block, or where it's carved and the block
+    /// isn't `#uncarvable`, the aquifer's substance. Dirt under a carved top block is tried
+    /// again as the surface. Returns the minimum surface level if `frozen`, for the iceberg.
+    #[allow(clippy::too_many_arguments)]
+    fn fill_column(
+        &self,
+        chunk: &mut Chunk,
+        biomes: &ChunkBiomes<'_>,
+        column: &NoiseColumn,
+        [x, z]: [i32; 2],
+        mask: Option<&CarvingMask>,
+        uncarvable: &[bool],
+        substance: &mut dyn FnMut([i32; 3]) -> Option<State>,
+        frozen: bool,
+    ) -> Option<i32> {
+        let (min_y, max_y) = (chunk.min_y, chunk.min_y + chunk.height - 1);
+        let cell = Cell::new(None);
+        let mut c = Context {
+            system: self,
+            biomes,
+            terrain: None,
+            cell: &cell,
+            x,
+            z,
+            gradient: Cell::new(column.gradient),
+            gradient_read: Cell::new(true),
+            surface_depth: self.surface_depth(x, z),
+            surface_secondary: Cell::new(None),
+            min_surface_level: Cell::new(None),
+            y: 0,
+            stone_depth_above: 0,
+            stone_depth_below: 0,
+            water_height: i32::MIN,
+            biome: Cell::new(None),
+            tied: Cell::new(false),
+        };
+        let mut stone_depth_above = 0;
+        let mut water_height = i32::MIN;
+        let mut next_ceiling = i32::MAX;
+        let mut dirt = false;
+        for i in (0..=column.top).rev() {
+            let y = column.min_y + i;
+            let pos = [x, y, z];
+            let in_level = (min_y..=max_y).contains(&y);
+            let carved = mask.is_some_and(|m| m.is_carved(x & 15, y, z & 15));
+            match column.slots[i as usize] {
+                Slot::Air => {
+                    stone_depth_above = 0;
+                    water_height = i32::MIN;
+                    dirt &= carved;
+                    continue;
+                }
+                Slot::Fluid(fluid) => {
+                    if water_height == i32::MIN {
+                        water_height = y + 1;
+                    }
+                    if in_level {
+                        chunk.put(pos, fluid);
+                    }
+                    dirt &= carved;
+                    continue;
+                }
+                Slot::Solid => {}
+            }
+            if i <= next_ceiling {
+                next_ceiling = column.ceiling_below(i);
+            }
+            stone_depth_above += 1;
+            if !in_level {
+                continue;
+            }
+            // Indices, not ys: with no ceiling, `WAY_BELOW_MIN_Y` is taken as an index.
+            let stone_depth_below = i.wrapping_sub(next_ceiling).wrapping_add(1);
+            c.y = y;
+            c.stone_depth_above = stone_depth_above;
+            c.stone_depth_below = stone_depth_below;
+            c.water_height = water_height;
+            c.biome.set(None);
+            c.tied.set(false);
+            let mut result = self.apply(&self.rule, &c);
+            let mut tied = c.tied.get();
+            // A carved position the aquifer finds solid gets the rule's block after all.
+            if carved
+                && result.is_none_or(|s| !uncarvable[usize::from(s)])
+                && let Some(s) = substance(pos)
+            {
+                dirt |= stone_depth_above == 1;
+                if s != state::AIR {
+                    chunk.put(pos, s);
+                }
+                if tied {
+                    chunk.mark_uncertain(pos);
+                }
+                continue;
+            }
+            if dirt {
+                if result == Some(self.fixed.dirt) {
+                    c.stone_depth_above = 1;
+                    c.biome.set(None);
+                    c.tied.set(false);
+                    result = self.apply(&self.rule, &c);
+                    tied |= c.tied.get();
+                }
+                dirt = false;
+            }
+            if let Some(s) = result {
+                chunk.put(pos, s);
+            }
+            if tied {
+                chunk.mark_uncertain(pos);
+            }
+        }
+        frozen.then(|| c.min_surface_level())
+    }
+
+    /// 26.4's `SurfaceExtensions.extendErodedBadlands`: the pillar, as solid positions of the
+    /// noise column, for the rule to decide.
+    fn extend_eroded_badlands(&self, column: &mut NoiseColumn, x: i32, z: i32) {
+        // dcmpg/ifgt: NaN goes on.
+        let Some((pillar, roof)) = self.family.pillar(false, x, z, |p| p > 0.0 || p.is_nan())
+        else {
+            return;
+        };
+        let top = floor_f64(64.0 + (pillar * pillar * 2.5).min((roof * 50.0).ceil() + 24.0));
+        if column.min_y + column.top + 1 > top {
+            return;
+        }
+        let mut y = top;
+        while y >= column.min_y {
+            match column.at(y) {
+                Slot::Solid => break,
+                Slot::Fluid(s) if s == state::WATER => return,
+                _ => {}
+            }
+            y -= 1;
+        }
+        let mut y = top;
+        while y >= column.min_y && column.at(y) == Slot::Air {
+            column.set_solid(y);
             y -= 1;
         }
     }

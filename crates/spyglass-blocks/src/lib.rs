@@ -14,12 +14,13 @@ use std::collections::HashMap;
 use spyglass_biome::{BiomeRegion, BiomeSource, Biomes};
 use spyglass_data::bundle::Bundle;
 use spyglass_data::codec::LoadError;
+use spyglass_rng::LegacyRandomSource;
 use spyglass_rng::worldgen::large_feature;
 use spyglass_terrain::{Block, BlockColumn, Terrain, TerrainSettings, VeinBlock};
 
-use carver::{CarverSettings, CarvingMask, Legacy, Sink};
+use carver::{Carver, CarverSettings, CarvingMask, Legacy, Sink};
 pub use chunk::Chunk;
-use material::{BoundMaterial, ChunkBiomes, MaterialSettings};
+use material::{BoundMaterial, ChunkBiomes, MaterialSettings, NoiseColumn, Slot};
 pub use state::{Palette, State};
 use temperature::Climate;
 
@@ -38,6 +39,8 @@ pub struct BlockSettings {
     carvers: Carving,
     /// `minecraft:cave_air`, which 26.2's Nether carver fills with.
     cave_air: State,
+    /// Switch `carving_mask_level_bounds`.
+    mask_level_bounds: bool,
 }
 
 /// The carvers, and what applying a carving mask needs (26.3 on).
@@ -112,6 +115,8 @@ impl BlockSettings {
             veins,
             carvers,
             cave_air,
+            mask_level_bounds: spyglass_density::Resources::behavior(bundle)
+                .carving_mask_level_bounds,
         })
     }
 
@@ -170,14 +175,21 @@ impl ChunkGenerator<'_> {
 
     /// The chunk at chunk `(cx, cz)` after the noise fill and the material rule, without carvers.
     pub fn chunk(&self, cx: i32, cz: i32) -> Chunk {
+        if self.settings.material.default_block().is_none() {
+            return self.built_chunk(cx, cz, false);
+        }
         self.surface(cx, cz).0
     }
 
     /// The chunk at chunk `(cx, cz)` after the noise fill, the material rule and carvers
-    /// (`docs/specs/carvers.md`): from 26.3, carved into a mask and applied after
-    /// (`generateCarvers`); in 26.2, straight into the chunk (`applyCarvers`).
+    /// (`docs/specs/carvers.md`): in 26.3, carved into a mask and applied after
+    /// (`generateCarvers`); in 26.2, straight into the chunk (`applyCarvers`); in 26.4, the mask
+    /// applied with the rule (`ChunkTerrainBuilder`).
     pub fn carved_chunk(&self, cx: i32, cz: i32) -> Chunk {
         let settings = self.settings;
+        if settings.material.default_block().is_none() {
+            return self.built_chunk(cx, cz, true);
+        }
         let carving = &settings.carvers;
         let v1_21 = settings.material.is_v1_21();
         let (mut chunk, region) = self.surface(cx, cz);
@@ -189,6 +201,48 @@ impl ChunkGenerator<'_> {
         // What a tied carver biome could carve instead.
         let mut doubt = CarvingMask::new(anchors.min_y + 1, top);
         let mut columns: HashMap<(i32, i32), BlockColumn> = HashMap::new();
+        self.visit_starts(
+            [cx, cz],
+            &mut doubt,
+            |carver, legacy, random, start| match legacy {
+                Some(legacy) if v1_21 => {
+                    let mut direct = Direct {
+                        generator: self,
+                        chunk: &mut chunk,
+                        mask: &mut mask,
+                        legacy,
+                        lava_level: legacy.lava_level.resolve(anchors),
+                        nether_lava: anchors.min_y + 31,
+                        biomes: &biomes,
+                        columns: &mut columns,
+                        grass: false,
+                    };
+                    carver.carve(anchors, random, [cx, cz], start, &mut direct);
+                }
+                _ => carver.carve(anchors, random, [cx, cz], start, &mut mask),
+            },
+        );
+        if !v1_21 && !mask.is_empty() {
+            self.apply_carving_mask(&mut chunk, &mask, carving, &biomes, &mut columns);
+        }
+        Self::mark_doubt(&mut chunk, &doubt);
+        chunk
+    }
+
+    /// The carvers that start within 8 chunks of `chunk`, x outer and z inner, each with its
+    /// seeded random once `isStartChunk` passed. Where a start chunk's carver biome is tied and
+    /// its candidates have different carvers, each candidate's carving goes into `doubt`.
+    fn visit_starts(
+        &self,
+        [cx, cz]: [i32; 2],
+        doubt: &mut CarvingMask,
+        mut carve: impl FnMut(&Carver, Option<&Legacy>, &mut LegacyRandomSource, [i32; 2]),
+    ) {
+        let carving = &self.settings.carvers;
+        let anchors = self.settings.terrain.anchors();
+        let random = |i: usize, start: [i32; 2]| {
+            large_feature(self.seed.wrapping_add(i as i64), start[0], start[1])
+        };
         for dx in -8..=8 {
             for dz in -8..=8 {
                 let start = [cx.wrapping_add(dx), cz.wrapping_add(dz)];
@@ -198,27 +252,9 @@ impl ChunkGenerator<'_> {
                         .biome_at(start[0].wrapping_mul(4), 0, start[1].wrapping_mul(4));
                 let first = lookup.biome();
                 for (i, (carver, legacy)) in carving.carvers.of(first).enumerate() {
-                    let mut random =
-                        large_feature(self.seed.wrapping_add(i as i64), start[0], start[1]);
-                    if !carver.is_start_chunk(&mut random) {
-                        continue;
-                    }
-                    match legacy {
-                        Some(legacy) if v1_21 => {
-                            let mut direct = Direct {
-                                generator: self,
-                                chunk: &mut chunk,
-                                mask: &mut mask,
-                                legacy,
-                                lava_level: legacy.lava_level.resolve(anchors),
-                                nether_lava: anchors.min_y + 31,
-                                biomes: &biomes,
-                                columns: &mut columns,
-                                grass: false,
-                            };
-                            carver.carve(anchors, &mut random, [cx, cz], start, &mut direct);
-                        }
-                        _ => carver.carve(anchors, &mut random, [cx, cz], start, &mut mask),
+                    let mut random = random(i, start);
+                    if carver.is_start_chunk(&mut random) {
+                        carve(carver, legacy, &mut random, start);
                     }
                 }
                 if lookup
@@ -228,25 +264,105 @@ impl ChunkGenerator<'_> {
                 {
                     for &b in lookup.candidates() {
                         for (i, (carver, _)) in carving.carvers.of(b).enumerate() {
-                            let mut random =
-                                large_feature(self.seed.wrapping_add(i as i64), start[0], start[1]);
+                            let mut random = random(i, start);
                             if carver.is_start_chunk(&mut random) {
-                                carver.carve(anchors, &mut random, [cx, cz], start, &mut doubt);
+                                carver.carve(anchors, &mut random, [cx, cz], start, doubt);
                             }
                         }
                     }
                 }
             }
         }
-        if !v1_21 && !mask.is_empty() {
-            self.apply_carving_mask(&mut chunk, &mask, carving, &biomes, &mut columns);
-        }
-        let [x0, z0] = [cx.wrapping_shl(4), cz.wrapping_shl(4)];
+    }
+
+    /// Marks every position `doubt` carves, and the one below it, as uncertain.
+    fn mark_doubt(chunk: &mut Chunk, doubt: &CarvingMask) {
+        let [x0, z0] = chunk.pos.map(|c| c.wrapping_shl(4));
         for (x, z, y0, y1) in doubt.runs() {
             for y in y0 - 1..=y1 {
                 chunk.mark_uncertain([x0 + x, y, z0 + z]);
             }
         }
+    }
+
+    /// 26.4's `buildTerrain`: the chunk's noise columns, with carvers' mask if `carvers`, filled
+    /// by `ChunkTerrainBuilder` (`docs/specs/material.md#264`).
+    fn built_chunk(&self, cx: i32, cz: i32, carvers: bool) -> Chunk {
+        let settings = self.settings;
+        let (min_y, height) = (settings.terrain.level_min_y, settings.terrain.level_height);
+        let (x0, z0) = (cx.wrapping_shl(4), cz.wrapping_shl(4));
+        // NoiseChunk.prepareColumn: the aquifer's answer up to each column's top.
+        let mut columns: Vec<NoiseColumn> = Vec::with_capacity(256);
+        for dz in 0..16 {
+            for dx in 0..16 {
+                let column = self.terrain.base_column(x0 + dx, z0 + dz);
+                let slots: Vec<Slot> = column
+                    .blocks
+                    .iter()
+                    .map(|b| match b {
+                        Block::Air => Slot::Air,
+                        Block::Water => Slot::Fluid(state::WATER),
+                        Block::Lava => Slot::Fluid(state::LAVA),
+                        Block::Default | Block::Vein(_) => Slot::Solid,
+                    })
+                    .collect();
+                let top = slots
+                    .iter()
+                    .rposition(|s| *s != Slot::Air)
+                    .map_or(-1, |i| i as i32);
+                columns.push(NoiseColumn {
+                    min_y: column.min_y,
+                    slots,
+                    top,
+                    gradient: [0, 0],
+                });
+            }
+        }
+        // The gradients: the neighbours' tops within the chunk, before any pillar.
+        let tops: Vec<i32> = columns.iter().map(|c| c.top).collect();
+        let top = |dx: i32, dz: i32| tops[(dz * 16 + dx) as usize];
+        for dz in 0..16 {
+            for dx in 0..16 {
+                columns[(dz * 16 + dx) as usize].gradient = [
+                    top((dx + 1).min(15), dz) - top((dx - 1).max(0), dz),
+                    top(dx, (dz + 1).min(15)) - top(dx, (dz - 1).max(0)),
+                ];
+            }
+        }
+        // generateCarvingMask: the bottom block and the top eight are left out, of the level
+        // or, in 26.4-snapshot-5, of the anchors' context (switch `carving_mask_level_bounds`).
+        let anchors = settings.terrain.anchors();
+        let (bottom, depth) = if settings.mask_level_bounds {
+            (min_y, height)
+        } else {
+            (anchors.min_y, anchors.height)
+        };
+        let mask_range = (bottom + 1, bottom + depth - 1 - 7);
+        let mut doubt = CarvingMask::new(mask_range.0, mask_range.1);
+        let mask = carvers.then(|| {
+            let mut mask = CarvingMask::new(mask_range.0, mask_range.1);
+            self.visit_starts([cx, cz], &mut doubt, |carver, _, random, start| {
+                carver.carve(anchors, random, [cx, cz], start, &mut mask);
+            });
+            mask
+        });
+        let mut chunk = Chunk::new([cx, cz], min_y, height);
+        let region = self.biomes.biomes_in(
+            [(x0 >> 2) - 1, min_y >> 2, (z0 >> 2) - 1],
+            [6, (height >> 2) as u32, 6],
+        );
+        let biomes = ChunkBiomes::new(&region, min_y, height);
+        let mut substances: HashMap<(i32, i32), BlockColumn> = HashMap::new();
+        self.material.build_terrain(
+            &mut chunk,
+            &settings.palette,
+            &biomes,
+            &mut columns,
+            mask.as_ref(),
+            &settings.carvers.uncarvable,
+            &mut |pos| self.substance(&mut substances, pos),
+        );
+        Self::mark_doubt(&mut chunk, &doubt);
         chunk
     }
 
@@ -325,7 +441,10 @@ impl ChunkGenerator<'_> {
         let settings = self.settings;
         let (min_y, height) = (settings.terrain.level_min_y, settings.terrain.level_height);
         let mut chunk = Chunk::new([cx, cz], min_y, height);
-        let default = settings.material.default_block();
+        let default = settings
+            .material
+            .default_block()
+            .expect("chunks filled by default block have one");
         let (x0, z0) = (cx.wrapping_shl(4), cz.wrapping_shl(4));
         for dz in 0..16 {
             for dx in 0..16 {

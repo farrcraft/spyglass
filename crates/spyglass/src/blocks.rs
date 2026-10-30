@@ -106,7 +106,7 @@ impl<'w> Session<'w> {
     /// The blocks of chunk `[x, z]`, as the game generates them before features, with or
     /// without carvers (`docs/specs/material.md`, `docs/specs/carvers.md`). Every query
     /// generates the whole chunk, which takes a while: keep the answer to ask about more than
-    /// one block. Versions whose material rule isn't ported, such as 26.4's, are an error.
+    /// one block.
     pub fn chunk_blocks(&self, chunk: [i32; 2], carvers: Carvers) -> Result<ChunkBlocks<'w>> {
         let generator = self.chunks()?;
         let [x, z] = chunk;

@@ -42,6 +42,7 @@ pub struct Cave {
     vertical_radius_multiplier: FloatProvider,
     start_vertical_radius_multiplier: FloatProvider,
     floor_level: FloatProvider,
+    trig: Trig,
 }
 
 /// `CanyonWorldCarver`'s fields.
@@ -57,6 +58,7 @@ pub struct Canyon {
     vertical_radius_default_factor: f32,
     vertical_radius_center_factor: f32,
     y_scale: FloatProvider,
+    trig: Trig,
 }
 
 /// What a 26.2 carver's `CarverConfiguration` adds to its shape: which blocks it carves and
@@ -88,12 +90,17 @@ impl CarverSettings {
         v1_21: bool,
     ) -> Result<Self, LoadError> {
         let family = usize::from(v1_21);
+        let trig = if resources.behavior().rounded_trig {
+            Trig::Rounded
+        } else {
+            Trig::Truncated
+        };
         let parse = |json: &Value, at: &At<'_>| -> Result<(Carver, Option<Legacy>), LoadError> {
             if v1_21 {
                 let (carver, legacy) = Carver::parse_v1_21(resources, json, at)?;
-                Ok((carver, Some(legacy)))
+                Ok((carver.with_trig(trig), Some(legacy)))
             } else {
-                Ok((Carver::parse(json, at)?, None))
+                Ok((Carver::parse(json, at)?.with_trig(trig), None))
             }
         };
         let mut settings = CarverSettings::default();
@@ -259,6 +266,7 @@ impl Carver {
                         Some(1.0),
                         &at.child("floor_level"),
                     )?,
+                    trig: Trig::Truncated,
                 }))
             }
             "minecraft:canyon" => {
@@ -291,6 +299,7 @@ impl Carver {
                     vertical_radius_default_factor: shape_float("vertical_radius_default_factor")?,
                     vertical_radius_center_factor: shape_float("vertical_radius_center_factor")?,
                     y_scale: shape_floats("y_scale")?,
+                    trig: Trig::Truncated,
                 }))
             }
             _ => {
@@ -356,6 +365,7 @@ impl Carver {
                         Some(1.0),
                         &at.child("floor_level"),
                     )?,
+                    trig: Trig::Truncated,
                 }))
             }
             "minecraft:canyon" => {
@@ -386,6 +396,15 @@ impl Carver {
                 nether,
             },
         ))
+    }
+
+    /// The version's `Mth.sin` and `Mth.cos`.
+    fn with_trig(mut self, trig: Trig) -> Self {
+        match &mut self {
+            Carver::Cave(c) => c.trig = trig,
+            Carver::Canyon(c) => c.trig = trig,
+        }
+        self
     }
 
     /// `isStartChunk`: `nextFloat() ≤ probability`.
@@ -523,24 +542,61 @@ impl CarvingMask {
     }
 }
 
-/// 26.3's `Mth.SIN`: `(float) Math.sin(i / 10430.378350470453)` for `i` in `0..65536`.
-fn sin_table() -> &'static [f32] {
-    static TABLE: OnceLock<Vec<f32>> = OnceLock::new();
-    TABLE.get_or_init(|| {
-        (0..65_536)
+/// `Mth.sin` and `Mth.cos` over the game's 65,536-entry sine table, as the version computes
+/// them (switch `rounded_trig`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Trig {
+    /// 26.3: `SIN[(int) ((long) (x · 10430.378350470453) & 65535)]`, and `cos` with 16,384
+    /// added before the cast; the table is `(float) Math.sin(i / 10430.378350470453)`.
+    Truncated,
+    /// From 26.4: the nearest entry (`+ 0.5`), of `−x` for negative `x` (`sin` negated); the
+    /// table's quarter turns are exactly 0, 1, 0 and −1.
+    Rounded,
+}
+
+/// The game's sine table: `(float) Math.sin(i / 10430.378350470453)`, with the quarter turns
+/// exact if `exact`.
+fn sin_table(exact: bool) -> &'static [f32] {
+    static TABLES: [OnceLock<Vec<f32>>; 2] = [OnceLock::new(), OnceLock::new()];
+    TABLES[usize::from(exact)].get_or_init(|| {
+        let mut table: Vec<f32> = (0..65_536)
             .map(|i| (f64::from(i) / 10_430.378_350_470_453).sin() as f32)
-            .collect()
+            .collect();
+        if exact {
+            for (i, v) in [(0, 0.0), (16_384, 1.0), (32_768, 0.0), (49_152, -1.0)] {
+                table[i] = v;
+            }
+        }
+        table
     })
 }
 
-/// 26.3's `Mth.sin(double)`: `SIN[(int) ((long) (x · 10430.378350470453) & 65535)]`.
-fn sin(x: f64) -> f32 {
-    sin_table()[((x * 10_430.378_350_470_453) as i64 & 65_535) as usize]
-}
+impl Trig {
+    /// The table entry at `(long) index & 65535`.
+    fn entry(self, index: f64) -> f32 {
+        sin_table(self == Trig::Rounded)[(index as i64 & 65_535) as usize]
+    }
 
-/// 26.3's `Mth.cos(double)`: `SIN[(int) ((long) (x · 10430.378350470453 + 16384) & 65535)]`.
-fn cos(x: f64) -> f32 {
-    sin_table()[((x * 10_430.378_350_470_453 + 16_384.0) as i64 & 65_535) as usize]
+    /// `Mth.sin(double)`.
+    pub fn sin(self, x: f64) -> f32 {
+        const K: f64 = 10_430.378_350_470_453;
+        match self {
+            Trig::Truncated => self.entry(x * K),
+            // dcmpl/iflt: NaN takes the negative branch.
+            Trig::Rounded if x >= 0.0 => self.entry(x * K + 0.5),
+            Trig::Rounded => -self.entry(-x * K + 0.5),
+        }
+    }
+
+    /// `Mth.cos(double)`.
+    pub fn cos(self, x: f64) -> f32 {
+        const K: f64 = 10_430.378_350_470_453;
+        match self {
+            Trig::Truncated => self.entry(x * K + 16_384.0),
+            Trig::Rounded if x >= 0.0 => self.entry(x * K + 16_384.0 + 0.5),
+            Trig::Rounded => self.entry(-x * K + 16_384.0 + 0.5),
+        }
+    }
 }
 
 /// `Mth.floor(double)`.
@@ -650,7 +706,7 @@ impl Cave {
                 let room_vertical = f64::from(self.room_vertical_radius_multiplier.sample(random));
                 let thickness = 1.0 + random.next_float() * 6.0;
                 // createRoom.
-                let h = 1.5 + f64::from(sin(1.570_796_370_506_286_6) * thickness);
+                let h = 1.5 + f64::from(self.trig.sin(1.570_796_370_506_286_6) * thickness);
                 carve_ellipsoid(chunk, x + 1.0, y, z, h, h * room_vertical, mask, skip);
                 tunnels += random.next_int_bounded(4);
             }
@@ -661,6 +717,7 @@ impl Cave {
                 let steps = range - random.next_int_bounded(range / 4);
                 let tunnel = Tunnel {
                     chunk,
+                    trig: self.trig,
                     horizontal,
                     vertical,
                     floor_level,
@@ -694,6 +751,7 @@ impl Cave {
 /// What a cave's tunnels share.
 struct Tunnel {
     chunk: [i32; 2],
+    trig: Trig,
     horizontal: f64,
     vertical: f64,
     floor_level: f64,
@@ -723,13 +781,15 @@ impl Tunnel {
         for i in step..count {
             let h = 1.5
                 + f64::from(
-                    sin(f64::from(std::f32::consts::PI * i as f32 / count as f32)) * thickness,
+                    self.trig
+                        .sin(f64::from(std::f32::consts::PI * i as f32 / count as f32))
+                        * thickness,
                 );
             let v = h * vertical_scale;
-            let cos_pitch = cos(f64::from(pitch));
-            x += f64::from(cos(f64::from(yaw)) * cos_pitch);
-            y += f64::from(sin(f64::from(pitch)));
-            z += f64::from(sin(f64::from(yaw)) * cos_pitch);
+            let cos_pitch = self.trig.cos(f64::from(pitch));
+            x += f64::from(self.trig.cos(f64::from(yaw)) * cos_pitch);
+            y += f64::from(self.trig.sin(f64::from(pitch)));
+            z += f64::from(self.trig.sin(f64::from(yaw)) * cos_pitch);
             pitch *= if steep { 0.92 } else { 0.7 };
             pitch += pitch_change * 0.1;
             yaw += yaw_change * 0.1;
@@ -834,15 +894,20 @@ impl Canyon {
         for i in 0..count {
             let h = 1.5
                 + f64::from(
-                    sin(f64::from(std::f32::consts::PI * i as f32 / count as f32)) * thickness,
+                    self.trig
+                        .sin(f64::from(std::f32::consts::PI * i as f32 / count as f32))
+                        * thickness,
                 );
             let v = h * y_scale;
             let h = h * f64::from(self.horizontal_radius_factor.sample(&mut random));
             let v = self.vertical_radius(&mut random, v, count as f32, i as f32);
-            let (cos_pitch, sin_pitch) = (cos(f64::from(pitch)), sin(f64::from(pitch)));
-            x += f64::from(cos(f64::from(yaw)) * cos_pitch);
+            let (cos_pitch, sin_pitch) = (
+                self.trig.cos(f64::from(pitch)),
+                self.trig.sin(f64::from(pitch)),
+            );
+            x += f64::from(self.trig.cos(f64::from(yaw)) * cos_pitch);
             y += f64::from(sin_pitch);
-            z += f64::from(sin(f64::from(yaw)) * cos_pitch);
+            z += f64::from(self.trig.sin(f64::from(yaw)) * cos_pitch);
             pitch *= 0.7;
             pitch += pitch_change * 0.05;
             yaw += yaw_change * 0.05;

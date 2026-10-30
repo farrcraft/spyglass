@@ -178,6 +178,15 @@ switches! {
     /// upscaling every block.
     upscale_offset_by_step, "density-functions.md#upscale", [5126..];
 
+    /// `Mth.sin` and `Mth.cos` round to the nearest entry of the sine table, take negative angles
+    /// by symmetry, and the table's quarter turns are exact, where 26.3 truncated the index.
+    rounded_trig, "carvers.md#shapes", [5125..];
+
+    /// The carving mask spans the level's heights (`LevelHeightAccessor`), where
+    /// 26.4-snapshot-5's spanned the vertical anchors' context: from 1 above the bottom to 7
+    /// below the top either way.
+    carving_mask_level_bounds, "carvers.md#264-the-carving-mask-with-the-rule", [5126..];
+
     /// A feature pool element's jigsaw is named `minecraft:bottom`, and attaches only to a parent
     /// jigsaw targeting that name exactly. Later versions leave the name empty, matching any target.
     feature_jigsaw_named_bottom, "structure-placement.md#jigsaw-assembly", [0..5023];

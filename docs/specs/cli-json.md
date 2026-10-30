@@ -99,7 +99,7 @@ The generator's heights, before structures, carvers, features and surface blocks
 
 ## `blocks`
 
-The blocks the game generates before structures and features ([material.md](material.md), [carvers.md](carvers.md)), for one block (`--at`), a column (`--column`) or a chunk (`--chunk`): after carvers, or before them with `--no-carvers`. Versions whose material rule isn't ported yet (26.4) are an error.
+The blocks the game generates before structures and features ([material.md](material.md), [carvers.md](carvers.md)), for one block (`--at`), a column (`--column`) or a chunk (`--chunk`): after carvers, or before them with `--no-carvers`.
 
 | Field     | Type | Meaning                                                           |
 | --------- | ---- | ----------------------------------------------------------------- |

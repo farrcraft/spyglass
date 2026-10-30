@@ -1,8 +1,8 @@
 # Carvers
 
-Status: draft. Covers 26.3's and 26.2's carvers (`net.minecraft.world.level.levelgen.carver` and `NoiseBasedChunkGenerator.generateCarvers`): which carvers reach a chunk, the caves and canyons they carve into a mask, and how the mask is applied to the chunk after the [material rule](material.md). Implemented in `spyglass-blocks`. It's checked against the oracle's [block golden files](oracle.md#block-golden-files) with carvers: every block of 26.3's and 26.2's golden chunks matches, except the blocks that depend on a [tied biome](material.md#ties) and [one](#open-questions) in 26.2. 26.4 is [below](#versions), and is still being ported.
+Status: draft. Covers 26.3's, 26.4's and 26.2's carvers (`net.minecraft.world.level.levelgen.carver` and `NoiseBasedChunkGenerator.generateCarvers`): which carvers reach a chunk, the caves and canyons they carve into a mask, and how the mask is applied to the chunk after the [material rule](material.md). Implemented in `spyglass-blocks`. It's checked against the oracle's [block golden files](oracle.md#block-golden-files) with carvers: every block of every supported version's golden chunks matches, except the blocks that depend on a [tied biome](material.md#ties) and [one](#open-questions) in 26.2.
 
-Ported from the 26.3 and 26.2 bytecode.
+Ported from the 26.3, 26.4 and 26.2 bytecode.
 
 ## Data
 
@@ -38,7 +38,7 @@ For chunk `C`, `generateCarvers` visits every chunk `S` within 8 chunks of it, x
 
 ## Shapes
 
-`Mth.sin` and `Mth.cos` read 26.3's table of 65,536 `(float) Math.sin(i / 10430.378350470453)`: `sin(x)` at `(int) ((long) (x · 10430.378350470453) & 65535)`, and `cos(x)` the same with 16,384 added before the cast. Angles are `f32`, widened to `f64` for the table.
+`Mth.sin` and `Mth.cos` read a table of 65,536 `(float) Math.sin(i / 10430.378350470453)`. In 26.3, `sin(x)` is the entry at `(int) ((long) (x · 10430.378350470453) & 65535)`, and `cos(x)` the same with 16,384 added before the cast. From 26.4 (switch `rounded_trig`), the index is rounded (`+ 0.5` before the cast), a negative `x` is taken as `−x` (with `sin` negated), and the table's entries 0, 16,384, 32,768 and 49,152 are exactly 0, 1, 0 and −1. Angles are `f32`, widened to `f64` for the table.
 
 **`carveEllipsoid(C, x, y, z, h, v, skip)`:**
 
@@ -86,8 +86,14 @@ For chunk `C`, `generateCarvers` visits every chunk `S` within 8 chunks of it, x
 
 ## Versions
 
-- **26.4:** not ported yet. The material rule and the carving mask are applied together, per column ([material.md](material.md#264)).
+- **26.4:** see [below](#264-the-carving-mask-with-the-rule).
 - **26.2:** see [below](#262-carving-into-the-chunk).
+
+### 26.4: the carving mask with the rule
+
+The carvers, which reach a chunk and their shapes are 26.3's, with 26.4's `Mth.sin` and `Mth.cos` ([Shapes](#shapes)). The mask is built before the chunk is filled, and the [terrain builder](material.md#264) applies it with the rule: a carved solid position gets the aquifer's substance at density 0 unless the rule's block is `#uncarvable`, and stays the rule's block where the substance is solid. **Dirt under an opening:** carving the top block of stone (stone depth 1) to air or a fluid flags the column; the flag is kept through carved air and fluids and dropped at an uncarved one. At the next solid position that keeps the rule's block, a dirt block is tried again with a stone depth of 1, and the flag is cleared there either way. There's no top material as in 26.3.
+
+**The mask's bounds:** from 1 above the bottom to 7 below the top, of the level (`LevelHeightAccessor`; switch `carving_mask_level_bounds`), where 26.4-snapshot-5 used the vertical anchors' context. In the Nether, whose noise is 128 tall in a 256-block level, snapshot-5's mask stops at y 120 and snapshot-6's at 248.
 
 ### 26.2: carving into the chunk
 
@@ -113,4 +119,4 @@ There's no `#uncarvable`.
 
 ## Testing
 
-`spyglass-blocks`' `material` test compares every block of the golden chunks with carvers. In 26.3's golden set it matches all 73.4 million blocks but 386 that depend on tied biomes, as the run without carvers does; 26.2's likewise, but for the [open question](#open-questions).
+`spyglass-blocks`' `material` test compares every block of the golden chunks with carvers. In 26.3's golden set it matches all 73.4 million blocks but 386 that depend on tied biomes, as the run without carvers does; 26.2's likewise, but for the [open question](#open-questions); both 26.4 snapshots' all of them.

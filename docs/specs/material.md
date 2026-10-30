@@ -1,8 +1,8 @@
 # The material rule
 
-Status: draft. Covers 26.3's material rule (`net.minecraft.world.level.levelgen.material`) and 26.2's surface rules ([below](#262-surface-rules)), the blocks a chunk has after the noise fill and the rule and before carvers. Implemented in `spyglass-blocks` ([ADR 0050](../adr/0050-blocks-in-their-own-crate.md)). It's checked against the oracle's [block golden files](oracle.md#block-golden-files) without carvers: every block of 26.3's and 26.2's golden chunks matches, except the blocks that depend on a [tied biome](#ties). 26.4 is [below](#264), and is still being ported.
+Status: draft. Covers 26.3's material rule (`net.minecraft.world.level.levelgen.material`), 26.4's terrain builder ([below](#264)) and 26.2's surface rules ([below](#262-surface-rules)): the blocks a chunk has after the noise fill and the rule, before carvers. Implemented in `spyglass-blocks` ([ADR 0050](../adr/0050-blocks-in-their-own-crate.md)). It's checked against the oracle's [block golden files](oracle.md#block-golden-files) without carvers: every block of every supported version's golden chunks matches, except the blocks that depend on a [tied biome](#ties).
 
-Ported from the 26.3 and 26.2 bytecode. Classes are in `net.minecraft.world.level.levelgen` unless stated otherwise.
+Ported from the 26.3, 26.4 and 26.2 bytecode. Classes are in `net.minecraft.world.level.levelgen` unless stated otherwise.
 
 ## The chunk
 
@@ -181,14 +181,21 @@ Carvers cut caves and canyons after the rule ([carvers.md](carvers.md)). Where t
 
 ### 26.4
 
-Not ported yet. Its noise settings have no `default_block`, and the noise fill leaves solid positions undecided. A new `ChunkTerrainBuilder` does the rule and the carving mask in one pass per column (`fillColumn`):
+Its noise settings have no `default_block`: the noise fill leaves solid positions undecided, and the rule decides them, with the [carving mask](carvers.md#264-the-carving-mask-with-the-rule) in the same pass. `NoiseBasedChunkGenerator.buildTerrain` builds the mask first, then `ChunkTerrainBuilder.fillChunk` fills the empty chunk column by column, z outer and x inner. The rule, its conditions, its noises and ore veins are 26.3's.
 
-- **Columns:** they come from `NoiseChunk.prepareColumn`, with their gradients and ceilings.
-- **Biomes:** the chunk's own upscaled biomes, through `ChunkAccess.getBiome`, not the biome manager.
-- **Carving:** carved positions get the aquifer's substance unless the rule's block is in `#uncarvable`, and dirt under a carved opening is evaluated again as the surface.
-- **The extensions:** pillars and icebergs are in a new `SurfaceExtensions` class.
+**Columns** (`NoiseChunk.prepareColumn`): the aquifer's answer at each y of the [terrain column](terrain.md#the-column), up to its top non-air y (`topIndexY`, −1 for an empty column): air, a fluid, or solid. Their **gradients** compare the chunk's columns' tops, before any pillar: `top(min(x + 1, 15), z) − top(max(x − 1, 0), z)`, and likewise for z, fluids counted. Nothing reads a heightmap: writes go straight into the chunk's sections.
 
-It's ported with the carvers, since the two can't be separated.
+**Each column:**
+
+1. **Start:** one above the column's top. The start biome is the chunk's stored biome there (`ChunkAccess.getBiome`), at y clamped to the level, which is [the zoom's](#biomes) at that block.
+2. **Pillar:** in eroded badlands, 26.3's [pillar](#eroded-badlands-pillars), as solid positions of the column: the scan for the default block stops at a solid position, and the fill marks air positions solid. The rule then decides them.
+3. **Down the column** (`fillColumn`), with 26.3's context from the column's gradients, from the top index down:
+   - **Air:** stone depth 0, no water above.
+   - **A fluid:** the water height if unset; the fluid goes in, within the level.
+   - **Solid:** the ceiling as 26.3's, by index (`getCeilingBelowIndex`; with none, `WAY_BELOW_MIN_Y` is taken as an index), stone depth + 1. Within the level, the rule's block, with `stoneDepthBelow = index − ceiling + 1`. If the position is [carved](carvers.md#264-the-carving-mask-with-the-rule) and the rule's block is none or isn't `#uncarvable`, the aquifer's substance at density 0 instead, unless that's solid. Where the rule leaves a position, it stays air.
+4. **Iceberg:** in frozen ocean or deep frozen ocean, 26.3's [iceberg](#frozen-ocean-icebergs), from the start before the pillar, with the column's minimum surface level, placing nothing at carved positions.
+
+The snapshots differ only in the carving mask's [bounds](carvers.md#264-the-carving-mask-with-the-rule).
 
 ### 26.2: surface rules
 
@@ -204,4 +211,4 @@ The 1.21 family's `SurfaceRules` and `SurfaceSystem` (ADR 0026), told apart by t
 
 ## Testing
 
-`spyglass-blocks`' `material` test compares every block of the golden chunks without carvers, which `cargo xtask oracle-test` runs for 26.2 and 26.3 (26.4 is ported with its carvers). In 26.2's golden set, 22,241 of 73.4 million blocks are marked as depending on a tie, and 387 of them differ from the game, as in 26.3's. Unit tests cover the zoom against Guava's hash, the heightmap's updates, block state names, the frozen modifier in both families, and `PerlinSimplexNoise`.
+`spyglass-blocks`' `material` test compares every block of the golden chunks without carvers, which `cargo xtask oracle-test` runs for every version. In 26.2's golden set, 22,241 of 73.4 million blocks are marked as depending on a tie, and 387 of them differ from the game, as in 26.3's. In both 26.4 snapshots' sets, 515 are marked (ties are far rarer with half-open climate ranges) and none differ. Unit tests cover the zoom against Guava's hash, the heightmap's updates, block state names, the frozen modifier in both families, and `PerlinSimplexNoise`.

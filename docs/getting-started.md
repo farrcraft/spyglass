@@ -272,7 +272,7 @@ Slime chunks and the world spawn are only in the Overworld. In the Nether, heigh
 
 `spyglass heights` prints the generator's terrain heights for one column (`--at x,z`) or a region (`--min x,z --max x,z`, up to 256 × 256 columns): one above the highest block before structures, carvers, features and surface blocks change it, as structures are placed by ([specs/terrain.md](specs/terrain.md)). `--heightmap ocean-floor` ignores water.
 
-`spyglass blocks` prints the blocks the game generates before structures and features: one block (`--at x,y,z`), a column top down (`--column x,z`), or how many of each block a chunk has (`--chunk x,z`, in chunks; `--json` for every block). That's the terrain with its surface (grass, sand, terracotta bands, icebergs), ore veins, and the caves and ravines carvers cut; `--no-carvers` leaves those out ([specs/material.md](specs/material.md), [specs/carvers.md](specs/carvers.md)). It's for 26.2 and 26.3 so far.
+`spyglass blocks` prints the blocks the game generates before structures and features: one block (`--at x,y,z`), a column top down (`--column x,z`), or how many of each block a chunk has (`--chunk x,z`, in chunks; `--json` for every block). That's the terrain with its surface (grass, sand, terracotta bands, icebergs), ore veins, and the caves and ravines carvers cut; `--no-carvers` leaves those out ([specs/material.md](specs/material.md), [specs/carvers.md](specs/carvers.md)).
 
 ### Your own worlds
 

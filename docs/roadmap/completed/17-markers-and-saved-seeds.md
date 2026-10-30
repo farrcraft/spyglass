@@ -1,8 +1,8 @@
 # 17. Markers and saved seeds
 
-- Status: Planned
-- Depends on: [13](completed/13-viewer-redesign.md)
-- Plans: none yet
+- Status: Completed
+- Depends on: [13](13-viewer-redesign.md)
+- Plans: [m17-markers-and-saved-seeds](../../plans/completed/m17-markers-and-saved-seeds.md)
 
 ## Goal
 
@@ -24,7 +24,7 @@ Not in scope:
 
 ## Exit criteria
 
-- [ ] Markers, done states and saved seeds survive a restart, a version switch and the same file imported on another machine.
-- [ ] A copied view text opens the same view in a fresh viewer, and texts from the first version of the format still open after a change to it (a test).
-- [ ] A corrupt or hostile data file loads what it can and reports the rest, without a panic (fuzzed, or with hand-made cases).
-- [ ] `cargo xtask check` passes.
+- [x] Markers, done states and saved seeds survive a restart, a version switch and the same file imported on another machine.
+- [x] A copied view text opens the same view in a fresh viewer, and texts from the first version of the format still open after a change to it (a test).
+- [x] A corrupt or hostile data file loads what it can and reports the rest, without a panic (fuzzed, or with hand-made cases).
+- [x] `cargo xtask check` passes.

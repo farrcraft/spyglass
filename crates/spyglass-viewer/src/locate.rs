@@ -3,6 +3,8 @@
 
 use spyglass::{LOCATE_BIOME_RADIUS, LOCATE_RADIUS, Session};
 
+use crate::userdata::{Kind, Place};
+
 /// What to look for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Target {
@@ -34,6 +36,8 @@ pub struct Hit {
     pub blocks_away: i32,
     /// Which answer a structure's certain hit is: "Nearest", "/locate's answer" or both.
     pub answer: Option<&'static str>,
+    /// What marking it done marks: its structure start, or the biome at its block.
+    pub place: Place,
 }
 
 /// A locate's answer.
@@ -64,6 +68,11 @@ fn structure_hits(found: &spyglass::StructureLocate, answer: &'static str) -> Ve
             certain: h.start.certain,
             blocks_away: h.blocks_away,
             answer: (found.certain_answer == Some(i)).then_some(answer),
+            place: Place {
+                kind: Kind::Structure,
+                id: h.start.set.clone(),
+                at: [h.start.position[0], h.start.position[2]],
+            },
         })
         .collect()
 }
@@ -154,6 +163,11 @@ pub fn run(
                     certain: h.certain,
                     blocks_away: h.blocks_away,
                     answer: None,
+                    place: Place {
+                        kind: Kind::Biome,
+                        id: h.biome.biome.clone(),
+                        at: [h.position[0], h.position[2]],
+                    },
                 })
                 .collect::<Vec<_>>();
             let note = if hits.is_empty() {

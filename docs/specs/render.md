@@ -53,12 +53,13 @@ Drawn in this order, each over the last:
 2. **Slime chunks**: each slime chunk's pixels blended with `#40e040` at alpha 128. Only at scales up to 16, where a chunk is at least a pixel; asking for them at a larger scale is an error.
 3. **Structures**: a marker at each start `Session::structures_in` finds for the chosen structures and tags, [confirmed](locate.md#confirmed-mode) if `Layers::confirm` is on (it's off by default), at the start's `position` (x and z). The marker's centre pixel is `floor((position − min) / scale)`. A certain start is a 9 × 9 square: a 1-pixel black border around the set's colour. A candidate is the same square with its middle 3 × 3 left showing the map, so it reads as hollow. Markers are drawn in order of set id, then chunk z, then chunk x, so overlaps resolve the same way in every area.
 4. **Spawn**: a cross centred on `SpawnOrigin::position`, or on the centre of its chunk when there's no position: a white cross 1 pixel wide reaching 4 pixels from the centre, over a black one 3 pixels wide reaching 5.
+5. **Pins**: `Layers::pins`, places a front end gives with a colour each, such as the viewer's markers ([user-data.md](user-data.md#markers)). Each is a disc centred on its block's pixel: with `(dx, dy)` a pixel's offset from the centre, the pin's colour where `dx² + dy² ≤ 9`, and black where `10 ≤ dx² + dy² ≤ 20`. Pins are drawn in the order given, so a later one covers an earlier one. They're drawn in every dimension.
 
 The viewer draws its own icons in place of these markers ([ADR 0044](../adr/0044-the-viewer-draws-its-own-map-icons.md)): at the same centre pixels, in the same set colours, filled for a certain start and hollow for a candidate. Exports, from the library, the CLI or the viewer, draw the markers above.
 
 Markers have a fixed size in pixels at every scale. A marker can overlap an area while its position is outside it, so an area includes every feature whose centre pixel is within 5 pixels of it; markers near an edge are cut off, and a tile shows the same pixels as the larger view it's part of.
 
-`Session::map_features` returns the features an area would draw (structure starts, slime chunks, the spawn), so front ends and scripts can list or label them with exactly what the image shows.
+`Session::map_features` returns the features an area would draw (structure starts, slime chunks, the spawn, pins), so front ends and scripts can list or label them with exactly what the image shows.
 
 ## Dimensions
 

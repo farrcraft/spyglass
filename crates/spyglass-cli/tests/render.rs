@@ -6,7 +6,7 @@ use std::path::Path;
 use std::process::{Command, Output};
 
 use serde_json::{Value, json};
-use spyglass::{Layers, MapArea, World};
+use spyglass::{Layers, MapArea, Pin, World};
 use spyglass_oracle::fixtures::{self, TestBundle, resource};
 
 fn bundle() -> TestBundle {
@@ -73,6 +73,12 @@ fn the_command_writes_the_same_image_as_the_library() {
             "--slime",
             "--spawn",
             "--ties",
+            "--pin",
+            "-40,8",
+            "--pin",
+            "-100,-60,#4C8FF0",
+            "--pin",
+            "5000,0,#e05050",
             "-o",
             file.to_str().unwrap(),
             "--json",
@@ -90,6 +96,21 @@ fn the_command_writes_the_same_image_as_the_library() {
         structures: vec![world.structure_query("minecraft:tower").unwrap()],
         slime_chunks: true,
         spawn: true,
+        // Amber when no colour is given.
+        pins: vec![
+            Pin {
+                position: [-40, 8],
+                colour: [0xf0, 0xb0, 0x30],
+            },
+            Pin {
+                position: [-100, -60],
+                colour: [0x4c, 0x8f, 0xf0],
+            },
+            Pin {
+                position: [5000, 0],
+                colour: [0xe0, 0x50, 0x50],
+            },
+        ],
         ..Layers::default()
     };
     let mut expected = Vec::new();
@@ -120,6 +141,14 @@ fn the_command_writes_the_same_image_as_the_library() {
     assert_eq!(
         answer["spawn"]["chunk"],
         json!(session.spawn_origin().chunk)
+    );
+    // The pins in view, in order; the one at x = 5000 is out of it.
+    assert_eq!(
+        answer["pins"],
+        json!([
+            {"position": {"x": -40, "z": 8}, "colour": "#f0b030"},
+            {"position": {"x": -100, "z": -60}, "colour": "#4c8ff0"},
+        ])
     );
 }
 
@@ -228,6 +257,9 @@ fn bad_requests_fail_without_writing() {
         &["--seed", "1", "--size", "big", "-o", path],
         &["--seed", "1", "--centre", "player", "-o", path],
         &["--seed", "1", "--centre", "0,0", "--min", "0,0", "-o", path],
+        &["--seed", "1", "--pin", "1", "-o", path],
+        &["--seed", "1", "--pin", "1,2,#12345", "-o", path],
+        &["--seed", "1", "--pin", "1,2,red", "-o", path],
     ] {
         let out = spyglass(&fixture.path(), args);
         assert!(!out.status.success(), "{args:?}");

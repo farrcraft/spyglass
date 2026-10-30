@@ -1,7 +1,7 @@
 //! The viewer window: its state, and the loading and background work behind it. What it draws
 //! is in the child modules: the toolbar and settings (`toolbar`), the side panel's tabs
-//! (`side_panel`, `search_panel`), the map with its controls and status bar (`map`), and the
-//! screen shown until there's a bundle (`saves`, `extract_panel`).
+//! (`side_panel`, `search_panel`, `markers_panel`), the map with its controls and status bar
+//! (`map`), and the screen shown until there's a bundle (`saves`, `extract_panel`).
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -27,15 +27,18 @@ use crate::style;
 use crate::tiles::{
     Cache, Entry, Job, JobKey, LayoutKey, MarkerKey, Output, Pool, Style, TileKey, slime_features,
 };
+use crate::userdata::{Marker, Store, WorldKey};
 use crate::view::{TILE, Tile, View};
 
 mod extract_panel;
 mod map;
+mod markers_panel;
 mod saves;
 mod search_panel;
 mod side_panel;
 mod toolbar;
 
+use markers_panel::MenuTarget;
 use search_panel::Opened;
 use side_panel::Tab;
 
@@ -88,6 +91,10 @@ struct Settings {
     /// Biome ids to keep bright.
     highlight: Vec<String>,
     search: SearchSettings,
+    /// Draw what's marked done, dimmed; otherwise hide it.
+    show_done: bool,
+    /// Put the user's markers in exported images.
+    export_markers: bool,
 }
 
 impl Default for Settings {
@@ -108,6 +115,8 @@ impl Default for Settings {
             structures: Vec::new(),
             highlight: Vec::new(),
             search: SearchSettings::default(),
+            show_done: true,
+            export_markers: true,
         }
     }
 }
@@ -282,6 +291,22 @@ pub struct App {
     expanded: std::collections::HashSet<String>,
     /// How long the map takes to fill the window, with `SPYGLASS_VIEWER_TIMING`.
     fill: crate::timing::Fill,
+    /// The user's markers, done places and worlds (`docs/specs/user-data.md`).
+    store: Store,
+    /// The world shown, as the user data keys it.
+    world_key: Option<WorldKey>,
+    /// The marker being edited, by id.
+    editing: Option<String>,
+    /// What the map's context menu was opened on, and whether it's done.
+    menu_target: Option<(MenuTarget, bool)>,
+    /// A view text being typed into the Share menu.
+    share_text: String,
+    /// The last import's, export's or view text's outcome.
+    data_note: Option<Result<String, String>>,
+    /// Whether the user dismissed the problems reading the data file.
+    data_problems_seen: bool,
+    /// The name being typed for a world, and which.
+    world_name: (Option<WorldKey>, String),
 }
 
 /// A search and its query.
@@ -306,7 +331,8 @@ struct FindState {
 }
 
 impl App {
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+    /// The viewer, with its user data in `data_dir` (`None` if there's no folder for it).
+    pub fn new(cc: &eframe::CreationContext<'_>, data_dir: Option<PathBuf>) -> Self {
         let stored: Option<Settings> = cc.storage.and_then(|s| eframe::get_value(s, SETTINGS));
         let first_run = stored.is_none();
         let settings = stored.unwrap_or_default();
@@ -368,6 +394,14 @@ impl App {
             in_view: HashMap::new(),
             expanded: std::collections::HashSet::new(),
             fill: crate::timing::Fill::default(),
+            store: data_dir.map_or_else(Store::detached, |dir| Store::open(&dir)),
+            world_key: None,
+            editing: None,
+            menu_target: None,
+            share_text: String::new(),
+            data_note: None,
+            data_problems_seen: false,
+            world_name: (None, String::new()),
         };
         app.scan(&cc.egui_ctx);
         // With nothing found on a first run, bundles go beside spyglass unless the user picks
@@ -593,6 +627,7 @@ impl App {
                 self.markers.clear();
                 self.layouts.clear();
                 self.select();
+                self.remember_world();
             }
             Err(e) => self.seed_error = Some(e.to_string()),
         }
@@ -696,6 +731,7 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.poll_loading();
         self.poll_tasks(ui.ctx());
+        self.store.flush(false);
         self.poll_extract(ui.ctx());
         let ready = self.bundles.as_ref().is_ok_and(|found| !found.is_empty());
         if ready {
@@ -726,6 +762,7 @@ impl eframe::App for App {
                 .show(ui, |ui| self.status_bar(ui));
         }
         self.settings_window(ui.ctx());
+        self.marker_editor(ui.ctx());
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(style::GROUND))
             .show(ui, |ui| {
@@ -739,5 +776,8 @@ impl eframe::App for App {
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, SETTINGS, &self.settings);
+        // Also on shutdown, so the last changes and views are kept.
+        self.keep_views();
+        self.store.flush(true);
     }
 }

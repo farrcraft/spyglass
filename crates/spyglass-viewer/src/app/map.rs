@@ -1,14 +1,18 @@
 //! The map: tiles drawn as textures (coarse ones first, so the view fills quickly), markers,
 //! picking, the controls over the map, and the status bar.
 
+use std::collections::HashSet;
+
 use spyglass::Outcome;
 
+use super::markers_panel::MenuTarget;
 use super::search_panel::Opened;
 use super::*;
-use crate::markers::Size;
+use crate::markers::{DONE_OPACITY, Size};
 use crate::search::Area;
 use crate::style;
 use crate::timing;
+use crate::userdata::Place;
 use crate::view;
 
 /// What the map shows behind tiles not drawn yet: faint diagonal lines, so a gap reads as
@@ -54,8 +58,19 @@ impl App {
         let mut focus_goto = false;
         // N and P step through the last find's matches.
         let mut step = 0;
+        // M adds a marker under the pointer; a view text pasted onto the map opens it.
+        let mut add_marker = false;
+        let mut pasted = None;
         if ui.memory(|m| m.focused().is_none()) {
             ui.input(|i| {
+                add_marker = response.hovered() && i.key_pressed(Key::M);
+                for event in &i.events {
+                    if let egui::Event::Paste(text) = event
+                        && text.contains("spyglass:")
+                    {
+                        pasted = Some(text.clone());
+                    }
+                }
                 for (key, delta) in [
                     (Key::ArrowLeft, [-KEY_PAN, 0.0]),
                     (Key::ArrowRight, [KEY_PAN, 0.0]),
@@ -94,10 +109,33 @@ impl App {
             );
             x += HATCH_GAP;
         }
+        if let Some(text) = pasted {
+            self.open_view_text(ui.ctx(), &text);
+        }
+        if add_marker && let Some(block) = self.cursor {
+            self.add_marker(block);
+        }
         let (Some(shown), Some(world)) = (&self.shown, self.world) else {
             return;
         };
         let (source, session, spawn) = (shown.id, shown.session.clone(), shown.spawn);
+        // The user's markers here, and what they've marked done.
+        let dimension = world.dimension_kind().id();
+        let (user, done): (Vec<Marker>, HashSet<Place>) =
+            self.here().map_or_else(Default::default, |here| {
+                (
+                    here.live_markers()
+                        .filter(|m| m.dimension == dimension)
+                        .cloned()
+                        .collect(),
+                    here.done
+                        .iter()
+                        .filter(|d| d.done && d.dimension == dimension)
+                        .map(|d| d.place.clone())
+                        .collect(),
+                )
+            });
+        let show_done = self.settings.show_done;
         let view = self.settings.view;
         let tiles = view.tiles([rect.width(), rect.height()]);
         // Terrain layers by each tile's own scale, so the coarser tiles shown while one loads
@@ -338,6 +376,12 @@ impl App {
                 placed.push((at, 10.0, Picked::Hit(hit)));
             }
         }
+        for m in &user {
+            let at = markers::pixel_centre(&view, centre, [m.x, m.z]);
+            if rect.expand(30.0).contains(at) {
+                placed.push((at, 11.0, Picked::Marker(m)));
+            }
+        }
         if let Some(opened) = &self.opened
             && opened.seed == session.seed()
         {
@@ -350,6 +394,18 @@ impl App {
                 placed.push((at, 15.0, Picked::Match(m)));
             }
         }
+        // What's done: dimmed, or left out while done things are hidden.
+        let is_done = |what: &Picked<'_>| match what {
+            Picked::Marker(m) => m.done,
+            other => other.place().is_some_and(|p| done.contains(&p)),
+        };
+        if !show_done {
+            placed.retain(|(_, _, what)| !is_done(what));
+        }
+        let faded: Vec<bool> = placed.iter().map(|(_, _, what)| is_done(what)).collect();
+        let mut dimmed = painter.clone();
+        dimmed.multiply_opacity(DONE_OPACITY);
+        let paint = |i: usize| if faded[i] { &dimmed } else { &painter };
         let hovered = response
             .hover_pos()
             .filter(|_| !response.dragged())
@@ -362,30 +418,47 @@ impl App {
                 )
             })
             .map(|(i, _)| i);
-        // Rings first, so the icons they surround stay readable; then icons, the spawn, pins.
-        for (at, _, what) in &placed {
+        // Rings first, so the icons they surround stay readable; then icons, the spawn, pins,
+        // and the user's markers over everything.
+        for (i, (at, _, what)) in placed.iter().enumerate() {
             if let Picked::Match(m) = what {
-                markers::ring(&painter, *at, m.certain);
+                markers::ring(paint(i), *at, m.certain);
             }
         }
         for (i, (at, _, what)) in placed.iter().enumerate() {
             match what {
                 Picked::Structure(start) if Some(i) != hovered => {
-                    markers::structure(ui, &painter, *at, start, size, false);
+                    markers::structure(ui, paint(i), *at, start, size, false, faded[i]);
                 }
                 Picked::Spawn(_) => markers::spawn(&painter, *at),
-                Picked::Hit(hit) => markers::pin(&painter, *at, hit.certain),
+                Picked::Hit(hit) => markers::pin(paint(i), *at, hit.certain),
                 _ => {}
+            }
+        }
+        for (i, (at, _, what)) in placed.iter().enumerate() {
+            if let Picked::Marker(m) = what {
+                markers::user(paint(i), *at, m, size == Size::Full || Some(i) == hovered);
             }
         }
         if let Some(i) = hovered {
             let (at, _, what) = &placed[i];
             if let Picked::Structure(start) = what {
-                markers::structure(ui, &painter, *at, start, size, true);
+                markers::structure(ui, paint(i), *at, start, size, true, faded[i]);
             }
             response
                 .clone()
-                .on_hover_ui_at_pointer(|ui| describe(ui, what));
+                .on_hover_ui_at_pointer(|ui| describe(ui, what, faded[i]));
+        }
+        // What a click or right-click is on, if anything.
+        let target = hovered.and_then(|i| match &placed[i].2 {
+            Picked::Marker(m) => Some(MenuTarget::Marker(m.id.clone())),
+            other => other.place().map(MenuTarget::Place),
+        });
+        let target_done = hovered.is_some_and(|i| faded[i]);
+        if response.clicked()
+            && let Some(MenuTarget::Marker(id)) = &target
+        {
+            self.editing = Some(id.clone());
         }
         self.cursor = response
             .hover_pos()
@@ -403,13 +476,49 @@ impl App {
             && let Some(p) = response.interact_pointer_pos()
         {
             self.menu_block = Some(view.block_at(offset(p)).map(|b| b.floor() as i32));
+            self.menu_target = target.map(|t| (t, target_done));
         }
         let Some([bx, bz]) = self.menu_block else {
             return;
         };
+        let menu_target = self.menu_target.clone();
         let mut action = None;
         response.context_menu(|ui| {
             ui.label(style::mono(format!("{bx}, {bz}")).color(style::MUTED));
+            match &menu_target {
+                Some((MenuTarget::Marker(id), done)) => {
+                    if ui.button("Edit marker").clicked() {
+                        action = Some(Action::Edit(id.clone()));
+                        ui.close();
+                    }
+                    let text = if *done { "Mark not done" } else { "Mark done" };
+                    if ui.button(text).clicked() {
+                        action = Some(Action::MarkerDone(id.clone(), !done));
+                        ui.close();
+                    }
+                    if ui.button("Delete marker").clicked() {
+                        action = Some(Action::Delete(id.clone()));
+                        ui.close();
+                    }
+                }
+                Some((MenuTarget::Place(place), done)) => {
+                    let text = if *done { "Mark not done" } else { "Mark done" };
+                    if ui.button(text).clicked() {
+                        action = Some(Action::Done(place.clone(), !done));
+                        ui.close();
+                    }
+                }
+                None => {}
+            }
+            if ui
+                .button("Add a marker here")
+                .on_hover_text("Or press M")
+                .clicked()
+            {
+                action = Some(Action::AddMarker);
+                ui.close();
+            }
+            ui.separator();
             ui.menu_button("Nearest structure", |ui| {
                 egui::ScrollArea::vertical()
                     .max_height(320.0)
@@ -449,6 +558,14 @@ impl App {
                 ui.ctx().copy_text(format!("{bx} {bz}"));
                 ui.close();
             }
+            if ui
+                .button("Copy the view text")
+                .on_hover_text("A line that opens this view in another spyglass")
+                .clicked()
+            {
+                action = Some(Action::CopyView);
+                ui.close();
+            }
         });
         match action {
             Some(Action::Locate(target)) => {
@@ -458,6 +575,17 @@ impl App {
             Some(Action::Centre) => {
                 self.settings.view.centre = [f64::from(bx) + 0.5, f64::from(bz) + 0.5];
             }
+            Some(Action::AddMarker) => self.add_marker([bx, bz]),
+            Some(Action::Edit(id)) => self.editing = Some(id),
+            Some(Action::MarkerDone(id, done)) => self.change_marker(&id, |m| m.done = done),
+            Some(Action::Delete(id)) => {
+                self.change_marker(&id, Marker::delete);
+                if self.editing.as_ref() == Some(&id) {
+                    self.editing = None;
+                }
+            }
+            Some(Action::Done(place, done)) => self.set_done(&place, done),
+            Some(Action::CopyView) => self.copy_view(ui.ctx()),
             None => {}
         }
     }
@@ -786,8 +914,11 @@ impl App {
                 });
             } else {
                 ui.label(
-                    egui::RichText::new("Drag to move · scroll to zoom · right-click to locate")
-                        .color(style::MUTED),
+                    egui::RichText::new(
+                        "Drag to move · scroll to zoom · right-click to locate or mark · M adds \
+                         a marker",
+                    )
+                    .color(style::MUTED),
                 );
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -958,10 +1089,21 @@ fn thousands(n: u32) -> String {
 pub(super) enum Action {
     Locate(Target),
     Centre,
+    AddMarker,
+    /// Edit, mark done or not, or delete the marker with this id.
+    Edit(String),
+    MarkerDone(String, bool),
+    Delete(String),
+    /// Mark a place done or not.
+    Done(Place, bool),
+    CopyView,
 }
 
-/// A marker's tooltip.
-pub(super) fn describe(ui: &mut egui::Ui, picked: &Picked<'_>) {
+/// A marker's tooltip; `done` if it's marked done.
+pub(super) fn describe(ui: &mut egui::Ui, picked: &Picked<'_>, done: bool) {
+    if done {
+        ui.colored_label(style::GOOD, "Done");
+    }
     match picked {
         Picked::Structure(start) => {
             let [x, _, z] = start.position;
@@ -1020,6 +1162,15 @@ pub(super) fn describe(ui: &mut egui::Ui, picked: &Picked<'_>) {
             if !m.certain {
                 ui.label("Possible: it depends on terrain, a tied biome or the platform.");
             }
+        }
+        Picked::Marker(m) => {
+            if m.name.is_empty() {
+                ui.strong("Marker");
+            } else {
+                ui.strong(&m.name);
+            }
+            ui.label(style::mono(format!("{}, {}", m.x, m.z)));
+            ui.label(egui::RichText::new("Click to edit").color(style::MUTED));
         }
     }
 }

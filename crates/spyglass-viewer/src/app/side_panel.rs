@@ -1,4 +1,5 @@
-//! The side panel: its tabs, the Layers tab, the Locate tab, and exporting the view.
+//! The side panel: its tabs, the Layers tab, the Locate tab, and exporting the view. The
+//! Markers tab is `markers_panel`'s.
 
 use super::*;
 use crate::style;
@@ -10,6 +11,7 @@ pub(super) enum Tab {
     Layers,
     Search,
     Locate,
+    Markers,
 }
 
 impl App {
@@ -60,6 +62,18 @@ impl App {
                 (false, None) => "Locate".to_string(),
             };
             tab(ui, &mut self.tab, Tab::Locate, locate);
+            let dimension = self.world.map(|w| w.dimension_kind().id());
+            let markers = self.here().map_or(0, |h| {
+                h.live_markers()
+                    .filter(|m| Some(m.dimension.as_str()) == dimension)
+                    .count()
+            });
+            let label = if markers > 0 {
+                format!("Markers ({markers})")
+            } else {
+                "Markers".to_string()
+            };
+            tab(ui, &mut self.tab, Tab::Markers, label);
         });
         ui.add_space(4.0);
         ui.separator();
@@ -71,6 +85,7 @@ impl App {
                     Tab::Layers => self.layers_tab(ui),
                     Tab::Search => self.search_section(ui),
                     Tab::Locate => self.locate_section(ui),
+                    Tab::Markers => self.markers_tab(ui),
                 }
                 ui.add_space(8.0);
             });
@@ -87,8 +102,9 @@ impl App {
             },
         };
         let terrain = self.terrain_allowed();
+        let area = visible_area(&self.settings.view, self.map_size)?;
         Some(Export {
-            area: visible_area(&self.settings.view, self.map_size)?,
+            area,
             source,
             dimension: world.dimension_kind(),
             bundles: (self.settings.bundles != Settings::default().bundles)
@@ -105,7 +121,33 @@ impl App {
             confirm: self.settings.confirm,
             relief: self.settings.relief && terrain,
             surface: self.settings.surface && terrain,
+            pins: if self.settings.export_markers {
+                self.export_pins(world.dimension_kind(), &area)
+            } else {
+                Vec::new()
+            },
         })
+    }
+
+    /// The user's markers an image of `area` in `dimension` shows: those whose pin reaches it,
+    /// and not done ones while done things are hidden.
+    fn export_pins(&self, dimension: Dimension, area: &spyglass::MapArea) -> Vec<spyglass::Pin> {
+        let Some(here) = self.here() else {
+            return Vec::new();
+        };
+        let reach = i64::from(spyglass::MARKER_REACH);
+        let inside = |[px, pz]: [i64; 2]| {
+            (-reach..i64::from(area.size[0]) + reach).contains(&px)
+                && (-reach..i64::from(area.size[1]) + reach).contains(&pz)
+        };
+        here.live_markers()
+            .filter(|m| m.dimension == dimension.id() && (self.settings.show_done || !m.done))
+            .map(|m| spyglass::Pin {
+                position: [m.x, m.z],
+                colour: m.colour,
+            })
+            .filter(|p| inside(area.pixel(p.position)))
+            .collect()
     }
 
     /// Draws `export` with the library and writes it to `path`, in the background.
@@ -136,6 +178,7 @@ impl App {
                 confirm: export.confirm,
                 relief: export.relief && export.area.scale <= MAX_TERRAIN_SCALE,
                 surface: export.surface && export.area.scale <= MAX_TERRAIN_SCALE,
+                pins: export.pins.clone(),
             };
             let image = session
                 .render(&export.area, &layers)
@@ -271,6 +314,8 @@ impl App {
         } else if !slime_visible {
             style::hint(ui, "Zoom to 1:16 or closer to see them.");
         }
+        ui.checkbox(&mut self.settings.show_done, "Done things")
+            .on_hover_text("Structures, pins and markers you've marked done, dimmed.");
         ui.add_enabled(
             terrain,
             egui::Checkbox::new(&mut self.settings.relief, "Relief shading"),

@@ -1,5 +1,5 @@
-//! What's drawn over the map: structure icons, the spawn, locate pins and search rings, and
-//! jigsaw bounds. Markers sit where the library's `Image::draw_features` puts its own
+//! What's drawn over the map: structure icons, the spawn, locate pins and search rings, the
+//! user's markers, and jigsaw bounds. Markers sit where the library's `Image::draw_features` puts its own
 //! (`docs/specs/render.md#layers`): one tile pixel is one point, and a marker's centre is the
 //! pixel `floor(block / scale)` on the world-aligned grid. Their shapes are the viewer's own
 //! (ADR 0044), in the library's set colours.
@@ -13,7 +13,11 @@ use spyglass::{SpawnOrigin, StructureStart, structure_colour};
 use crate::icons;
 use crate::locate::Hit;
 use crate::style;
+use crate::userdata::{Kind, Marker, Place};
 use crate::view::View;
+
+/// How opaque done things are drawn.
+pub const DONE_OPACITY: f32 = 0.4;
 
 /// The screen position of the centre of the pixel containing `block`.
 pub fn pixel_centre(view: &View, map_centre: Pos2, block: [i32; 2]) -> Pos2 {
@@ -58,7 +62,7 @@ impl Size {
 
 /// A structure start's icon: its family's glyph on a badge in its set's colour, filled if it's
 /// certain and hollow if it's a candidate. The hovered one is drawn larger, with a halo and its
-/// name.
+/// name. A done one is dimmed: `painter` should be too.
 pub fn structure(
     ui: &egui::Ui,
     painter: &Painter,
@@ -66,7 +70,9 @@ pub fn structure(
     start: &StructureStart,
     size: Size,
     hovered: bool,
+    done: bool,
 ) {
+    let glyph_opacity = if done { DONE_OPACITY } else { 1.0 };
     let badge = icons::badge(&start.set);
     if size == Size::Dot && !hovered {
         let (fill, stroke) = if start.certain {
@@ -109,7 +115,7 @@ pub fn structure(
     };
     let id = start.structures.first().map_or("", String::as_str);
     icons::glyph(id)
-        .tint(ink)
+        .tint(ink.gamma_multiply(glyph_opacity))
         .paint_at(ui, Rect::from_center_size(centre, Vec2::splat(side * 0.68)));
     if hovered {
         let name = start
@@ -187,18 +193,6 @@ pub fn spawn_sized(painter: &Painter, centre: Pos2, r: f32) {
 
 /// A locate hit: a pin with its point on the block, yellow if the game certainly stops there.
 pub fn pin(painter: &Painter, tip: Pos2, certain: bool) {
-    // A circle of radius `r` whose centre is `d` above the tip, and the two tangents to it from
-    // the tip: a convex teardrop.
-    let (r, d) = (7.5_f32, 15.0_f32);
-    let head = tip - Vec2::Y * d;
-    let spread = (r / d).acos();
-    let down = std::f32::consts::FRAC_PI_2;
-    let steps = 18;
-    let mut points = vec![tip];
-    for i in 0..=steps {
-        let a = down + spread + (std::f32::consts::TAU - 2.0 * spread) * i as f32 / steps as f32;
-        points.push(head + Vec2::angled(a) * r);
-    }
     let (fill, line, dot) = if certain {
         (
             Color32::from_rgb(0xff, 0xd0, 0x40),
@@ -208,8 +202,35 @@ pub fn pin(painter: &Painter, tip: Pos2, certain: bool) {
     } else {
         (style::GROUND, Color32::WHITE, Color32::WHITE)
     };
+    teardrop(painter, tip, 7.5, fill, line, dot);
+}
+
+/// A user's marker: a pin in its colour, larger than a locate pin, with its name beside it when
+/// `named`.
+pub fn user(painter: &Painter, tip: Pos2, marker: &Marker, named: bool) {
+    let [r, g, b] = marker.colour;
+    let fill = Color32::from_rgb(r, g, b);
+    teardrop(painter, tip, 8.5, fill, style::GROUND, style::GROUND);
+    if named && !marker.name.is_empty() {
+        label(painter, tip + Vec2::new(12.0, -17.0), &marker.name);
+    }
+}
+
+/// A pin: a circle of radius `r` whose centre is `2r` above `tip`, and the two tangents to it from
+/// the tip, a convex teardrop, with a dot in the middle.
+fn teardrop(painter: &Painter, tip: Pos2, r: f32, fill: Color32, line: Color32, dot: Color32) {
+    let d = 2.0 * r;
+    let head = tip - Vec2::Y * d;
+    let spread = (r / d).acos();
+    let down = std::f32::consts::FRAC_PI_2;
+    let steps = 18;
+    let mut points = vec![tip];
+    for i in 0..=steps {
+        let a = down + spread + (std::f32::consts::TAU - 2.0 * spread) * i as f32 / steps as f32;
+        points.push(head + Vec2::angled(a) * r);
+    }
     painter.add(Shape::convex_polygon(points, fill, Stroke::new(2.0, line)));
-    painter.circle_filled(head, 3.0, dot);
+    painter.circle_filled(head, r * 0.4, dot);
 }
 
 /// Something a search hit's constraint matched: a ring around it, white if certain.
@@ -231,6 +252,24 @@ pub enum Picked<'a> {
     Hit(&'a Hit),
     /// Something a search hit's constraint matched.
     Match(&'a crate::search::Match),
+    /// One of the user's markers.
+    Marker(&'a Marker),
+}
+
+impl Picked<'_> {
+    /// What marking it done marks, if it can be.
+    pub fn place(&self) -> Option<Place> {
+        match self {
+            Picked::Structure(start) => Some(Place {
+                kind: Kind::Structure,
+                id: start.set.clone(),
+                at: [start.position[0], start.position[2]],
+            }),
+            Picked::Hit(hit) => Some(hit.place.clone()),
+            Picked::Match(m) => m.place.clone(),
+            Picked::Spawn(_) | Picked::Marker(_) => None,
+        }
+    }
 }
 
 /// The marker nearest `pointer` within its reach, from markers at screen positions.

@@ -17,6 +17,8 @@ use spyglass::{
     SeedSource,
 };
 
+use crate::userdata::{self, Kind};
+
 /// What the Search tab searches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum Mode {
@@ -336,6 +338,25 @@ pub struct Match {
     pub certain: bool,
     /// The constraint's canonical line.
     pub constraint: String,
+    /// What marking it done marks; `None` for what can't be done (the spawn, slime chunks).
+    pub place: Option<userdata::Place>,
+}
+
+/// The done key of a structure start or biome a search found.
+fn place_of(feature: &Feature) -> Option<userdata::Place> {
+    match feature {
+        Feature::Structure(s) => Some(userdata::Place {
+            kind: Kind::Structure,
+            id: s.set.clone(),
+            at: [s.position[0], s.position[2]],
+        }),
+        Feature::Biome { biome, .. } => Some(userdata::Place {
+            kind: Kind::Biome,
+            id: biome.biome.clone(),
+            at: feature.map_block(),
+        }),
+        _ => None,
+    }
 }
 
 /// A query's constraint lines in canonical text: without a `find` line.
@@ -368,6 +389,7 @@ pub fn matches(query: &SearchQuery, evaluation: &Evaluation) -> Vec<Match> {
                 what,
                 certain,
                 constraint: line.to_string(),
+                place: place_of(feature),
             });
         }
     }
@@ -382,12 +404,21 @@ pub fn find_matches(query: &SearchQuery, dimension: Dimension, m: &FindMatch) ->
         _ => ("Here".to_string(), true),
     };
     let first_line = query.to_string().lines().next().unwrap_or("").to_string();
+    let place = m.target.as_ref().map_or(
+        Some(userdata::Place {
+            kind: Kind::Place,
+            id: String::new(),
+            at: m.position,
+        }),
+        place_of,
+    );
     let mut out = vec![Match {
         dimension,
         at: m.position,
         what,
         certain,
         constraint: first_line,
+        place,
     }];
     out.extend(matches(query, &m.evaluation));
     out

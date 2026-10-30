@@ -1,10 +1,10 @@
-﻿//! Map rendering on the hand-written fixture world (`spyglass_oracle::fixtures`): plains west of
+//! Map rendering on the hand-written fixture world (`spyglass_oracle::fixtures`): plains west of
 //! x = 0 tied with forest, desert east of it, two structure sets, and ground that rises to the
 //! east and south out of a sea. No game data (ADR 0008), so these always run. See
 //! `docs/specs/render.md#testing`.
 
 use serde_json::json;
-use spyglass::{Error, Heightmap, Layers, MapArea, Session, StructureStart, World};
+use spyglass::{Error, Heightmap, Layers, MapArea, Pin, Session, StructureStart, World};
 use spyglass_oracle::fixtures::{self, TestBundle, resource};
 
 fn bundle() -> TestBundle {
@@ -115,6 +115,17 @@ fn layers(world: &World, slime: bool) -> Layers {
         ],
         slime_chunks: slime,
         spawn: true,
+        // Near the spawn, so tiles cut through a pin and the spawn marker.
+        pins: vec![
+            Pin {
+                position: [3, -5],
+                colour: [0xf0, 0xb0, 0x30],
+            },
+            Pin {
+                position: [-700, 40],
+                colour: [0x4c, 0x8f, 0xf0],
+            },
+        ],
         ..Layers::default()
     }
 }
@@ -401,6 +412,43 @@ fn features_are_the_queries_answers() {
 }
 
 #[test]
+fn pins_are_discs_drawn_last_in_order() {
+    let fixture = bundle();
+    let world = World::open(fixture.path()).unwrap();
+    let session = world.session(3).unwrap();
+    let area = MapArea::centred_on([0, 0], [40, 40], 2, 64).unwrap();
+    let red = [0xe0, 0x50, 0x50];
+    let blue = [0x4c, 0x8f, 0xf0];
+    let pin = |position, colour| Pin { position, colour };
+    let plain = session.render(&area, &Layers::default()).unwrap();
+    let layers = Layers {
+        // The second overlaps the first and is drawn over it; the third is out of reach.
+        pins: vec![pin([0, 0], red), pin([10, 0], blue), pin([200, 0], red)],
+        ..Layers::default()
+    };
+    let image = session.render(&area, &layers).unwrap();
+    let centre = area.pixel([0, 0]).map(|p| p as u32);
+    let at = |dx: i64, dy: i64| {
+        image.pixel([
+            (i64::from(centre[0]) + dx) as u32,
+            (i64::from(centre[1]) + dy) as u32,
+        ])
+    };
+    // The first pin's centre, its black ring, and past it the map.
+    assert_eq!(at(0, 0), red);
+    assert_eq!(at(-3, 0), red);
+    assert_eq!(at(-4, 0), [0, 0, 0]);
+    assert_eq!(at(-4, 2), [0, 0, 0]);
+    assert_eq!(at(-5, 0), plain.pixel([centre[0] - 5, centre[1]]));
+    // The second pin, 5 pixels to the east, covers the first where they overlap.
+    assert_eq!(at(5, 0), blue);
+    assert_eq!(at(2, 0), blue);
+    assert_eq!(at(1, 0), [0, 0, 0]);
+    let features = session.map_features(&area, &layers).unwrap();
+    assert_eq!(features.pins, layers.pins[..2]);
+}
+
+#[test]
 fn bad_requests_are_errors() {
     let fixture = bundle();
     let world = World::open(fixture.path()).unwrap();
@@ -491,6 +539,10 @@ fn the_real_world_renders_the_same_in_tiles() {
             confirm: true,
             relief: scale <= spyglass::MAX_TERRAIN_SCALE,
             surface: scale <= spyglass::MAX_TERRAIN_SCALE,
+            pins: vec![Pin {
+                position: [200, -300],
+                colour: [0xf0, 0xb0, 0x30],
+            }],
         };
         let area = MapArea::centred_on([200, -300], [160, 120], scale, 64).unwrap();
         let whole = session.render(&area, &layers).unwrap();

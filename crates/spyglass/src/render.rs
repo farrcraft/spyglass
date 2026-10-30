@@ -182,6 +182,18 @@ pub struct Layers {
     /// Sample biomes at the surface rather than at the area's `y`. Scales up to
     /// [`MAX_TERRAIN_SCALE`].
     pub surface: bool,
+    /// Pins a front end puts on the map, drawn last, in this order.
+    pub pins: Vec<Pin>,
+}
+
+/// A pin on the map: a block and a colour, for places a front end keeps, such as its user's
+/// markers (`docs/specs/render.md#layers`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Pin {
+    /// The block x and z.
+    pub position: [i32; 2],
+    /// Its colour, as red, green and blue.
+    pub colour: [u8; 3],
 }
 
 impl Default for Layers {
@@ -197,6 +209,7 @@ impl Default for Layers {
             confirm: false,
             relief: false,
             surface: false,
+            pins: Vec::new(),
         }
     }
 }
@@ -240,6 +253,8 @@ pub struct MapFeatures {
     pub slime_chunks: Vec<[i32; 2]>,
     /// The spawn's origin, if its marker reaches the area.
     pub spawn: Option<SpawnOrigin>,
+    /// The pins whose marker reaches the area, in the order given.
+    pub pins: Vec<Pin>,
 }
 
 impl SpawnOrigin {
@@ -580,6 +595,15 @@ fn spawn_marker(dx: i64, dy: i64) -> Option<[u8; 3]> {
     }
 }
 
+/// A pin: a disc of radius 3 in its colour, ringed in black out to radius √20.
+fn pin_marker(colour: [u8; 3]) -> impl Fn(i64, i64) -> Option<[u8; 3]> {
+    move |dx, dy| match dx * dx + dy * dy {
+        0..=9 => Some(colour),
+        10..=20 => Some(BLACK),
+        _ => None,
+    }
+}
+
 /// `i64` to `i32`, saturating.
 fn saturate(v: i64) -> i32 {
     v.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
@@ -718,8 +742,8 @@ impl Session<'_> {
         self.biome_at([x, y, z])
     }
 
-    /// The structure starts, slime chunks and spawn that `area` draws with `layers`
-    /// (`docs/specs/render.md#layers`): structures and the spawn whose marker reaches the
+    /// The structure starts, slime chunks, spawn and pins that `area` draws with `layers`
+    /// (`docs/specs/render.md#layers`): structures, the spawn and pins whose marker reaches the
     /// area, and slime chunks that overlap it.
     pub fn map_features(&self, area: &MapArea, layers: &Layers) -> Result<MapFeatures> {
         area.check()?;
@@ -772,6 +796,12 @@ impl Session<'_> {
                 features.spawn = Some(origin);
             }
         }
+        features.pins = layers
+            .pins
+            .iter()
+            .filter(|p| area.reaches(p.position))
+            .copied()
+            .collect();
         Ok(features)
     }
 
@@ -812,7 +842,7 @@ impl Image {
     }
 
     /// Draws `features` over the image of `area`, which must be the image's size: slime chunks,
-    /// then structure markers, then the spawn. [`Session::render`] is
+    /// then structure markers, then the spawn, then pins. [`Session::render`] is
     /// [`BiomeMap::colorize`] (or [`background`](Self::background)), then this, with
     /// [`Session::map_features`]; front ends that cache biome maps can do the steps
     /// themselves, and leave out features they draw another way.
@@ -833,6 +863,9 @@ impl Image {
         }
         if let Some(origin) = &features.spawn {
             self.stamp(area.pixel(origin.map_block()), 5, spawn_marker);
+        }
+        for pin in &features.pins {
+            self.stamp(area.pixel(pin.position), 4, pin_marker(pin.colour));
         }
     }
 }

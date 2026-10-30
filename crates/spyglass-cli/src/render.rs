@@ -55,6 +55,7 @@ pub fn run(args: &Render) -> Result<()> {
         confirm: args.confirm,
         relief: args.relief,
         surface: args.surface,
+        pins: args.pins.clone(),
     };
     let features = session.map_features(&area, &layers)?;
     let image = session.render(&area, &layers)?;
@@ -103,6 +104,7 @@ pub fn run(args: &Render) -> Result<()> {
                 structures,
                 slime_chunks: features.slime_chunks,
                 spawn: features.spawn.map(|s| json::SpawnAnswer::new(&s)),
+                pins: features.pins.iter().map(json::PinMark::new).collect(),
             },
         );
     }
@@ -122,6 +124,13 @@ pub fn run(args: &Render) -> Result<()> {
         area.scale,
         out.context(None),
     );
+    if !layers.pins.is_empty() {
+        out!(
+            "  {} of {} pins in view",
+            features.pins.len(),
+            layers.pins.len()
+        );
+    }
     if layers.spawn || !layers.structures.is_empty() || layers.slime_chunks {
         let certain = features.structures.iter().filter(|s| s.certain).count();
         out!(

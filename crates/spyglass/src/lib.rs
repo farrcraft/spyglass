@@ -48,8 +48,8 @@ use spyglass_terrain::{Terrain, TerrainSettings};
 pub use game::{Game, GameSession};
 pub use render::{
     BiomeMap, DEFAULT_MAP_Y, HeightMap, Image, Layers, MARKER_REACH, MAX_PIXELS, MAX_SCALE,
-    MAX_SIDE, MAX_SLIME_SCALE, MAX_TERRAIN_SCALE, MapArea, MapFeatures, biome_colour, display_name,
-    structure_colour,
+    MAX_SIDE, MAX_SLIME_SCALE, MAX_TERRAIN_SCALE, MapArea, MapFeatures, Pin, biome_colour,
+    display_name, structure_colour,
 };
 pub use save::{
     LauncherSave, PackConcern, SaveInfo, SaveInspector, SaveLocation, SaveReport, SaveWarning,

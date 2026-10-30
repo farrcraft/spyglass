@@ -4,6 +4,8 @@
 // No console window beside the viewer's on Windows. Debug builds keep theirs, for panics and logs.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::path::{Path, PathBuf};
+
 use eframe::egui;
 
 mod app;
@@ -13,10 +15,15 @@ mod icons;
 mod locate;
 mod markers;
 mod search;
+mod share;
 mod style;
 mod tiles;
 mod timing;
+mod userdata;
 mod view;
+
+/// The app's name, which names its settings folder too.
+const APP: &str = "spyglass";
 
 fn main() -> eframe::Result {
     // The one argument the viewer takes: for bug reports, and for checking a release archive on a
@@ -26,6 +33,12 @@ fn main() -> eframe::Result {
         println!("spyglass-viewer {}", spyglass::build::version());
         return Ok(());
     }
+    // User data lives beside the settings, in their file's folder when it's given (ADR 0048).
+    let settings: Option<PathBuf> = std::env::var_os("SPYGLASS_VIEWER_SETTINGS").map(Into::into);
+    let data_dir = match &settings {
+        Some(file) => file.parent().map(Path::to_path_buf),
+        None => eframe::storage_dir(APP),
+    };
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("spyglass")
@@ -35,12 +48,12 @@ fn main() -> eframe::Result {
         dithering: false,
         // Another settings file than the per-user one, for measuring the viewer from known
         // settings without touching its user's.
-        persistence_path: std::env::var_os("SPYGLASS_VIEWER_SETTINGS").map(Into::into),
+        persistence_path: settings.clone(),
         ..Default::default()
     };
     eframe::run_native(
-        "spyglass",
+        APP,
         options,
-        Box::new(|cc| Ok(Box::new(app::App::new(cc)))),
+        Box::new(|cc| Ok(Box::new(app::App::new(cc, data_dir)))),
     )
 }

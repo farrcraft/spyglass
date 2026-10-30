@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use spyglass::{Dimension, MAX_SLIME_SCALE, MAX_TERRAIN_SCALE, MapArea};
+use spyglass::{Dimension, MAX_SLIME_SCALE, MAX_TERRAIN_SCALE, MapArea, Pin};
 
 use crate::view::View;
 
@@ -40,6 +40,8 @@ pub struct Export {
     pub confirm: bool,
     pub relief: bool,
     pub surface: bool,
+    /// The user's markers in view.
+    pub pins: Vec<Pin>,
 }
 
 /// `text` as one shell argument: quoted if it has spaces or quotes.
@@ -108,6 +110,12 @@ impl Export {
         if self.surface && terrain {
             args.push("--surface".to_string());
         }
+        for pin in &self.pins {
+            let [r, g, b] = pin.colour;
+            let [x, z] = pin.position;
+            args.push("--pin".to_string());
+            args.push(format!("{x},{z},#{r:02x}{g:02x}{b:02x}"));
+        }
         args.push("-o".to_string());
         args.push(output.to_string());
         args
@@ -162,6 +170,7 @@ mod tests {
             confirm: true,
             relief: true,
             surface: false,
+            pins: Vec::new(),
         };
         // Terrain layers aren't drawn past scale 4, so the command doesn't ask for them.
         assert_eq!(
@@ -202,11 +211,22 @@ mod tests {
             confirm: false,
             relief: false,
             surface: false,
+            pins: vec![
+                Pin {
+                    position: [-3, 4],
+                    colour: [0xf0, 0xb0, 0x30],
+                },
+                Pin {
+                    position: [10, -20],
+                    colour: [0x4c, 0x8f, 0xf0],
+                },
+            ],
         };
         assert_eq!(
             export.command("out dir/map.png"),
             "spyglass render --world \"C:/saves/My World\" --bundles D:/bundles --centre 0,0 \
-             --size 10x10 --scale 32 --y 64 -o \"out dir/map.png\""
+             --size 10x10 --scale 32 --y 64 --pin \"-3,4,#f0b030\" --pin \"10,-20,#4c8ff0\" \
+             -o \"out dir/map.png\""
         );
         let nether = Export {
             dimension: Dimension::Nether,

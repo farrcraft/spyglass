@@ -109,6 +109,7 @@ The image is written to the file given; the JSON describes it ([render.md](rende
 | `structures`   | array             | The structure markers drawn, in drawing order. Each is a `locate structure` hit without `blocks_away`.                                                                                         |
 | `slime_chunks` | array of `[x, z]` | The slime chunks shaded, by z, then x. Empty unless asked for.                                                                                                                                 |
 | `spawn`        | object or null    | The spawn marker, as `locate spawn`'s fields; null if not asked for or not in view.                                                                                                            |
+| `pins`         | array             | The `--pin` pins drawn, in order: each has `position` (`x`, `z`) and `colour` (`#rrggbb`, lowercase). Pins out of view aren't listed.                                                          |
 
 ## `search`
 

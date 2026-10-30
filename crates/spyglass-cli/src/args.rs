@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use spyglass::{DEFAULT_MAP_Y, Dimension, Heightmap, LOCATE_BIOME_RADIUS, LOCATE_RADIUS};
+use spyglass::{DEFAULT_MAP_Y, Dimension, Heightmap, LOCATE_BIOME_RADIUS, LOCATE_RADIUS, Pin};
 
 #[derive(Parser)]
 #[command(
@@ -306,8 +306,36 @@ pub struct Render {
     /// Draw biomes at the surface instead of at `--y` (scales up to 4).
     #[arg(long, conflicts_with = "no_biomes")]
     pub surface: bool,
+    /// A pin at block `x,z`, with a colour `#rrggbb` after another comma (amber if none).
+    /// Repeat it for more; they're drawn last, in order.
+    #[arg(long = "pin", allow_hyphen_values = true, value_parser = pin)]
+    pub pins: Vec<Pin>,
     #[command(flatten)]
     pub common: Common,
+}
+
+/// A pin's colour when `--pin` gives none: the viewer's first marker colour.
+const PIN_COLOUR: [u8; 3] = [0xf0, 0xb0, 0x30];
+
+/// `x,z` or `x,z,#rrggbb`.
+fn pin(text: &str) -> Result<Pin, String> {
+    let bad = || format!("expected x,z or x,z,#rrggbb, got {text:?}");
+    let (at, colour) = match text.rsplit_once(',') {
+        Some((at, colour)) if colour.trim_start().starts_with('#') => (at, Some(colour.trim())),
+        _ => (text, None),
+    };
+    let position = xz(at).map_err(|_| bad())?;
+    let colour = match colour {
+        None => PIN_COLOUR,
+        Some(hex) => {
+            let digits = hex
+                .strip_prefix('#')
+                .filter(|d| d.len() == 6 && d.bytes().all(|b| b.is_ascii_hexdigit()));
+            let digits = digits.ok_or_else(bad)?;
+            [0, 2, 4].map(|i| u8::from_str_radix(&digits[i..i + 2], 16).unwrap_or(0))
+        }
+    };
+    Ok(Pin { position, colour })
 }
 
 /// Where a map is centred.

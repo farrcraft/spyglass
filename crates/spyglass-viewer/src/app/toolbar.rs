@@ -1,5 +1,5 @@
-//! The toolbar: the world on the map (seed, version, dimension, save), export, and the
-//! settings window with where game data is kept. Under it, a row for anything that needs
+//! The toolbar: the world on the map (seed, saved worlds, version, dimension, save), sharing,
+//! export, and the settings window with where game data and user data are kept. Under it, a row for anything that needs
 //! saying: errors, warnings, the save shown, the last export.
 
 use std::hash::{BuildHasher, Hasher};
@@ -21,6 +21,7 @@ impl App {
             .on_hover_text(spyglass::build::version());
             ui.separator();
             self.seed_field(ui);
+            self.worlds_menu(ui);
             self.version_picker_bar(ui);
             self.dimension_toggles(ui);
             self.save_menu(ui);
@@ -36,6 +37,7 @@ impl App {
                     self.settings_open = !self.settings_open;
                 }
                 self.export_menu(ui);
+                self.share_menu(ui);
             });
         });
         ui.add_space(2.0);
@@ -212,6 +214,8 @@ impl App {
                         self.start_export(ui.ctx(), export.clone(), path);
                     }
                 }
+                ui.checkbox(&mut self.settings.export_markers, "Include markers")
+                    .on_hover_text("Your markers in view, as pins in the image");
                 if ui
                     .button("Copy the command that draws it")
                     .on_hover_text("The spyglass render command for this view")
@@ -269,6 +273,8 @@ impl App {
             Some(Err(e)) => lines.push((style::ERROR, e.clone())),
             None => {}
         }
+        self.data_notices(&mut lines);
+        let data_problems = !self.store.problems.is_empty() && !self.data_problems_seen;
         if lines.is_empty() {
             return;
         }
@@ -276,11 +282,26 @@ impl App {
             for (colour, text) in lines {
                 ui.colored_label(colour, text);
             }
-            if (self.export_note.is_some() || self.save_error.is_some())
+            if data_problems {
+                ui.small_button("Details").on_hover_ui(|ui| {
+                    for problem in self.store.problems.iter().take(30) {
+                        ui.label(style::mono(problem.clone()).size(11.5));
+                    }
+                    if self.store.problems.len() > 30 {
+                        ui.label(format!("and {} more", self.store.problems.len() - 30));
+                    }
+                });
+            }
+            if (self.export_note.is_some()
+                || self.save_error.is_some()
+                || self.data_note.is_some()
+                || data_problems)
                 && ui.small_button("Dismiss").clicked()
             {
                 self.export_note = None;
                 self.save_error = None;
+                self.data_note = None;
+                self.data_problems_seen = true;
             }
         });
         ui.add_space(2.0);
@@ -306,6 +327,9 @@ impl App {
                 ui.add_space(8.0);
                 style::heading(ui, "Add a game version");
                 self.extract_section(ui);
+                ui.add_space(8.0);
+                style::heading(ui, "Your markers and worlds");
+                self.data_section(ui);
                 ui.add_space(8.0);
                 style::heading(ui, "About");
                 ui.label(format!("spyglass {}", spyglass::build::version()));

@@ -212,6 +212,28 @@ pub struct RenderAnswer<'a> {
     pub structures: Vec<StructureMark<'a>>,
     pub slime_chunks: Vec<[i32; 2]>,
     pub spawn: Option<SpawnAnswer>,
+    pub pins: Vec<PinMark>,
+}
+
+/// A pin on a map.
+#[derive(Serialize)]
+pub struct PinMark {
+    pub position: Xz,
+    /// `#rrggbb`.
+    pub colour: String,
+}
+
+impl PinMark {
+    pub fn new(pin: &spyglass::Pin) -> PinMark {
+        let [r, g, b] = pin.colour;
+        PinMark {
+            position: Xz {
+                x: pin.position[0],
+                z: pin.position[1],
+            },
+            colour: format!("#{r:02x}{g:02x}{b:02x}"),
+        }
+    }
 }
 
 #[derive(Serialize)]

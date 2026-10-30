@@ -3768,6 +3768,7 @@ dependencies = [
  "spyglass",
  "spyglass-extract",
  "spyglass-oracle",
+ "tempfile",
 ]
 
 [[package]]

@@ -69,6 +69,10 @@ public final class Main {
                 case "spawn" -> Spawn.run(game, Path.of(args[1]), dimension(args), positional(args));
                 case "heights" -> Heights.run(game, Path.of(args[1]), dimension(args), positional(args),
                         intOption(args, "--threads", Runtime.getRuntime().availableProcessors()));
+                case "column" -> Blocks.column(game, args[1], dimension(args), Integer.parseInt(args[2]),
+                        Integer.parseInt(args[3]));
+                case "blocks" -> Blocks.run(game, Path.of(args[1]), dimension(args), positional(args),
+                        intOption(args, "--threads", Runtime.getRuntime().availableProcessors()));
                 default -> {
                     usage();
                     yield 2;

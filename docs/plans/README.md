@@ -6,6 +6,11 @@ Code must not reference plans. Anything durable a plan produces belongs in a spe
 
 ## Active
 
-None: no milestone is in progress. The next is [18](../roadmap/18-surface-veins-and-carvers.md).
+For [18. Surface rules, ore veins, caves and carvers](../roadmap/18-surface-veins-and-carvers.md), in order:
+
+- [m18-block-oracle](completed/m18-block-oracle.md) (completed): the game's blocks for whole chunks, as golden files.
+- [m18-material-rule](m18-material-rule.md) (next): the material rule, ore veins and 26.2's surface rules.
+- [m18-carvers](m18-carvers.md) (draft): caves and ravines.
+- [m18-layers](m18-layers.md) (draft): the map layers.
 
 The follow-ups of milestones 08 and 11 ([roadmap](../roadmap/README.md#follow-ups)) need no plan of their own.

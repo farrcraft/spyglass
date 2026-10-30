@@ -50,16 +50,18 @@ enum Output {
     Structures,
     Spawn,
     Heights,
+    Blocks,
     Locate,
 }
 
 impl Output {
-    const ALL: [Output; 6] = [
+    const ALL: [Output; 7] = [
         Output::Probe,
         Output::Biomes,
         Output::Structures,
         Output::Spawn,
         Output::Heights,
+        Output::Blocks,
         Output::Locate,
     ];
 
@@ -71,6 +73,7 @@ impl Output {
             Output::Structures => Input::Structures,
             Output::Spawn => Input::Spawn,
             Output::Heights => Input::Heights,
+            Output::Blocks => Input::BlocksNoCarvers,
             Output::Locate => Input::Locate,
         }
     }
@@ -117,6 +120,10 @@ fn runs(inputs: &[Input], made: &[Input], only: bool) -> bool {
 fn made(outputs: &[Output]) -> Vec<Input> {
     let mut made = vec![Input::Bundle, Input::Extracted];
     made.extend(outputs.iter().map(|o| o.input()));
+    // `oracle blocks` makes both runs.
+    if outputs.contains(&Output::Blocks) {
+        made.push(Input::Blocks);
+    }
     made
 }
 
@@ -139,7 +146,7 @@ pub fn run(args: &Ci) -> Result<()> {
         .collect();
     if !golden.is_empty() {
         step(&format!("oracle golden: {golden:?}"), || {
-            let harness = oracle::build(&common())?;
+            let mut harness = oracle::build(&common())?;
             for output in &golden {
                 match output {
                     Output::Probe => harness.probe()?,
@@ -151,6 +158,9 @@ pub fn run(args: &Ci) -> Result<()> {
                         harness.heights(args.threads, &oracle::golden_seed_shard(i, n))?;
                     }
                     Output::Biomes => harness.golden_biomes(args.threads)?,
+                    Output::Blocks => {
+                        oracle::blocks(&mut harness, args.threads, oracle::GOLDEN_SEEDS)?;
+                    }
                     Output::Locate => {}
                 }
             }
@@ -232,7 +242,7 @@ mod tests {
         assert_eq!(selected(&[Heights], &[]), [Heights]);
         assert_eq!(
             selected(&[], &[Heights]),
-            [Probe, Biomes, Structures, Spawn, Locate]
+            [Probe, Biomes, Structures, Spawn, Blocks, Locate]
         );
     }
 

@@ -25,6 +25,10 @@ pub(crate) enum Input {
     Spawn,
     Locate,
     Heights,
+    /// The block files with carvers.
+    Blocks,
+    /// The block files without carvers, under `oracle-out/<version>+no-carvers/`.
+    BlocksNoCarvers,
 }
 
 impl Input {
@@ -49,6 +53,14 @@ impl Input {
             Input::Spawn => "spawn",
             Input::Locate => "locate",
             Input::Heights => "heights",
+            Input::Blocks => "blocks",
+            Input::BlocksNoCarvers => {
+                return root
+                    .join("oracle-out")
+                    .join(format!("{version}+no-carvers"))
+                    .join("blocks")
+                    .is_dir();
+            }
         };
         root.join("oracle-out").join(version).join(sub).is_dir()
     }
@@ -63,6 +75,7 @@ impl Input {
             Input::Spawn => "cargo xtask oracle spawn",
             Input::Locate => "cargo xtask oracle locate",
             Input::Heights => "cargo xtask oracle heights",
+            Input::Blocks | Input::BlocksNoCarvers => "cargo xtask oracle blocks",
         }
     }
 }
@@ -117,6 +130,16 @@ const TESTS: &[(&str, &str, &[Input])] = &[
         "spyglass-terrain",
         "every_height_matches_the_game",
         &[Input::Heights, Input::Bundle],
+    ),
+    (
+        "spyglass-terrain",
+        "chunks_without_carvers_have_the_columns_air_and_fluids",
+        &[Input::BlocksNoCarvers, Input::Bundle],
+    ),
+    (
+        "spyglass-terrain",
+        "carvers_only_carve",
+        &[Input::Blocks, Input::BlocksNoCarvers],
     ),
     (
         "spyglass-oracle",

@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+pub mod blocks;
 pub mod fixtures;
 pub mod probe;
 

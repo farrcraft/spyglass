@@ -66,6 +66,35 @@ pub enum OracleCmd {
         #[arg(long)]
         threads: Option<usize>,
     },
+    /// Write block golden files (whole chunks as generation leaves them before features) for the
+    /// golden seeds and dimensions into `oracle-out/<version>/blocks/`.
+    Blocks {
+        #[command(flatten)]
+        common: Common,
+        /// Parallel chunks. Defaults to the number of CPUs.
+        #[arg(long)]
+        threads: Option<usize>,
+        /// Only these seeds, instead of the golden ones.
+        #[arg(long = "seed")]
+        seeds: Vec<String>,
+    },
+    /// Print one column of a generated chunk beside the generator's `getBaseColumn`, marking
+    /// where they differ. For finding where blocks go wrong.
+    Column {
+        #[command(flatten)]
+        common: Common,
+        /// The seed, as typed into the world-creation screen.
+        #[arg(allow_hyphen_values = true)]
+        seed: String,
+        /// Block x.
+        #[arg(allow_hyphen_values = true)]
+        x: i32,
+        /// Block z.
+        #[arg(allow_hyphen_values = true)]
+        z: i32,
+        #[arg(long, default_value = "minecraft:overworld")]
+        dimension: String,
+    },
     /// Ask a real dedicated server `/locate` questions for a fixed case list, and write the
     /// answers into `oracle-out/<version>/locate/`. Takes several minutes; not part of `golden`.
     /// Running the server means accepting the Minecraft EULA (ADR 0033).
@@ -122,7 +151,7 @@ impl Common {
 }
 
 /// The golden seed set. Text seeds are hashed by the game, as typed into the world-creation screen.
-const GOLDEN_SEEDS: &[&str] = &[
+pub(crate) const GOLDEN_SEEDS: &[&str] = &[
     "0",
     "1",
     "-1",
@@ -220,6 +249,36 @@ pub fn run(cmd: OracleCmd) -> Result<()> {
             let harness = build(&common)?;
             harness.heights(threads, GOLDEN_SEEDS)
         }
+        OracleCmd::Blocks {
+            common,
+            threads,
+            seeds,
+        } => {
+            let mut harness = build(&common)?;
+            let seeds: Vec<&str> = if seeds.is_empty() {
+                GOLDEN_SEEDS.to_vec()
+            } else {
+                seeds.iter().map(String::as_str).collect()
+            };
+            blocks(&mut harness, threads, &seeds)
+        }
+        OracleCmd::Column {
+            common,
+            seed,
+            x,
+            z,
+            dimension,
+        } => {
+            let harness = build(&common)?;
+            harness.run(&[
+                "column".into(),
+                seed.into(),
+                x.to_string().into(),
+                z.to_string().into(),
+                "--dimension".into(),
+                dimension.into(),
+            ])
+        }
         OracleCmd::TestPack(common) => test_pack(&common),
         OracleCmd::Golden { common, threads } => golden(&common, threads),
     }
@@ -256,6 +315,60 @@ fn test_pack(common: &Common) -> Result<()> {
 
 /// The test data pack's folder in `oracle/`, and the suffix of its version name.
 const TEST_PACK: &str = "testpack";
+
+/// The suffix of the version name of the block files made without carvers.
+const NO_CARVERS: &str = "no-carvers";
+
+/// The block golden files, then the same with no carvers, under the version name
+/// `<version>+no-carvers` (`docs/specs/oracle.md#block-golden-files`).
+pub(crate) fn blocks(harness: &mut Harness, threads: Option<usize>, seeds: &[&str]) -> Result<()> {
+    harness.blocks(threads, seeds)?;
+    let version = harness.version.clone();
+    let packs = std::mem::replace(&mut harness.packs, vec![no_carvers_pack(&version)?]);
+    harness.version = format!("{version}+{NO_CARVERS}");
+    let result = harness.blocks(threads, seeds);
+    harness.version = version;
+    harness.packs = packs;
+    result
+}
+
+/// A data pack that empties every biome's carver list, built from `bundles/<version>` into
+/// `target/oracle/<version>/no-carvers/`. Generated, not committed, since it's vanilla data.
+/// Emptying the lists turns carvers off exactly: a carver with probability 0 still starts when
+/// its random float is 0.
+fn no_carvers_pack(version: &str) -> Result<PathBuf> {
+    let biomes = repo_root()
+        .join("bundles")
+        .join(version)
+        .join("data/minecraft/worldgen/biome");
+    let pack = repo_root()
+        .join("target")
+        .join("oracle")
+        .join(version)
+        .join(NO_CARVERS);
+    if pack.exists() {
+        fs::remove_dir_all(&pack)?;
+    }
+    let out = pack.join("data/minecraft/worldgen/biome");
+    fs::create_dir_all(&out)?;
+    for entry in fs::read_dir(&biomes)
+        .with_context(|| format!("no biomes in {}; extract {version} first", biomes.display()))?
+    {
+        let path = entry?.path();
+        if path.extension().is_none_or(|e| e != "json") {
+            continue;
+        }
+        let mut biome: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)
+            .with_context(|| format!("reading {}", path.display()))?;
+        let Some(fields) = biome.as_object_mut() else {
+            bail!("{} isn't a JSON object", path.display());
+        };
+        fields.insert("carvers".to_string(), serde_json::Value::Array(Vec::new()));
+        let name = path.file_name().expect("a file");
+        fs::write(out.join(name), serde_json::to_vec_pretty(&biome)?)?;
+    }
+    Ok(pack)
+}
 
 /// `bundles/<version>` with `pack`'s `data/` files added, as `target/oracle/bundles/<variant>/`,
 /// its manifest naming `variant` and listing the added files. Rebuilt every time.
@@ -316,13 +429,14 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-/// Every golden file: probes, structures, spawn, heights, and the biome grids.
+/// Every golden file: probes, structures, spawn, heights, blocks, and the biome grids.
 fn golden(common: &Common, threads: Option<usize>) -> Result<()> {
-    let harness = build(common)?;
+    let mut harness = build(common)?;
     harness.probe()?;
     harness.structures()?;
     harness.spawn()?;
     harness.heights(threads, GOLDEN_SEEDS)?;
+    blocks(&mut harness, threads, GOLDEN_SEEDS)?;
     harness.golden_biomes(threads)?;
     println!(
         "golden files in {}",
@@ -459,6 +573,16 @@ impl Harness {
             extra.extend(["--threads".into(), threads.to_string().into()]);
         }
         self.per_dimension("heights", &extra, seeds)
+    }
+
+    /// Writes `oracle-out/<version>/blocks/<dimension>/` for each golden dimension, replacing
+    /// what was there.
+    pub(crate) fn blocks(&self, threads: Option<usize>, seeds: &[&str]) -> Result<()> {
+        let mut extra: Vec<OsString> = Vec::new();
+        if let Some(threads) = threads {
+            extra.extend(["--threads".into(), threads.to_string().into()]);
+        }
+        self.per_dimension("blocks", &extra, seeds)
     }
 
     /// Runs harness command `kind` for `seeds` once per golden dimension, into

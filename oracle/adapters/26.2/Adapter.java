@@ -147,9 +147,6 @@ final class Adapter implements GameApi {
 
     @Override
     public Game load(List<java.nio.file.Path> packs) {
-        if (!packs.isEmpty()) {
-            throw new IllegalArgumentException("the 26.2 adapter doesn't load test packs");
-        }
         SharedConstants.tryDetectVersion();
         Bootstrap.bootStrap();
 
@@ -157,8 +154,15 @@ final class Adapter implements GameApi {
         // worldgen registries from the data packs into the WORLDGEN layer. (Its next step loads the
         // DIMENSIONS layer, which a new world fills from the preset below instead.)
         LayeredRegistryAccess<RegistryLayer> layers = RegistryLayer.createRegistryAccess();
-        var resources = new MultiPackResourceManager(PackType.SERVER_DATA,
-                List.of(ServerPacksSource.createVanillaPackSource()));
+        var all = new java.util.ArrayList<net.minecraft.server.packs.PackResources>();
+        all.add(ServerPacksSource.createVanillaPackSource());
+        for (java.nio.file.Path pack : packs) {
+            String name = pack.getFileName().toString();
+            all.add(new net.minecraft.server.packs.PathPackResources(new net.minecraft.server.packs.PackLocationInfo(
+                    "file/" + name, net.minecraft.network.chat.Component.literal(name),
+                    net.minecraft.server.packs.repository.PackSource.DEFAULT, java.util.Optional.empty()), pack));
+        }
+        var resources = new MultiPackResourceManager(PackType.SERVER_DATA, all);
         var tags = TagLoader.loadTagsForExistingRegistries(resources, layers.getLayer(RegistryLayer.STATIC));
         List<HolderLookup.RegistryLookup<?>> lookups =
                 TagLoader.buildUpdatedLookups(layers.getAccessForLoading(RegistryLayer.WORLDGEN), tags);
@@ -384,6 +388,12 @@ final class Adapter implements GameApi {
     @Override
     public JsonArray probeDensity(Game game, List<String> seeds) {
         return ProbeWorldgen.density(game, seeds);
+    }
+
+    @Override
+    public net.minecraft.world.level.chunk.ChunkAccess generateChunk(Game game, NoiseBasedChunkGenerator generator,
+            LevelHeightAccessor height, RandomState random, long seed, ChunkPos pos) {
+        return Chunks.generate(game, generator, height, random, seed, pos);
     }
 
     @Override

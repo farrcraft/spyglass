@@ -86,6 +86,8 @@ When the harness doesn't compile against the new jar:
 
 26.4-snapshot-6's adapter is the model: an `extends` of `26.4`, and one file, `RandomStates.java`, for `RandomState.createForGenerator`.
 
+**The chunk steps' stand-ins** ([ADR 0049](adr/0049-the-oracle-generates-chunks-with-stand-ins.md)) break in their own way. A version whose chunk steps use more of the region fails with a null pointer in `WorldGenRegion` or `StructureManager`: override that method in the adapter's `Chunks.java`. A version that changes the status tasks' glue around the steps, as 26.4 did with its biome statuses, needs a `Chunks.java` of its own. Read `ChunkStatusTasks` in the new jar with `javap -c` and repeat what it does.
+
 A change in the harness core changes every version's output. After one, regenerate the goldens of every version and check that they're unchanged where they should be.
 
 ## Tests pinned to one version

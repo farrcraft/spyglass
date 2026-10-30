@@ -14,6 +14,7 @@ import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.BiomeSource;
 import net.minecraft.world.level.biome.Climate;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.ChunkGenerator;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator;
@@ -120,4 +121,11 @@ interface GameApi {
 
     /** The probe's terrain (aquifer) cases. */
     JsonArray probeTerrain(Game game, List<String> seeds);
+
+    /**
+     * The chunk at {@code pos} as generation leaves it before features, with no structures: the
+     * generator's own chunk steps, given stand-ins for the server ({@link StandIns}).
+     */
+    ChunkAccess generateChunk(Game game, NoiseBasedChunkGenerator generator, LevelHeightAccessor height,
+            RandomState random, long seed, ChunkPos pos);
 }

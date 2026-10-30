@@ -1,13 +1,13 @@
 # m18. Carvers
 
-- Status: In progress
-- Milestone: [18. Surface rules, ore veins, caves and carvers](../roadmap/18-surface-veins-and-carvers.md)
+- Status: Completed
+- Milestone: [18. Surface rules, ore veins, caves and carvers](../../roadmap/18-surface-veins-and-carvers.md)
 - Started: 2026-10-30
-- Completed: YYYY-MM-DD
+- Completed: 2026-10-30
 
 ## Goal
 
-The caves and ravines that carvers cut after the material rule, exactly as the game makes them, so a chunk's blocks are the game's before features. It meets the milestone's first exit criterion for the `terrain` runs of the [block golden files](completed/m18-block-oracle.md), building on [m18-material-rule](completed/m18-material-rule.md).
+The caves and ravines that carvers cut after the material rule, exactly as the game makes them, so a chunk's blocks are the game's before features. It meets the milestone's first exit criterion for the `terrain` runs of the [block golden files](m18-block-oracle.md), building on [m18-material-rule](m18-material-rule.md).
 
 ## Approach
 
@@ -20,7 +20,7 @@ The caves and ravines that carvers cut after the material rule, exactly as the g
   - They fill with the aquifer's answer, or lava below `lava_level`.
   - They fix the surface block above a carved grass or mycelium position.
 - **26.3:** carvers only mark a `CarvingMask`. `applyCarvingMask` then gives each marked position the aquifer's substance, and the material rule's block where that's solid. The carver data loses `replaceable`, `lava_level` and `debug_settings`.
-- **26.4 snapshots:** the material rule itself is ported here, since `ChunkTerrainBuilder.fillColumn` runs it and the carving mask in one pass per column (columns from `NoiseChunk.prepareColumn`, the chunk's upscaled biomes, `#uncarvable`, dirt under an opening evaluated again; see [m18-material-rule](completed/m18-material-rule.md)'s notes). Other differences are found with `version-diff --code` and become switches.
+- **26.4 snapshots:** the material rule itself is ported here, since `ChunkTerrainBuilder.fillColumn` runs it and the carving mask in one pass per column (columns from `NoiseChunk.prepareColumn`, the chunk's upscaled biomes, `#uncarvable`, dirt under an opening evaluated again; see [m18-material-rule](m18-material-rule.md)'s notes). Other differences are found with `version-diff --code` and become switches.
 
 **Where it lives.** `spyglass-blocks`, after the material rule: `Session::chunk_blocks(chunk, Carvers::On)` (the default), and `block_at` and `block_column` with carvers. The CLI's `--no-carvers` becomes meaningful.
 
@@ -36,7 +36,7 @@ The caves and ravines that carvers cut after the material rule, exactly as the g
 - [x] **API and CLI:** carvers on by default, `--no-carvers`, and docs.
 - [x] **Spec:** `carvers.md`: the start check, the seeding, each carver's shape, the mask, per-version notes. Link it from terrain.md and material.md.
 - [x] **Cost:** `cargo xtask bench` gains a chunk with carvers. Record it here: 43 ms a chunk in 26.3 (41 without), 98 ms in 26.2 (59 without), 44 ms in 26.4-snapshot-6 (45 without); see the notes.
-- [ ] `cargo xtask check` and `cargo xtask oracle-test`.
+- [x] `cargo xtask check` and `cargo xtask oracle-test`.
 
 ## Verification
 
@@ -58,7 +58,7 @@ The caves and ravines that carvers cut after the material rule, exactly as the g
   - **Providers** moved to `spyglass_data::providers` (specs/providers.md), with every type the codecs register; structures use them too.
   - Tag resolution is now `spyglass_terrain::tag`, for any registry, keeping entry order.
 - 2026-10-30: **26.2 matches but for one block.** 26.2's carvers are 26.3's shapes: 26.3 moved the cave count, thickness and vertical scale into data with the same draws and results, so 26.2's configs map onto them. What differs is carving straight into the chunk through a sink: the mask skips positions already carved, `replaceable`, `lava_level`, the Nether carver's lava and cave air, and the surface fix-up per ellipsoid column. Every block of 26.2's golden chunks with carvers matches except tied ones and one Nether block at x −1,000,064, where the game has air and spyglass cave air. The game's own no-carvers chunk and base column have netherrack there, and nothing in 26.2's Nether carving writes plain air. It's named in the test and in carvers.md's open questions.
-- 2026-10-30: **Cost.** `chunk_blocks with carvers, bound`: 43 ms a chunk in 26.3, 2 ms over the chunk without carvers, so the start checks over 17 × 17 chunks are cheap, as expected. In 26.2 it's 98 ms, 40 ms over: each carved column asks the aquifer for its whole column (`Terrain::aquifer_column`), and 26.2's family builds a one-column `NoiseChunk` for that. Asking only at carved positions would cut it; left for [m18-layers](m18-layers.md), which sets its limits from measured cost.
+- 2026-10-30: **Cost.** `chunk_blocks with carvers, bound`: 43 ms a chunk in 26.3, 2 ms over the chunk without carvers, so the start checks over 17 × 17 chunks are cheap, as expected. In 26.2 it's 98 ms, 40 ms over: each carved column asks the aquifer for its whole column (`Terrain::aquifer_column`), and 26.2's family builds a one-column `NoiseChunk` for that. Asking only at carved positions would cut it; left for [m18-layers](../m18-layers.md), which sets its limits from measured cost.
 - 2026-10-30: **26.4 matches, both snapshots, with and without carvers.** `ChunkTerrainBuilder` ported: columns from terrain's 26.4 column (solid left undecided), gradients from the chunk's column tops, the rule and the carving per column, pillars on the noise column and icebergs that skip carved positions. Without carvers it matched on the first run. With carvers, two switches were needed, both found from the golden differences:
   - `rounded_trig` (5125 on): 26.4's `Mth.sin` and `Mth.cos` round to the nearest table entry, are symmetric about 0, and have exact quarter turns. Truncating as 26.3 did moved a few hundred ellipsoid edge blocks.
   - `carving_mask_level_bounds` (5126 on): snapshot-6's mask spans the level, snapshot-5's the anchors' context, which in the Nether stops at y 120 rather than 248.

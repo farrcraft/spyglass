@@ -7,7 +7,7 @@
 
 ## Goal
 
-Map layers that show what [m18-material-rule](completed/m18-material-rule.md) and [m18-carvers](m18-carvers.md) compute: ore veins, noise caves, carver caves and ravines, at a height the user picks. They're in the library's renderer, so the viewer, `spyglass render` and exports draw the same pixels. It meets the milestone's second and third exit criteria.
+Map layers that show what [m18-material-rule](completed/m18-material-rule.md) and [m18-carvers](completed/m18-carvers.md) compute: ore veins, noise caves, carver caves and ravines, at a height the user picks. They're in the library's renderer, so the viewer, `spyglass render` and exports draw the same pixels. It meets the milestone's second and third exit criteria.
 
 ## Approach
 

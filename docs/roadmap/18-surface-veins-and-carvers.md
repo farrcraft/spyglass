@@ -2,7 +2,7 @@
 
 - Status: In progress
 - Depends on: [09](completed/09-fast-density.md)
-- Plans, in order: [m18-block-oracle](../plans/completed/m18-block-oracle.md), [m18-material-rule](../plans/completed/m18-material-rule.md), [m18-carvers](../plans/m18-carvers.md), [m18-layers](../plans/m18-layers.md)
+- Plans, in order: [m18-block-oracle](../plans/completed/m18-block-oracle.md), [m18-material-rule](../plans/completed/m18-material-rule.md), [m18-carvers](../plans/completed/m18-carvers.md), [m18-layers](../plans/m18-layers.md)
 
 ## Goal
 
@@ -25,7 +25,7 @@ Not in scope:
 
 ## Exit criteria
 
-- [ ] Every golden block column matches the game after the material rule and after carvers, in each dimension, for every supported version (`cargo xtask oracle-test`).
+- [x] Every golden block column matches the game after the material rule and after carvers, in each dimension, for every supported version (`cargo xtask oracle-test`). One 26.2 Nether block is an open question ([carvers.md](../specs/carvers.md#open-questions)).
 - [ ] The new layers tile exactly: a view equals itself assembled from tiles (the render spec's tiling test, extended).
 - [ ] The layers' cost per tile at their largest scale is recorded with `cargo xtask bench`, and the viewer stays responsive while they draw.
 - [ ] `cargo xtask check` passes.

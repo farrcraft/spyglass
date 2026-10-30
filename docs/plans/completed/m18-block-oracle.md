@@ -7,7 +7,7 @@
 
 ## Goal
 
-The game's own blocks for whole chunks, as generation leaves them before features and structures, in every supported version and dimension, so the ports in [m18-material-rule](m18-material-rule.md) and [m18-carvers](../m18-carvers.md) have something exact to match. It's the reference behind the milestone's first exit criterion. This plan ports nothing itself.
+The game's own blocks for whole chunks, as generation leaves them before features and structures, in every supported version and dimension, so the ports in [m18-material-rule](m18-material-rule.md) and [m18-carvers](m18-carvers.md) have something exact to match. It's the reference behind the milestone's first exit criterion. This plan ports nothing itself.
 
 ## Approach
 

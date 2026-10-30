@@ -175,7 +175,7 @@ Carvers cut caves and canyons after the rule ([carvers.md](carvers.md)). Where t
 
 ## Queries
 
-`Session::chunk_blocks(chunk, Carvers::Off)` gives a chunk's blocks, each with whether it's [certain](#ties). `Session::block_at` and `Session::block_column` generate the chunk around the block or column and answer from it. `Carvers` has only `Off` until carvers are ported. The CLI's `spyglass blocks` answers the same ([cli-json.md](cli-json.md#blocks)). The block settings are loaded on a world's first block query, and the seed's chunk generator is bound on a session's.
+`Session::chunk_blocks(chunk, carvers)` gives a chunk's blocks, each with whether it's [certain](#ties): with `Carvers::On`, after [carvers](carvers.md), with `Carvers::Off`, before. `Session::block_at` and `Session::block_column` generate the chunk around the block or column and answer from it. The CLI's `spyglass blocks` answers the same ([cli-json.md](cli-json.md#blocks)). The block settings are loaded on a world's first block query, and the seed's chunk generator is bound on a session's.
 
 ## Versions
 

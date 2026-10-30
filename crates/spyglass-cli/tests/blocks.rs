@@ -86,6 +86,19 @@ fn blocks_columns_and_chunks() {
 }
 
 #[test]
+fn carvers_are_on_by_default() {
+    // The fixture's biomes have no carvers, so both answers are the same seabed.
+    let fixture = fixtures::overworld(&[], false);
+    let path = fixture.path();
+    let out = spyglass(&path, &["--seed", "5", "--at", "3,49,-20", "--json"]);
+    let v: Value = serde_json::from_str(&ok(&out)).unwrap();
+    assert_eq!(
+        (&v["carvers"], &v["block"]),
+        (&json!(true), &json!("minecraft:sand"))
+    );
+}
+
+#[test]
 fn bad_requests_fail() {
     let fixture = fixtures::overworld(&[], false);
     let path = fixture.path();
@@ -95,9 +108,6 @@ fn bad_requests_fail() {
         assert!(out.stdout.is_empty());
         String::from_utf8(out.stderr).unwrap()
     };
-    // Blocks after carvers aren't computed yet.
-    let error = fails(&["--seed", "5", "--at", "0,0,0"]);
-    assert!(error.contains("--no-carvers"), "{error}");
     // One of --at, --column and --chunk.
     fails(&["--seed", "5", "--no-carvers"]);
     fails(&[

@@ -33,9 +33,9 @@ The caves and ravines that carvers cut after the material rule, exactly as the g
 - [x] **26.3:** the cave, canyon and nether cave carvers, the start check and seeding, the carving mask, and applying it through the aquifer and the material rule. The golden `terrain` chunks of 26.3 in all three dimensions.
 - [ ] **26.4:** `ChunkTerrainBuilder`: the material rule interleaved with the carving mask, the switches, and both snapshots' golden chunks, with and without carvers. Add 26.4 to `PINNED` for `chunks_without_carvers_match_the_game` and `blocks_through_the_api_are_the_game_s`, and drop the 26.4 error in `MaterialSettings::load`.
 - [x] **26.2:** carving into blocks (replaceable, lava level, surface fix-up), and 26.2's golden chunks.
-- [ ] **API and CLI:** carvers on by default, `--no-carvers`, and docs.
-- [ ] **Spec:** `carvers.md`: the start check, the seeding, each carver's shape, the mask, per-version notes. Link it from terrain.md and material.md.
-- [ ] **Cost:** `cargo xtask bench` gains a chunk with carvers. Record it here.
+- [x] **API and CLI:** carvers on by default, `--no-carvers`, and docs.
+- [x] **Spec:** `carvers.md`: the start check, the seeding, each carver's shape, the mask, per-version notes. Link it from terrain.md and material.md.
+- [x] **Cost:** `cargo xtask bench` gains a chunk with carvers. Record it here: 43 ms a chunk in 26.3 (41 without), 98 ms in 26.2 (59 without); see the notes.
 - [ ] `cargo xtask check` and `cargo xtask oracle-test`.
 
 ## Verification
@@ -45,9 +45,9 @@ The caves and ravines that carvers cut after the material rule, exactly as the g
 
 ## Durable outputs
 
-- [ ] `docs/specs/carvers.md`.
-- [ ] terrain.md and material.md: pointers to it.
-- [ ] cli-json.md: what `--no-carvers` changes.
+- [x] `docs/specs/carvers.md`.
+- [x] terrain.md and material.md: pointers to it.
+- [x] cli-json.md: what `--no-carvers` changes.
 
 ## Notes
 
@@ -58,3 +58,4 @@ The caves and ravines that carvers cut after the material rule, exactly as the g
   - **Providers** moved to `spyglass_data::providers` (specs/providers.md), with every type the codecs register; structures use them too.
   - Tag resolution is now `spyglass_terrain::tag`, for any registry, keeping entry order.
 - 2026-10-30: **26.2 matches but for one block.** 26.2's carvers are 26.3's shapes: 26.3 moved the cave count, thickness and vertical scale into data with the same draws and results, so 26.2's configs map onto them. What differs is carving straight into the chunk through a sink: the mask skips positions already carved, `replaceable`, `lava_level`, the Nether carver's lava and cave air, and the surface fix-up per ellipsoid column. Every block of 26.2's golden chunks with carvers matches except tied ones and one Nether block at x −1,000,064, where the game has air and spyglass cave air. The game's own no-carvers chunk and base column have netherrack there, and nothing in 26.2's Nether carving writes plain air. It's named in the test and in carvers.md's open questions.
+- 2026-10-30: **Cost.** `chunk_blocks with carvers, bound`: 43 ms a chunk in 26.3, 2 ms over the chunk without carvers, so the start checks over 17 × 17 chunks are cheap, as expected. In 26.2 it's 98 ms, 40 ms over: each carved column asks the aquifer for its whole column (`Terrain::aquifer_column`), and 26.2's family builds a one-column `NoiseChunk` for that. Asking only at carved positions would cut it; left for [m18-layers](m18-layers.md), which sets its limits from measured cost.

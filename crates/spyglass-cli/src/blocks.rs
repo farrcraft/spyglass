@@ -1,9 +1,9 @@
 //! `spyglass blocks`: a chunk's blocks before features, at one block, a column or a whole chunk
-//! (`docs/specs/material.md`).
+//! (`docs/specs/material.md`, `docs/specs/carvers.md`).
 
 use std::collections::BTreeMap;
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 use spyglass::{BlockColumn, Carvers, ChunkBlocks};
 
 use crate::Out;
@@ -11,10 +11,11 @@ use crate::args::Blocks;
 use crate::json;
 
 pub fn run(args: &Blocks) -> Result<()> {
-    if !args.no_carvers {
-        bail!("blocks after carvers aren't computed yet; pass --no-carvers for the blocks before");
-    }
-    let carvers = Carvers::Off;
+    let carvers = if args.no_carvers {
+        Carvers::Off
+    } else {
+        Carvers::On
+    };
     let (world, seed, report) = crate::load(&args.common, false)?;
     let session = world.session(seed)?;
     let out = Out {
@@ -28,7 +29,7 @@ pub fn run(args: &Blocks) -> Result<()> {
             return out.print(
                 "blocks",
                 json::BlockAnswer {
-                    carvers: false,
+                    carvers: !args.no_carvers,
                     position: pos,
                     block: &block.block,
                     certain: block.certain,
@@ -43,7 +44,7 @@ pub fn run(args: &Blocks) -> Result<()> {
             return out.print(
                 "blocks",
                 json::BlocksAnswer {
-                    carvers: false,
+                    carvers: !args.no_carvers,
                     min_y: blocks.min_y,
                     columns: vec![json::BlockColumn::new([x, z], &blocks)],
                 },
@@ -60,7 +61,7 @@ pub fn run(args: &Blocks) -> Result<()> {
             return out.print(
                 "blocks",
                 json::BlocksAnswer {
-                    carvers: false,
+                    carvers: !args.no_carvers,
                     min_y: chunk.min_y(),
                     columns,
                 },
@@ -69,7 +70,11 @@ pub fn run(args: &Blocks) -> Result<()> {
         out!("Blocks in chunk {cx} {cz}, by count{}", out.context(None));
         print_counts(&chunk);
     }
-    out!("Blocks are the game's before carvers, structures and features.");
+    if args.no_carvers {
+        out!("Blocks are the game's before carvers, structures and features.");
+    } else {
+        out!("Blocks are the game's before structures and features.");
+    }
     out.warn();
     Ok(())
 }

@@ -149,7 +149,7 @@ const TESTS: &[(&str, &str, &[Input])] = &[
     (
         "spyglass",
         "blocks_through_the_api_are_the_game_s",
-        &[Input::BlocksNoCarvers, Input::Bundle],
+        &[Input::Blocks, Input::BlocksNoCarvers, Input::Bundle],
     ),
     (
         "spyglass-terrain",

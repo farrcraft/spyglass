@@ -41,8 +41,8 @@ pub enum Command {
     /// Terrain heights before structures, carvers and features, as structures are placed by:
     /// one column or a region.
     Heights(Heights),
-    /// A chunk's blocks before features, as the game generates them: one block, a column or a
-    /// whole chunk.
+    /// A chunk's blocks before features, as the game generates them, carvers included: one
+    /// block, a column or a whole chunk.
     Blocks(Blocks),
 }
 
@@ -59,8 +59,7 @@ pub struct Blocks {
     /// A whole chunk, `x,z` in chunks.
     #[arg(long, allow_hyphen_values = true, value_parser = xz)]
     pub chunk: Option<[i32; 2]>,
-    /// The blocks before carvers cut caves and ravines. Required for now: blocks after carvers
-    /// aren't computed yet.
+    /// The blocks before carvers cut caves and ravines.
     #[arg(long)]
     pub no_carvers: bool,
     #[command(flatten)]

@@ -1,5 +1,5 @@
-//! A chunk's blocks before features: the noise fill and the material rule
-//! (`docs/specs/material.md`).
+//! A chunk's blocks before features: the noise fill, the material rule and carvers
+//! (`docs/specs/material.md`, `docs/specs/carvers.md`).
 
 use spyglass_blocks::{Chunk, ChunkGenerator, Palette};
 
@@ -9,6 +9,9 @@ use crate::{Result, Session};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Carvers {
+    /// After carvers: with the caves and ravines they cut, as the game's chunks are before
+    /// features.
+    On,
     /// Before carvers: the noise fill and the material rule, with noise caves but not the
     /// caves and ravines carvers cut.
     Off,
@@ -100,15 +103,18 @@ impl<'w> Session<'w> {
         Ok(self.chunks.get_or_init(|| generator))
     }
 
-    /// The blocks of chunk `[x, z]`, as the game generates them before features
-    /// (`docs/specs/material.md`). Every query generates the whole chunk, which takes a while:
-    /// keep the answer to ask about more than one block. Versions whose material rule isn't
-    /// ported, such as 26.4's, are an error.
+    /// The blocks of chunk `[x, z]`, as the game generates them before features, with or
+    /// without carvers (`docs/specs/material.md`, `docs/specs/carvers.md`). Every query
+    /// generates the whole chunk, which takes a while: keep the answer to ask about more than
+    /// one block. Versions whose material rule isn't ported, such as 26.4's, are an error.
     pub fn chunk_blocks(&self, chunk: [i32; 2], carvers: Carvers) -> Result<ChunkBlocks<'w>> {
-        let Carvers::Off = carvers;
         let generator = self.chunks()?;
+        let [x, z] = chunk;
         Ok(ChunkBlocks {
-            chunk: generator.chunk(chunk[0], chunk[1]),
+            chunk: match carvers {
+                Carvers::On => generator.carved_chunk(x, z),
+                Carvers::Off => generator.chunk(x, z),
+            },
             palette: self.world.block_settings()?.palette(),
         })
     }

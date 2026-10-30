@@ -241,15 +241,22 @@ fn main() -> spyglass::Result<()> {
     report("heights_in 40 x 25 columns", 3, || {
         black_box(heights.heights_in([0, 0], [39, 24], spyglass::Heightmap::OceanFloorWg)).unwrap();
     });
-    // A chunk's blocks before carvers: the noise fill and the material rule, in chunks far
-    // apart so no column is shared. 26.4's rule isn't ported, so it's skipped there.
-    let name = "chunk_blocks without carvers, bound";
-    if wanted(name) && heights.chunk_blocks([0, 0], spyglass::Carvers::Off).is_ok() {
-        let mut chunk = 0;
-        report(name, 5, || {
-            chunk += 1000;
-            black_box(heights.chunk_blocks([chunk, -40], spyglass::Carvers::Off)).unwrap();
-        });
+    // A chunk's blocks without and with carvers, in chunks far apart so no column is shared.
+    // 26.4's rule isn't ported, so it's skipped there.
+    for (name, carvers) in [
+        (
+            "chunk_blocks without carvers, bound",
+            spyglass::Carvers::Off,
+        ),
+        ("chunk_blocks with carvers, bound", spyglass::Carvers::On),
+    ] {
+        if wanted(name) && heights.chunk_blocks([0, 0], carvers).is_ok() {
+            let mut chunk = 0;
+            report(name, 5, || {
+                chunk += 1000;
+                black_box(heights.chunk_blocks([chunk, -40], carvers)).unwrap();
+            });
+        }
     }
     // Seed search: one constraint of each kind, judged in a new session (what a search's
     // full check costs per seed), then whole searches.

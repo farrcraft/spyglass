@@ -2,7 +2,7 @@
 
 - Status: In progress
 - Depends on: [09](completed/09-fast-density.md)
-- Plans, in order: [m18-block-oracle](../plans/completed/m18-block-oracle.md), [m18-material-rule](../plans/m18-material-rule.md), [m18-carvers](../plans/m18-carvers.md), [m18-layers](../plans/m18-layers.md)
+- Plans, in order: [m18-block-oracle](../plans/completed/m18-block-oracle.md), [m18-material-rule](../plans/completed/m18-material-rule.md), [m18-carvers](../plans/m18-carvers.md), [m18-layers](../plans/m18-layers.md)
 
 ## Goal
 

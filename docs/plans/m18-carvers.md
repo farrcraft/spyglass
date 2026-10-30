@@ -7,7 +7,7 @@
 
 ## Goal
 
-The caves and ravines that carvers cut after the material rule, exactly as the game makes them, so a chunk's blocks are the game's before features. It meets the milestone's first exit criterion for the `terrain` runs of the [block golden files](completed/m18-block-oracle.md), building on [m18-material-rule](m18-material-rule.md).
+The caves and ravines that carvers cut after the material rule, exactly as the game makes them, so a chunk's blocks are the game's before features. It meets the milestone's first exit criterion for the `terrain` runs of the [block golden files](completed/m18-block-oracle.md), building on [m18-material-rule](completed/m18-material-rule.md).
 
 ## Approach
 
@@ -20,7 +20,7 @@ The caves and ravines that carvers cut after the material rule, exactly as the g
   - They fill with the aquifer's answer, or lava below `lava_level`.
   - They fix the surface block above a carved grass or mycelium position.
 - **26.3:** carvers only mark a `CarvingMask`. `applyCarvingMask` then gives each marked position the aquifer's substance, and the material rule's block where that's solid. The carver data loses `replaceable`, `lava_level` and `debug_settings`.
-- **26.4 snapshots:** the same as 26.3, through `generateCarvingMask`. Other differences are found with `version-diff --code` and become switches.
+- **26.4 snapshots:** the material rule itself is ported here, since `ChunkTerrainBuilder.fillColumn` runs it and the carving mask in one pass per column (columns from `NoiseChunk.prepareColumn`, the chunk's upscaled biomes, `#uncarvable`, dirt under an opening evaluated again; see [m18-material-rule](completed/m18-material-rule.md)'s notes). Other differences are found with `version-diff --code` and become switches.
 
 **Where it lives.** `spyglass-blocks`, after the material rule: `Session::chunk_blocks(chunk, Carvers::On)` (the default), and `block_at` and `block_column` with carvers. The CLI's `--no-carvers` becomes meaningful.
 
@@ -31,7 +31,7 @@ The caves and ravines that carvers cut after the material rule, exactly as the g
 - [ ] **Spike:** port the cave carver for 26.3 only, and compare one golden chunk's carved positions: the difference between its `terrain` and `no-carvers` runs.
 - [ ] **Data:** configured carvers, height providers and float providers for all versions. Typed loading and fixture tests.
 - [ ] **26.3:** the cave, canyon and nether cave carvers, the start check and seeding, the carving mask, and applying it through the aquifer and the material rule. The golden `terrain` chunks of 26.3 in all three dimensions.
-- [ ] **26.4:** the switches, and both snapshots' golden chunks.
+- [ ] **26.4:** `ChunkTerrainBuilder`: the material rule interleaved with the carving mask, the switches, and both snapshots' golden chunks, with and without carvers. Add 26.4 to `PINNED` for `chunks_without_carvers_match_the_game` and `blocks_through_the_api_are_the_game_s`, and drop the 26.4 error in `MaterialSettings::load`.
 - [ ] **26.2:** carving into blocks (replaceable, lava level, surface fix-up), and 26.2's golden chunks.
 - [ ] **API and CLI:** carvers on by default, `--no-carvers`, and docs.
 - [ ] **Spec:** `carvers.md`: the start check, the seeding, each carver's shape, the mask, per-version notes. Link it from terrain.md and material.md.

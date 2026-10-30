@@ -117,6 +117,33 @@ fn main() -> spyglass::Result<()> {
             );
         });
     }
+    // `find` presets over the 4,096 blocks around the origin, in new sessions (ADR 0047).
+    for (name, text) in [
+        (
+            "double huts",
+            "find minecraft:swamp_hut within 4096\nrequire minecraft:swamp_hut within 200 of here",
+        ),
+        (
+            "flat outpost",
+            "find minecraft:pillager_outpost within 4096\nrequire flat 4 within 48 of here step 4",
+        ),
+        (
+            "mushroom fields",
+            "find biome minecraft:mushroom_fields within 4096 step 32",
+        ),
+    ] {
+        let query = world.search_query(text)?;
+        let options = spyglass::FindOptions::default();
+        let mut seeds = SEEDS.iter().cycle();
+        report(&format!("find {name}, new session"), 5, || {
+            let session = world.session(*seeds.next().unwrap()).unwrap();
+            black_box(
+                session
+                    .find(&query, &options, |_| std::ops::ControlFlow::Continue(()))
+                    .unwrap(),
+            );
+        });
+    }
     report("structure_layout village_plains, bound", 5, || {
         black_box(
             session

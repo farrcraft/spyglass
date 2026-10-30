@@ -14,7 +14,7 @@ Locate and draw the features players look for: dungeons, amethyst geodes, desert
 - **The features first:** `monster_room` (dungeons), `amethyst_geode`, `desert_well`, `fossil` (with its diamond variant), `lake` (lava pools), and the Nether's fossils. Each comes with its own validity checks against the blocks: a dungeon's air and solid counts, a geode's exposure, a well's sand.
 - **Certainty:** a feature whose checks depend on blocks spyglass can't yet compute, such as other features placed earlier in the same chunk, is a candidate, never a guess. The spec lists which checks those are. Where earlier features are cheap to place exactly, the plan may place them.
 - **Queries:** features in an area and the nearest feature, with the same certain and candidate answers and a `--json` form, as `spyglass locate feature` and in the API.
-- **The viewer:** feature layers with icons in the shared style, a Locate tab entry, and features as targets and conditions in [16](16-search-within-a-seed.md)'s search and the seed search ("two dungeons within 16 blocks").
+- **The viewer:** feature layers with icons in the shared style, a Locate tab entry, and features as targets and conditions in [16](completed/16-search-within-a-seed.md)'s search and the seed search ("two dungeons within 16 blocks").
 - **The oracle:** golden feature positions from the game's own decoration, for the golden seeds, in every supported version.
 - **Specs:** a features spec, with per-version notes.
 

@@ -307,7 +307,7 @@ impl BiomeMap {
             if query.world != world.id {
                 return Err(Error::OtherWorld(query.id.clone()));
             }
-            if let Some(BiomeId(b)) = query.biome {
+            for &BiomeId(b) in &query.biomes {
                 bright[usize::from(b)] = true;
             }
         }

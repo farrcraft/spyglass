@@ -21,7 +21,7 @@ The milestones build toward the goals in the [README](../../README.md#goals): co
 | 13  | [Viewer redesign](completed/13-viewer-redesign.md)                            | A designed layout, map controls and icons, and visible loading.     | Completed |
 | 14  | [Viewer performance](completed/14-viewer-performance.md)                      | A full map in less time, measured; faster rendering in the library. | Completed |
 | 15  | [Nearest locate](completed/15-nearest-locate.md)                              | The nearest structure, beside `/locate`'s answer.                   | Completed |
-| 16  | [Search within a seed](16-search-within-a-seed.md)                            | Places in one seed that fit a query, nearest first.                 | Planned   |
+| 16  | [Search within a seed](completed/16-search-within-a-seed.md)                  | Places in one seed that fit a query, nearest first.                 | Completed |
 | 17  | [Markers and saved seeds](17-markers-and-saved-seeds.md)                      | Your own pins, done structures, saved seeds and shared views.       | Planned   |
 | 18  | [Surface rules, ore veins, caves, carvers](18-surface-veins-and-carvers.md)   | A chunk's blocks before features, and layers to show them.          | Planned   |
 | 19  | [Features](19-features.md)                                                    | Dungeons, geodes, wells, fossils and lava lakes, certain or not.    | Planned   |

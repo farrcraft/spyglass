@@ -28,10 +28,12 @@ description: Launch and drive the spyglass viewer on Windows to see a change wor
 3. **Look** at it: `& $V shot -Out <scratchpad>\viewer\name.png`, then Read the PNG. A blank or grey frame means it didn't draw: wait longer, or check that a bundle for `-Version` is in `bundles/`.
 
 4. **Interact**, then take another shot:
+
    - `click -X -Y`: a left click.
    - `rclick -X -Y`: the map's menu, with Nearest structure and Nearest biome.
    - `move -X -Y`: hover, which opens a submenu.
    - `wheel -X -Y -Notches n`: scroll a list, or zoom the map. Positive scrolls down.
+   - `key -Keys k`: type keys in `SendKeys` notation (`n`, `{ESC}`). The map's keys work only while no text field has focus, so click the map first.
 
    Coordinates are screen pixels. `shot` prints where the window is (`window at 7,0`), so a point at (x, y) in the screenshot is at (x + left, y + top) on screen. The few pixels of difference rarely matter for buttons.
 

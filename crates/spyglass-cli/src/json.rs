@@ -357,6 +357,33 @@ pub struct SearchAnswer<'a> {
     pub warnings: Option<Vec<Warning>>,
 }
 
+/// `find`'s answer.
+#[derive(Serialize)]
+pub struct FindAnswer<'a> {
+    #[serde(flatten)]
+    pub header: Header<'a>,
+    pub query: &'a str,
+    pub origin: Xz,
+    pub certain: bool,
+    pub confirm: bool,
+    pub top: usize,
+    pub targets: usize,
+    pub judged: usize,
+    pub complete: bool,
+    pub elapsed_seconds: f64,
+    pub matches: Vec<FindMatch<'a>>,
+}
+
+#[derive(Serialize)]
+pub struct FindMatch<'a> {
+    pub position: Xz,
+    pub distance: u32,
+    pub target: Option<FeatureAnswer<'a>>,
+    pub score: u64,
+    pub verdict: &'static str,
+    pub constraints: Vec<ConstraintAnswer<'a>>,
+}
+
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Source {

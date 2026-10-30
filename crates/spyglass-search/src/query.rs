@@ -16,10 +16,18 @@ pub const DEFAULT_Y: i32 = 64;
 pub const DEFAULT_STEP: u32 = 16;
 /// The most grid points a biome constraint may have, counted over its place's bounding box.
 pub const MAX_SAMPLES: u64 = 1 << 20;
+/// The most grid points a terrain condition may have: a column's height costs far more than its
+/// biome.
+pub const MAX_HEIGHT_SAMPLES: u64 = 1 << 14;
+/// The most blocks `flat` may allow heights to differ by, and the largest height magnitude.
+pub const MAX_HEIGHT: i32 = 4096;
+/// How far apart a `find` query's biome and point matches are unless it says `apart`.
+pub const DEFAULT_APART: u32 = 256;
 
-/// A parsed query: its constraints in order.
+/// A parsed query: its `find` line, if any, and its constraints in order.
 #[derive(Debug, Clone)]
 pub struct Query {
+    find: Option<(usize, Find)>,
     constraints: Vec<Constraint>,
     lines: Vec<usize>,
 }
@@ -28,8 +36,23 @@ impl Query {
     /// Parses a query's text. Errors name the line and column.
     pub fn parse(text: &str) -> Result<Query, ParseError> {
         let parsed = parse::query(text)?;
-        let (lines, constraints) = parsed.into_iter().unzip();
-        Ok(Query { constraints, lines })
+        let (lines, constraints) = parsed.constraints.into_iter().unzip();
+        Ok(Query {
+            find: parsed.find,
+            constraints,
+            lines,
+        })
+    }
+
+    /// The `find` line: what a search within one seed judges the constraints around. `None` for
+    /// a seed search's query.
+    pub fn find(&self) -> Option<&Find> {
+        self.find.as_ref().map(|(_, f)| f)
+    }
+
+    /// The line (from 1) the `find` line was written on.
+    pub fn find_line(&self) -> Option<usize> {
+        self.find.as_ref().map(|&(line, _)| line)
     }
 
     /// The constraints, in the order written.
@@ -54,13 +77,53 @@ impl Query {
     }
 }
 
-/// The canonical text: one constraint per line, each ending in a newline.
+/// The canonical text: the `find` line, then one constraint per line, each ending in a newline.
 impl fmt::Display for Query {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(find) = self.find() {
+            writeln!(f, "{find}")?;
+        }
         for c in &self.constraints {
             writeln!(f, "{c}")?;
         }
         Ok(())
+    }
+}
+
+/// A query's `find` line: the targets a search within one seed judges its constraints around,
+/// with `here` set to each in turn (ADR 0047).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Find {
+    /// What's looked for.
+    pub target: Target,
+    /// Where. `within R` with no `of` is around the origin the search is given
+    /// ([`Anchor::Origin`]).
+    pub place: Place,
+    /// The grid of a biome or point target; the default for a structure.
+    pub sampling: Sampling,
+    /// A match within this many blocks of an earlier one is skipped.
+    pub apart: u32,
+}
+
+/// What a `find` line looks for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Target {
+    /// Each start of a structure: a full structure id, or `#` and a full tag id.
+    Structure(String),
+    /// `biome B`: each grid sample whose biome matches. A full biome id, or `#` and a tag.
+    Biome(String),
+    /// `point`: each grid point.
+    Point,
+}
+
+impl Target {
+    /// `apart` when a `find` line doesn't say: 0 for structures, [`DEFAULT_APART`] for the
+    /// grid targets, so one biome patch isn't a match per sample.
+    pub fn default_apart(&self) -> u32 {
+        match self {
+            Target::Structure(_) => 0,
+            Target::Biome(_) | Target::Point => DEFAULT_APART,
+        }
     }
 }
 
@@ -153,6 +216,26 @@ pub enum Kind {
         /// Where.
         place: Place,
     },
+    /// `height A to B place [step S]`: every sampled column's terrain height is in `A..=B`.
+    Height {
+        /// The lower of A and B.
+        min: i32,
+        /// The higher.
+        max: i32,
+        /// Where.
+        place: Place,
+        /// The grid's spacing.
+        step: u32,
+    },
+    /// `flat D place [step S]`: the sampled columns' heights differ by at most D.
+    Flat {
+        /// D.
+        range: u32,
+        /// Where.
+        place: Place,
+        /// The grid's spacing.
+        step: u32,
+    },
 }
 
 /// Where structures or slime chunks are counted.
@@ -197,6 +280,10 @@ pub enum Anchor {
     Spawn,
     /// A block `x,z`.
     Point([i32; 2]),
+    /// `here`: the target a `find` query is judging.
+    Here,
+    /// A `find` line's `within R` with no `of`: the origin the search is given.
+    Origin,
 }
 
 /// A biome grid's height and spacing.
@@ -287,7 +374,42 @@ impl fmt::Display for Kind {
                 sampling,
             } => write!(f, "biome {biome} covers {percent}% {place}{sampling}"),
             Kind::Spawn { place } => write!(f, "spawn {place}"),
+            Kind::Height {
+                min,
+                max,
+                place,
+                step,
+            } => write!(f, "height {min} to {max} {place}{}", Step(*step)),
+            Kind::Flat { range, place, step } => {
+                write!(f, "flat {range} {place}{}", Step(*step))
+            }
         }
+    }
+}
+
+impl fmt::Display for Find {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.target {
+            Target::Structure(s) => write!(f, "find {s} {}", self.place)?,
+            Target::Biome(b) => write!(f, "find biome {b} {}{}", self.place, self.sampling)?,
+            Target::Point => write!(f, "find point {}{}", self.place, self.sampling)?,
+        }
+        if self.apart != self.target.default_apart() {
+            write!(f, " apart {}", self.apart)?;
+        }
+        Ok(())
+    }
+}
+
+/// ` step S` unless S is the default.
+struct Step(u32);
+
+impl fmt::Display for Step {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.0 != DEFAULT_STEP {
+            write!(f, " step {}", self.0)?;
+        }
+        Ok(())
     }
 }
 
@@ -327,6 +449,10 @@ impl fmt::Display for Region {
 impl fmt::Display for Place {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Place::Within {
+                radius,
+                anchor: Anchor::Origin,
+            } => write!(f, "within {radius}"),
             Place::Within { radius, anchor } => write!(f, "within {radius} of {anchor}"),
             Place::Box { min, max } => {
                 write!(f, "in {},{} to {},{}", min[0], min[1], max[0], max[1])
@@ -340,6 +466,8 @@ impl fmt::Display for Anchor {
         match self {
             Anchor::Spawn => write!(f, "spawn"),
             Anchor::Point([x, z]) => write!(f, "{x},{z}"),
+            Anchor::Here => write!(f, "here"),
+            Anchor::Origin => write!(f, "the origin"),
         }
     }
 }

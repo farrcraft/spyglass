@@ -72,6 +72,8 @@ The CLI's `locate structure --nearest` and the viewer's Locate tab use it. The v
 
 ## Biomes
 
+The argument is a biome id or a `#tag`, as `/locate biome` takes them. `World::biome_query` expands a tag's entries as structure tags are: nested tags in place, duplicates once, optional entries that don't exist skipped, a missing required entry or tag an error, and a tag that includes itself an error. The predicate is whether a biome is one of them.
+
 `LocateCommand` calls `ServerLevel.findClosestBiome3d(predicate, pos, 6400, 32, 64)`, which is `BiomeSource.findClosestBiome3d`:
 
 1. Nothing if no biome the source can produce matches.

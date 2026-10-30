@@ -56,8 +56,9 @@ pub use save::{
     Scan, find_save, inspect_save, launcher_saves,
 };
 pub use search::{
-    ConstraintResult, Evaluation, Feature, Outcome, RankedSeed, SearchHit, SearchOptions,
-    SearchOutcome, SearchProgress, SearchQuery, SearchStop, SearchThrottle, SeedSource,
+    ConstraintResult, Evaluation, Feature, FindMatch, FindOptions, FindOutcome, FindProgress,
+    MAX_FIND_TARGETS, Outcome, RankedSeed, SearchHit, SearchOptions, SearchOutcome, SearchProgress,
+    SearchQuery, SearchStop, SearchThrottle, SeedSource,
 };
 pub use spyglass_data::build;
 pub use spyglass_data::bundle::{
@@ -619,20 +620,91 @@ impl World {
         Ok(query.targets.iter().map(|&i| all[i].id.as_str()).collect())
     }
 
-    /// Resolves a biome id for this world's sessions. A biome that exists but that this
-    /// dimension can't have resolves, and is never found.
+    /// Resolves a biome id, or a `#tag` as `/locate biome` takes one, for this world's
+    /// sessions. A tag's entries are expanded as structure tags are (`docs/specs/locate.md`).
+    /// Biomes that exist but that this dimension can't have resolve, and are never found.
     pub fn biome_query(&self, biome: &str) -> Result<BiomeQuery> {
-        if !self.exists("worldgen/biome", biome) {
-            return Err(Error::Unknown {
-                what: "biome",
-                id: biome.to_string(),
-            });
+        let mut ids = Vec::new();
+        match biome.strip_prefix('#') {
+            Some(tag) => self.biome_tag(tag, &mut Vec::new(), &mut ids)?,
+            None if self.exists("worldgen/biome", biome) => ids.push(full_id(biome)),
+            None => {
+                return Err(Error::Unknown {
+                    what: "biome",
+                    id: biome.to_string(),
+                });
+            }
+        }
+        let names = self.source.biome_names();
+        let mut biomes: Vec<BiomeId> = Vec::new();
+        for id in ids.iter().filter_map(|id| names.id(id)) {
+            if !biomes.contains(&id) {
+                biomes.push(id);
+            }
         }
         Ok(BiomeQuery {
             world: self.id,
             id: biome.to_string(),
-            biome: self.source.biome_names().id(&full_id(biome)),
+            biomes,
         })
+    }
+
+    /// Adds the biomes of tag `tag` to `out`, by full id, nested tags in place:
+    /// `TagEntry`s as [`StructureSets::resolve`] reads them, optional entries that don't exist
+    /// skipped.
+    fn biome_tag(&self, tag: &str, loading: &mut Vec<String>, out: &mut Vec<String>) -> Result<()> {
+        const TAG: &str = "tags/worldgen/biome";
+        let id = full_id(tag);
+        let malformed = |what: &str| Error::Unsupported(format!("biome tag #{id}: {what}"));
+        if loading.contains(&id) {
+            return Err(malformed("it includes itself"));
+        }
+        if !self.exists(TAG, &id) {
+            return Err(Error::Unknown {
+                what: "biome tag",
+                id: format!("#{id}"),
+            });
+        }
+        let json = self.bundle.resource(TAG, &id)?;
+        let values = json
+            .get("values")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| malformed("no `values`"))?;
+        loading.push(id.clone());
+        for entry in values {
+            let (name, required) = match entry {
+                serde_json::Value::String(s) => (s.as_str(), true),
+                serde_json::Value::Object(obj) => (
+                    obj.get("id")
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or_else(|| malformed("an entry has no `id`"))?,
+                    obj.get("required")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(true),
+                ),
+                _ => return Err(malformed("an entry isn't an id or an object")),
+            };
+            match name.strip_prefix('#') {
+                Some(nested) if required || self.exists(TAG, nested) => {
+                    self.biome_tag(nested, loading, out)?;
+                }
+                None if self.exists("worldgen/biome", name) => {
+                    let name = full_id(name);
+                    if !out.contains(&name) {
+                        out.push(name);
+                    }
+                }
+                None if required => {
+                    return Err(Error::Unknown {
+                        what: "biome",
+                        id: name.to_string(),
+                    });
+                }
+                _ => {}
+            }
+        }
+        loading.pop();
+        Ok(())
     }
 }
 
@@ -699,14 +771,24 @@ impl StructureQuery {
 pub struct BiomeQuery {
     world: u64,
     id: String,
-    /// `None` if the dimension can't have the biome.
-    biome: Option<BiomeId>,
+    /// The biomes it names that the dimension can have: empty if none.
+    biomes: Vec<BiomeId>,
 }
 
 impl BiomeQuery {
-    /// The biome id as given, e.g. `minecraft:cherry_grove`.
+    /// The biome id or `#tag` as given, e.g. `minecraft:cherry_grove`.
     pub fn id(&self) -> &str {
         &self.id
+    }
+
+    /// Whether `biome` is one of those it names.
+    pub(crate) fn matches(&self, biome: BiomeId) -> bool {
+        self.biomes.contains(&biome)
+    }
+
+    /// Whether the dimension can have any biome it names.
+    pub(crate) fn possible(&self) -> bool {
+        !self.biomes.is_empty()
     }
 }
 
@@ -1167,7 +1249,6 @@ impl<'w> Session<'w> {
     ) -> Result<BiomeLocate> {
         self.check_world(query.world, &query.id)?;
         at_most("a biome locate radius of", radius, MAX_LOCATE_BIOME_RADIUS)?;
-        let target = query.biome;
         let heights = self.world.sets.heights();
         let min_y = heights.level_min_y;
         let max_y = min_y.wrapping_add(heights.level_height).wrapping_sub(1);
@@ -1181,7 +1262,7 @@ impl<'w> Session<'w> {
         };
         let search = self
             .biomes
-            .find_closest_biome_3d(volume, |b| Some(b) == target);
+            .find_closest_biome_3d(volume, |b| query.matches(b));
         let hits = search
             .hits
             .iter()

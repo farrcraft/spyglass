@@ -340,6 +340,18 @@ The bundle options are as for `locate`; `--json` prints every hit with what each
 
 Most structures need terrain to confirm. Without `--confirm`, a constraint on them is usually **possibly** met rather than met: the structures are where the game tries them, and whether each one generates depends on the ground there. With it, terrain decides them, and only tied biomes and platform-dependent results stay uncertain. Confirming costs little on top of a search, since it runs only on seeds that pass everything else.
 
+### Finding places in one seed
+
+`spyglass find` searches one seed, or a world save with `--world`, for places that fit a query: a `find` line naming what to look for, then constraints around each one, where `here` is the place being judged ([specs/search.md](specs/search.md#searching-within-a-seed)):
+
+```sh
+cargo run --release -p spyglass-cli -- find --seed 12345 -q 'find minecraft:pillager_outpost within 4096
+require flat 4 within 48 of here step 4'
+cargo run --release -p spyglass-cli -- find --world "My World" --from player -q 'find biome minecraft:mushroom_fields within 4096 step 32'
+```
+
+The target is a structure or tag (each start), `biome B` (each sample of a grid), or `point` (each grid point). `within R` alone is around `--from` (default `0,0`). Matches come nearest first, up to `--top` (default 20); `--confirm`, `--certain`, `--threads`, `--time` and `--json` are as for `search`. Biome tags such as `#minecraft:is_ocean`, and the terrain conditions `height A to B` and `flat D` (over the terrain before structures and features), work in both kinds of query.
+
 ### Reading the answers
 
 Answers are listed in the game's search order, which isn't always nearest first: `/locate` can skip a nearer structure for one it scans first. `--nearest` answers with the nearest instead, and lists nearest first ([specs/locate.md](specs/locate.md#nearest)). `locate` decides each structure with the seed's terrain, as the game does, so its answers are almost always **certain**, and then exactly the game's `/locate` answer. A **candidate** is left where the game's choice depends on a tied biome cell, a platform-dependent stronghold ring position or a mineshaft spyglass can't place yet: the game's answer is the first of them it generates, usually the first one listed. Without terrain (`--unconfirmed`, and maps and searches unless they confirm), most surface structures (villages, temples, monuments) are candidates.
@@ -361,6 +373,7 @@ The viewer opens the newest release in the bundles folder (or the newest snapsho
 - **Locate:** right-click the map for the nearest structure or biome from there, as `/locate` would. Hits are listed in the side panel (click one to go there) and pinned on the map. For a structure, where the nearest isn't `/locate`'s answer, both are listed and pinned, the nearest first.
 - **Export:** **Export image…** saves the view as a PNG, and **Copy command** copies the `spyglass render` command that draws the same image.
 - **Search:** type a query in the **Search** section, set a seed count or time limit (and **Confirm with terrain** to decide structures), and press **Search**. The best seeds appear as they're found; click one to open it, in its first constraint's dimension and centred on that constraint's place, with everything its constraints matched there ringed.
+- **This seed:** the Search tab's other mode finds places in the seed shown, around the view's centre: pick a query from **Presets** (double witch huts, a monument in deep ocean, a flat outpost, rare biomes, a base site) or write one, and press **Find**. The nearest match opens on the map; **Previous** and **Next**, or P and N on the map, step through the rest.
 
 Rendering runs in the background on all but one core, so the map stays responsive while tiles fill in. Settings are kept between runs.
 

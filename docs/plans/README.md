@@ -6,6 +6,6 @@ Code must not reference plans. Anything durable a plan produces belongs in a spe
 
 ## Active
 
-None: no milestone is in progress. The next is [16](../roadmap/16-search-within-a-seed.md).
+None: no milestone is in progress. The next is [17](../roadmap/17-markers-and-saved-seeds.md).
 
 The follow-ups of milestones 08 and 11 ([roadmap](../roadmap/README.md#follow-ups)) need no plan of their own.

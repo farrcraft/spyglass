@@ -1,6 +1,6 @@
 # CLI JSON output
 
-Status: stable, format 1. Covers `spyglass locate`, `spyglass heights`, `spyglass render`, `spyglass search` and `spyglass world` with `--json`.
+Status: stable, format 1. Covers `spyglass locate`, `spyglass heights`, `spyglass render`, `spyglass search`, `spyglass find` and `spyglass world` with `--json`.
 
 Scripts depend on this format, so it's versioned. Within a format version, fields are only ever added. Removing or changing the meaning of a field bumps `format`. The CLI writes the JSON from the library's results ([ADR 0014](../adr/0014-public-api-world-and-session.md)); the library types themselves aren't the format.
 
@@ -150,6 +150,25 @@ Feature kinds; more may be added within format 1:
 - `biome`: `position` (`x`, `y`, `z`), `biome`, `tied` (as `locate biome`) and `certain`.
 - `spawn`: `locate spawn`'s fields.
 - `other`: a kind the library added that this build of the command can't describe yet. No other fields.
+
+## `find`
+
+Places in one seed or save that fit a `find` query ([search.md](search.md#searching-within-a-seed)). The header is the usual one (`format`, `command` (`find`), `version`, `dimension` (the target's), `seed`, and with `--world`, `world` and `warnings`), then:
+
+| Field             | Type     | Meaning                                                                                              |
+| ----------------- | -------- | ---------------------------------------------------------------------------------------------------- |
+| `query`           | string   | The canonical text, its `find` line first.                                                           |
+| `origin`          | `{x, z}` | What `within R` alone is around, in the target's dimension.                                          |
+| `certain`         | bool     | Whether only certain matches, at certain targets, were kept.                                         |
+| `confirm`         | bool     | Whether structure starts were decided with terrain.                                                  |
+| `top`             | int      | The most matches asked for.                                                                          |
+| `targets`         | int      | How many targets the place has.                                                                      |
+| `judged`          | int      | How many were judged, nearest first.                                                                 |
+| `complete`        | bool     | Whether every target was judged, or `top` matches found: false if it was stopped or ran out of time. |
+| `elapsed_seconds` | float    | How long it took.                                                                                    |
+| `matches`         | array    | Nearest first.                                                                                       |
+
+Each match has `position` (`{x, z}`), `distance` (from the place's centre, rounded down), `target` (the structure start or biome sample as a feature, as in `search`, or null for a point), `score`, `verdict`, and `constraints`, as a `search` hit's, without the `find` line.
 
 ## `world info`
 

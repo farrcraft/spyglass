@@ -52,6 +52,8 @@ impl App {
             }
         }
         let mut focus_goto = false;
+        // N and P step through the last find's matches.
+        let mut step = 0;
         if ui.memory(|m| m.focused().is_none()) {
             ui.input(|i| {
                 for (key, delta) in [
@@ -71,6 +73,11 @@ impl App {
                     view.zoom(false, [0.0, 0.0]);
                 }
                 focus_goto = i.key_pressed(Key::G);
+                if i.key_pressed(Key::N) {
+                    step = 1;
+                } else if i.key_pressed(Key::P) {
+                    step = -1;
+                }
             });
         }
 
@@ -385,6 +392,9 @@ impl App {
             .map(|hover| view.block_at(offset(hover)).map(|b| b.floor() as i32));
 
         let spawn_block = spawn.map_block();
+        if step != 0 {
+            self.step_match(ui.ctx(), step);
+        }
         self.map_controls(ui, rect, spawn_block, focus_goto);
         self.map_legend(ui, rect, world);
         scale_bar(&painter, rect, view.scale);
@@ -456,6 +466,7 @@ impl App {
     /// centre on spawn and zoom in a row (top right).
     fn map_controls(&mut self, ui: &mut egui::Ui, rect: Rect, spawn: [i32; 2], focus_goto: bool) {
         let inner = rect.shrink(12.0);
+        let mut step = 0;
         ui.scope_builder(
             egui::UiBuilder::new()
                 .max_rect(inner)
@@ -513,10 +524,13 @@ impl App {
                         .is_some_and(|s| s.session.seed() == opened.seed)
                 {
                     ui.add_space(8.0);
-                    hit_card(ui, opened);
+                    step = hit_card(ui, opened);
                 }
             },
         );
+        if step != 0 {
+            self.step_match(ui.ctx(), step);
+        }
         // Top right, in one row: centre on spawn, then zoom as − 1:N +. Right to left, so the
         // zoom is in the corner.
         ui.scope_builder(
@@ -802,15 +816,33 @@ impl App {
     }
 }
 
-/// The open search hit: its seed, and each constraint with its outcome.
-fn hit_card(ui: &mut egui::Ui, opened: &Opened) {
+/// The open search hit or find match: its seed, and each constraint with its outcome. Returns
+/// 1 or −1 when the next or previous match is asked for.
+fn hit_card(ui: &mut egui::Ui, opened: &Opened) -> isize {
+    let mut step = 0;
     style::overlay().show(ui, |ui| {
         ui.set_max_width(460.0);
         ui.horizontal(|ui| {
-            ui.strong("Search hit");
+            ui.strong(&opened.title);
             ui.label(style::mono(opened.seed.to_string()).color(style::MUTED));
             if ui.small_button("Copy seed").clicked() {
                 ui.ctx().copy_text(opened.seed.to_string());
+            }
+            if let Some((at, count)) = opened.step {
+                if ui
+                    .add_enabled(at > 0, egui::Button::new("Previous").small())
+                    .on_hover_text("Previous (P)")
+                    .clicked()
+                {
+                    step = -1;
+                }
+                if ui
+                    .add_enabled(at + 1 < count, egui::Button::new("Next").small())
+                    .on_hover_text("Next (N)")
+                    .clicked()
+                {
+                    step = 1;
+                }
             }
         });
         for c in &opened.constraints {
@@ -820,7 +852,8 @@ fn hit_card(ui: &mut egui::Ui, opened: &Opened) {
                     Outcome::PossiblyMet => (
                         "Maybe",
                         style::WARN,
-                        "It holds only in the best case: it depends on terrain, a tied biome or                          the platform.",
+                        "It holds only in the best case: it depends on terrain, a tied biome or \
+                         the platform.",
                     ),
                     Outcome::Failed => ("No", style::MUTED, "It doesn't hold."),
                 };
@@ -833,6 +866,7 @@ fn hit_card(ui: &mut egui::Ui, opened: &Opened) {
             });
         }
     });
+    step
 }
 
 /// A constraint's area: a dashed disc or box in the accent colour.

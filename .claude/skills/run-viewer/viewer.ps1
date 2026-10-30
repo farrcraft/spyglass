@@ -9,10 +9,11 @@
 #   viewer.ps1 rclick -X <px> -Y <px>       (right click: the map's locate menu)
 #   viewer.ps1 move  -X <px> -Y <px>        (hover: opens submenus)
 #   viewer.ps1 wheel -X <px> -Y <px> [-Notches 3]   (negative scrolls up)
+#   viewer.ps1 key -Keys n                  (SendKeys text, e.g. n, {ESC}; click the map first)
 #   viewer.ps1 stop
 param(
     [Parameter(Mandatory = $true, Position = 0)]
-    [ValidateSet('start', 'shot', 'click', 'rclick', 'move', 'wheel', 'stop')]
+    [ValidateSet('start', 'shot', 'click', 'rclick', 'move', 'wheel', 'key', 'stop')]
     [string]$Action,
     [string]$Out,
     [string]$Seed = '12345',
@@ -29,6 +30,7 @@ param(
     [switch]$Unconfirmed,
     [string[]]$Structures = @(),
     [int]$Notches = 3,
+    [string]$Keys,
     [int]$Wait = 6
 )
 
@@ -110,6 +112,15 @@ switch ($Action) {
             [ViewerInput]::mouse_event(0x0800, 0, 0, -120 * [Math]::Sign($Notches), 0)
             Start-Sleep -Milliseconds 150
         }
+    }
+    'key' {
+        if (-not $Keys) { throw 'key needs -Keys, in SendKeys notation' }
+        Add-Type -AssemblyName System.Windows.Forms
+        $p = Get-Process spyglass-viewer | Select-Object -First 1
+        [ViewerInput]::SetForegroundWindow($p.MainWindowHandle) | Out-Null
+        Start-Sleep -Milliseconds 200
+        [System.Windows.Forms.SendKeys]::SendWait($Keys)
+        Start-Sleep -Milliseconds 300
     }
     'stop' { Get-Process spyglass-viewer -ErrorAction SilentlyContinue | Stop-Process }
 }

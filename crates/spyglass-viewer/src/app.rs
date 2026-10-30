@@ -12,9 +12,9 @@ use std::thread;
 use eframe::egui::{self, Color32, Key, Pos2, Rect, Sense, TextureOptions, Vec2};
 use serde::{Deserialize, Serialize};
 use spyglass::{
-    BiomeQuery, BundleInfo, Dimension, Evaluation, Game, Heightmap, Image, LauncherSave, Layers,
-    MAX_TERRAIN_SCALE, SaveReport, Scan, SearchOutcome, SearchQuery, Session, SpawnOrigin,
-    StructureLayout, StructureQuery, StructureStart, World,
+    BiomeQuery, BundleInfo, Dimension, Evaluation, FindOutcome, Game, Heightmap, Image,
+    LauncherSave, Layers, MAX_TERRAIN_SCALE, SaveReport, Scan, SearchOutcome, SearchQuery, Session,
+    SpawnOrigin, StructureLayout, StructureQuery, StructureStart, World,
 };
 
 use crate::export::{Export, Source, visible_area};
@@ -22,7 +22,7 @@ use crate::extract::{self, Offer};
 use crate::icons;
 use crate::locate::{self, Found, Target};
 use crate::markers::{self, Picked};
-use crate::search::{self, Match, Running, SearchSettings};
+use crate::search::{self, FindRun, Match, Running, SearchSettings, SeedRun};
 use crate::style;
 use crate::tiles::{
     Cache, Entry, Job, JobKey, LayoutKey, MarkerKey, Output, Pool, Style, TileKey, slime_features,
@@ -256,6 +256,8 @@ pub struct App {
     search_parsing: Option<(String, Pending<Result<SearchQuery, String>>)>,
     /// The search running or last run.
     search_run: Option<SearchRun>,
+    /// The `find` running or last run in the seed shown.
+    find_run: Option<FindState>,
     /// A live hit being evaluated before it opens.
     opening: Option<Pending<Result<(i64, Evaluation), String>>>,
     /// The hit last opened: its seed, and what its constraints matched and where.
@@ -287,8 +289,20 @@ struct SearchRun {
     query: SearchQuery,
     /// Whether the search decided starts with terrain, so opening a hit does too.
     confirm: bool,
-    running: Option<Running>,
+    running: Option<SeedRun>,
     outcome: Option<Result<SearchOutcome, String>>,
+}
+
+/// A `find` in one seed: its query, where it ran, and its matches.
+struct FindState {
+    query: SearchQuery,
+    seed: i64,
+    /// The dimension its targets are in.
+    dimension: Dimension,
+    running: Option<FindRun>,
+    outcome: Option<Result<FindOutcome, String>>,
+    /// The match open on the map, by index.
+    current: Option<usize>,
 }
 
 impl App {
@@ -339,6 +353,7 @@ impl App {
             search_parsed: None,
             search_parsing: None,
             search_run: None,
+            find_run: None,
             opening: None,
             opened: None,
             search_error: None,
@@ -507,6 +522,19 @@ impl App {
             run.outcome = Some(outcome);
         }
         if let Some(running) = self.search_run.as_ref().and_then(|r| r.running.as_ref()) {
+            running.yield_to_map(self.pool.pending() > 0);
+        }
+        if let Some(run) = &mut self.find_run
+            && let Some(outcome) = run.running.as_ref().and_then(Running::poll)
+        {
+            run.running = None;
+            let first = outcome.as_ref().is_ok_and(|o| !o.matches.is_empty());
+            run.outcome = Some(outcome);
+            if first && run.current.is_none() {
+                self.open_match(ctx, 0);
+            }
+        }
+        if let Some(running) = self.find_run.as_ref().and_then(|r| r.running.as_ref()) {
             running.yield_to_map(self.pool.pending() > 0);
         }
         if let Some(result) = self.opening.as_ref().and_then(Pending::poll) {

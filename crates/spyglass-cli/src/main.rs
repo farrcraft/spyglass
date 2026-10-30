@@ -13,6 +13,7 @@ macro_rules! out {
 }
 
 mod args;
+mod find;
 mod heights;
 mod json;
 mod locate;
@@ -63,6 +64,7 @@ fn run(cli: Cli) -> Result<()> {
         Command::World { what } => world::run(what),
         Command::Render(args) => render::run(&args),
         Command::Search(args) => search::run(&args),
+        Command::Find(args) => find::run(&args),
         Command::Heights(args) => heights::run(&args),
     }
 }

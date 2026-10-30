@@ -267,6 +267,26 @@ pub fn map_prefix<T: Sync, R: Send, E: Send>(
     results.into_iter().map_while(|r| r).collect()
 }
 
+/// [`map_prefix`] that stops when `stop` is asked, with each item's work held to `throttle`'s
+/// limit on threads at work.
+pub fn map_prefix_throttled<T: Sync, R: Send, E: Send>(
+    pool: &rayon::ThreadPool,
+    items: &[T],
+    stop: &Stop,
+    throttle: &Throttle,
+    f: impl Fn(&T) -> Result<R, E> + Sync,
+) -> Result<Vec<R>, E> {
+    map_prefix(
+        pool,
+        items,
+        || stop.is_stopped(),
+        |item| {
+            let _working = throttle.enter(stop);
+            f(item)
+        },
+    )
+}
+
 /// Merges `hits` into `top` in rank order, keeping the first `n`.
 fn merge(top: &mut Vec<Hit>, hits: Vec<Hit>, n: usize) {
     top.extend(hits);

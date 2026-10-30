@@ -118,7 +118,7 @@ fn status(p: &SearchProgress) -> String {
     )
 }
 
-fn outcome_word(o: Outcome) -> &'static str {
+pub(crate) fn outcome_word(o: Outcome) -> &'static str {
     match o {
         Outcome::Met => "met",
         Outcome::PossiblyMet => "possibly",
@@ -240,7 +240,7 @@ fn print_json(
     })
 }
 
-fn feature_json(f: &Feature) -> json::FeatureAnswer<'_> {
+pub(crate) fn feature_json(f: &Feature) -> json::FeatureAnswer<'_> {
     match f {
         Feature::Structure(s) => json::FeatureAnswer::Structure(json::StructureMark {
             position: Xz {

@@ -70,17 +70,19 @@ enum Area {
 
 impl Area {
     /// The place, with a spawn anchor widened to every place the spawn can be: within
-    /// `spawn_reach` of (0, 0).
-    fn new(place: &Place, spawn_reach: u32) -> Area {
+    /// `spawn_reach` of (0, 0). `None` for a place around a `find` query's target or origin,
+    /// which a seed's lower 48 bits don't decide.
+    fn new(place: &Place, spawn_reach: u32) -> Option<Area> {
         match *place {
             Place::Within { radius, anchor } => match anchor {
-                Anchor::Spawn => Area::Disc {
+                Anchor::Spawn => Some(Area::Disc {
                     centre: [0, 0],
                     radius: radius + spawn_reach,
-                },
-                Anchor::Point(centre) => Area::Disc { centre, radius },
+                }),
+                Anchor::Point(centre) => Some(Area::Disc { centre, radius }),
+                Anchor::Here | Anchor::Origin => None,
             },
-            Place::Box { min, max } => Area::Box { min, max },
+            Place::Box { min, max } => Some(Area::Box { min, max }),
         }
     }
 
@@ -166,11 +168,11 @@ impl Prefilter {
             } => {
                 let target = sets_of(sets, named.target?)?;
                 let region = match region {
-                    Region::Place(place) => Within::Area(area(place)),
+                    Region::Place(place) => Within::Area(area(place)?),
                     Region::NearStructure { radius, place, .. } => Within::Near {
                         radius: *radius,
                         sets: sets_of(sets, named.anchor?)?,
-                        area: area(place),
+                        area: area(place)?,
                     },
                 };
                 Some(Filter::Starts {
@@ -185,7 +187,7 @@ impl Prefilter {
                 size: *size as usize,
                 sets: sets_of(sets, named.target?)?,
                 apart: *apart,
-                area: area(place),
+                area: area(place)?,
             }),
             // Widened to the spawn's reach, a slime count would almost never fail and costs
             // tens of thousands of chunks, so only fixed places are checked.
@@ -194,7 +196,7 @@ impl Prefilter {
                 region: Region::Place(place),
             } if !spawn_anchored(place) => Some(Filter::Slime {
                 count: *n as usize,
-                area: area(place),
+                area: area(place)?,
             }),
             _ => None,
         }

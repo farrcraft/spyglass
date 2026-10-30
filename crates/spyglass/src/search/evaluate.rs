@@ -3,15 +3,14 @@
 
 use std::cell::OnceCell;
 
-use spyglass_biome::BiomeId;
 use spyglass_search::{
     Anchor, Checked, Count, Importance, Kind, Place, Region, Sampling, distance_sqr, largest_group,
 };
 
 use super::{Resolved, SearchQuery, Target, convert};
 use crate::{
-    BiomeAt, Dimension, Error, GameSession, Result, Session, SpawnOrigin, StructureQuery,
-    StructureStart,
+    BiomeAt, BiomeQuery, Dimension, Error, GameSession, Heightmap, Result, Session, SpawnOrigin,
+    StructureQuery, StructureStart,
 };
 
 /// Whether a constraint, or a seed, meets a query (`docs/specs/search.md#outcomes`).
@@ -204,6 +203,17 @@ impl<'g> Sessions<'g> for GameSession<'g> {
     }
 }
 
+/// A `find` query's target, which `here` is in its constraints (ADR 0047).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Here {
+    /// The dimension its position is in.
+    pub dimension: Dimension,
+    /// Its position: a structure start's, or a grid point's.
+    pub position: [i32; 2],
+    /// A structure target's dimension, set and chunk: a start isn't counted around itself.
+    pub start: Option<(Dimension, String, [i32; 2])>,
+}
+
 /// One evaluation's view of a seed's sessions: the spawn origin is found once, when first
 /// needed.
 struct Judge<'a, 'w> {
@@ -212,14 +222,17 @@ struct Judge<'a, 'w> {
     spawn: OnceCell<SpawnOrigin>,
     /// Whether structure starts are confirmed with the seed's terrain.
     confirm: bool,
+    /// The target `here` is, in a `find` query.
+    here: Option<&'a Here>,
 }
 
 impl<'a, 'w> Judge<'a, 'w> {
-    fn new(sessions: &'a dyn Sessions<'w>, confirm: bool) -> Self {
+    fn new(sessions: &'a dyn Sessions<'w>, confirm: bool, here: Option<&'a Here>) -> Self {
         Judge {
             sessions,
             spawn: OnceCell::new(),
             confirm,
+            here,
         }
     }
 
@@ -274,8 +287,19 @@ fn evaluate<'w>(
     query: &SearchQuery,
     confirm: bool,
 ) -> Result<Evaluation> {
+    super::reject_find(query)?;
+    evaluate_at(sessions, query, confirm, None)
+}
+
+/// [`evaluate`], with `here` set to a `find` query's target.
+pub(crate) fn evaluate_at<'w>(
+    sessions: &dyn Sessions<'w>,
+    query: &SearchQuery,
+    confirm: bool,
+    here: Option<&Here>,
+) -> Result<Evaluation> {
     sessions.check_worlds(query)?;
-    let judge = Judge::new(sessions, confirm);
+    let judge = Judge::new(sessions, confirm, here);
     let constraints: Vec<ConstraintResult> = query
         .query
         .constraints()
@@ -325,23 +349,36 @@ fn check<'w>(
     threshold: u64,
     confirm: bool,
 ) -> Result<Checked> {
-    sessions.check_worlds(query)?;
-    // An unreachable threshold stops before any preferred constraint.
-    if confirm && check_with(sessions, query, false, u64::MAX, false)? == Checked::Failed {
-        return Ok(Checked::Failed);
-    }
-    check_with(sessions, query, certain, threshold, confirm)
+    check_at(sessions, query, certain, threshold, confirm, None)
 }
 
-/// [`check`] in one pass.
+/// [`check`], with `here` set to a `find` query's target.
+pub(crate) fn check_at<'w>(
+    sessions: &dyn Sessions<'w>,
+    query: &SearchQuery,
+    certain: bool,
+    threshold: u64,
+    confirm: bool,
+    here: Option<&Here>,
+) -> Result<Checked> {
+    sessions.check_worlds(query)?;
+    // An unreachable threshold stops before any preferred constraint.
+    if confirm && check_with(sessions, query, false, u64::MAX, false, here)? == Checked::Failed {
+        return Ok(Checked::Failed);
+    }
+    check_with(sessions, query, certain, threshold, confirm, here)
+}
+
+/// [`check_at`] in one pass.
 fn check_with<'w>(
     sessions: &dyn Sessions<'w>,
     query: &SearchQuery,
     certain: bool,
     threshold: u64,
     confirm: bool,
+    here: Option<&Here>,
 ) -> Result<Checked> {
-    let judge = Judge::new(sessions, confirm);
+    let judge = Judge::new(sessions, confirm, here);
     let constraints = query.query.constraints();
     for &i in &query.order {
         if constraints[i].importance != Importance::Required {
@@ -386,14 +423,14 @@ fn check_with<'w>(
 
 /// A place in blocks.
 #[derive(Debug, Clone, Copy)]
-enum Area {
+pub(super) enum Area {
     Disc { centre: [i32; 2], radius: u32 },
     Box { min: [i32; 2], max: [i32; 2] },
 }
 
 impl Area {
     /// The bounding box, corners included.
-    fn bounds(self) -> ([i32; 2], [i32; 2]) {
+    pub(super) fn bounds(self) -> ([i32; 2], [i32; 2]) {
         match self {
             Area::Disc { centre, radius } => {
                 let r = radius as i32; // at most 32,767
@@ -412,7 +449,7 @@ impl Area {
     }
 
     /// `p`'s distance from the centre if it's in the place (0 in a box).
-    fn distance(self, p: [i32; 2]) -> Option<u32> {
+    pub(super) fn distance(self, p: [i32; 2]) -> Option<u32> {
         match self {
             Area::Disc { centre, radius } => within(centre, p, radius),
             Area::Box { min, max } => {
@@ -422,7 +459,7 @@ impl Area {
     }
 
     /// The biome grid's points, z then x, each with its distance from the centre.
-    fn grid(self, step: u32) -> Vec<([i32; 2], u32)> {
+    pub(super) fn grid(self, step: u32) -> Vec<([i32; 2], u32)> {
         let step = i64::from(step);
         let mut out = Vec::new();
         match self {
@@ -584,6 +621,17 @@ impl<'a, 'w> Judge<'a, 'w> {
                         self.convert(self.spawn()?.map_block(), Dimension::Overworld, dimension)?
                     }
                     Anchor::Point(p) => p,
+                    Anchor::Here => {
+                        let here = self.here.ok_or_else(|| {
+                            Error::Unsupported(
+                                "`here` is a find query's target: judge it with find".to_string(),
+                            )
+                        })?;
+                        self.convert(here.position, here.dimension, dimension)?
+                    }
+                    Anchor::Origin => {
+                        unreachable!("the parser allows the origin only in a find line")
+                    }
                 },
                 radius,
             },
@@ -597,9 +645,16 @@ impl<'a, 'w> Judge<'a, 'w> {
         let judged = match (kind, &resolved.target) {
             (Kind::Structures { count, region, .. }, Some(Target::Structure(target))) => {
                 let within = self.within(region, resolved.anchor.as_ref(), dimension)?;
-                let starts = within.bounds().map_or_else(Vec::new, |(min, max)| {
+                let mut starts = within.bounds().map_or_else(Vec::new, |(min, max)| {
                     self.starts(session, target, min, max)
                 });
+                // A structure target isn't counted around itself.
+                if let (Region::Place(p), Some(own)) =
+                    (region, self.here.and_then(|h| h.start.as_ref()))
+                    && around_here(p)
+                {
+                    starts.retain(|s| candidate(s, dimension, xz(s)).start.as_ref() != Some(own));
+                }
                 let candidates: Vec<Candidate> = starts
                     .iter()
                     .map(|s| candidate(s, dimension, xz(s)))
@@ -674,7 +729,7 @@ impl<'a, 'w> Judge<'a, 'w> {
                 *present,
                 &self.area(place, dimension)?,
                 *sampling,
-                biome.biome,
+                biome,
             ),
             (
                 Kind::Coverage {
@@ -689,7 +744,7 @@ impl<'a, 'w> Judge<'a, 'w> {
                 *percent,
                 &self.area(place, dimension)?,
                 *sampling,
-                biome.biome,
+                biome,
             ),
             (Kind::Spawn { place }, None) => {
                 let area = self.area(place, dimension)?;
@@ -702,6 +757,47 @@ impl<'a, 'w> Judge<'a, 'w> {
                     best_sat: sat,
                     worst_sat: sat,
                     features: vec![Feature::Spawn(spawn)],
+                }
+            }
+            (
+                Kind::Height {
+                    min,
+                    max,
+                    place,
+                    step,
+                },
+                None,
+            ) => {
+                let heights = heights(session, &self.area(place, dimension)?, *step);
+                let inside = heights.iter().filter(|h| (*min..=*max).contains(h)).count();
+                // A grid always has a point: a disc's centre, a box's corner.
+                let sat = (1000 * inside / heights.len()) as u32;
+                let holds = inside == heights.len();
+                Judged {
+                    best: holds,
+                    worst: holds,
+                    best_sat: sat,
+                    worst_sat: sat,
+                    features: Vec::new(),
+                }
+            }
+            (Kind::Flat { range, place, step }, None) => {
+                let heights = heights(session, &self.area(place, dimension)?, *step);
+                let low = heights.iter().min().copied().unwrap_or(0);
+                let high = heights.iter().max().copied().unwrap_or(0);
+                let spread = high.abs_diff(low);
+                let holds = spread <= *range;
+                let sat = if holds {
+                    1000
+                } else {
+                    (1000 * u64::from(*range) / u64::from(spread)) as u32
+                };
+                Judged {
+                    best: holds,
+                    worst: holds,
+                    best_sat: sat,
+                    worst_sat: sat,
+                    features: Vec::new(),
                 }
             }
             _ => unreachable!("resolution gives each kind its target"),
@@ -749,18 +845,49 @@ impl<'a, 'w> Judge<'a, 'w> {
         min: [i32; 2],
         max: [i32; 2],
     ) -> Vec<StructureStart> {
-        // position = chunk · 16 + offset, so the chunks run from ceil((min − offset) / 16) to
-        // floor((max − offset) / 16). Every value is far from overflowing.
-        let chunks = |offset: [i32; 3]| {
-            let lo = |b: i32, o: i32| (b - o + 15).div_euclid(16);
-            let hi = |b: i32, o: i32| (b - o).div_euclid(16);
-            (
-                [lo(min[0], offset[0]), lo(min[1], offset[2])],
-                [hi(max[0], offset[0]), hi(max[1], offset[2])],
-            )
-        };
-        session.starts_by_set(&query.targets, chunks, self.confirm)
+        starts_in(session, query, min, max, self.confirm)
     }
+}
+
+/// The starts of `query` in `session` whose position is in `min..=max`, by set, then in chunk
+/// order, decided with terrain if `confirm`.
+pub(super) fn starts_in(
+    session: &Session<'_>,
+    query: &StructureQuery,
+    min: [i32; 2],
+    max: [i32; 2],
+    confirm: bool,
+) -> Vec<StructureStart> {
+    // position = chunk · 16 + offset, so the chunks run from ceil((min − offset) / 16) to
+    // floor((max − offset) / 16). Every value is far from overflowing.
+    let chunks = |offset: [i32; 3]| {
+        let lo = |b: i32, o: i32| (b - o + 15).div_euclid(16);
+        let hi = |b: i32, o: i32| (b - o).div_euclid(16);
+        (
+            [lo(min[0], offset[0]), lo(min[1], offset[2])],
+            [hi(max[0], offset[0]), hi(max[1], offset[2])],
+        )
+    };
+    session.starts_by_set(&query.targets, chunks, confirm)
+}
+
+/// Whether `place` is a disc around a `find` query's target.
+fn around_here(place: &Place) -> bool {
+    matches!(
+        place,
+        Place::Within {
+            anchor: Anchor::Here,
+            ..
+        }
+    )
+}
+
+/// The terrain heights (`WORLD_SURFACE_WG`) of `area`'s grid points at spacing `step`.
+fn heights(session: &Session<'_>, area: &Area, step: u32) -> Vec<i32> {
+    area.grid(step)
+        .iter()
+        .map(|&(p, _)| session.height_at(p, Heightmap::WorldSurfaceWg))
+        .collect()
 }
 
 /// The slime chunks whose centre is in `min..=max`.
@@ -775,7 +902,7 @@ fn biome_presence(
     present: bool,
     area: &Area,
     sampling: Sampling,
-    target: Option<BiomeId>,
+    target: &BiomeQuery,
 ) -> Judged {
     // The nearest sample that possibly matches, and the nearest that certainly does.
     let mut possible: Option<([i32; 3], u32)> = None;
@@ -832,7 +959,7 @@ fn coverage(
     percent: u32,
     area: &Area,
     sampling: Sampling,
-    target: Option<BiomeId>,
+    target: &BiomeQuery,
 ) -> Judged {
     let grid = area.grid(sampling.step);
     let (mut possible, mut certain) = (0_u64, 0_u64);
@@ -853,19 +980,25 @@ fn coverage(
     }
 }
 
-fn lookup(session: &Session<'_>, [x, y, z]: [i32; 3]) -> spyglass_biome::Lookup {
+pub(super) fn lookup(session: &Session<'_>, [x, y, z]: [i32; 3]) -> spyglass_biome::Lookup {
     session.biomes.biome_at(x >> 2, y >> 2, z >> 2)
 }
 
-/// Whether the sample at `position` possibly, and certainly, is `target`.
-fn sample(session: &Session<'_>, position: [i32; 3], target: Option<BiomeId>) -> (bool, bool) {
-    let Some(target) = target else {
+/// Whether the sample at `position` possibly, and certainly, is one of `target`'s biomes: some
+/// of its tied candidates are, or all of them (for a single biome, only an untied cell can be).
+pub(super) fn sample(
+    session: &Session<'_>,
+    position: [i32; 3],
+    target: &BiomeQuery,
+) -> (bool, bool) {
+    if !target.possible() {
         return (false, false);
-    };
+    }
     let lookup = lookup(session, position);
+    let candidates = lookup.candidates();
     (
-        lookup.candidates().contains(&target),
-        !lookup.is_tied() && lookup.biome() == target,
+        candidates.iter().any(|&b| target.matches(b)),
+        candidates.iter().all(|&b| target.matches(b)),
     )
 }
 
@@ -943,7 +1076,9 @@ pub(super) fn uses_spawn(kind: &Kind) -> bool {
         Kind::Structures { region: r, .. } | Kind::Slime { region: r, .. } => region(r),
         Kind::Cluster { place: p, .. }
         | Kind::Biome { place: p, .. }
-        | Kind::Coverage { place: p, .. } => place(p),
+        | Kind::Coverage { place: p, .. }
+        | Kind::Height { place: p, .. }
+        | Kind::Flat { place: p, .. } => place(p),
         Kind::Spawn { .. } => true,
     }
 }

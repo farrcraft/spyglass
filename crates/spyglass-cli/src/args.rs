@@ -35,6 +35,9 @@ pub enum Command {
     /// Find the seeds that fit a query best: required and preferred structures, biomes, slime
     /// chunks and spawn, in any dimension.
     Search(Search),
+    /// Places in one seed or world save that fit a `find` query, nearest first: a target (a
+    /// structure, a biome or a grid point) and constraints around it.
+    Find(Find),
     /// Terrain heights before structures, carvers and features, as structures are placed by:
     /// one column or a region.
     Heights(Heights),
@@ -136,6 +139,84 @@ pub struct Search {
     /// Print JSON (docs/specs/cli-json.md) instead of text.
     #[arg(long)]
     pub json: bool,
+}
+
+#[derive(Args)]
+pub struct Find {
+    /// The query: a `find` line, e.g. `find minecraft:swamp_hut within 4096`, then
+    /// constraints around `here`, one per line.
+    #[arg(
+        short,
+        long,
+        conflicts_with = "query_file",
+        required_unless_present = "query_file"
+    )]
+    pub query: Option<String>,
+    /// A file with the query.
+    #[arg(long)]
+    pub query_file: Option<PathBuf>,
+    /// The world seed: a number, or text hashed as the world-creation screen does.
+    #[arg(long, allow_hyphen_values = true, required_unless_present = "world")]
+    pub seed: Option<String>,
+    /// A world save instead of a seed: its folder, or its folder name in a launcher's saves.
+    #[arg(long, conflicts_with_all = ["seed", "bundle", "game_version"])]
+    pub world: Option<String>,
+    /// What `within R` alone is around: `x,z` in the target's dimension, or `player` for the
+    /// single player of `--world`, converted into the target's dimension.
+    #[arg(long, default_value = "0,0", allow_hyphen_values = true, value_parser = find_origin)]
+    pub from: FindOrigin,
+    /// How many matches to find.
+    #[arg(long, default_value_t = 20, value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..=10_000))]
+    pub top: usize,
+    /// Stop after this long: e.g. `90s` or `10m`.
+    #[arg(long, value_parser = duration)]
+    pub time: Option<Duration>,
+    /// Worker threads; all cores by default.
+    #[arg(long)]
+    pub threads: Option<usize>,
+    /// Report only matches whose required constraints are met whatever terrain decides, at
+    /// targets that certainly are what's looked for.
+    #[arg(long)]
+    pub certain: bool,
+    /// Decide structure starts with the seed's terrain, as the game does.
+    #[arg(long)]
+    pub confirm: bool,
+    /// Game version of the bundle to use, from `--bundles`. Defaults to the newest release there;
+    /// snapshots are used only when named.
+    #[arg(long)]
+    pub game_version: Option<String>,
+    /// A bundle directory to use instead of choosing one from `--bundles`.
+    #[arg(long, conflicts_with = "game_version")]
+    pub bundle: Option<PathBuf>,
+    /// Where bundles are, one directory per version. `SPYGLASS_BUNDLES` sets the default.
+    #[arg(long, default_value_os_t = spyglass::default_bundles_dir())]
+    pub bundles: PathBuf,
+    /// Print JSON (docs/specs/cli-json.md) instead of text.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// What a `find` query's `within R` alone is around.
+#[derive(Clone, Copy)]
+pub enum FindOrigin {
+    At([i32; 2]),
+    /// The single player of `--world`'s save.
+    Player,
+}
+
+fn find_origin(text: &str) -> Result<FindOrigin, String> {
+    if text == "player" {
+        return Ok(FindOrigin::Player);
+    }
+    let parse = |s: &str| {
+        s.trim()
+            .parse::<i32>()
+            .map_err(|_| format!("not a block: {s:?}"))
+    };
+    match text.split_once(',') {
+        Some((x, z)) => Ok(FindOrigin::At([parse(x)?, parse(z)?])),
+        None => Err("expected `x,z` or `player`".to_string()),
+    }
 }
 
 /// `A..B`, both included.

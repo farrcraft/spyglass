@@ -33,6 +33,7 @@ bare_urls = "deny"
 [workspace.dependencies]
 spyglass = { path = "crates/spyglass" }
 spyglass-biome = { path = "crates/spyglass-biome" }
+spyglass-blocks = { path = "crates/spyglass-blocks" }
 spyglass-data = { path = "crates/spyglass-data" }
 spyglass-density = { path = "crates/spyglass-density" }
 spyglass-extract = { path = "crates/spyglass-extract" }

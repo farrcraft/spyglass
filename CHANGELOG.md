@@ -24,6 +24,11 @@ Changes go under **Unreleased** as they're made. `cargo xtask release` turns tha
 - `World::query_structures` in the library: the structures a structure id or `#tag` names in a dimension.
 - `display_name`, `World::structure_set` and `World::structure_generates` in the library: an id as a front end shows it, the set whose colour a structure's markers are, and whether it can generate in a dimension.
 - A `bundles` folder beside the programs is found by all three, from any working directory, when it exists. The viewer puts its first bundle there unless you choose another place ([bundle-format.md](docs/specs/bundle-format.md#where-bundles-are)).
+- **Blocks before carvers:** `spyglass blocks --no-carvers` gives the blocks the game generates for one block, a column or a chunk, before carvers, structures and features: the terrain with its surface (grass, sand, terracotta bands, eroded badlands pillars, icebergs) and ore veins. Each block says whether a tied biome could change it. `Session::chunk_blocks`, `block_at` and `block_column` in the library. For 26.2 and 26.3, checked block for block against the game ([material.md](docs/specs/material.md)).
+
+### Changed
+
+- Bundles now include the data generator's block report, `reports/blocks.json`. Extract bundles again to ask about blocks with them ([bundle-format.md](docs/specs/bundle-format.md#layout)).
 
 ### Fixed
 

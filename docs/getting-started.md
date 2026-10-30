@@ -248,6 +248,7 @@ cargo run --release -p spyglass-cli -- locate slime --seed 12345 --radius 4
 cargo run --release -p spyglass-cli -- locate spawn --seed 12345
 cargo run --release -p spyglass-cli -- locate structure minecraft:bastion_remnant --seed 12345 --dimension nether
 cargo run --release -p spyglass-cli -- heights --seed 12345 --min 0,0 --max 15,15
+cargo run --release -p spyglass-cli -- blocks --seed 12345 --column 100,-37 --no-carvers
 ```
 
 Or install it with `cargo install --path crates/spyglass-cli` and run `spyglass ...` directly.
@@ -270,6 +271,8 @@ Or install it with `cargo install --path crates/spyglass-cli` and run `spyglass 
 Slime chunks and the world spawn are only in the Overworld. In the Nether, heights find the solid ceiling (about 128 everywhere), which is what the game's own structure checks see too.
 
 `spyglass heights` prints the generator's terrain heights for one column (`--at x,z`) or a region (`--min x,z --max x,z`, up to 256 × 256 columns): one above the highest block before structures, carvers, features and surface blocks change it, as structures are placed by ([specs/terrain.md](specs/terrain.md)). `--heightmap ocean-floor` ignores water.
+
+`spyglass blocks` prints the blocks the game generates before carvers, structures and features: one block (`--at x,y,z`), a column top down (`--column x,z`), or how many of each block a chunk has (`--chunk x,z`, in chunks; `--json` for every block). That's the terrain with its surface (grass, sand, terracotta bands, icebergs) and ore veins, without the caves and ravines carvers cut. `--no-carvers` is required until those are computed ([specs/material.md](specs/material.md)). It's for 26.2 and 26.3 so far.
 
 ### Your own worlds
 

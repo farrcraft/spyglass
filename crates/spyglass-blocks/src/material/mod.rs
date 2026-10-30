@@ -92,6 +92,14 @@ impl MaterialSettings {
             .resource(NOISE_SETTINGS, &id)
             .map_err(|e| root.error(e.into()))?;
         let settings = object(&json, &root)?;
+        // 26.4's noise settings leave the default block to the rule, which its terrain builder
+        // runs with the carvers (`docs/specs/material.md#264`).
+        if !settings.contains_key("default_block") {
+            return Err(root.error(LoadErrorKind::Unsupported {
+                what: "noise settings without a default_block, as 26.4's, in",
+                name: "the material rule".to_string(),
+            }));
+        }
         let mut loader = RuleLoader::new(resources, palette);
         let default_block = loader.state(
             field(settings, "default_block", &root)?,
@@ -719,9 +727,29 @@ pub struct BoundMaterial {
 /// The biomes around a chunk, as a `WorldGenRegion` hands them to the biome manager: quart
 /// biomes, with quart y clamped to the level's (`ChunkAccess.getNoiseBiome`).
 pub struct ChunkBiomes<'r> {
-    region: &'r BiomeRegion,
+    region: Region<'r>,
     min_qy: i32,
     max_qy: i32,
+}
+
+/// Where [`ChunkBiomes`] reads quarts from.
+enum Region<'r> {
+    Biomes(&'r BiomeRegion),
+    /// One biome everywhere, for tests.
+    #[cfg(test)]
+    One(spyglass_biome::Lookup),
+}
+
+impl Region<'_> {
+    fn get(&self, [qx, qy, qz]: [i32; 3]) -> spyglass_biome::Lookup {
+        match self {
+            Region::Biomes(region) => region
+                .get(qx, qy, qz)
+                .expect("the region covers the chunk's biome lookups"),
+            #[cfg(test)]
+            Region::One(lookup) => lookup.clone(),
+        }
+    }
 }
 
 impl<'r> ChunkBiomes<'r> {
@@ -730,7 +758,7 @@ impl<'r> ChunkBiomes<'r> {
     pub fn new(region: &'r BiomeRegion, min_y: i32, height: i32) -> Self {
         let min_qy = min_y >> 2;
         ChunkBiomes {
-            region,
+            region: Region::Biomes(region),
             min_qy,
             max_qy: min_qy + (height >> 2) - 1,
         }
@@ -738,22 +766,16 @@ impl<'r> ChunkBiomes<'r> {
 
     /// The biome of quart `(qx, qy, qz)`, and whether it's tied.
     fn quart(&self, [qx, qy, qz]: [i32; 3]) -> (BiomeId, bool) {
-        let qy = qy.clamp(self.min_qy, self.max_qy);
         let lookup = self
             .region
-            .get(qx, qy, qz)
-            .expect("the region covers the chunk's biome lookups");
+            .get([qx, qy.clamp(self.min_qy, self.max_qy), qz]);
         (lookup.biome(), lookup.is_tied())
     }
 
     /// The candidates of quart `(qx, qy, qz)`.
     fn candidates(&self, [qx, qy, qz]: [i32; 3]) -> Vec<BiomeId> {
         let qy = qy.clamp(self.min_qy, self.max_qy);
-        self.region
-            .get(qx, qy, qz)
-            .expect("the region covers the chunk's biome lookups")
-            .candidates()
-            .to_vec()
+        self.region.get([qx, qy, qz]).candidates().to_vec()
     }
 }
 
@@ -762,7 +784,7 @@ struct Context<'a> {
     system: &'a BoundMaterial,
     biomes: &'a ChunkBiomes<'a>,
     /// For 26.2's preliminary surface.
-    terrain: &'a Terrain,
+    terrain: Option<&'a Terrain>,
     /// 26.2's `preliminarySurfaceCache`: the preliminary surface at the corners of the chunk's
     /// surface cell, once read.
     cell: &'a Cell<Option<[i32; 4]>>,
@@ -821,10 +843,12 @@ impl Context<'_> {
                     let (i, j) = (self.x >> 4, self.z >> 4);
                     let at = |di: i32, dj: i32| {
                         self.terrain
-                            .preliminary_surface_level(
-                                i.wrapping_add(di).wrapping_shl(4),
-                                j.wrapping_add(dj).wrapping_shl(4),
-                            )
+                            .and_then(|t| {
+                                t.preliminary_surface_level(
+                                    i.wrapping_add(di).wrapping_shl(4),
+                                    j.wrapping_add(dj).wrapping_shl(4),
+                                )
+                            })
                             .expect("26.2's surface rules come with 26.2's terrain")
                     };
                     let corners = [at(0, 0), at(1, 0), at(0, 1), at(1, 1)];
@@ -1107,7 +1131,7 @@ impl BoundMaterial {
                 let mut c = Context {
                     system: self,
                     biomes,
-                    terrain,
+                    terrain: Some(terrain),
                     cell: &cell,
                     x,
                     z,
@@ -1297,4 +1321,363 @@ impl BoundMaterial {
 fn floor_f64(v: f64) -> i32 {
     let i = v as i32;
     if v < f64::from(i) { i - 1 } else { i }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Each rule and condition type on fixture data, through the loader and the binder, at
+    //! hand-set context values.
+
+    use serde_json::{Value, json};
+    use spyglass_biome::Lookup;
+
+    use super::*;
+
+    const SETTINGS: &str = "test:settings";
+    const ANCHORS: AnchorHeights = AnchorHeights {
+        min_y: -64,
+        height: 384,
+    };
+    /// Biome 0 is temperate, biome 1 cold enough to snow.
+    const PLAINS: u16 = 0;
+    const SNOWY: u16 = 1;
+
+    /// Noise settings with `rule`, the system's noises and `test:noise`, and `extra` entries.
+    fn resources(rule: Value, extra: &[(&str, Value)]) -> HashMap<String, Value> {
+        let mut r = HashMap::new();
+        r.insert(
+            format!("{NOISE_SETTINGS}/{SETTINGS}"),
+            json!({
+                "default_block": "minecraft:stone",
+                "sea_level": 63,
+                "material_rule": rule,
+                "noise_router": {"chunk_surface_level": 64.0},
+            }),
+        );
+        for id in SYSTEM_NOISES.into_iter().chain(["test:noise"]) {
+            r.insert(
+                format!("worldgen/noise/{id}"),
+                json!({"base_amplitude": 1.0, "base_octave": -4, "octave_count": 2}),
+            );
+        }
+        for (key, value) in extra {
+            r.insert((*key).to_string(), value.clone());
+        }
+        r
+    }
+
+    fn load(resources: &HashMap<String, Value>) -> Result<(MaterialSettings, Palette), LoadError> {
+        let mut palette = Palette::new();
+        let settings = MaterialSettings::load(resources, SETTINGS, ANCHORS, &mut palette)?;
+        Ok((settings, palette))
+    }
+
+    /// The context values a rule is tried at.
+    #[derive(Debug, Clone, Copy)]
+    struct Place {
+        pos: [i32; 3],
+        biome: u16,
+        surface_depth: i32,
+        stone_depth_above: i32,
+        stone_depth_below: i32,
+        water_height: i32,
+        gradient: [i32; 2],
+    }
+
+    impl Default for Place {
+        fn default() -> Self {
+            Place {
+                pos: [5, 64, -7],
+                biome: PLAINS,
+                surface_depth: 3,
+                stone_depth_above: 1,
+                stone_depth_below: 1,
+                water_height: i32::MIN,
+                gradient: [0, 0],
+            }
+        }
+    }
+
+    /// The block `rule` gives at `place`, by name.
+    fn eval(rule: Value, place: Place) -> Option<String> {
+        let (settings, palette) = load(&resources(rule, &[])).unwrap();
+        let names = BiomeNames::new(vec![
+            "minecraft:plains".into(),
+            "minecraft:snowy_plains".into(),
+        ]);
+        let climates = [0.8, 0.0].map(|temperature| Climate {
+            temperature,
+            frozen: false,
+        });
+        let material = settings.bind(1, &palette, &names, &climates).unwrap();
+        let biomes = ChunkBiomes {
+            region: Region::One(Lookup::Unique(BiomeId(place.biome))),
+            min_qy: -16,
+            max_qy: 79,
+        };
+        let cell = Cell::new(None);
+        let [x, y, z] = place.pos;
+        let c = Context {
+            system: &material,
+            biomes: &biomes,
+            terrain: None,
+            cell: &cell,
+            x,
+            z,
+            gradient: Cell::new(place.gradient),
+            gradient_read: Cell::new(true),
+            surface_depth: place.surface_depth,
+            surface_secondary: Cell::new(None),
+            min_surface_level: Cell::new(None),
+            y,
+            stone_depth_above: place.stone_depth_above,
+            stone_depth_below: place.stone_depth_below,
+            water_height: place.water_height,
+            biome: Cell::new(None),
+            tied: Cell::new(false),
+        };
+        material
+            .apply(&material.rule, &c)
+            .map(|s| palette.name(s).to_string())
+    }
+
+    fn block(id: &str) -> Value {
+        json!({"type": "minecraft:block", "result_state": {"Name": id}})
+    }
+
+    /// Whether `condition` holds at `place`.
+    fn holds(condition: Value, place: Place) -> bool {
+        let rule = json!({
+            "type": "minecraft:condition",
+            "if_true": condition,
+            "then_run": block("minecraft:dirt"),
+        });
+        eval(rule, place).is_some()
+    }
+
+    fn at(y: i32) -> Place {
+        Place {
+            pos: [5, y, -7],
+            ..Place::default()
+        }
+    }
+
+    #[test]
+    fn block_sequence_and_condition_rules() {
+        let place = Place::default();
+        assert_eq!(
+            eval(block("dirt"), place).as_deref(),
+            Some("minecraft:dirt")
+        );
+        let never = json!({"type": "minecraft:hole"});
+        let sequence = json!({"type": "minecraft:sequence", "sequence": [
+            {"type": "minecraft:condition", "if_true": never, "then_run": block("dirt")},
+            block("sand"),
+            block("gravel"),
+        ]});
+        assert_eq!(eval(sequence, place).as_deref(), Some("minecraft:sand"));
+        assert!(!holds(never, place));
+    }
+
+    #[test]
+    fn bandlands_gives_a_clay_band() {
+        let band = eval(json!({"type": "minecraft:bandlands"}), Place::default()).unwrap();
+        assert!(band.ends_with("terracotta"), "{band}");
+    }
+
+    #[test]
+    fn ore_vein_rules() {
+        let vein = |density: f64, filler_gap: f64| {
+            let rule = json!({
+                "type": "minecraft:ore_vein",
+                "ore_block": {"Name": "minecraft:copper_ore"},
+                "raw_ore_block": {"Name": "minecraft:raw_copper_block"},
+                "filler_block": {"Name": "minecraft:granite"},
+                "raw_ore_chance": 0.0,
+                "density": density,
+                "richness": 1.0,
+                "filler_gap": filler_gap,
+            });
+            eval(rule, Place::default())
+        };
+        // Outside the vein, nothing; in it, ore where the gap is negative, else filler.
+        assert_eq!(vein(-1.0, -1.0), None);
+        assert_eq!(vein(1.0, -1.0).as_deref(), Some("minecraft:copper_ore"));
+        assert_eq!(vein(1.0, 1.0).as_deref(), Some("minecraft:granite"));
+    }
+
+    #[test]
+    fn biome_and_temperature_conditions() {
+        let plains = json!({"type": "minecraft:biome", "biome_is": ["minecraft:plains"]});
+        let snowy = Place {
+            biome: SNOWY,
+            ..Place::default()
+        };
+        assert!(holds(plains.clone(), Place::default()));
+        assert!(!holds(plains, snowy));
+        let cold = json!({"type": "minecraft:temperature"});
+        assert!(holds(cold.clone(), snowy));
+        assert!(!holds(cold, Place::default()));
+    }
+
+    #[test]
+    fn noise_threshold_conditions() {
+        let threshold = |min: f64, is_3d: bool| {
+            json!({"type": "minecraft:noise_threshold", "noise": "test:noise",
+                   "min_threshold": min, "max_threshold": 1e9, "is_3d": is_3d})
+        };
+        assert!(holds(threshold(-1e9, false), Place::default()));
+        assert!(!holds(threshold(1e9, false), Place::default()));
+        // In 3D, the noise varies with y.
+        let seen: Vec<bool> = (0..64)
+            .map(|y| holds(threshold(0.0, true), at(y)))
+            .collect();
+        assert!(seen.contains(&true) && seen.contains(&false));
+    }
+
+    #[test]
+    fn vertical_gradient_conditions() {
+        let gradient = json!({"type": "minecraft:vertical_gradient", "random_name": "test:gradient",
+            "true_at_and_below": {"absolute": 0}, "false_at_and_above": {"absolute": 10}});
+        assert!(holds(gradient.clone(), at(0)));
+        assert!(!holds(gradient.clone(), at(10)));
+        let between: Vec<bool> = (-200..200)
+            .map(|x| {
+                let place = Place {
+                    pos: [x, 5, 0],
+                    ..Place::default()
+                };
+                holds(gradient.clone(), place)
+            })
+            .collect();
+        assert!(between.contains(&true) && between.contains(&false));
+    }
+
+    #[test]
+    fn y_above_and_water_conditions() {
+        let y_above = |multiplier: i32, add: bool| {
+            json!({"type": "minecraft:y_above", "anchor": {"absolute": 60},
+                   "surface_depth_multiplier": multiplier, "add_stone_depth": add})
+        };
+        assert!(holds(y_above(0, false), at(60)));
+        assert!(!holds(y_above(0, false), at(59)));
+        let deep = Place {
+            stone_depth_above: 2,
+            ..at(58)
+        };
+        assert!(holds(y_above(0, true), deep));
+        // 60 + 3 · 1.
+        assert!(holds(y_above(1, false), at(63)));
+        assert!(!holds(y_above(1, false), at(62)));
+        let water = json!({"type": "minecraft:water", "offset": -1,
+            "surface_depth_multiplier": 0, "add_stone_depth": false});
+        assert!(holds(water.clone(), at(0)), "no water above");
+        let under = |y| Place {
+            water_height: 64,
+            ..at(y)
+        };
+        assert!(holds(water.clone(), under(63)));
+        assert!(!holds(water, under(62)));
+    }
+
+    #[test]
+    fn steep_hole_and_preliminary_surface_conditions() {
+        let steep = json!({"type": "minecraft:steep"});
+        let sloped = |gradient| Place {
+            gradient,
+            ..Place::default()
+        };
+        assert!(holds(steep.clone(), sloped([-4, 0])));
+        assert!(holds(steep.clone(), sloped([0, 4])));
+        assert!(!holds(steep, sloped([-3, 3])));
+        let hole = json!({"type": "minecraft:hole"});
+        let depth = |surface_depth| Place {
+            surface_depth,
+            ..Place::default()
+        };
+        assert!(holds(hole.clone(), depth(0)));
+        assert!(!holds(hole, depth(1)));
+        // chunk_surface_level 64, plus the surface depth 3, minus 8.
+        let above = json!({"type": "minecraft:above_preliminary_surface"});
+        assert!(holds(above.clone(), at(59)));
+        assert!(!holds(above, at(58)));
+    }
+
+    #[test]
+    fn not_and_stone_depth_conditions() {
+        let not_hole = json!({"type": "minecraft:not", "invert": {"type": "minecraft:hole"}});
+        assert!(holds(not_hole, Place::default()));
+        let stone_depth = |add: bool, surface_type: &str| {
+            json!({"type": "minecraft:stone_depth", "offset": 0, "add_surface_depth": add,
+                   "secondary_depth_range": 0, "surface_type": surface_type})
+        };
+        let depths = |above, below| Place {
+            stone_depth_above: above,
+            stone_depth_below: below,
+            ..Place::default()
+        };
+        assert!(holds(stone_depth(false, "floor"), depths(1, 9)));
+        assert!(!holds(stone_depth(false, "floor"), depths(2, 1)));
+        assert!(holds(stone_depth(false, "ceiling"), depths(9, 1)));
+        // 1 + the surface depth 3.
+        assert!(holds(stone_depth(true, "floor"), depths(4, 9)));
+        assert!(!holds(stone_depth(true, "floor"), depths(5, 9)));
+    }
+
+    #[test]
+    fn rules_and_conditions_by_id() {
+        let extra = [
+            (
+                "worldgen/material_rule/test:top",
+                json!({"type": "minecraft:condition", "if_true": "test:never",
+                       "then_run": block("dirt")}),
+            ),
+            (
+                "worldgen/material_condition/test:never",
+                json!({"type": "minecraft:hole"}),
+            ),
+        ];
+        let (settings, _) = load(&resources(json!("test:top"), &extra)).unwrap();
+        assert!(matches!(settings.rule, Rule::Condition(..)));
+    }
+
+    #[test]
+    fn load_errors_name_the_resource_and_path() {
+        let error = |rule: Value, extra: &[(&str, Value)]| {
+            load(&resources(rule, extra)).unwrap_err().to_string()
+        };
+        let unknown = json!({"type": "minecraft:sequence", "sequence": [{"type": "test:nope"}]});
+        assert_eq!(
+            error(unknown, &[]),
+            r#"test:settings: material_rule.sequence.0.type: unsupported material rule type "test:nope""#
+        );
+        let cycle = [
+            ("worldgen/material_rule/test:a", json!("test:b")),
+            ("worldgen/material_rule/test:b", json!("test:a")),
+        ];
+        assert_eq!(
+            error(json!("test:a"), &cycle),
+            "test:a: reference cycle: test:a -> test:b -> test:a"
+        );
+    }
+
+    #[test]
+    fn surface_rules_have_no_ore_veins() {
+        let mut resources = resources(json!(null), &[]);
+        let settings = resources
+            .get_mut(&format!("{NOISE_SETTINGS}/{SETTINGS}"))
+            .unwrap();
+        settings["noise"] = json!({"size_horizontal": 1});
+        settings["surface_rule"] = json!({
+            "type": "minecraft:ore_vein",
+            "ore_block": {"Name": "minecraft:copper_ore"},
+            "raw_ore_block": {"Name": "minecraft:raw_copper_block"},
+            "filler_block": {"Name": "minecraft:granite"},
+            "raw_ore_chance": 0.0, "density": 1.0, "richness": 1.0, "filler_gap": 1.0,
+        });
+        assert_eq!(
+            load(&resources).unwrap_err().to_string(),
+            r#"test:settings: surface_rule: unsupported rule type in 26.2's surface rules "minecraft:ore_vein""#
+        );
+    }
 }

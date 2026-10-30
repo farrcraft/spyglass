@@ -61,13 +61,13 @@ From the plan:
 
 - [x] **ADR:** the `spyglass-blocks` crate: blocks after the noise, the material rule and carvers, and why not in `spyglass-terrain`.
 - [x] **Spike:** fill one golden chunk from noise with today's columns, and compare the `no-carvers` run below the surface depth, where the material rule leaves stone (or deepslate). Decide whether chunks need `NoiseChunk`'s interpolation.
-- [ ] **Blocks and chunks:** the state type, the palette, chunk storage, and the noise fill for whole chunks, in all three dimensions and all four versions.
-- [ ] **Data:** typed loading of material rules and conditions (26.3 and 26.4) and surface rules (26.2), with errors that name the file and path. Fixture-bundle tests for each rule and condition type.
+- [x] **Blocks and chunks:** the state type, the palette, chunk storage, and the noise fill for whole chunks, in all three dimensions, for 26.2 and 26.3 (26.4 moved with its rule). The fill goes column by column; a chunk-wise fill is for the cost task.
+- [x] **Data:** typed loading of material rules and conditions (26.3 and 26.4) and surface rules (26.2), with errors that name the file and path. Fixture-bundle tests for each rule and condition type.
 - [x] **26.3's material rule:** each condition and rule, the context, and the system's loop, with ore veins. Unit tests on fixtures, then the golden `no-carvers` chunks of 26.3 in all three dimensions.
 - [ ] ~~**26.4:** the switches, and the golden chunks of both snapshots.~~ Moved to [m18-carvers](m18-carvers.md) (see the notes).
 - [x] **26.2's surface rules:** the rules, `SurfaceSystem`'s extras, and the golden chunks of 26.2.
-- [ ] **API and CLI:** `chunk_blocks`, `block_at`, `block_column`; `spyglass blocks`; cli-json.md; CLI tests on fixtures.
-- [ ] **Specs:** a new `material.md` (the rule, its conditions, the context, ore veins, 26.2's surface rules as a section, per-version notes), and terrain.md's pointers to it.
+- [x] **API and CLI:** `chunk_blocks`, `block_at`, `block_column`; `spyglass blocks`; cli-json.md; CLI tests on fixtures.
+- [x] **Specs:** a new `material.md` (the rule, its conditions, the context, ore veins, 26.2's surface rules as a section, per-version notes), and terrain.md's pointers to it.
 - [ ] **Cost:** `cargo xtask bench` gains a chunk's blocks without carvers. Record the time here.
 - [ ] `cargo xtask check` and `cargo xtask oracle-test`.
 
@@ -79,10 +79,10 @@ From the plan:
 
 ## Durable outputs
 
-- [ ] ADR: the `spyglass-blocks` crate.
-- [ ] `docs/specs/material.md`.
-- [ ] terrain.md: pointers to it, and the 26.2 ore veins' place.
-- [ ] cli-json.md: `blocks`.
+- [x] ADR: the `spyglass-blocks` crate.
+- [x] `docs/specs/material.md`.
+- [x] terrain.md: pointers to it, and the 26.2 ore veins' place.
+- [x] cli-json.md: `blocks`.
 
 ## Notes
 
@@ -117,3 +117,4 @@ From the plan:
   - the rule tried only on the default block itself, keeping the noise fill's veins;
   - steep read lazily;
   - icebergs that go on with `top` and `bottom` at 0.
+- 2026-10-30: **API and CLI.** `Session::chunk_blocks`, `block_at` and `block_column` take `Carvers`, whose only variant is `Off` (non-exhaustive, so `On` can be added). `World` loads the block settings on the first block query, and a session binds its chunk generator on its first. Every query generates its whole chunk. `spyglass blocks` requires `--no-carvers` until carvers are ported, and 26.4 is an error naming its missing `default_block`. The fixture world gained a material rule (sand, stone, deepslate), system noises and biome temperatures for the CLI tests.

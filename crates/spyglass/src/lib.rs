@@ -26,6 +26,7 @@
 //! terrain (unless it's confirmed, which computes it), and some results depend on the platform
 //! the game runs on; each result type says which applies. See `docs/specs/locate.md`.
 
+mod blocks;
 mod game;
 mod render;
 mod save;
@@ -36,6 +37,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use spyglass_biome::{BiomeId, BiomeSource, Biomes, SearchVolume, SpawnSearch, SpawnTargets};
+use spyglass_blocks::{BlockSettings, ChunkGenerator};
 use spyglass_data::anchor::AnchorHeights;
 use spyglass_data::bundle::{Bundle, BundleError};
 use spyglass_data::codec::{LoadError, full_id};
@@ -45,6 +47,7 @@ use spyglass_structure::{
 };
 use spyglass_terrain::{Terrain, TerrainSettings};
 
+pub use blocks::{BlockAt, BlockColumn, Carvers, ChunkBlocks};
 pub use game::{Game, GameSession};
 pub use render::{
     BiomeMap, DEFAULT_MAP_Y, HeightMap, Image, Layers, MARKER_REACH, MAX_PIXELS, MAX_SCALE,
@@ -435,6 +438,8 @@ pub struct World {
     terrain: TerrainSettings,
     /// Loaded on first use: they read most of the bundle's structure templates.
     pools: OnceLock<JigsawPools>,
+    /// Loaded on first block query.
+    blocks: OnceLock<BlockSettings>,
     /// Each biome's map colour, by [`BiomeId`].
     palette: Vec<[u8; 3]>,
 }
@@ -483,6 +488,7 @@ impl World {
             spawn,
             terrain,
             pools: OnceLock::new(),
+            blocks: OnceLock::new(),
             palette,
         })
     }
@@ -494,6 +500,15 @@ impl World {
         }
         let pools = JigsawPools::load(&self.bundle, &self.sets)?;
         Ok(self.pools.get_or_init(|| pools))
+    }
+
+    /// The settings for blocks, loaded the first time they're asked for.
+    fn block_settings(&self) -> Result<&BlockSettings> {
+        if let Some(settings) = self.blocks.get() {
+            return Ok(settings);
+        }
+        let settings = BlockSettings::load(&self.bundle, PRESET, self.dimension.id())?;
+        Ok(self.blocks.get_or_init(|| settings))
     }
 
     /// The game version, e.g. `26.3`.
@@ -581,6 +596,7 @@ impl World {
             biomes,
             placements,
             terrain: OnceLock::new(),
+            chunks: OnceLock::new(),
         })
     }
 
@@ -815,6 +831,8 @@ pub struct Session<'w> {
     spawn: SpawnSearch,
     /// Bound on first use: most queries never need terrain.
     terrain: OnceLock<Terrain>,
+    /// Bound on first block query.
+    chunks: OnceLock<ChunkGenerator<'w>>,
 }
 
 /// The biome at a position.

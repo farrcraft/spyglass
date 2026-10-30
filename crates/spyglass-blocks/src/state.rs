@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use serde_json::{Map, Value};
+use spyglass_data::bundle::BundleError;
 use spyglass_data::codec::{At, LoadError, LoadErrorKind, full_id, object};
 use spyglass_density::Resources;
 
@@ -107,9 +108,18 @@ impl BlockDefaults {
     /// Reads [`BLOCKS_REPORT`] from `resources`.
     pub fn load<R: Resources + ?Sized>(resources: &R) -> Result<Self, LoadError> {
         let root = At::root(BLOCKS_REPORT);
-        let json = resources
-            .report(BLOCKS_REPORT)
-            .map_err(|e| root.error(e.into()))?;
+        let json = resources.report(BLOCKS_REPORT).map_err(|e| {
+            // Bundles extracted before the report was included don't have it.
+            let e = match e {
+                BundleError::NotFound(_) => BundleError::Layout(
+                    "the bundle has no block report; extract it again with this version of \
+                     spyglass"
+                        .to_string(),
+                ),
+                e => e,
+            };
+            root.error(e.into())
+        })?;
         let mut blocks = HashMap::new();
         for (id, block) in object(&json, &root)? {
             let at = root.child(id);
@@ -230,6 +240,16 @@ mod tests {
             "minecraft:grass_block[snowy=true]"
         );
         assert_eq!(name("stone", json!({})).unwrap(), "minecraft:stone");
+    }
+
+    #[test]
+    fn a_bundle_without_the_report_says_to_extract_it_again() {
+        let error = BlockDefaults::load(&HashMap::<String, Value>::new()).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "reports/blocks.json: the bundle has no block report; extract it again with this \
+             version of spyglass"
+        );
     }
 
     #[test]

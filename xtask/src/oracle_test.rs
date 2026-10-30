@@ -142,6 +142,11 @@ const TESTS: &[(&str, &str, &[Input])] = &[
         &[Input::BlocksNoCarvers, Input::Bundle],
     ),
     (
+        "spyglass",
+        "blocks_through_the_api_are_the_game_s",
+        &[Input::BlocksNoCarvers, Input::Bundle],
+    ),
+    (
         "spyglass-terrain",
         "carvers_only_carve",
         &[Input::Blocks, Input::BlocksNoCarvers],
@@ -280,6 +285,7 @@ const PINNED: &[(&str, &[&str])] = &[
     ("a_preset_world_is_named", &["26.3"]),
     // 26.4's material rule is interleaved with its carvers, and is ported with them.
     ("chunks_without_carvers_match_the_game", &["26.2", "26.3"]),
+    ("blocks_through_the_api_are_the_game_s", &["26.2", "26.3"]),
 ];
 
 /// How one version's run went.

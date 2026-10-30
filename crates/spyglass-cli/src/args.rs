@@ -41,6 +41,30 @@ pub enum Command {
     /// Terrain heights before structures, carvers and features, as structures are placed by:
     /// one column or a region.
     Heights(Heights),
+    /// A chunk's blocks before features, as the game generates them: one block, a column or a
+    /// whole chunk.
+    Blocks(Blocks),
+}
+
+/// `spyglass blocks` (`docs/specs/material.md`).
+#[derive(Args)]
+#[command(group(clap::ArgGroup::new("what").required(true).args(["at", "column", "chunk"])))]
+pub struct Blocks {
+    /// One block, `x,y,z`.
+    #[arg(long, allow_hyphen_values = true, value_parser = xyz)]
+    pub at: Option<[i32; 3]>,
+    /// One column, `x,z`, from the bottom of the world up.
+    #[arg(long, allow_hyphen_values = true, value_parser = xz)]
+    pub column: Option<[i32; 2]>,
+    /// A whole chunk, `x,z` in chunks.
+    #[arg(long, allow_hyphen_values = true, value_parser = xz)]
+    pub chunk: Option<[i32; 2]>,
+    /// The blocks before carvers cut caves and ravines. Required for now: blocks after carvers
+    /// aren't computed yet.
+    #[arg(long)]
+    pub no_carvers: bool,
+    #[command(flatten)]
+    pub common: Common,
 }
 
 /// `spyglass heights` (`docs/specs/terrain.md`).
@@ -364,6 +388,17 @@ fn centre(text: &str) -> Result<Centre, String> {
         Ok(Centre::Player)
     } else {
         xz(text).map(Centre::At)
+    }
+}
+
+fn xyz(text: &str) -> Result<[i32; 3], String> {
+    match text
+        .split(',')
+        .map(|p| p.trim().parse::<i32>())
+        .collect::<Result<Vec<_>, _>>()
+    {
+        Ok(parts) if parts.len() == 3 => Ok([parts[0], parts[1], parts[2]]),
+        _ => Err(format!("expected x,y,z in blocks, got {text:?}")),
     }
 }
 

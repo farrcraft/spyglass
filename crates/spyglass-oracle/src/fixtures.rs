@@ -150,7 +150,23 @@ fn overworld_files(extra: &[(String, Value)], tie: bool, nether: bool) -> Vec<(S
                 "noise": {"min_y": -64, "height": 384},
                 "default_block": "minecraft:stone",
                 "default_fluid": "minecraft:water",
+                // Sand on the seabed's top block, stone down to y 0, deepslate below.
+                "material_rule": {"type": "minecraft:sequence", "sequence": [
+                    {"type": "minecraft:condition",
+                        "if_true": {"type": "minecraft:stone_depth", "offset": 0,
+                            "add_surface_depth": false, "secondary_depth_range": 0,
+                            "surface_type": "floor"},
+                        "then_run": {"type": "minecraft:block",
+                            "result_state": {"Name": "minecraft:sand"}}},
+                    {"type": "minecraft:condition",
+                        "if_true": {"type": "minecraft:y_above", "anchor": {"absolute": 0},
+                            "surface_depth_multiplier": 0, "add_stone_depth": false},
+                        "then_run": {"type": "minecraft:block",
+                            "result_state": {"Name": "minecraft:stone"}}},
+                    {"type": "minecraft:block", "result_state": {"Name": "minecraft:deepslate"}}
+                ]},
                 "noise_router": {
+                    "chunk_surface_level": 50.0,
                     // A flat seabed: stone below y 50, then water to the sea level.
                     "final_density": {"type": "minecraft:gradient", "axis": "y",
                         "from_coordinate": 0, "from_value": 1.0,
@@ -169,7 +185,29 @@ fn overworld_files(extra: &[(String, Value)], tie: bool, nether: bool) -> Vec<(S
         ),
     ];
     for biome in ["plains", "desert", "forest", "nether_wastes"] {
-        files.push(resource("worldgen/biome", biome, json!({})));
+        files.push(resource(
+            "worldgen/biome",
+            biome,
+            json!({"temperature": 0.8}),
+        ));
+    }
+    // The noises the material rule's system samples itself.
+    for noise in [
+        "clay_bands_offset",
+        "surface",
+        "surface_secondary",
+        "badlands_pillar",
+        "badlands_pillar_roof",
+        "badlands_surface",
+        "iceberg_pillar",
+        "iceberg_pillar_roof",
+        "iceberg_surface",
+    ] {
+        files.push(resource(
+            "worldgen/noise",
+            noise,
+            json!({"base_amplitude": 1.0, "base_octave": -4, "octave_count": 2}),
+        ));
     }
     if nether {
         files.extend([

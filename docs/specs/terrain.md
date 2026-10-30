@@ -59,7 +59,7 @@ _Versions:_ 26.2's aquifer exclusion test depends on the `NoiseChunk`'s flat-cac
 
 **From the top.** A height query needs only the blocks down to the first one its heightmap counts. spyglass samples a column for one in two parts: from a little below the column's [surface level](#the-aquifer) (8 blocks, rounded down to `final_density`'s [y alignment](density-functions.md#point-and-volume-evaluation)) to the top, then, only if nothing there counts, from the bottom up to where the first part began. A part that starts on the alignment gives each block the column's own value, bit for bit, and the aquifer doesn't depend on the order of questions, so the answer is the column's. In the Overworld the surface is nearly always in the first part, which is about two thirds of the column. Without an aquifer (the Nether and the End) or an alignment, and for a block column (`getBaseColumn`), the column is sampled whole.
 
-**What the column leaves out.** It evaluates the density graph with no structures and no blending. `beardifier` is 0, `blend_density` passes its input through, `blend_alpha` is 1 and `blend_offset` 0. The material rule isn't evaluated at all, so the router's `chunk_surface_level` isn't used either.
+**What the column leaves out.** It evaluates the density graph with no structures and no blending. `beardifier` is 0, `blend_density` passes its input through, `blend_alpha` is 1 and `blend_offset` 0. The material rule isn't evaluated at all ([material.md](material.md) is), so the router's `chunk_surface_level` isn't used either.
 
 _Versions:_ 26.2's column does include ore veins ([below](#262-columns)). 26.4-snapshot-5's column leaves solid positions without a block (above).
 
@@ -151,7 +151,7 @@ Open when this spec was drafted, and settled since:
 
 From the 26.2 bytecode (`NoiseBasedChunkGenerator`, `NoiseChunk`, `Aquifer.NoiseBasedAquifer`, `OreVeinifier`, `OverworldBiomeBuilder`), and checked against the oracle: every block of 26.2's [aquifer probe cases](oracle.md#262s-probe-cases), and every height and block column of its height golden files, ore veins included. Density evaluation is [density-functions.md's 26.2 section](density-functions.md#262-evaluation). In `spyglass-terrain` it's its own path behind the same queries, chosen by the noise settings' shape (`noise.size_horizontal`).
 
-**Settings.** 26.2's noise settings have `default_block` and `default_fluid` as block states (`{"Name": ..., "Properties": ...}`), `aquifers_enabled` and `ore_veins_enabled` instead of `aquifers` and the material rule's vein rules, and the fifteen-entry router ([density-functions.md](density-functions.md#262-router)). `OCEAN_FLOOR_WG` tests `blocksMotion()` (switch `heightmap_blocks_motion`). Legacy randomness with aquifers or ore veins isn't supported, as in 26.3; no vanilla dimension has both.
+**Settings.** 26.2's noise settings have `default_block` and `default_fluid` as block states (`{"Name": ..., "Properties": ...}`), `aquifers_enabled` and `ore_veins_enabled` instead of `aquifers` and the material rule's vein rules, and the fifteen-entry router ([density-functions.md](density-functions.md#262-router)). `OCEAN_FLOOR_WG` tests `blocksMotion()` (switch `heightmap_blocks_motion`). Legacy randomness with aquifers or ore veins isn't supported, as in 26.3; no vanilla dimension has both. The surface rules then replace only the default block, so the columns' vein blocks stay in the chunk ([material.md](material.md#262-surface-rules)).
 
 ### 26.2 columns
 

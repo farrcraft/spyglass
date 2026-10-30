@@ -1,6 +1,6 @@
 # CLI JSON output
 
-Status: stable, format 1. Covers `spyglass locate`, `spyglass heights`, `spyglass render`, `spyglass search`, `spyglass find` and `spyglass world` with `--json`.
+Status: stable, format 1. Covers `spyglass locate`, `spyglass heights`, `spyglass blocks`, `spyglass render`, `spyglass search`, `spyglass find` and `spyglass world` with `--json`.
 
 Scripts depend on this format, so it's versioned. Within a format version, fields are only ever added. Removing or changing the meaning of a field bumps `format`. The CLI writes the JSON from the library's results ([ADR 0014](../adr/0014-public-api-world-and-session.md)); the library types themselves aren't the format.
 
@@ -13,12 +13,12 @@ Scripts depend on this format, so it's versioned. Within a format version, field
 - Paths are strings. Characters that aren't valid Unicode are replaced with U+FFFD.
 - `seed` is the 64-bit seed after text seeds are hashed ([locate.md](locate.md#text-seeds)).
 
-Every `locate`, `heights` and `render` object starts with:
+Every `locate`, `heights`, `blocks` and `render` object starts with:
 
 | Field       | Type   | Meaning                                                                                                                                                              |
 | ----------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `format`    | int    | This format's version: `1`.                                                                                                                                          |
-| `command`   | string | `locate structure`, `locate biome`, `locate slime`, `locate spawn`, `heights` or `render`.                                                                           |
+| `command`   | string | `locate structure`, `locate biome`, `locate slime`, `locate spawn`, `heights`, `blocks` or `render`.                                                                 |
 | `version`   | string | The game version of the bundle used, e.g. `26.3`.                                                                                                                    |
 | `dimension` | string | The dimension answered for: `minecraft:overworld`, `minecraft:the_nether` or `minecraft:the_end` (`--dimension`, or the player's when the position is the player's). |
 | `seed`      | int    | The world seed.                                                                                                                                                      |
@@ -96,6 +96,31 @@ The generator's heights, before structures, carvers, features and surface blocks
 | `min`       | `[x, z]`        | The first column; `--at`'s for one column.                                                                       |
 | `max`       | `[x, z]`        | The last column, included.                                                                                       |
 | `heights`   | array of arrays | One row per z from `min` to `max`, each with one height per x: one above the highest block the heightmap counts. |
+
+## `blocks`
+
+The blocks the game generates before carvers, structures and features ([material.md](material.md)), for one block (`--at`), a column (`--column`) or a chunk (`--chunk`). `--no-carvers` is required for now. Versions whose material rule isn't ported yet (26.4) are an error.
+
+| Field     | Type | Meaning                                       |
+| --------- | ---- | --------------------------------------------- |
+| `carvers` | bool | Whether carvers have cut the blocks: `false`. |
+
+With `--at`:
+
+| Field      | Type        | Meaning                                                                                                                      |
+| ---------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `position` | `[x, y, z]` | The block.                                                                                                                   |
+| `block`    | string      | Its state: the id, then non-default properties in brackets, e.g. `minecraft:grass_block[snowy=true]`. Air outside the level. |
+| `certain`  | bool        | Whether it's the game's block whatever the lookup history; otherwise it depends on a [tied biome](material.md#ties).         |
+
+With `--column` or `--chunk`:
+
+| Field     | Type  | Meaning                                                                                          |
+| --------- | ----- | ------------------------------------------------------------------------------------------------ |
+| `min_y`   | int   | The level's lowest y, where each column starts.                                                  |
+| `columns` | array | One for `--column`; 256 for `--chunk`, z outer and x inner. Each is `{x, z, blocks, uncertain}`. |
+
+A column's `blocks` is its states from `min_y` to the level's top, as runs: `[state, count]` pairs, bottom up. `uncertain` lists the y of each block that depends on a tied biome.
 
 ## `render`
 

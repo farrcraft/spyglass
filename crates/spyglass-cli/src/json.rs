@@ -153,6 +153,56 @@ impl Bounds {
     }
 }
 
+/// `blocks --at`: one block.
+#[derive(Serialize)]
+pub struct BlockAnswer<'a> {
+    pub carvers: bool,
+    pub position: [i32; 3],
+    pub block: &'a str,
+    pub certain: bool,
+}
+
+/// `blocks --column` and `--chunk`: columns of blocks.
+#[derive(Serialize)]
+pub struct BlocksAnswer {
+    pub carvers: bool,
+    pub min_y: i32,
+    pub columns: Vec<BlockColumn>,
+}
+
+/// A column's blocks from `min_y` up, as runs of one state, and the y of each block that
+/// depends on a tied biome.
+#[derive(Serialize)]
+pub struct BlockColumn {
+    pub x: i32,
+    pub z: i32,
+    pub blocks: Vec<(String, usize)>,
+    pub uncertain: Vec<i32>,
+}
+
+impl BlockColumn {
+    pub fn new([x, z]: [i32; 2], column: &spyglass::BlockColumn) -> Self {
+        let mut blocks: Vec<(String, usize)> = Vec::new();
+        for b in &column.blocks {
+            match blocks.last_mut() {
+                Some((block, n)) if *block == b.block => *n += 1,
+                _ => blocks.push((b.block.clone(), 1)),
+            }
+        }
+        let uncertain = (column.min_y..)
+            .zip(&column.blocks)
+            .filter(|(_, b)| !b.certain)
+            .map(|(y, _)| y)
+            .collect();
+        BlockColumn {
+            x,
+            z,
+            blocks,
+            uncertain,
+        }
+    }
+}
+
 /// `heights`: rows of columns, z outer and x inner.
 #[derive(Serialize)]
 pub struct HeightsAnswer<'a> {

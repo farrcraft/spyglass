@@ -3622,6 +3622,7 @@ dependencies = [
  "png 0.18.1",
  "serde_json",
  "spyglass-biome",
+ "spyglass-blocks",
  "spyglass-data",
  "spyglass-oracle",
  "spyglass-search",

@@ -13,11 +13,11 @@ use std::collections::HashMap;
 
 use spyglass_biome::{BiomeRegion, BiomeSource, Biomes};
 use spyglass_data::bundle::Bundle;
-use spyglass_data::codec::{At, LoadError, LoadErrorKind};
+use spyglass_data::codec::LoadError;
 use spyglass_rng::worldgen::large_feature;
 use spyglass_terrain::{Block, BlockColumn, Terrain, TerrainSettings, VeinBlock};
 
-use carver::{CarverSettings, CarvingMask};
+use carver::{CarverSettings, CarvingMask, Legacy, Sink};
 pub use chunk::Chunk;
 use material::{BoundMaterial, ChunkBiomes, MaterialSettings};
 pub use state::{Palette, State};
@@ -34,11 +34,13 @@ pub struct BlockSettings {
     palette: Palette,
     /// 26.2's ore vein blocks, as [`vein_index`] orders them.
     veins: [State; 6],
-    /// Each biome's carvers, from 26.3 on; `None` for 26.2's, which aren't ported yet.
-    carvers: Option<Carving>,
+    /// Each biome's carvers.
+    carvers: Carving,
+    /// `minecraft:cave_air`, which 26.2's Nether carver fills with.
+    cave_air: State,
 }
 
-/// What applying a carving mask needs (26.3 on).
+/// The carvers, and what applying a carving mask needs (26.3 on).
 #[derive(Debug, Clone)]
 struct Carving {
     carvers: CarverSettings,
@@ -83,26 +85,23 @@ impl BlockSettings {
             .map(|id| Climate::load(bundle, id))
             .collect::<Result<_, _>>()?;
         let veins = VEINS.map(|v| palette.state(v.id()));
-        let carvers = if material.is_v1_21() {
-            None
+        let cave_air = palette.state("minecraft:cave_air");
+        let v1_21 = material.is_v1_21();
+        // A tag the code names but the data leaves out is empty; 26.2 has none.
+        let uncarvable = if !v1_21 && bundle.resource("tags/block", UNCARVABLE).is_ok() {
+            spyglass_terrain::tag(bundle, "tags/block", UNCARVABLE)?
         } else {
-            // A tag the code names but the data leaves out is empty.
-            let uncarvable = if bundle.resource("tags/block", UNCARVABLE).is_ok() {
-                spyglass_terrain::tag(bundle, "tags/block", UNCARVABLE)?
-            } else {
-                Vec::new()
-            };
-            let carvers = CarverSettings::load(bundle, biomes.biome_names())?;
-            Some(Carving {
-                carvers,
-                uncarvable: (0..palette.len())
-                    .map(|s| {
-                        uncarvable
-                            .iter()
-                            .any(|id| id == palette.block_id(s as State))
-                    })
-                    .collect(),
-            })
+            Vec::new()
+        };
+        let carvers = Carving {
+            carvers: CarverSettings::load(bundle, biomes.biome_names(), v1_21)?,
+            uncarvable: (0..palette.len())
+                .map(|s| {
+                    uncarvable
+                        .iter()
+                        .any(|id| id == palette.block_id(s as State))
+                })
+                .collect(),
         };
         Ok(BlockSettings {
             terrain,
@@ -112,6 +111,7 @@ impl BlockSettings {
             palette,
             veins,
             carvers,
+            cave_air,
         })
     }
 
@@ -174,56 +174,72 @@ impl ChunkGenerator<'_> {
     }
 
     /// The chunk at chunk `(cx, cz)` after the noise fill, the material rule and carvers
-    /// (`NoiseBasedChunkGenerator.generateCarvers`, `docs/specs/carvers.md`). 26.2's carvers
-    /// aren't ported yet, and are an error.
-    pub fn carved_chunk(&self, cx: i32, cz: i32) -> Result<Chunk, LoadError> {
+    /// (`docs/specs/carvers.md`): from 26.3, carved into a mask and applied after
+    /// (`generateCarvers`); in 26.2, straight into the chunk (`applyCarvers`).
+    pub fn carved_chunk(&self, cx: i32, cz: i32) -> Chunk {
         let settings = self.settings;
-        let Some(carving) = &settings.carvers else {
-            return Err(At::root("carvers").error(LoadErrorKind::Unsupported {
-                what: "carvers of the 1.21 family, as 26.2's, in",
-                name: "the chunk generator".to_string(),
-            }));
-        };
+        let carving = &settings.carvers;
+        let v1_21 = settings.material.is_v1_21();
         let (mut chunk, region) = self.surface(cx, cz);
+        let biomes = ChunkBiomes::new(&region, chunk.min_y, chunk.height);
         let anchors = settings.terrain.anchors();
         // The mask leaves out the level's bottom block and its top eight.
         let top = anchors.min_y + anchors.height - 1 - 7;
         let mut mask = CarvingMask::new(anchors.min_y + 1, top);
         // What a tied carver biome could carve instead.
         let mut doubt = CarvingMask::new(anchors.min_y + 1, top);
+        let mut columns: HashMap<(i32, i32), BlockColumn> = HashMap::new();
         for dx in -8..=8 {
             for dz in -8..=8 {
                 let start = [cx.wrapping_add(dx), cz.wrapping_add(dz)];
-                // getBiomeGenerationSettingsForCarver: the source's biome at the chunk's corner
-                // quart at y 0.
+                // The source's biome at the start chunk's corner quart at y 0, uncached.
                 let lookup =
                     self.biomes
                         .biome_at(start[0].wrapping_mul(4), 0, start[1].wrapping_mul(4));
-                let carve = |biome, mask: &mut CarvingMask| {
-                    for (i, carver) in carving.carvers.of(biome).enumerate() {
-                        let mut random =
-                            large_feature(self.seed.wrapping_add(i as i64), start[0], start[1]);
-                        if carver.is_start_chunk(&mut random) {
-                            carver.carve(anchors, &mut random, [cx, cz], start, mask);
-                        }
-                    }
-                };
                 let first = lookup.biome();
-                carve(first, &mut mask);
+                for (i, (carver, legacy)) in carving.carvers.of(first).enumerate() {
+                    let mut random =
+                        large_feature(self.seed.wrapping_add(i as i64), start[0], start[1]);
+                    if !carver.is_start_chunk(&mut random) {
+                        continue;
+                    }
+                    match legacy {
+                        Some(legacy) if v1_21 => {
+                            let mut direct = Direct {
+                                generator: self,
+                                chunk: &mut chunk,
+                                mask: &mut mask,
+                                legacy,
+                                lava_level: legacy.lava_level.resolve(anchors),
+                                nether_lava: anchors.min_y + 31,
+                                biomes: &biomes,
+                                columns: &mut columns,
+                                grass: false,
+                            };
+                            carver.carve(anchors, &mut random, [cx, cz], start, &mut direct);
+                        }
+                        _ => carver.carve(anchors, &mut random, [cx, cz], start, &mut mask),
+                    }
+                }
                 if lookup
                     .candidates()
                     .iter()
                     .any(|&b| !carving.carvers.same(b, first))
                 {
                     for &b in lookup.candidates() {
-                        carve(b, &mut doubt);
+                        for (i, (carver, _)) in carving.carvers.of(b).enumerate() {
+                            let mut random =
+                                large_feature(self.seed.wrapping_add(i as i64), start[0], start[1]);
+                            if carver.is_start_chunk(&mut random) {
+                                carver.carve(anchors, &mut random, [cx, cz], start, &mut doubt);
+                            }
+                        }
                     }
                 }
             }
         }
-        if !mask.is_empty() {
-            let biomes = ChunkBiomes::new(&region, chunk.min_y, chunk.height);
-            self.apply_carving_mask(&mut chunk, &mask, carving, &biomes);
+        if !v1_21 && !mask.is_empty() {
+            self.apply_carving_mask(&mut chunk, &mask, carving, &biomes, &mut columns);
         }
         let [x0, z0] = [cx.wrapping_shl(4), cz.wrapping_shl(4)];
         for (x, z, y0, y1) in doubt.runs() {
@@ -231,7 +247,25 @@ impl ChunkGenerator<'_> {
                 chunk.mark_uncertain([x0 + x, y, z0 + z]);
             }
         }
-        Ok(chunk)
+        chunk
+    }
+
+    /// `computeSubstance(x, y, z, 0)`: the aquifer's block at a carved position, as a state, or
+    /// `None` where it's solid (the game's `null`). Columns are asked once.
+    fn substance(
+        &self,
+        columns: &mut HashMap<(i32, i32), BlockColumn>,
+        [x, y, z]: [i32; 3],
+    ) -> Option<State> {
+        let column = columns
+            .entry((x & 15, z & 15))
+            .or_insert_with(|| self.terrain.aquifer_column(x, z, Some(0.0)));
+        match column.at(y) {
+            Block::Air => Some(state::AIR),
+            Block::Water => Some(state::WATER),
+            Block::Lava => Some(state::LAVA),
+            Block::Default | Block::Vein(_) => None,
+        }
     }
 
     /// `applyCarvingMask`: each carved position, unless it's `#uncarvable`, gets the aquifer's
@@ -243,15 +277,12 @@ impl ChunkGenerator<'_> {
         mask: &CarvingMask,
         carving: &Carving,
         biomes: &ChunkBiomes<'_>,
+        columns: &mut HashMap<(i32, i32), BlockColumn>,
     ) {
         let palette = &self.settings.palette;
         let [cx, cz] = chunk.pos;
-        let mut columns: HashMap<(i32, i32), BlockColumn> = HashMap::new();
         for (lx, lz, y0, y1) in mask.runs() {
             let (x, z) = (cx.wrapping_shl(4) + lx, cz.wrapping_shl(4) + lz);
-            let column = columns
-                .entry((lx, lz))
-                .or_insert_with(|| self.terrain.aquifer_column(x, z, Some(0.0)));
             let mut grass = false;
             for y in (y0..=y1).rev() {
                 let state = chunk.get([x, y, z]);
@@ -264,18 +295,20 @@ impl ChunkGenerator<'_> {
                 ) {
                     grass = true;
                 }
-                let substance = match column.at(y) {
-                    Block::Air => state::AIR,
-                    Block::Water => state::WATER,
-                    Block::Lava => state::LAVA,
-                    // computeSubstance's null: solid, left as it is.
-                    Block::Default | Block::Vein(_) => continue,
+                let Some(substance) = self.substance(columns, [x, y, z]) else {
+                    continue;
                 };
                 chunk.set(palette, [x, y, z], substance);
                 let below = [x, y - 1, z];
                 if grass && palette.block_id(chunk.get(below)) == "minecraft:dirt" {
                     let fluid = palette.is_fluid(substance);
-                    let (top, tied) = self.material.top_material(chunk, biomes, below, fluid);
+                    let (top, tied) = self.material.top_material(
+                        chunk,
+                        biomes,
+                        Some(&self.terrain),
+                        below,
+                        fluid,
+                    );
                     if let Some(top) = top {
                         chunk.set(palette, below, top);
                     }
@@ -319,5 +352,94 @@ impl ChunkGenerator<'_> {
         self.material
             .build_surface(&mut chunk, &settings.palette, &biomes, &self.terrain);
         (chunk, region)
+    }
+}
+
+/// 26.2's carving straight into the chunk (`WorldCarver.carveEllipsoid` and `carveBlock`), one
+/// carver at a time.
+struct Direct<'c, 'g> {
+    generator: &'c ChunkGenerator<'g>,
+    chunk: &'c mut Chunk,
+    /// The chunk's carving mask: positions carved before are skipped.
+    mask: &'c mut CarvingMask,
+    legacy: &'c Legacy,
+    /// `lava_level`, resolved.
+    lava_level: i32,
+    /// The Nether carver's lava: up to 31 above the generation context's bottom.
+    nether_lava: i32,
+    biomes: &'c ChunkBiomes<'c>,
+    columns: &'c mut HashMap<(i32, i32), BlockColumn>,
+    /// Whether this column of this ellipsoid has carved grass or mycelium.
+    grass: bool,
+}
+
+impl Sink for Direct<'_, '_> {
+    fn min_y(&self) -> i32 {
+        Sink::min_y(&*self.mask)
+    }
+
+    fn max_y(&self) -> i32 {
+        Sink::max_y(&*self.mask)
+    }
+
+    fn column(&mut self) {
+        self.grass = false;
+    }
+
+    fn carve(&mut self, lx: i32, y: i32, lz: i32) {
+        if self.mask.test_and_carve(lx, y, lz) {
+            return;
+        }
+        let generator = self.generator;
+        let settings = generator.settings;
+        let palette = &settings.palette;
+        let [cx, cz] = self.chunk.pos;
+        let pos = [cx.wrapping_shl(4) + lx, y, cz.wrapping_shl(4) + lz];
+        let id = palette.block_id(self.chunk.get(pos));
+        // NetherWorldCarver.carveBlock: lava low down, cave air above, no aquifer.
+        if self.legacy.nether {
+            if self.legacy.replaceable.contains(id) {
+                let state = if y <= self.nether_lava {
+                    state::LAVA
+                } else {
+                    settings.cave_air
+                };
+                self.chunk.set(palette, pos, state);
+            }
+            return;
+        }
+        if matches!(id, "minecraft:grass_block" | "minecraft:mycelium") {
+            self.grass = true;
+        }
+        if !self.legacy.replaceable.contains(id) {
+            return;
+        }
+        // getCarveState: lava at and below lava_level, else the aquifer's substance.
+        let substance = if y <= self.lava_level {
+            state::LAVA
+        } else {
+            match generator.substance(self.columns, pos) {
+                Some(s) => s,
+                None => return,
+            }
+        };
+        self.chunk.set(palette, pos, substance);
+        let below = [pos[0], y - 1, pos[2]];
+        if self.grass && palette.block_id(self.chunk.get(below)) == "minecraft:dirt" {
+            let fluid = palette.is_fluid(substance);
+            let (top, tied) = generator.material.top_material(
+                self.chunk,
+                self.biomes,
+                Some(&generator.terrain),
+                below,
+                fluid,
+            );
+            if let Some(top) = top {
+                self.chunk.set(palette, below, top);
+            }
+            if tied {
+                self.chunk.mark_uncertain(below);
+            }
+        }
     }
 }

@@ -1081,14 +1081,15 @@ impl BoundMaterial {
         }
     }
 
-    /// `MaterialSystem.topMaterial` (26.3 on): the rule's block at `pos` of `chunk` as the top
+    /// `MaterialSystem.topMaterial` (26.2's `SurfaceSystem.topMaterial`): the rule's block at `pos` of `chunk` as the top
     /// of the surface, with one block of stone above and below, and water above if
     /// `fluid_above`, and whether it depends on a tied biome. The gradients are the chunk's
-    /// heights now.
+    /// heights now. `terrain` is the seed's, for 26.2's preliminary surface.
     pub fn top_material(
         &self,
         chunk: &Chunk,
         biomes: &ChunkBiomes<'_>,
+        terrain: Option<&Terrain>,
         [x, y, z]: [i32; 3],
         fluid_above: bool,
     ) -> (Option<State>, bool) {
@@ -1101,7 +1102,7 @@ impl BoundMaterial {
         let c = Context {
             system: self,
             biomes,
-            terrain: None,
+            terrain,
             cell: &cell,
             x,
             z,

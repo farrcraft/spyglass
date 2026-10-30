@@ -291,7 +291,7 @@ const PINNED: &[(&str, &[&str])] = &[
     // 26.4's material rule is interleaved with its carvers, and is ported with them.
     ("chunks_without_carvers_match_the_game", &["26.2", "26.3"]),
     ("blocks_through_the_api_are_the_game_s", &["26.2", "26.3"]),
-    ("chunks_with_carvers_match_the_game", &["26.3"]),
+    ("chunks_with_carvers_match_the_game", &["26.2", "26.3"]),
 ];
 
 /// How one version's run went.

@@ -1,21 +1,21 @@
-//! Carvers (26.3 on): the caves and canyons that biomes' carvers cut into a chunk after the
-//! material rule, as a carving mask (`docs/specs/carvers.md`).
+//! Carvers: the caves and canyons that biomes' carvers cut into a chunk after the material rule,
+//! as a carving mask from 26.3, and straight into the chunk in 26.2 (`docs/specs/carvers.md`).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
 use serde_json::Value;
 use spyglass_biome::{BiomeId, BiomeNames};
-use spyglass_data::anchor::AnchorHeights;
+use spyglass_data::anchor::{AnchorHeights, VerticalAnchor};
 use spyglass_data::codec::{At, LoadError, LoadErrorKind, field, float, full_id, int, object};
 use spyglass_data::providers::{FloatProvider, HeightProvider, IntProvider};
 use spyglass_density::Resources;
 use spyglass_rng::{LegacyRandomSource, RandomSource};
 
-/// The carvers registry.
-const CARVERS: &str = "worldgen/carver";
-/// Carver tags.
-const CARVER_TAGS: &str = "tags/worldgen/carver";
+/// The carvers registry, and 26.2's.
+const CARVERS: [&str; 2] = ["worldgen/carver", "worldgen/configured_carver"];
+/// Carver tags, and 26.2's.
+const CARVER_TAGS: [&str; 2] = ["tags/worldgen/carver", "tags/worldgen/configured_carver"];
 
 /// `WorldCarver.getRange()`: how many chunks a carver reaches, which sets its tunnels' length.
 const RANGE: i32 = 4;
@@ -59,20 +59,43 @@ pub struct Canyon {
     y_scale: FloatProvider,
 }
 
+/// What a 26.2 carver's `CarverConfiguration` adds to its shape: which blocks it carves and
+/// what it fills them with.
+#[derive(Debug, Clone)]
+pub struct Legacy {
+    /// `replaceable`: the block ids it may carve.
+    pub replaceable: HashSet<String>,
+    /// `lava_level`: lava at and below it.
+    pub lava_level: VerticalAnchor,
+    /// `nether_cave`: lava up to 31 above the bottom, cave air above, and no aquifer.
+    pub nether: bool,
+}
+
 /// Each biome's carvers, seed-independent.
 #[derive(Debug, Clone, Default)]
 pub struct CarverSettings {
-    carvers: Vec<Carver>,
+    carvers: Vec<(Carver, Option<Legacy>)>,
     /// By biome id: indexes into `carvers`, in the biome's order.
     by_biome: Vec<Vec<usize>>,
 }
 
 impl CarverSettings {
-    /// The carvers of each biome in `biomes`, from their `worldgen/biome` entries' `carvers`.
+    /// The carvers of each biome in `biomes`, from their `worldgen/biome` entries' `carvers`:
+    /// 26.2's configured carvers if `v1_21`.
     pub fn load<R: Resources + ?Sized>(
         resources: &R,
         biomes: &BiomeNames,
+        v1_21: bool,
     ) -> Result<Self, LoadError> {
+        let family = usize::from(v1_21);
+        let parse = |json: &Value, at: &At<'_>| -> Result<(Carver, Option<Legacy>), LoadError> {
+            if v1_21 {
+                let (carver, legacy) = Carver::parse_v1_21(resources, json, at)?;
+                Ok((carver, Some(legacy)))
+            } else {
+                Ok((Carver::parse(json, at)?, None))
+            }
+        };
         let mut settings = CarverSettings::default();
         let mut by_id: HashMap<String, usize> = HashMap::new();
         for name in biomes.names() {
@@ -92,7 +115,7 @@ impl CarverSettings {
                     .map(|(i, v)| (v.clone(), at.child(&i.to_string())))
                     .collect(),
                 Some(Value::String(s)) if s.starts_with('#') => {
-                    spyglass_terrain::tag(resources, CARVER_TAGS, &s[1..])?
+                    spyglass_terrain::tag(resources, CARVER_TAGS[family], &s[1..])?
                         .into_iter()
                         .map(|id| (Value::String(id), at.clone()))
                         .collect()
@@ -108,16 +131,16 @@ impl CarverSettings {
                             None => {
                                 let root = At::root(&id);
                                 let json = resources
-                                    .resource(CARVERS, &id)
+                                    .resource(CARVERS[family], &id)
                                     .map_err(|e| root.error(e.into()))?;
-                                settings.carvers.push(Carver::parse(&json, &root)?);
+                                settings.carvers.push(parse(&json, &root)?);
                                 by_id.insert(id, settings.carvers.len() - 1);
                                 settings.carvers.len() - 1
                             }
                         }
                     }
                     inline => {
-                        settings.carvers.push(Carver::parse(inline, &at)?);
+                        settings.carvers.push(parse(inline, &at)?);
                         settings.carvers.len() - 1
                     }
                 };
@@ -128,16 +151,44 @@ impl CarverSettings {
         Ok(settings)
     }
 
-    /// The carvers of `biome`, in order.
-    pub fn of(&self, biome: BiomeId) -> impl Iterator<Item = &Carver> {
-        self.by_biome[usize::from(biome.0)]
-            .iter()
-            .map(|&i| &self.carvers[i])
+    /// The carvers of `biome`, in order, with 26.2's configuration.
+    pub fn of(&self, biome: BiomeId) -> impl Iterator<Item = (&Carver, Option<&Legacy>)> {
+        self.by_biome[usize::from(biome.0)].iter().map(|&i| {
+            let (carver, legacy) = &self.carvers[i];
+            (carver, legacy.as_ref())
+        })
     }
 
     /// Whether two biomes have the same carvers, in the same order.
     pub fn same(&self, a: BiomeId, b: BiomeId) -> bool {
         self.by_biome[usize::from(a.0)] == self.by_biome[usize::from(b.0)]
+    }
+}
+
+/// A block `HolderSet`: an id, a `#tag`, or a list of ids, as block ids.
+fn block_set<R: Resources + ?Sized>(
+    resources: &R,
+    json: &Value,
+    at: &At<'_>,
+) -> Result<HashSet<String>, LoadError> {
+    match json {
+        Value::String(s) => match s.strip_prefix('#') {
+            Some(tag) => Ok(spyglass_terrain::tag(resources, "tags/block", tag)?
+                .into_iter()
+                .collect()),
+            None => Ok(HashSet::from([full_id(s)])),
+        },
+        Value::Array(items) => items
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                v.as_str().map(full_id).ok_or_else(|| {
+                    at.child(&i.to_string())
+                        .error(LoadErrorKind::Shape("a block id"))
+                })
+            })
+            .collect(),
+        _ => Err(at.error(LoadErrorKind::Shape("a block id, tag or list"))),
     }
 }
 
@@ -251,6 +302,92 @@ impl Carver {
         })
     }
 
+    /// 26.2's `ConfiguredWorldCarver.CODEC`: `type` and `config`, as the 26.3 shape that carves
+    /// the same, and what 26.2 adds. 26.2's caves draw their count as
+    /// `nextInt(nextInt(nextInt(bound) + 1) + 1)` (bound 15, the Nether's 10), their thickness as
+    /// `nextFloat() · 2 + nextFloat()` (the Nether's doubled), and scale their tunnels' vertical
+    /// radius by 1 (the Nether's 5): exactly `very_biased_to_bottom` from 0, `trapezoid` from 0
+    /// to 3 with plateau 1 (to 6 with plateau 2) and a constant start multiplier, with 26.3's
+    /// draws and results.
+    pub fn parse_v1_21<R: Resources + ?Sized>(
+        resources: &R,
+        json: &Value,
+        at: &At<'_>,
+    ) -> Result<(Carver, Legacy), LoadError> {
+        let o = object(json, at)?;
+        let kind = field(o, "type", at)?
+            .as_str()
+            .map(full_id)
+            .ok_or_else(|| at.child("type").error(LoadErrorKind::Shape("a type id")))?;
+        let at = at.child("config");
+        let c = object(field(o, "config", &at)?, &at)?;
+        let floats =
+            |name: &'static str| FloatProvider::parse(field(c, name, &at)?, &at.child(name));
+        let y = HeightProvider::parse(field(c, "y", &at)?, &at.child("y"))?;
+        let lava_level =
+            VerticalAnchor::parse(field(c, "lava_level", &at)?, &at.child("lava_level"))?;
+        let replaceable = block_set(
+            resources,
+            field(c, "replaceable", &at)?,
+            &at.child("replaceable"),
+        )?;
+        let y_scale = floats("yScale")?;
+        let nether = kind == "minecraft:nether_cave";
+        let carver = match kind.as_str() {
+            "minecraft:cave" | "minecraft:nether_cave" => {
+                let (bound, max, plateau, start) = if nether {
+                    (10, 6.0, 2.0, 5.0)
+                } else {
+                    (15, 3.0, 1.0, 1.0)
+                };
+                Carver::Cave(Box::new(Cave {
+                    probability: probability(c, &at)?,
+                    y,
+                    count: IntProvider::VeryBiasedToBottom(0, bound - 1),
+                    thickness: FloatProvider::Trapezoid(0.0, max, plateau),
+                    weird_thickness_bias: !nether,
+                    room_vertical_radius_multiplier: y_scale,
+                    horizontal_radius_multiplier: floats("horizontal_radius_multiplier")?,
+                    vertical_radius_multiplier: floats("vertical_radius_multiplier")?,
+                    start_vertical_radius_multiplier: FloatProvider::Constant(start),
+                    floor_level: FloatProvider::parse_in(
+                        field(c, "floor_level", &at)?,
+                        -1.0,
+                        Some(1.0),
+                        &at.child("floor_level"),
+                    )?,
+                }))
+            }
+            "minecraft:canyon" => {
+                let mut shape_json = field(c, "shape", &at)?.clone();
+                if let Value::Object(shape) = &mut shape_json {
+                    shape.insert("y_scale".to_string(), c["yScale"].clone());
+                }
+                let mut canyon = serde_json::Map::new();
+                canyon.insert("type".to_string(), Value::String(kind.clone()));
+                for name in ["probability", "y", "vertical_rotation"] {
+                    canyon.insert(name.to_string(), field(c, name, &at)?.clone());
+                }
+                canyon.insert("shape".to_string(), shape_json);
+                Carver::parse(&Value::Object(canyon), &at)?
+            }
+            _ => {
+                return Err(at.child("type").error(LoadErrorKind::Unsupported {
+                    what: "carver type",
+                    name: kind,
+                }));
+            }
+        };
+        Ok((
+            carver,
+            Legacy {
+                replaceable,
+                lava_level,
+                nether,
+            },
+        ))
+    }
+
     /// `isStartChunk`: `nextFloat() ≤ probability`.
     pub fn is_start_chunk(&self, random: &mut LegacyRandomSource) -> bool {
         let p = match self {
@@ -269,13 +406,25 @@ impl Carver {
         random: &mut LegacyRandomSource,
         chunk: [i32; 2],
         start: [i32; 2],
-        mask: &mut CarvingMask,
+        mask: &mut impl Sink,
     ) {
         match self {
             Carver::Cave(c) => c.carve(anchors, random, chunk, start, mask),
             Carver::Canyon(c) => c.carve(anchors, random, chunk, start, mask),
         }
     }
+}
+
+/// Where a carver's ellipsoids carve: 26.3's mask, or 26.2's chunk itself.
+pub trait Sink {
+    /// The lowest y, which ellipsoids stop above.
+    fn min_y(&self) -> i32;
+    /// The highest y an ellipsoid carves.
+    fn max_y(&self) -> i32;
+    /// An ellipsoid starts a column (26.2's `MutableBoolean`, for carved grass).
+    fn column(&mut self) {}
+    /// Carves `(x, y, z)`, x and z within the chunk.
+    fn carve(&mut self, x: i32, y: i32, z: i32);
 }
 
 /// `CarvingMask`: the positions carvers carve in one chunk, between `min_y` and `max_y`.
@@ -288,6 +437,20 @@ pub struct CarvingMask {
     bits: Vec<u64>,
 }
 
+impl Sink for CarvingMask {
+    fn min_y(&self) -> i32 {
+        self.min_y
+    }
+
+    fn max_y(&self) -> i32 {
+        self.max_y
+    }
+
+    fn carve(&mut self, x: i32, y: i32, z: i32) {
+        CarvingMask::carve(self, x, y, z);
+    }
+}
+
 impl CarvingMask {
     /// An empty mask over `min_y..=max_y`.
     pub fn new(min_y: i32, max_y: i32) -> Self {
@@ -298,16 +461,6 @@ impl CarvingMask {
             height,
             bits: vec![0; (256 * height.max(0) as usize).div_ceil(64)],
         }
-    }
-
-    /// The mask's lowest y, which ellipsoids stop above.
-    pub fn min_y(&self) -> i32 {
-        self.min_y
-    }
-
-    /// The highest y a carver may carve.
-    pub fn max_y(&self) -> i32 {
-        self.max_y
     }
 
     fn index(&self, x: i32, y: i32, z: i32) -> usize {
@@ -353,6 +506,13 @@ impl CarvingMask {
             }
         }
         runs
+    }
+
+    /// Whether `(x, y, z)` is carved, then marks it (26.2's `get`, then `set`).
+    pub fn test_and_carve(&mut self, x: i32, y: i32, z: i32) -> bool {
+        let carved = self.is_carved(x, y, z);
+        self.carve(x, y, z);
+        carved
     }
 
     /// Adds every position `other` carves.
@@ -420,7 +580,7 @@ fn carve_ellipsoid(
     z: f64,
     horizontal: f64,
     vertical: f64,
-    mask: &mut CarvingMask,
+    sink: &mut impl Sink,
     skip: impl Fn(f64, f64, f64, i32) -> bool,
 ) {
     let [min_x, min_z] = min_block(chunk);
@@ -432,8 +592,8 @@ fn carve_ellipsoid(
     }
     let x0 = (floor(x - horizontal) - min_x - 1).max(0);
     let x1 = (floor(x + horizontal) - min_x).min(15);
-    let y0 = (floor(y - vertical) - 1).max(mask.min_y());
-    let y1 = (floor(y + vertical) + 1).min(mask.max_y());
+    let y0 = (floor(y - vertical) - 1).max(sink.min_y());
+    let y1 = (floor(y + vertical) + 1).min(sink.max_y());
     let z0 = (floor(z - horizontal) - min_z - 1).max(0);
     let z1 = (floor(z + horizontal) - min_z).min(15);
     for lx in x0..=x1 {
@@ -444,11 +604,12 @@ fn carve_ellipsoid(
             if fx * fx + fz * fz >= 1.0 {
                 continue;
             }
+            sink.column();
             let mut by = y1;
             while by > y0 {
                 let fy = (f64::from(by) - 0.5 - y) / vertical;
                 if !skip(fx, fy, fz, by) {
-                    mask.carve(lx, by, lz);
+                    sink.carve(lx, by, lz);
                 }
                 by -= 1;
             }
@@ -470,7 +631,7 @@ impl Cave {
         random: &mut LegacyRandomSource,
         chunk: [i32; 2],
         start: [i32; 2],
-        mask: &mut CarvingMask,
+        mask: &mut impl Sink,
     ) {
         let range = (RANGE * 2 - 1) << 4;
         let [sx, sz] = min_block(start);
@@ -552,7 +713,7 @@ impl Tunnel {
         step: i32,
         count: i32,
         vertical_scale: f64,
-        mask: &mut CarvingMask,
+        mask: &mut impl Sink,
     ) {
         let mut random = LegacyRandomSource::new(seed);
         let split = random.next_int_bounded(count / 2) + count / 4;
@@ -624,7 +785,7 @@ impl Canyon {
         random: &mut LegacyRandomSource,
         chunk: [i32; 2],
         start: [i32; 2],
-        mask: &mut CarvingMask,
+        mask: &mut impl Sink,
     ) {
         let range = (RANGE * 2 - 1) * 16;
         let [sx, sz] = min_block(start);
@@ -664,7 +825,7 @@ impl Canyon {
         mut pitch: f32,
         count: i32,
         y_scale: f64,
-        mask: &mut CarvingMask,
+        mask: &mut impl Sink,
     ) {
         let mut random = LegacyRandomSource::new(seed);
         let widths = self.width_factors(anchors, &mut random);

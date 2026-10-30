@@ -1,8 +1,8 @@
 # Carvers
 
-Status: draft. Covers 26.3's carvers (`net.minecraft.world.level.levelgen.carver` and `NoiseBasedChunkGenerator.generateCarvers`): which carvers reach a chunk, the caves and canyons they carve into a mask, and how the mask is applied to the chunk after the [material rule](material.md). Implemented in `spyglass-blocks`. It's checked against the oracle's [block golden files](oracle.md#block-golden-files) with carvers: every block of 26.3's golden chunks matches, except the blocks that depend on a [tied biome](material.md#ties). 26.4 and 26.2 are [below](#versions), and are still being ported.
+Status: draft. Covers 26.3's and 26.2's carvers (`net.minecraft.world.level.levelgen.carver` and `NoiseBasedChunkGenerator.generateCarvers`): which carvers reach a chunk, the caves and canyons they carve into a mask, and how the mask is applied to the chunk after the [material rule](material.md). Implemented in `spyglass-blocks`. It's checked against the oracle's [block golden files](oracle.md#block-golden-files) with carvers: every block of 26.3's and 26.2's golden chunks matches, except the blocks that depend on a [tied biome](material.md#ties) and [one](#open-questions) in 26.2. 26.4 is [below](#versions), and is still being ported.
 
-Ported from the 26.3 bytecode.
+Ported from the 26.3 and 26.2 bytecode.
 
 ## Data
 
@@ -87,8 +87,30 @@ For chunk `C`, `generateCarvers` visits every chunk `S` within 8 chunks of it, x
 ## Versions
 
 - **26.4:** not ported yet. The material rule and the carving mask are applied together, per column ([material.md](material.md#264)).
-- **26.2:** not ported yet. Its carvers have a `config` with `replaceable`, `lava_level` and `debug_settings`, and carve straight into the chunk's blocks.
+- **26.2:** see [below](#262-carving-into-the-chunk).
+
+### 26.2: carving into the chunk
+
+26.2's carvers are `ConfiguredWorldCarver`s in `worldgen/configured_carver`: a `type` (`cave`, `nether_cave` or `canyon`) and a `config` with `probability`, `y`, `yScale` (a float provider), `lava_level` (an anchor), `replaceable` (a block id, list or `#tag`) and an optional `debug_settings`, which only debug builds read. Caves add `horizontal_radius_multiplier`, `vertical_radius_multiplier` and `floor_level`; canyons `vertical_rotation` and a `shape` without `y_scale`. Which carvers reach a chunk, and their random, are 26.3's.
+
+**Shapes.** 26.3 moved 26.2's code constants into data without changing a draw or a result, so 26.2's carvers are 26.3's shapes:
+
+- **`cave`:** `count` is `nextInt(nextInt(nextInt(15) + 1) + 1)`, which is `very_biased_to_bottom` from 0 to 14; `thickness` is `nextFloat() · 2 + nextFloat()`, the `trapezoid` from 0 to 3 with plateau 1, with the weird thickness bias; `yScale` is the room vertical multiplier; the start vertical multiplier is 1.
+- **`nether_cave`:** bound 10 (0 to 9), thickness `(nextFloat() · 2 + nextFloat()) · 2`, the trapezoid from 0 to 6 with plateau 2 (doubling commutes with `f32` rounding), no bias, and a start vertical multiplier of 5.
+- **`canyon`:** the config's `yScale` is the shape's `y_scale`.
+
+**Carving** happens as each ellipsoid reaches a position, straight into the chunk, in the order the carvers run. The chunk's carving mask only remembers positions:
+
+1. A position already in the mask is skipped; otherwise it's added.
+2. **`nether_cave`:** if the block is `replaceable`, it becomes lava at or below the generation context's bottom + 31, cave air above. Nothing else.
+3. **Others:** grass or mycelium marks the ellipsoid's column. A block that isn't `replaceable` stays. The rest get lava at or below `lava_level`, else the aquifer's substance at density 0 (staying if that's solid). In a marked column, dirt below gets the rule's top material, as from 26.3, with 26.2's [surface rules](material.md#262-surface-rules).
+
+There's no `#uncarvable`.
+
+## Open questions
+
+- **One 26.2 Nether block.** At seed −4893098694207956070, (−1000064, 64, −1000044), the game's chunk with carvers has air where spyglass has cave air. The game's own chunk without carvers and its `getBaseColumn` have netherrack there, and no 26.2 code path writes plain air in the Nether: its only carver fills with cave air or lava. Every other carved block of that chunk matches. The golden comparison names it as the only exception.
 
 ## Testing
 
-`spyglass-blocks`' `material` test compares every block of the golden chunks with carvers. In 26.3's golden set it matches all 73.4 million blocks but 386 that depend on tied biomes, as the run without carvers does.
+`spyglass-blocks`' `material` test compares every block of the golden chunks with carvers. In 26.3's golden set it matches all 73.4 million blocks but 386 that depend on tied biomes, as the run without carvers does; 26.2's likewise, but for the [open question](#open-questions).

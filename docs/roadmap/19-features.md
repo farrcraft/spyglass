@@ -2,7 +2,7 @@
 
 - Status: Planned
 - Depends on: [18](completed/18-surface-veins-and-carvers.md)
-- Plans: none yet
+- Plans, in order: [m19-decoration](../plans/m19-decoration.md), [m19-placing](../plans/m19-placing.md), [m19-queries](../plans/m19-queries.md)
 
 ## Goal
 
@@ -11,7 +11,7 @@ Locate and draw the features players look for: dungeons, amethyst geodes, desert
 ## Scope
 
 - **Decoration:** the order the game decorates a chunk in (biome feature steps, then features in each step's order), the per-feature random seeds, and placed features' placement modifiers (count, rarity, in-square, height range, biome, surface-relative, environment scans), all as data with the algorithms in code.
-- **The features first:** `monster_room` (dungeons), `amethyst_geode`, `desert_well`, `fossil` (with its diamond variant), `lake` (lava pools), and the Nether's fossils. Each comes with its own validity checks against the blocks: a dungeon's air and solid counts, a geode's exposure, a well's sand.
+- **The features first:** `monster_room` (dungeons), `amethyst_geode`, `desert_well`, `fossil` (with its diamond variant) and `lake` (lava pools). The Nether's fossils are a structure (`nether_fossil`), already placed and located. Each comes with its own validity checks against the blocks: a dungeon's air and solid counts, a geode's exposure, a well's sand.
 - **Certainty:** a feature whose checks depend on blocks spyglass can't yet compute, such as other features placed earlier in the same chunk, is a candidate, never a guess. The spec lists which checks those are. Where earlier features are cheap to place exactly, the plan may place them.
 - **Queries:** features in an area and the nearest feature, with the same certain and candidate answers and a `--json` form, as `spyglass locate feature` and in the API.
 - **The viewer:** feature layers with icons in the shared style, a Locate tab entry, and features as targets and conditions in [16](completed/16-search-within-a-seed.md)'s search and the seed search ("two dungeons within 16 blocks").

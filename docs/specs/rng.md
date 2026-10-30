@@ -48,10 +48,17 @@ With `legacy_random_source: true`, `RandomState`'s positional factory is `Legacy
 
 ## Worldgen seeding (`WorldgenRandom`)
 
-`WorldgenRandom` wraps a source; when it's a `LegacyRandomSource`, `next(bits)` is the inner source's, so drawing from it is drawing from that source. Its seeding methods, all on a legacy source, are in `spyglass_rng::worldgen`. Arithmetic wraps; `(long)` widens an `int`.
+`WorldgenRandom` extends `LegacyRandomSource` and wraps a source. It overrides only `next(bits)`, `setSeed`, `fork` and `forkPositional`; every other draw is the legacy one built on `next(bits)` (`nextInt(bound)`, `nextLong`, `nextFloat`, `nextDouble`, the Gaussian). Arithmetic wraps; `(long)` widens an `int`.
+
+- **Over a `LegacyRandomSource`,** `next(bits)` is the inner source's, so drawing from it is drawing from that source. Structures and slime chunks use it this way, and their seeding methods below return that legacy source (`spyglass_rng::worldgen`).
+- **Over a `XoroshiroRandomSource`,** as decoration makes it (`spyglass_rng::WorldgenRandom`): `next(bits)` is `(int)(nextLong() >>> (64 − bits))` of the inner source, `setSeed` seeds the inner source, and `fork` and `forkPositional` are the inner source's. Its own Gaussian cache is never cleared, since its `setSeed` doesn't reach the legacy one's.
+
+The seeding methods:
 
 - `setLargeFeatureSeed(seed, x, z)`: `setSeed(seed)`, `a = nextLong()`, `b = nextLong()`, then `setSeed((long)x * a ^ (long)z * b ^ seed)`.
 - `setLargeFeatureWithSalt(seed, x, z, salt)`: `setSeed((long)x * 341873128712 + (long)z * 132897987541 + seed + salt)`.
+- `setDecorationSeed(seed, x, z)`, with a chunk's minimum block x and z: `setSeed(seed)`, `a = nextLong() | 1`, `b = nextLong() | 1`, `s = (long)x * a + (long)z * b ^ seed`, then `setSeed(s)`; returns `s`, the decoration seed.
+- `setFeatureSeed(decoration, index, step)`: `setSeed(decoration + index + (long)(10000 * step))`, the product an `int` product.
 - `seedSlimeChunk(x, z, seed, salt)`: a new legacy source seeded with `seed + (long)(x * x * 4987142) + (long)(x * 5947611) + (long)(z * z) * 4392871 + (long)(z * 389711) ^ salt`. The products in `(long)(...)` are `int` products, wrapped in 32 bits; `(long)(z * z)` is widened before the multiply by 4392871.
 
 ## Gaussian

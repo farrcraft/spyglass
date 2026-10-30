@@ -92,6 +92,7 @@ impl XoroshiroRandomSource {
 
 impl RandomSource for XoroshiroRandomSource {
     type Positional = XoroshiroPositionalRandomFactory;
+    type Fork = Self;
 
     fn fork(&mut self) -> Self {
         let lo = self.rng.next_long();

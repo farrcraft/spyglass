@@ -8,7 +8,8 @@ use spyglass_rng::support::{
     mix_stafford13, seed_from_hash_of, upgrade_seed_to_128bit, upgrade_seed_to_128bit_unmixed,
 };
 use spyglass_rng::{
-    LegacyRandomSource, PositionalRandomFactory, RandomSource, XoroshiroRandomSource,
+    LegacyRandomSource, PositionalRandomFactory, RandomSource, WorldgenRandom,
+    XoroshiroRandomSource,
 };
 
 /// What spyglass computed for a case, in the case's value type.
@@ -105,6 +106,18 @@ fn actual(case: &Case) -> Values {
             let s = seed_from_hash_of(case.name.as_deref().expect("a name"));
             Values::I64(vec![s.lo, s.hi])
         }
+        "decoration_seed" => {
+            let [x, _, z] = case.pos.expect("a position");
+            let mut r = WorldgenRandom::new(0);
+            let decoration = r.set_decoration_seed(seed(), x, z);
+            let mut values = vec![decoration, r.next_long()];
+            for (index, step) in [(0, 0), (7, 3), (i32::MAX, 10)] {
+                r.set_feature_seed(decoration, index, step);
+                values.push(r.next_long());
+                values.push(i64::from(r.next_int_bounded(16)));
+            }
+            Values::I64(values)
+        }
         _ => match case.kind.as_deref() {
             Some("xoroshiro") => replay(case, XoroshiroRandomSource::new, |f| {
                 let s = f.seed();
@@ -112,6 +125,11 @@ fn actual(case: &Case) -> Values {
             }),
             Some("legacy") => replay(case, LegacyRandomSource::new, |f| {
                 format!("LegacyPositionalRandomFactory{{{}}}", f.seed())
+            }),
+            // Its positional factory is the inner Xoroshiro source's.
+            Some("worldgen") => replay(case, WorldgenRandom::new, |f| {
+                let s = f.seed();
+                format!("seedLo: {}, seedHi: {}", s.lo, s.hi)
             }),
             other => panic!("{}: unknown kind {other:?}", case.label()),
         },

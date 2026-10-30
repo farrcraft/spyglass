@@ -1,16 +1,13 @@
 //! `LegacyRandomSource` and its positional factory: Java's 48-bit LCG, as in `java.util.Random`,
 //! used where `legacy_random_source` is true and by older parts of worldgen.
 
+use crate::bits::{self, Bits};
 use crate::gaussian::Gaussian;
 use crate::source::{PositionalRandomFactory, RandomSource};
 
 const MULTIPLIER: i64 = 0x5_DEEC_E66D;
 const INCREMENT: i64 = 11;
 const MODULUS_MASK: i64 = (1 << 48) - 1;
-/// `BitRandomSource.FLOAT_MULTIPLIER`: 2^-24.
-const FLOAT_MULTIPLIER: f32 = 5.960_464_5e-8;
-/// `BitRandomSource.DOUBLE_MULTIPLIER`: 2^-53.
-const DOUBLE_MULTIPLIER: f64 = 1.110_223_024_625_156_5e-16;
 
 /// `LegacyRandomSource`, with the defaults it inherits from `BitRandomSource`.
 #[derive(Debug, Clone)]
@@ -43,8 +40,15 @@ impl LegacyRandomSource {
     }
 }
 
+impl Bits for LegacyRandomSource {
+    fn next(&mut self, bits: u32) -> i32 {
+        LegacyRandomSource::next(self, bits)
+    }
+}
+
 impl RandomSource for LegacyRandomSource {
     type Positional = LegacyPositionalRandomFactory;
+    type Fork = Self;
 
     fn fork(&mut self) -> Self {
         LegacyRandomSource::new(self.next_long())
@@ -61,38 +65,23 @@ impl RandomSource for LegacyRandomSource {
     }
 
     fn next_int_bounded(&mut self, bound: i32) -> i32 {
-        assert!(bound > 0, "Bound must be positive");
-        if bound & (bound - 1) == 0 {
-            return ((i64::from(bound) * i64::from(self.next(31))) >> 31) as i32;
-        }
-        loop {
-            let bits = self.next(31);
-            let value = bits % bound;
-            // Rejects the top, partial range; the sum overflows exactly when it's hit.
-            if bits.wrapping_sub(value).wrapping_add(bound - 1) >= 0 {
-                return value;
-            }
-        }
+        bits::next_int_bounded(self, bound)
     }
 
     fn next_long(&mut self) -> i64 {
-        let hi = self.next(32);
-        let lo = self.next(32);
-        (i64::from(hi) << 32).wrapping_add(i64::from(lo))
+        bits::next_long(self)
     }
 
     fn next_boolean(&mut self) -> bool {
-        self.next(1) != 0
+        bits::next_boolean(self)
     }
 
     fn next_float(&mut self) -> f32 {
-        self.next(24) as f32 * FLOAT_MULTIPLIER
+        bits::next_float(self)
     }
 
     fn next_double(&mut self) -> f64 {
-        let hi = self.next(26);
-        let lo = self.next(27);
-        ((i64::from(hi) << 27) + i64::from(lo)) as f64 * DOUBLE_MULTIPLIER
+        bits::next_double(self)
     }
 
     fn next_gaussian(&mut self) -> f64 {

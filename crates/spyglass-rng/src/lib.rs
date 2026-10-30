@@ -3,6 +3,7 @@
 //! Names follow the game's (`net.minecraft.world.level.levelgen`), and each item cites the class
 //! and method it ports. Integer arithmetic wraps as Java's does. See `docs/specs/rng.md`.
 
+mod bits;
 mod gaussian;
 mod legacy;
 mod source;
@@ -13,6 +14,7 @@ mod xoroshiro;
 pub use legacy::{LegacyPositionalRandomFactory, LegacyRandomSource};
 pub use source::{PositionalRandomFactory, RandomSource};
 pub use support::Seed128;
+pub use worldgen::WorldgenRandom;
 pub use xoroshiro::{
     Xoroshiro128PlusPlus, XoroshiroPositionalRandomFactory, XoroshiroRandomSource,
 };

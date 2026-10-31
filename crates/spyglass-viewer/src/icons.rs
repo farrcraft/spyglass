@@ -152,6 +152,44 @@ fn family(id: &str) -> (&'static str, &'static [u8]) {
     find(id).map_or(UNKNOWN, |f| f.icon)
 }
 
+/// The features the Layers tab offers, each a name and the placed features it marks.
+pub const FEATURE_KINDS: &[(&str, &[&str])] = &[
+    (
+        "Dungeons",
+        &["minecraft:monster_room", "minecraft:monster_room_deep"],
+    ),
+    ("Amethyst geodes", &["minecraft:amethyst_geode"]),
+    ("Desert wells", &["minecraft:desert_well"]),
+    (
+        "Fossils",
+        &["minecraft:fossil_upper", "minecraft:fossil_lower"],
+    ),
+    (
+        "Lava lakes",
+        &[
+            "minecraft:lake_lava_underground",
+            "minecraft:lake_lava_surface",
+        ],
+    ),
+];
+
+/// A placed feature's name, e.g. "Dungeon" for `minecraft:monster_room`; one not listed by
+/// its id.
+pub fn feature_name(placed: &str) -> String {
+    let name = match placed.strip_prefix("minecraft:").unwrap_or(placed) {
+        "monster_room" => "Dungeon",
+        "monster_room_deep" => "Deep dungeon",
+        "amethyst_geode" => "Amethyst geode",
+        "desert_well" => "Desert well",
+        "fossil_upper" => "Fossil",
+        "fossil_lower" => "Deep fossil",
+        "lake_lava_underground" => "Underground lava lake",
+        "lake_lava_surface" => "Surface lava lake",
+        _ => return spyglass::display_name(placed),
+    };
+    name.to_string()
+}
+
 /// The name of structure `id`'s family, e.g. "Village" for `minecraft:village_taiga`, or its own
 /// name if no family covers it.
 pub fn family_name(id: &str) -> String {

@@ -2,8 +2,8 @@
 //!
 //! Workers do the slow parts: a tile's biome map, heights, underground layers and slime
 //! chunks (keeping each tile's carving map across heights), separately the
-//! structure starts on a tile for the structures chosen, and the layouts of jigsaw structures
-//! shown up close. The UI thread turns biome maps into textures with the current style (ties,
+//! structure starts on a tile for the structures chosen, the features chosen up close, and the
+//! layouts of jigsaw structures shown up close. The UI thread turns biome maps into textures with the current style (ties,
 //! highlight, slime, relief) through the library's `BiomeMap::colorize`, `Image::shade` and
 //! `Image::draw_features`, so restyling never samples biomes again, and draws structure markers
 //! and bounds itself.
@@ -16,8 +16,9 @@ use std::thread;
 
 use eframe::egui;
 use spyglass::{
-    BiomeMap, CarvingMap, DEFAULT_MAP_Y, HeightMap, Layers, MAX_SLIME_SCALE, MapFeatures, Session,
-    StructureLayout, StructureQuery, StructureStart, UndergroundMap,
+    BiomeMap, CarvingMap, DEFAULT_MAP_Y, FeatureQuery, FoundFeature, HeightMap, Layers,
+    MAX_SLIME_SCALE, MapFeatures, Session, StructureLayout, StructureQuery, StructureStart,
+    UndergroundMap,
 };
 
 use crate::timing;
@@ -78,6 +79,16 @@ pub struct MarkerKey {
     pub tile: Tile,
 }
 
+/// A tile's feature markers: the world and seed, the features chosen, and its place, at a scale
+/// they're drawn at (`spyglass::MAX_FEATURE_SCALE`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FeatureKey {
+    pub source: u64,
+    /// The app's number for the features chosen.
+    pub selection: u64,
+    pub tile: Tile,
+}
+
 /// A structure's layout: the world and seed, the structure (an index into
 /// `World::structures`) and its start chunk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -103,6 +114,7 @@ pub struct TileData {
 pub enum JobKey {
     Biomes(TileKey),
     Markers(MarkerKey),
+    Features(FeatureKey),
     Layout(LayoutKey),
 }
 
@@ -112,6 +124,7 @@ impl Job {
         match self.key {
             JobKey::Biomes(k) => k.source,
             JobKey::Markers(k) => k.source,
+            JobKey::Features(k) => k.source,
             JobKey::Layout(k) => k.source,
         }
     }
@@ -123,12 +136,16 @@ pub struct Job {
     pub session: Arc<Session<'static>>,
     /// For markers: the structures chosen.
     pub structures: Arc<[StructureQuery]>,
+    /// For feature markers: the features chosen.
+    pub features: Arc<[FeatureQuery]>,
 }
 
 pub enum Output {
     Biomes(TileData),
     /// The structure starts whose marker centre is on the tile, in drawing order.
     Markers(Vec<StructureStart>),
+    /// The features whose marker centre is on the tile, in drawing order.
+    Features(Vec<FoundFeature>),
     /// `None` if the structure is neither a jigsaw nor a mineshaft.
     Layout(Option<StructureLayout>),
 }
@@ -243,6 +260,7 @@ fn compute(job: &Job, carvings: &Carvings) -> Result<Output, String> {
     let (tile, y) = match job.key {
         JobKey::Biomes(key) => (key.tile, key.y),
         JobKey::Markers(key) => (key.tile, DEFAULT_MAP_Y),
+        JobKey::Features(key) => (key.tile, DEFAULT_MAP_Y),
         JobKey::Layout(key) => {
             let structure = job
                 .session
@@ -328,6 +346,21 @@ fn compute(job: &Job, carvings: &Carvings) -> Result<Output, String> {
                 inside.contains(&x) && inside.contains(&z)
             });
             Ok(Output::Markers(starts))
+        }
+        JobKey::Features(_) => {
+            let layers = Layers {
+                biomes: false,
+                features: job.features.to_vec(),
+                ..Layers::default()
+            };
+            let mut found = timing::job(kind("features"), || features(layers))?.features;
+            // Each marker belongs to the tile its centre is on, so it's drawn once.
+            let inside = 0..i64::from(TILE);
+            found.retain(|f| {
+                let [x, z] = area.pixel([f.position[0], f.position[2]]);
+                inside.contains(&x) && inside.contains(&z)
+            });
+            Ok(Output::Features(found))
         }
         JobKey::Layout(_) => unreachable!("layouts are computed above"),
     }
@@ -499,6 +532,7 @@ mod tests {
             key,
             session: session.clone(),
             structures,
+            features: Arc::from(Vec::new()),
         }
     }
 

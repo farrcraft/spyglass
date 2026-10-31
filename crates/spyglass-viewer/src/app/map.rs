@@ -172,6 +172,14 @@ impl App {
             confirm,
             tile,
         };
+        // Features only up close: each chunk they could be in is placed.
+        let featuring =
+            !self.selection.features.is_empty() && view.scale <= spyglass::MAX_FEATURE_SCALE;
+        let feature_key = |tile: Tile| FeatureKey {
+            source,
+            selection,
+            tile,
+        };
         for (done, result) in self.pool.finished() {
             match (done, result) {
                 (JobKey::Biomes(k), result) if k.source == source => {
@@ -188,6 +196,13 @@ impl App {
                     });
                     self.markers.insert(k, starts);
                 }
+                (JobKey::Features(k), result) if k.source == source && k.selection == selection => {
+                    let found = result.and_then(|out| match out {
+                        Output::Features(found) => Ok(found),
+                        _ => Err("not features".to_string()),
+                    });
+                    self.feature_markers.insert(k, found);
+                }
                 (JobKey::Layout(k), result) if k.source == source => {
                     let layout = result.and_then(|out| match out {
                         Output::Layout(layout) => Ok(layout),
@@ -200,11 +215,13 @@ impl App {
         }
         self.cache.next_frame();
         self.markers.next_frame();
+        self.feature_markers.next_frame();
         self.layouts.next_frame();
         let job = |key| Job {
             key,
             session: session.clone(),
             structures: self.selection.queries.clone(),
+            features: self.selection.features.clone(),
         };
         // The coarse tiles over the view's missing ones first: a sixteenth of the pixels each,
         // and no heights past `MAX_TERRAIN_SCALE`, so the view fills in seconds. Then the
@@ -257,6 +274,16 @@ impl App {
                     .iter()
                     .filter(|(k, _)| !self.layouts.contains(k))
                     .map(|(k, _)| job(JobKey::Layout(*k))),
+            );
+        }
+        // Features last, nearest the centre first: each tile takes seconds.
+        if featuring {
+            jobs.extend(
+                tiles
+                    .iter()
+                    .map(|&t| feature_key(t))
+                    .filter(|k| !self.feature_markers.contains(k))
+                    .map(|k| job(JobKey::Features(k))),
             );
         }
         self.pool.want(jobs);
@@ -365,6 +392,14 @@ impl App {
                 }
             }
         }
+        let mut found_features: Vec<FoundFeature> = Vec::new();
+        if featuring {
+            for &tile in &tiles {
+                if let Some(Ok(found)) = self.feature_markers.get(&feature_key(tile)) {
+                    found_features.extend(found.iter().cloned());
+                }
+            }
+        }
         self.too_many_markers = starts.len() > MAX_MARKERS;
         if self.too_many_markers {
             starts.clear();
@@ -382,6 +417,12 @@ impl App {
             }
         }
         self.in_view = in_view;
+        for f in &found_features {
+            let at = markers::pixel_centre(&view, centre, [f.position[0], f.position[2]]);
+            if rect.expand(12.0).contains(at) {
+                placed.push((at, 11.0, Picked::Feature(f)));
+            }
+        }
         let spawn_at = (self.settings.spawn && self.spawn_allowed())
             .then(|| markers::pixel_centre(&view, centre, spawn.map_block()));
         if let Some(at) = spawn_at {
@@ -447,6 +488,9 @@ impl App {
                 Picked::Structure(start) if Some(i) != hovered => {
                     markers::structure(ui, paint(i), *at, start, size, false, faded[i]);
                 }
+                Picked::Feature(f) if Some(i) != hovered => {
+                    markers::feature(paint(i), *at, f, false);
+                }
                 Picked::Spawn(_) => markers::spawn(&painter, *at),
                 Picked::Hit(hit) => markers::pin(paint(i), *at, hit.certain),
                 _ => {}
@@ -459,8 +503,12 @@ impl App {
         }
         if let Some(i) = hovered {
             let (at, _, what) = &placed[i];
-            if let Picked::Structure(start) = what {
-                markers::structure(ui, paint(i), *at, start, size, true, faded[i]);
+            match what {
+                Picked::Structure(start) => {
+                    markers::structure(ui, paint(i), *at, start, size, true, faded[i]);
+                }
+                Picked::Feature(f) => markers::feature(paint(i), *at, f, true),
+                _ => {}
             }
             response
                 .clone()
@@ -1161,6 +1209,24 @@ pub(super) fn describe(ui: &mut egui::Ui, picked: &Picked<'_>, done: bool) {
             if origin.platform_dependent {
                 ui.label("This answer can differ between platforms the game runs on.");
             }
+        }
+        Picked::Feature(f) => {
+            let [x, y, z] = f.position;
+            ui.strong(icons::feature_name(&f.feature));
+            ui.label(style::mono(format!("{x} {y} {z}")));
+            ui.label(egui::RichText::new(&f.feature).color(style::MUTED));
+            if f.certain {
+                ui.colored_label(style::GOOD, "Certain");
+            } else {
+                ui.label("Likely: it places on spyglass's blocks, but something spyglass can't know could change that.");
+            }
+            if let Some(reason) = &f.reason {
+                ui.label(egui::RichText::new(reason).color(style::MUTED));
+            }
+            ui.label(
+                egui::RichText::new("For the chunk decorated before its neighbours.")
+                    .color(style::MUTED),
+            );
         }
         Picked::Hit(hit) => {
             ui.strong(&hit.what);

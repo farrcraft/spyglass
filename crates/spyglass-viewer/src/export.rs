@@ -4,7 +4,8 @@
 use std::path::PathBuf;
 
 use spyglass::{
-    Dimension, MAX_SLIME_SCALE, MAX_TERRAIN_SCALE, MAX_UNDERGROUND_SCALE, MapArea, Pin,
+    Dimension, MAX_FEATURE_SCALE, MAX_SLIME_SCALE, MAX_TERRAIN_SCALE, MAX_UNDERGROUND_SCALE,
+    MapArea, Pin,
 };
 
 use crate::view::View;
@@ -35,6 +36,8 @@ pub struct Export {
     /// The bundles folder, if it isn't `spyglass render`'s default.
     pub bundles: Option<PathBuf>,
     pub structures: Vec<String>,
+    /// Placed feature ids, drawn up close.
+    pub features: Vec<String>,
     pub highlight: Vec<String>,
     pub ties: bool,
     pub slime_chunks: bool,
@@ -92,6 +95,9 @@ impl Export {
         add("--y", self.area.y.to_string());
         if !self.structures.is_empty() {
             add("--structures", self.structures.join(","));
+        }
+        if !self.features.is_empty() && self.area.scale <= MAX_FEATURE_SCALE {
+            add("--features", self.features.join(","));
         }
         if !self.highlight.is_empty() {
             add("--highlight", self.highlight.join(","));
@@ -179,6 +185,7 @@ mod tests {
                 "minecraft:village_plains".into(),
                 "minecraft:stronghold".into(),
             ],
+            features: vec!["minecraft:monster_room".into()],
             highlight: vec!["minecraft:river".into()],
             ties: true,
             slime_chunks: true,
@@ -222,6 +229,7 @@ mod tests {
             dimension: Dimension::Overworld,
             bundles: Some(PathBuf::from("D:/bundles")),
             structures: Vec::new(),
+            features: Vec::new(),
             highlight: Vec::new(),
             ties: false,
             slime_chunks: true,

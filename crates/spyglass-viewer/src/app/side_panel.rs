@@ -114,6 +114,7 @@ impl App {
             } else {
                 Vec::new()
             },
+            features: self.settings.features.clone(),
             highlight: self.settings.highlight.clone(),
             ties: self.settings.ties,
             slime_chunks: self.settings.slime_chunks && self.slime_allowed(),
@@ -176,7 +177,15 @@ impl App {
                     .map(|s| world.structure_query(s))
                     .collect::<spyglass::Result<_>>()
                     .map_err(|e| e.to_string())?,
-                features: Vec::new(),
+                features: if export.area.scale <= spyglass::MAX_FEATURE_SCALE {
+                    export
+                        .features
+                        .iter()
+                        .filter_map(|f| world.feature_query(f).ok())
+                        .collect()
+                } else {
+                    Vec::new()
+                },
                 slime_chunks: export.slime_chunks && export.area.scale <= spyglass::MAX_SLIME_SCALE,
                 spawn: export.spawn,
                 confirm: export.confirm,
@@ -319,6 +328,41 @@ impl App {
         }
     }
 
+    /// Features to mark: dungeons, geodes, wells, fossils and lava lakes, up close.
+    fn features_section(&mut self, ui: &mut egui::Ui) {
+        style::heading(ui, "Features");
+        let mut changed = false;
+        for (name, placed) in icons::FEATURE_KINDS {
+            let mut on = placed
+                .iter()
+                .all(|p| self.settings.features.iter().any(|f| f == p));
+            if ui.checkbox(&mut on, *name).changed() {
+                self.settings
+                    .features
+                    .retain(|f| !placed.contains(&f.as_str()));
+                if on {
+                    self.settings
+                        .features
+                        .extend(placed.iter().map(|p| p.to_string()));
+                }
+                changed = true;
+            }
+        }
+        if changed {
+            self.select();
+        }
+        if !self.settings.features.is_empty() {
+            if self.settings.view.scale <= spyglass::MAX_FEATURE_SCALE {
+                style::hint(
+                    ui,
+                    "Certain ones filled, likely ones outlined. Slow to draw: each chunk is placed.",
+                );
+            } else {
+                style::hint(ui, "Zoom to 1:2 or closer to see them.");
+            }
+        }
+    }
+
     /// What's drawn on the map: biomes, overlays, structures, and whether to confirm with
     /// terrain.
     pub(super) fn layers_tab(&mut self, ui: &mut egui::Ui) {
@@ -352,7 +396,7 @@ impl App {
         {
             style::hint(
                 ui,
-                "The void between the End's islands shows at 1:4 or closer, with biomes at the                  surface or relief: the biome alone is the same over it.",
+                "The void between the End's islands shows at 1:4 or closer, with biomes at the surface or relief: the biome alone is the same over it.",
             );
         }
         ui.checkbox(&mut self.settings.ties, "Tied biome cells").on_hover_text(
@@ -398,6 +442,9 @@ impl App {
 
         ui.add_space(6.0);
         self.underground_section(ui);
+
+        ui.add_space(6.0);
+        self.features_section(ui);
 
         ui.add_space(6.0);
         self.structure_list(ui);

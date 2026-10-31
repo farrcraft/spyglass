@@ -12,9 +12,9 @@ use std::thread;
 use eframe::egui::{self, Color32, Key, Pos2, Rect, Sense, TextureOptions, Vec2};
 use serde::{Deserialize, Serialize};
 use spyglass::{
-    BiomeQuery, BundleInfo, Dimension, Evaluation, FindOutcome, Game, Heightmap, Image,
-    LauncherSave, Layers, MAX_TERRAIN_SCALE, MAX_UNDERGROUND_SCALE, SaveReport, Scan,
-    SearchOutcome, SearchQuery, Session, SpawnOrigin, StructureLayout, StructureQuery,
+    BiomeQuery, BundleInfo, Dimension, Evaluation, FeatureQuery, FindOutcome, FoundFeature, Game,
+    Heightmap, Image, LauncherSave, Layers, MAX_TERRAIN_SCALE, MAX_UNDERGROUND_SCALE, SaveReport,
+    Scan, SearchOutcome, SearchQuery, Session, SpawnOrigin, StructureLayout, StructureQuery,
     StructureStart, World,
 };
 
@@ -26,8 +26,8 @@ use crate::markers::{self, Picked};
 use crate::search::{self, FindRun, Match, Running, SearchSettings, SeedRun};
 use crate::style;
 use crate::tiles::{
-    Cache, Entry, Job, JobKey, LayoutKey, MarkerKey, Output, Pool, Style, TileKey, Underground,
-    slime_features,
+    Cache, Entry, FeatureKey, Job, JobKey, LayoutKey, MarkerKey, Output, Pool, Style, TileKey,
+    Underground, slime_features,
 };
 use crate::userdata::{Marker, Store, WorldKey};
 use crate::view::{TILE, Tile, View};
@@ -96,6 +96,8 @@ struct Settings {
     carvers: bool,
     /// Structure ids to mark.
     structures: Vec<String>,
+    /// Placed feature ids to mark, up close.
+    features: Vec<String>,
     /// Biome ids to keep bright.
     highlight: Vec<String>,
     search: SearchSettings,
@@ -124,6 +126,7 @@ impl Default for Settings {
             noise_caves: false,
             carvers: false,
             structures: Vec::new(),
+            features: Vec::new(),
             highlight: Vec::new(),
             search: SearchSettings::default(),
             show_done: true,
@@ -218,12 +221,22 @@ struct Shown {
     spawn: SpawnOrigin,
 }
 
-/// The structures chosen, resolved against the world shown.
-#[derive(Default)]
+/// The structures and features chosen, resolved against the world shown.
 struct Selection {
     /// Numbers marker keys; new for every change.
     id: u64,
     queries: Arc<[StructureQuery]>,
+    features: Arc<[FeatureQuery]>,
+}
+
+impl Default for Selection {
+    fn default() -> Self {
+        Selection {
+            id: 0,
+            queries: Arc::from(Vec::new()),
+            features: Arc::from(Vec::new()),
+        }
+    }
 }
 
 pub struct App {
@@ -242,6 +255,7 @@ pub struct App {
     pool: Pool,
     cache: Cache<TileKey, Entry>,
     markers: Cache<MarkerKey, Result<Vec<StructureStart>, String>>,
+    feature_markers: Cache<FeatureKey, Result<Vec<FoundFeature>, String>>,
     layouts: Cache<LayoutKey, Result<Option<StructureLayout>, String>>,
     selection: Selection,
     structure_filter: String,
@@ -367,6 +381,7 @@ impl App {
             pool: Pool::new(move || ctx.request_repaint()),
             cache: Cache::new(CACHE_TILES),
             markers: Cache::new(CACHE_MARKERS),
+            feature_markers: Cache::new(CACHE_MARKERS),
             layouts: Cache::new(CACHE_LAYOUTS),
             selection: Selection::default(),
             structure_filter: String::new(),
@@ -636,6 +651,7 @@ impl App {
                 });
                 self.cache.clear();
                 self.markers.clear();
+                self.feature_markers.clear();
                 self.layouts.clear();
                 self.select();
                 self.remember_world();
@@ -682,10 +698,18 @@ impl App {
             .iter()
             .filter_map(|s| world.structure_query(s).ok())
             .collect();
+        // Features the world doesn't place are kept in the settings but not marked.
+        let features: Vec<FeatureQuery> = self
+            .settings
+            .features
+            .iter()
+            .filter_map(|f| world.feature_query(f).ok())
+            .collect();
         self.next_id += 1;
         self.selection = Selection {
             id: self.next_id,
             queries: queries.into(),
+            features: features.into(),
         };
     }
 

@@ -72,7 +72,7 @@ Drawn in this order, each over the last:
 6. **Spawn**: a cross centred on `SpawnOrigin::position`, or on the centre of its chunk when there's no position: a white cross 1 pixel wide reaching 4 pixels from the centre, over a black one 3 pixels wide reaching 5.
 7. **Pins**: `Layers::pins`, places a front end gives with a colour each, such as the viewer's markers ([user-data.md](user-data.md#markers)). Each is a disc centred on its block's pixel: with `(dx, dy)` a pixel's offset from the centre, the pin's colour where `dx² + dy² ≤ 9`, and black where `10 ≤ dx² + dy² ≤ 20`. Pins are drawn in the order given, so a later one covers an earlier one. They're drawn in every dimension.
 
-The viewer draws its own icons in place of these markers ([ADR 0044](../adr/0044-the-viewer-draws-its-own-map-icons.md)): at the same centre pixels, in the same set colours, filled for a certain start and hollow for a candidate. Exports, from the library, the CLI or the viewer, draw the markers above.
+The viewer draws its own icons in place of these markers ([ADR 0044](../adr/0044-the-viewer-draws-its-own-map-icons.md)): at the same centre pixels, in the same set colours, filled for a certain start and hollow for a candidate. Features are diamonds in their colours, filled when certain and outlined when likely. Exports, from the library, the CLI or the viewer, draw the markers above.
 
 Markers have a fixed size in pixels at every scale. A marker can overlap an area while its position is outside it, so an area includes every feature whose centre pixel is within 5 pixels of it; markers near an edge are cut off, and a tile shows the same pixels as the larger view it's part of.
 

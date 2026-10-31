@@ -1,5 +1,5 @@
-//! What's drawn over the map: structure icons, the spawn, locate pins and search rings, the
-//! user's markers, and jigsaw and mineshaft bounds. Markers sit where the library's `Image::draw_features` puts its own
+//! What's drawn over the map: structure and feature icons, the spawn, locate pins and search
+//! rings, the user's markers, and jigsaw and mineshaft bounds. Markers sit where the library's `Image::draw_features` puts its own
 //! (`docs/specs/render.md#layers`): one tile pixel is one point, and a marker's centre is the
 //! pixel `floor(block / scale)` on the world-aligned grid. Their shapes are the viewer's own
 //! (ADR 0044), in the library's set colours.
@@ -8,7 +8,7 @@ use eframe::egui::{
     self, Align2, Color32, CornerRadius, FontId, Painter, Pos2, Rect, Shape, Stroke, StrokeKind,
     Vec2,
 };
-use spyglass::{SpawnOrigin, StructureStart, structure_colour};
+use spyglass::{FoundFeature, SpawnOrigin, StructureStart, feature_colour, structure_colour};
 
 use crate::icons;
 use crate::locate::Hit;
@@ -58,6 +58,35 @@ impl Size {
     pub fn reach(self) -> f32 {
         self.side() / 2.0 + 3.0
     }
+}
+
+/// A feature's icon (a dungeon, geode, well, fossil or lava lake): a diamond in its colour,
+/// filled if it's certain and outlined if it's a likely candidate, larger and ringed when
+/// hovered. Features are drawn only up close, so it has one size.
+pub fn feature(painter: &Painter, centre: Pos2, found: &FoundFeature, hovered: bool) {
+    let [r, g, b] = feature_colour(&found.feature);
+    let colour = Color32::from_rgb(r, g, b);
+    let half = if hovered { 13.0 } else { 9.0 };
+    let diamond = |h: f32| {
+        vec![
+            centre + Vec2::new(0.0, -h),
+            centre + Vec2::new(h, 0.0),
+            centre + Vec2::new(0.0, h),
+            centre + Vec2::new(-h, 0.0),
+        ]
+    };
+    if hovered {
+        painter.add(Shape::closed_line(
+            diamond(half + 3.0),
+            Stroke::new(2.0, Color32::WHITE),
+        ));
+    }
+    let (fill, stroke) = if found.certain {
+        (colour, Stroke::new(1.5, style::GROUND))
+    } else {
+        (style::GROUND, Stroke::new(2.5, colour))
+    };
+    painter.add(Shape::convex_polygon(diamond(half), fill, stroke));
 }
 
 /// A structure start's icon: its family's glyph on a badge in its set's colour, filled if it's
@@ -248,6 +277,7 @@ pub fn ring(painter: &Painter, centre: Pos2, certain: bool) {
 #[derive(Clone)]
 pub enum Picked<'a> {
     Structure(&'a StructureStart),
+    Feature(&'a FoundFeature),
     Spawn(&'a SpawnOrigin),
     Hit(&'a Hit),
     /// Something a search hit's constraint matched.
@@ -267,7 +297,7 @@ impl Picked<'_> {
             }),
             Picked::Hit(hit) => Some(hit.place.clone()),
             Picked::Match(m) => m.place.clone(),
-            Picked::Spawn(_) | Picked::Marker(_) => None,
+            Picked::Feature(_) | Picked::Spawn(_) | Picked::Marker(_) => None,
         }
     }
 }

@@ -16,6 +16,7 @@ spyglass-biome.workspace = true
 spyglass-blocks.workspace = true
 spyglass-data.workspace = true
 spyglass-density.workspace = true
+spyglass-noise.workspace = true
 spyglass-rng.workspace = true
 spyglass-terrain.workspace = true
 

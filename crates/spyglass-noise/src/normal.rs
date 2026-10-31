@@ -210,6 +210,50 @@ impl NormalNoise {
         })
     }
 
+    /// `NormalNoise.createParity(base_octave, amplitudes)`: a normalized noise of one octave per
+    /// amplitude, from `base_octave`, whose base amplitude
+    /// (`computeParityBaseAmplitude`) gives it the parity normalization's deviation. Features
+    /// sample it (the geode, from 26.3).
+    ///
+    /// # Errors
+    ///
+    /// For no amplitudes, or parameters outside the codec's ranges.
+    pub fn create_parity(base_octave: i32, amplitudes: &[f64]) -> Result<Self, NoiseError> {
+        if amplitudes.is_empty() {
+            return Err(NoiseError::OctaveCount);
+        }
+        let count = amplitudes.len() as i32;
+        // computeParityBaseAmplitude: buildOctaves(base, 1.0, count, true, amplitudes).
+        let unit = Parameters {
+            base_amplitude: 1.0,
+            base_octave,
+            octave_count: count,
+            normalize: Normalization::Enabled,
+            amplitude_modifiers: amplitudes.to_vec(),
+        };
+        let octaves = build_octaves(&unit);
+        let sum = java_double_stream_sum(octaves.iter().map(|o| o.amplitude.abs()));
+        let factor = normalization_factor(sum, &octaves);
+        let base_amplitude = if factor == 0.0 {
+            1.0
+        } else {
+            parity_normalization_factor(1.0, amplitudes) / factor
+        };
+        // The builder sets only the modifiers that aren't 1, which reads the same.
+        let amplitude_modifiers = if amplitudes.iter().all(|&a| a == 1.0) {
+            Vec::new()
+        } else {
+            amplitudes.to_vec()
+        };
+        Self::from_parameters(&Parameters {
+            base_amplitude,
+            base_octave,
+            octave_count: count,
+            normalize: Normalization::Enabled,
+            amplitude_modifiers,
+        })
+    }
+
     /// The octaves that are present, in order.
     pub fn octaves(&self) -> &[OctaveInfo] {
         &self.octaves
@@ -433,6 +477,34 @@ fn java_double_stream_sum(values: impl IntoIterator<Item = f64>) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parity_noise_weighs_its_layers_by_the_parity_factor() {
+        // computeParityBaseAmplitude divides the parity factor by the normalization factor,
+        // which doesn't depend on the base amplitude, so each octave weighs the parity factor
+        // times its weight at base amplitude 1, to rounding.
+        for amplitudes in [&[1.0][..], &[1.0, 0.0, 2.0], &[0.5, 1.0, 1.0, 1.0]] {
+            let noise = NormalNoise::create_parity(-4, amplitudes).unwrap();
+            let unit = build_octaves(&Parameters {
+                amplitude_modifiers: amplitudes.to_vec(),
+                octave_count: amplitudes.len() as i32,
+                ..Parameters::new(-4)
+            });
+            let parity = parity_normalization_factor(1.0, amplitudes);
+            for (o, u) in noise.octaves().iter().zip(&unit) {
+                let weight = noise.normalization_factor() * o.amplitude;
+                let want = parity * u.amplitude;
+                assert!(
+                    (weight - want).abs() < 1e-12,
+                    "{amplitudes:?}: {weight} vs {want}"
+                );
+            }
+        }
+        assert_eq!(
+            NormalNoise::create_parity(-4, &[]),
+            Err(NoiseError::OctaveCount)
+        );
+    }
 
     #[test]
     fn sqrt_2_matches_math_sqrt() {

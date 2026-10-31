@@ -33,8 +33,8 @@ The modifiers that read blocks (`heightmap`, `block_predicate_filter`, `environm
 ## Tasks
 
 - [x] **Spike:** each target feature's code in 26.2, 26.3 and 26.4-snapshot-6, and where the versions differ. _Findings in the notes; the full reconstructions are kept locally in `target/spike/placing/`, never committed._
-- [ ] **Block data:** the per-state behaviour placing reads (`isSolid`, `liquid`, `canBeReplaced`, `isSolidRender`, the fluid state, and 26.2's `blocksMotion` and leaves), which no data report has. How the bundle gets it is an ADR.
-- [ ] **Placing:** the five features with their blocks, in order, on a chunk's blocks; the modifiers that read blocks, on them.
+- [x] **Block data:** the per-state behaviour placing reads (`isSolid`, `liquid`, `canBeReplaced`, `isSolidRender`, the fluid state, and 26.2's `blocksMotion` and leaves), which no data report has. How the bundle gets it is an ADR. _The extractor's block report ([ADR 0054](../adr/0054-block-behaviour-from-the-running-game.md)), with `shape_updater` added for templates' neighbours._
+- [x] **Placing:** the five features with their blocks, in order, on a chunk's blocks; the modifiers that read blocks, on them. _`Region`, `Placer` and `Decorator::decorate`; `tests/placing.rs` compares every call with the game's._
 - [ ] **Certainty:** each reason above, measured on the golden seeds: how many tries each turns into candidates. Port mineshaft pieces, or place other early features, where they account for most of them.
 - [ ] **Oracle:** each try's result, and the second run with neighbours decorated first.
 - [ ] **Comparison:** an ignored test: every certain answer is the game's, and every try whose result differs between the oracle's runs is a candidate.
@@ -53,6 +53,9 @@ The modifiers that read blocks (`heightmap`, `block_predicate_filter`, `environm
 - [ ] oracle.md: results in feature golden files, and the second run.
 
 ## Notes
+
+- 2026-10-30: **Placing matches the game.** Every golden chunk of every seed placed on its carved 3 × 3, in every version, compared call by call (position, and whether it placed): no differences. Calls not compared, all after a tie in the chunk (a block or biome a tie decides): 26.2 503 of 37,859, 26.3 499 of 37,842, 26.4-snapshot-5 and 6 54 of 37,842. By feature (26.3): dungeons 365 and 74, geodes 30, underground lakes 30. Shape updates and waterlogging beside templates put none in doubt in the golden area. A chunk takes about 150 ms (its 9 carved chunks, shared with the neighbouring golden chunks, and the placing), measured in the test, which runs in parallel.
+- 2026-10-30: **What placing found.** The geode's 26.3 noise is `NormalNoise.createParity`, now in `spyglass-noise` and bit-exact against the real class (checked once with the spike's vectors, which stay out of the repo, ADR 0008). The block report gained `shape_updater`: the class whose `updateShape` a block runs, since a template beside a fence or plant can change it, and falling blocks, fluids, slabs and brushable blocks only schedule a tick (their bytecode). Templates read through a new `Resources::structure_template`.
 
 - 2026-10-30: **Spike: the level** (`WorldGenRegion`, `ProtoChunk`, `Heightmap`, the modifiers that read blocks):
   - **Writes** reach the chunk and its 8 neighbours (`blockStateWriteRadius(1)`). A write outside them is dropped, logged, and returns false. Writes outside the build height do nothing. The flags (2 or 3) change nothing on a proto chunk except bit 16, which skips the post-processing mark.

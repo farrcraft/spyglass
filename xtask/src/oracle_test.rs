@@ -171,6 +171,11 @@ const TESTS: &[(&str, &str, &[Input])] = &[
         &[Input::Features, Input::Bundle],
     ),
     (
+        "spyglass-feature",
+        "placing_matches_the_game",
+        &[Input::Features, Input::Bundle],
+    ),
+    (
         "spyglass",
         "blocks_through_the_api_are_the_game_s",
         &[Input::Blocks, Input::BlocksNoCarvers, Input::Bundle],

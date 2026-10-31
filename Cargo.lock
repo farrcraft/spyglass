@@ -3728,6 +3728,7 @@ dependencies = [
  "spyglass-blocks",
  "spyglass-data",
  "spyglass-density",
+ "spyglass-noise",
  "spyglass-oracle",
  "spyglass-rng",
  "spyglass-terrain",

@@ -43,6 +43,7 @@ public final class BlockReport {
         Object states = blockClass.getField("BLOCK_STATE_REGISTRY").get(null);
         Method getId = states.getClass().getMethod("getId", Object.class);
         Class<?> leaves = Class.forName("net.minecraft.world.level.block.LeavesBlock");
+        Class<?> behaviour = Class.forName("net.minecraft.world.level.block.state.BlockBehaviour");
         Object fluids =
                 Class.forName("net.minecraft.core.registries.BuiltInRegistries").getField("FLUID").get(null);
         Method fluidKey = fluids.getClass().getMethod("getKey", Object.class);
@@ -66,6 +67,10 @@ public final class BlockReport {
             }
             Object block = c.getMethod("getBlock").invoke(state);
             flag(out, "leaves", leaves.isInstance(block));
+            String updater = declaring(block.getClass(), behaviour, "updateShape");
+            if (updater != null) {
+                out.append(",\"shape_updater\":\"").append(updater).append('"');
+            }
             Object fluid = c.getMethod("getFluidState").invoke(state);
             Class<?> f = fluid.getClass();
             if (!(Boolean) f.getMethod("isEmpty").invoke(fluid)) {
@@ -99,6 +104,22 @@ public final class BlockReport {
     private static boolean call(Object state, Method m)
             throws IllegalAccessException, InvocationTargetException {
         return (Boolean) m.invoke(state);
+    }
+
+    /**
+     * The simple name of the first class from {@code c} up to {@code base} (not {@code base}
+     * itself) that declares a method named {@code name}, or null: which class's override of
+     * {@code BlockBehaviour}'s a block runs.
+     */
+    private static String declaring(Class<?> c, Class<?> base, String name) {
+        for (; c != null && c != base; c = c.getSuperclass()) {
+            for (Method m : c.getDeclaredMethods()) {
+                if (m.getName().equals(name)) {
+                    return c.getSimpleName();
+                }
+            }
+        }
+        return null;
     }
 
     /** A public no-argument method, or null if this version doesn't have it. */

@@ -194,6 +194,10 @@ switches! {
     /// `OCEAN_FLOOR_WG` counts blocks whose `blocksMotion()` is true, a block property, not the
     /// `#minecraft:blocks_motion_in_heightmap` tag, which doesn't exist.
     heightmap_blocks_motion, "terrain.md#queries", [0..5023];
+
+    /// The geode's noise is the 1.21 family's `NormalNoise.create(random, -4, 1.0)`, sampled in
+    /// `double`, not `NormalNoise.createParity(-4, 1.0)` sampled in `float`.
+    geode_noise_v1_21, "features.md#geode", [0..5023];
 }
 
 #[cfg(test)]

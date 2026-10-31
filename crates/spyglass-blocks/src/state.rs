@@ -168,6 +168,11 @@ impl BlockDefaults {
         Ok(BlockDefaults { blocks })
     }
 
+    /// Whether block `id` has property `name`.
+    pub fn has_property(&self, id: &str, name: &str) -> bool {
+        self.blocks.get(id).is_some_and(|p| p.contains_key(name))
+    }
+
     /// The name of block `id` with `properties` (`BlockState`'s codec: `Name` and
     /// `Properties`): the id, then the properties that differ from the default state's, by
     /// name, in brackets. Unknown blocks, properties and values are errors.

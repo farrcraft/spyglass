@@ -42,7 +42,7 @@ impl Chunk {
     }
 
     /// Marks the block at `(x, y, z)` as depending on a tied biome.
-    pub(crate) fn mark_uncertain(&mut self, pos: [i32; 3]) {
+    pub fn mark_uncertain(&mut self, pos: [i32; 3]) {
         if let Some(i) = self.index(pos) {
             self.uncertain[i / 64] |= 1 << (i % 64);
         }
@@ -62,8 +62,9 @@ impl Chunk {
         self.index(pos).map_or(AIR, |i| self.blocks[i])
     }
 
-    /// Sets a block without touching the heightmap, for filling.
-    pub(crate) fn put(&mut self, pos: [i32; 3], state: State) {
+    /// Sets a block without touching the heightmap: for filling, and for decoration, which
+    /// leaves `WORLD_SURFACE_WG` as terrain left it.
+    pub fn put(&mut self, pos: [i32; 3], state: State) {
         if let Some(i) = self.index(pos) {
             self.blocks[i] = state;
         }

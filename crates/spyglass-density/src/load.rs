@@ -38,6 +38,12 @@ pub trait Resources {
     fn behavior(&self) -> Behavior {
         Behavior::default()
     }
+
+    /// A structure template's bytes (gzip-compressed NBT), by id. Hand-built resources have
+    /// none unless they say otherwise.
+    fn structure_template(&self, id: &str) -> Result<Vec<u8>, BundleError> {
+        Err(BundleError::NotFound(id.to_string()))
+    }
 }
 
 impl Resources for Bundle {
@@ -47,6 +53,10 @@ impl Resources for Bundle {
 
     fn report(&self, path: &str) -> Result<Value, BundleError> {
         Bundle::report(self, path)
+    }
+
+    fn structure_template(&self, id: &str) -> Result<Vec<u8>, BundleError> {
+        Bundle::structure_template(self, id)
     }
 
     fn behavior(&self) -> Behavior {

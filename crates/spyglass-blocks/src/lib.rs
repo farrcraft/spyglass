@@ -2,6 +2,7 @@
 //! veins, carvers, and the biome lookups they use. See `docs/specs/material.md` and
 //! `docs/specs/carvers.md`.
 
+pub mod behaviour;
 pub mod carver;
 pub mod chunk;
 pub mod material;

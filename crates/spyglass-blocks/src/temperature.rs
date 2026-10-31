@@ -113,6 +113,15 @@ impl Temperature {
         })
     }
 
+    /// `Biome.BIOME_INFO_NOISE` at `(x, z)`, as the noise-count placement modifiers sample it:
+    /// `getValue(x, z, false)` in `f64` in 26.2, `get(x, z)` in `f32` from 26.3, widened.
+    pub fn biome_info(&self, x: f64, z: f64) -> f64 {
+        match &self.0 {
+            Noises::Simplex { info, .. } => f64::from(info.get(x, z)),
+            Noises::V1_21 { info, .. } => info.get_value(x, z),
+        }
+    }
+
     /// `TemperatureModifier.modifyTemperature`: `frozen` gives 0.2 in patches where the frozen
     /// and info noises are low.
     fn modified(&self, climate: Climate, x: i32, z: i32) -> f32 {

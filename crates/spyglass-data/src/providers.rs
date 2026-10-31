@@ -448,6 +448,27 @@ impl HeightProvider {
         }
     }
 
+    /// Every value [`HeightProvider::sample`] can give, as the least and greatest: loose, never
+    /// too narrow (a very biased provider's `inner` can carry it past its top).
+    pub fn range(&self, anchors: AnchorHeights) -> (i32, i32) {
+        let resolve = |a: &VerticalAnchor| a.resolve(anchors);
+        let span = |lo: &VerticalAnchor, hi: &VerticalAnchor, extra: i32| {
+            let (lo, hi) = (resolve(lo), resolve(hi));
+            (lo.min(hi), lo.max(hi).saturating_add(extra.max(0)))
+        };
+        match self {
+            HeightProvider::Constant(a) => (resolve(a), resolve(a)),
+            HeightProvider::Uniform(lo, hi)
+            | HeightProvider::BiasedToBottom(lo, hi, _)
+            | HeightProvider::Trapezoid(lo, hi, _) => span(lo, hi, 0),
+            HeightProvider::VeryBiasedToBottom(lo, hi, inner) => span(lo, hi, *inner),
+            HeightProvider::WeightedList(list) => list
+                .entries()
+                .map(|p| p.range(anchors))
+                .fold((i32::MAX, i32::MIN), |(a, b), (c, d)| (a.min(c), b.max(d))),
+        }
+    }
+
     /// `HeightProvider.CODEC`: a bare anchor, or a provider by `type`.
     pub fn parse(json: &Value, at: &At<'_>) -> LoadResult<HeightProvider> {
         let o = object(json, at)?;

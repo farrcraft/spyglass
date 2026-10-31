@@ -962,6 +962,11 @@ fn round_f32(v: f32) -> i32 {
 }
 
 impl BoundMaterial {
+    /// `Biome.BIOME_INFO_NOISE` at `(x, z)`, in this family's form.
+    pub fn biome_info(&self, x: f64, z: f64) -> f64 {
+        self.temperature.biome_info(x, z)
+    }
+
     /// The quart block `pos` takes its biome from (`BiomeManager.getBiome`'s zoom).
     pub fn biome_quart(&self, pos: [i32; 3]) -> [i32; 3] {
         self.zoom.quart(pos)

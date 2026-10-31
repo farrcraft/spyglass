@@ -186,6 +186,39 @@ impl ChunkGenerator<'_> {
         self.biomes.biome_at(qx, qy, qz)
     }
 
+    /// Every biome chunk `(cx, cz)` can store, with tied candidates: each quart's over the
+    /// level's height, and a quart's border around, since 26.4's upscaled biomes can take a
+    /// neighbouring quart's. Decoration runs a placed feature only where one of these lists it.
+    pub fn chunk_biomes(&self, cx: i32, cz: i32) -> Vec<spyglass_biome::BiomeId> {
+        let t = &self.settings.terrain;
+        let min_qy = t.level_min_y >> 2;
+        let mut out = Vec::new();
+        for qz in -1..5 {
+            for qx in -1..5 {
+                for qy in min_qy..min_qy + (t.level_height >> 2) {
+                    let lookup = self.biomes.biome_at(
+                        cx.wrapping_mul(4).wrapping_add(qx),
+                        qy,
+                        cz.wrapping_mul(4).wrapping_add(qz),
+                    );
+                    for b in
+                        std::iter::once(lookup.biome()).chain(lookup.candidates().iter().copied())
+                    {
+                        if !out.contains(&b) {
+                            out.push(b);
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// `Biome.BIOME_INFO_NOISE` at `(x, z)`, which placement's noise counts sample.
+    pub fn biome_info(&self, x: f64, z: f64) -> f64 {
+        self.material.biome_info(x, z)
+    }
+
     /// The noise fill's block at `y` at every `(x, z)` with x in `xs` and z in `zs`, z outer
     /// and x inner, and whether a solid block is above it ([`Terrain::probes_on`]).
     pub fn probes_on(&self, xs: &[i32], zs: &[i32], y: i32) -> Vec<Probe> {

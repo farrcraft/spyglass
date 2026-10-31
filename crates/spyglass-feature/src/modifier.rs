@@ -2,7 +2,7 @@
 //! feature is tried at (`docs/specs/features.md#modifiers`).
 
 use serde_json::Value;
-use spyglass_data::codec::{At, LoadError, LoadErrorKind, field, full_id, int, object};
+use spyglass_data::codec::{At, LoadError, LoadErrorKind, double, field, full_id, int, object};
 use spyglass_data::providers::{HeightProvider, IntProvider};
 use spyglass_density::Resources;
 
@@ -18,6 +18,26 @@ pub enum Modifier {
     Rarity(i32),
     /// `in_square`: x and z each moved by `nextInt(16)`, x first.
     InSquare,
+    /// `noise_based_count`: the position `ceil((noise(x / factor, z / factor) + offset) ·
+    /// ratio)` times, from the biome info noise. No draws.
+    NoiseBasedCount {
+        /// `noise_to_count_ratio`.
+        ratio: i32,
+        /// `noise_factor`.
+        factor: f64,
+        /// `noise_offset`, default 0.
+        offset: f64,
+    },
+    /// `noise_threshold_count`: the position `below_noise` times where the biome info noise at
+    /// `(x / 200, z / 200)` is below `noise_level`, else `above_noise` (NaN too). No draws.
+    NoiseThresholdCount {
+        /// `noise_level`.
+        level: f64,
+        /// `below_noise`.
+        below: i32,
+        /// `above_noise`.
+        above: i32,
+    },
     /// `height_range`: y from the height provider.
     HeightRange(HeightProvider),
     /// `biome`: the position, if the biome at its block lists the placed feature.
@@ -34,6 +54,9 @@ pub enum Modifier {
         kind: String,
         /// What it does.
         read: Option<Read>,
+        /// Its shape, its block predicates left as `true`: where it can move a position, for
+        /// boxes of tries (`Decorator::try_boxes`). Loaded without the blocks too.
+        shape: Option<Read>,
     },
 }
 
@@ -68,6 +91,12 @@ pub enum Read {
     },
     /// `block_predicate_filter`: the position, if it passes.
     Filter(BlockPredicate),
+    /// `surface_water_depth_filter`: the position, if `WORLD_SURFACE` less `OCEAN_FLOOR` (the
+    /// live heightmaps' first free y) is at most `max`.
+    SurfaceWaterDepth {
+        /// `max_water_depth`.
+        max: i32,
+    },
 }
 
 /// What loading the modifiers that read blocks needs.
@@ -134,6 +163,25 @@ impl Modifier {
                 Modifier::Rarity(chance)
             }
             "minecraft:in_square" => Modifier::InSquare,
+            "minecraft:noise_based_count" => {
+                let num = |k: &'static str| double(field(o, k, at)?, &at.child(k));
+                Modifier::NoiseBasedCount {
+                    ratio: int(
+                        field(o, "noise_to_count_ratio", at)?,
+                        &at.child("noise_to_count_ratio"),
+                    )?,
+                    factor: num("noise_factor")?,
+                    offset: match o.get("noise_offset") {
+                        None => 0.0,
+                        Some(v) => double(v, &at.child("noise_offset"))?,
+                    },
+                }
+            }
+            "minecraft:noise_threshold_count" => Modifier::NoiseThresholdCount {
+                level: double(field(o, "noise_level", at)?, &at.child("noise_level"))?,
+                below: int(field(o, "below_noise", at)?, &at.child("below_noise"))?,
+                above: int(field(o, "above_noise", at)?, &at.child("above_noise"))?,
+            },
             "minecraft:height_range" => Modifier::HeightRange(HeightProvider::parse(
                 field(o, "height", at)?,
                 &at.child("height"),
@@ -152,10 +200,11 @@ impl Modifier {
             }
             k if READS_BLOCKS.contains(&k) => {
                 let read = match reading {
-                    Some(reading) => Read::parse(&kind, o, at, reading)?,
+                    Some(reading) => Read::parse(&kind, o, at, Some(reading))?,
                     None => None,
                 };
-                Modifier::ReadsBlocks { kind, read }
+                let shape = Read::parse(&kind, o, at, None).ok().flatten();
+                Modifier::ReadsBlocks { kind, read, shape }
             }
             _ => {
                 return Err(at.child("type").error(LoadErrorKind::Unsupported {
@@ -173,7 +222,7 @@ impl Read {
         kind: &str,
         o: &serde_json::Map<String, Value>,
         at: &At<'_>,
-        reading: &mut Reading<'_>,
+        mut reading: Option<&mut Reading<'_>>,
     ) -> Result<Option<Read>, LoadError> {
         let heightmap = |at: &At<'_>| -> Result<Heightmap, LoadError> {
             let name = field(o, "heightmap", at)?.as_str().unwrap_or_default();
@@ -182,15 +231,16 @@ impl Read {
                     .error(LoadErrorKind::Shape("a heightmap"))
             })
         };
-        let predicate =
-            |key: &'static str, reading: &mut Reading<'_>| -> Result<BlockPredicate, LoadError> {
-                BlockPredicate::parse(
-                    field(o, key, at)?,
-                    &at.child(key),
-                    reading.resources,
-                    reading.blocks,
-                )
-            };
+        // Without the blocks, every predicate is `true`: the shape alone.
+        let predicate = |key: &'static str,
+                         reading: &mut Option<&mut Reading<'_>>|
+         -> Result<BlockPredicate, LoadError> {
+            let json = field(o, key, at)?;
+            match reading {
+                Some(r) => BlockPredicate::parse(json, &at.child(key), r.resources, r.blocks),
+                None => Ok(BlockPredicate::True),
+            }
+        };
         Ok(Some(match kind {
             "minecraft:heightmap" => Read::Heightmap(heightmap(at)?),
             "minecraft:environment_scan" => {
@@ -208,10 +258,10 @@ impl Read {
                 if !(1..=32).contains(&max_steps) {
                     return Err(steps_at.error(LoadErrorKind::Invalid("max_steps must be 1 to 32")));
                 }
-                let target = predicate("target_condition", reading)?;
+                let target = predicate("target_condition", &mut reading)?;
                 let allowed = match o.get("allowed_search_condition") {
                     None => BlockPredicate::True,
-                    Some(_) => predicate("allowed_search_condition", reading)?,
+                    Some(_) => predicate("allowed_search_condition", &mut reading)?,
                 };
                 Read::EnvironmentScan {
                     down,
@@ -231,7 +281,15 @@ impl Read {
                     max: bound("max_inclusive", i32::MAX)?,
                 }
             }
-            "minecraft:block_predicate_filter" => Read::Filter(predicate("predicate", reading)?),
+            "minecraft:block_predicate_filter" => {
+                Read::Filter(predicate("predicate", &mut reading)?)
+            }
+            "minecraft:surface_water_depth_filter" => Read::SurfaceWaterDepth {
+                max: int(
+                    field(o, "max_water_depth", at)?,
+                    &at.child("max_water_depth"),
+                )?,
+            },
             _ => return Ok(None),
         }))
     }

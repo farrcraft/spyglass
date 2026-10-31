@@ -37,15 +37,17 @@ A try that reaches the feature is spyglass's `Try`. It's **exact** unless a modi
 
 ### Modifiers
 
-| Type                               | What it does                                                                                                                                                                   |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `count`                            | The position `count` times: an int provider, 0 to 256, sampled once.                                                                                                           |
-| `rarity_filter`                    | The position if `nextFloat() < 1f / chance` (`float` division); NaN fails.                                                                                                     |
-| `in_square`                        | x moved by `nextInt(16)`, then z by `nextInt(16)`.                                                                                                                             |
-| `height_range`                     | y from the height provider, with the generator's vertical anchors (26.4's `VerticalAnchor.Context.from(generator, level)` is the same: the greater bottom, the lesser height). |
-| `biome`                            | The position if the biome at its block lists the placed feature in any step: the level's `getBiome`, the zoomed biome (`ChunkGenerator::block_biome`), not the stored quart.   |
-| `offset` (26.3 on)                 | Moved by `x`, `y` and `z`, three int providers sampled in that order.                                                                                                          |
-| `heightmap`, `environment_scan`, … | Read the level's blocks or heightmaps, which decoration has changed ([below](#modifiers-that-read-blocks)): without the blocks, a try after one isn't exact.                   |
+| Type                               | What it does                                                                                                                                                                                                                                                          |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `count`                            | The position `count` times: an int provider, 0 to 256, sampled once.                                                                                                                                                                                                  |
+| `rarity_filter`                    | The position if `nextFloat() < 1f / chance` (`float` division); NaN fails.                                                                                                                                                                                            |
+| `in_square`                        | x moved by `nextInt(16)`, then z by `nextInt(16)`.                                                                                                                                                                                                                    |
+| `height_range`                     | y from the height provider, with the generator's vertical anchors (26.4's `VerticalAnchor.Context.from(generator, level)` is the same: the greater bottom, the lesser height).                                                                                        |
+| `biome`                            | The position if the biome at its block lists the placed feature in any step: the level's `getBiome`, the zoomed biome (`ChunkGenerator::block_biome`), not the stored quart.                                                                                          |
+| `offset` (26.3 on)                 | Moved by `x`, `y` and `z`, three int providers sampled in that order.                                                                                                                                                                                                 |
+| `noise_based_count`                | The position `ceil((n(x / noise_factor, z / noise_factor) + noise_offset) · noise_to_count_ratio)` times, `n` the biome info noise (`Biome.BIOME_INFO_NOISE`: simplex from legacy random 2345, `float` from 26.3, 26.2's `PerlinSimplexNoise` in `double`). No draws. |
+| `noise_threshold_count`            | The position `below_noise` times where `n(x / 200, z / 200) < noise_level`, else (NaN too) `above_noise` times. No draws.                                                                                                                                             |
+| `heightmap`, `environment_scan`, … | Read the level's blocks or heightmaps, which decoration has changed ([below](#modifiers-that-read-blocks)): without the blocks, a try after one isn't exact.                                                                                                          |
 
 Where the biome at a try's block is tied and the candidates disagree on listing the feature, the try is kept and marked uncertain.
 
@@ -92,6 +94,7 @@ None draws from the random.
 | `environment_scan`                  | Nothing unless `allowed_search_condition` (default `true`) holds at the position. Then up to `max_steps` times: the position, if `target_condition` holds; move one up or down; nothing outside the build height; stop if not allowed. Then one more test of the target. |
 | `surface_relative_threshold_filter` | The position if `h + min_inclusive ≤ y ≤ h + max_inclusive`, in `long`, with `h` the heightmap's first free y; the bounds default to `i32`'s.                                                                                                                            |
 | `block_predicate_filter`            | The position if `predicate` holds.                                                                                                                                                                                                                                       |
+| `surface_water_depth_filter`        | The position if `WORLD_SURFACE`'s first free y less `OCEAN_FLOOR`'s is at most `max_water_depth`.                                                                                                                                                                        |
 
 ### Lake
 
@@ -151,14 +154,27 @@ From 26.3 the well is data. `offset` and `block_predicate_filter` check the sand
 
 ### Certainty
 
-Placing runs every placed feature of the steps it's asked for, not only the targets: the features of the same steps that spyglass places too (the forest rock and large dripstone, [below](#block-blob)) are placed exactly. A placing answer is certain unless something spyglass can't know could change it, which makes it a candidate with a reason:
+Placing runs every placed feature of the steps it's asked for, not only the targets: the features of the same steps that spyglass places too (the forest rock and large dripstone, [below](#block-blob)) are placed exactly. Each answer has two certainties ([ADR 0056](../adr/0056-two-certainties-on-its-own-and-whatever-the-neighbours.md)):
 
-- **A tie:** a block that depends on a tied biome ([material.md](material.md#ties)), or a tied biome at the try.
-- **Another feature:** one spyglass doesn't place reached its feature earlier in the chunk (or its position wasn't known), and could have written anything in the region.
-- **A shape update or waterlogging** that a template's placing would cause ([above](#templates)).
-- **Outside the region:** a read past the 3 × 3, which vanilla features don't make.
+- **On its own:** the answer for the chunk decorated before its neighbours, what the oracle's `tries` record. It's certain unless something in the chunk spyglass can't know could change it, which makes it a candidate with a reason:
+  - **a tie:** a block that depends on a tied biome ([material.md](material.md#ties)), or a tied biome at the try;
+  - **another feature:** one spyglass doesn't place, or isn't sure of, could have written what the try reads (below);
+  - **a shape update or waterlogging** that a template's placing would cause ([above](#templates));
+  - **outside the region:** a read past the 3 × 3, which vanilla features don't make.
+- **Whatever the neighbours do:** also certain with any of the 8 neighbours decorated first, which their writes, bounded as [below](#neighbours), couldn't reach.
 
-Once one answer in a chunk is a candidate, every later one is too: a candidate's blocks may not be the game's.
+**What a try reads**, around its position: a lake its box (`−8..7`, `−4..3`, `−8..7`) and its column; a geode `±16`; a dungeon `−4..4`, `−2..4`, `−4..4`; a fossil its footprint's columns (`±7`); a well its columns (`±3`); a forest rock its columns (`±5`); a large dripstone its columns (`±32`). Dungeons and fossils read only whether a block is air, solid, a fluid, a chest or spawner, or in `#features_cannot_replace`, so writes that only change which solid block it is (ores, disks) can't change them; the others can be.
+
+**Inside the chunk**, a placed feature spyglass doesn't place is unsure from its first try; one it places is unsure from its first candidate on. An unsure feature's later tries are candidates (their draws aren't known), and its writes, wherever its tries can be (as [below](#neighbours), for the chunk itself), put the later tries that read them in the same doubt.
+
+### Neighbours
+
+What a neighbour decorated first could write, for "whatever the neighbours do", from every placed feature of all 8 neighbours, in every step:
+
+- **Where its tries can be** (`Decorator::try_boxes`): the modifiers run with each coordinate a range. The draws are the game's until a try reaches its feature, which draws what its blocks decide; from then on each modifier gives every value it can (`in_square` the whole chunk, a height provider its range, an offset its providers'). A modifier that reads blocks gives every position it could: a scan its steps; a `_WG` heightmap terrain's height (they never change); a live heightmap from 48 below terrain's to the top. A `biome` modifier rules out a single column only if no biome along it lists the feature. A placed feature runs only where a biome stored in the chunk or its 8 neighbours lists it (`ChunkGenerator::chunk_biomes`, with a quart's border for 26.4's upscaled biomes).
+- **Where its feature can write** (`Reach`): a box around the try for each feature type, from its configuration, taken from each version's bytecode: ores `±ceil(3s/16)` across and `−ceil(s/16)−2` to `ceil(s/16)` up for size `s`; disks their radius and half height; trees `±10` across, `−15` to `32` up (higher for a taller trunk), and whole columns for pale oak's hanging moss; selectors the union of their children's, each moved by its modifiers' largest offset; and so on for every Overworld type. Features whose writes follow a heightmap down (ice spikes, icebergs, bamboo's podzol, 26.2's ocean plants, forest rocks, large dripstone, fossils, wells) write whole columns. A type not known writes anywhere in the 3 × 3. Ores and disks only change which solid block a block is.
+
+Measured on 26.3's golden area, nothing holds whatever the neighbours do: a neighbour's many-try features (dungeons, lichen, pointed dripstone, cave vegetation) can be anywhere in its chunk after their first try, and reach across the border.
 
 ### Block blob
 
@@ -180,4 +196,4 @@ Unit tests: the sorter on hand-built lists (merging, steps, a feature in two ste
 
 - every dimension's lists load and sort;
 - `spyglass-feature/tests/tries.rs` compares each step's order and every target's tries with the feature golden files, position by position, until a try that isn't exact (a dungeon's declined calls are replayed by drawing its two sizes);
-- `spyglass-feature/tests/placing.rs` places every golden chunk on its carved 3 × 3 and compares each call, its position and whether it placed, with the game's, stopping at a chunk's first candidate.
+- `spyglass-feature/tests/placing.rs` places every golden chunk on its carved 3 × 3 and compares each placed feature's calls, position and whether it placed, with the game's `tries`, up to its first candidate; where `after_neighbours` differs, spyglass must say the neighbours could change the call.

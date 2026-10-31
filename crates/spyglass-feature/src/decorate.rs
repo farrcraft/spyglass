@@ -7,6 +7,7 @@ use spyglass_data::anchor::AnchorHeights;
 use spyglass_data::codec::{At, LoadError, object};
 use spyglass_rng::{RandomSource, WorldgenRandom};
 
+use crate::blocks::Heightmap;
 use crate::modifier::{Modifier, Read, Reading};
 use crate::order::PlacedRef;
 use crate::region::Region;
@@ -182,12 +183,268 @@ impl<'a> Decorator<'a> {
         out
     }
 
+    /// How many times a noise count gives the position at `(x, z)`; `None` for another
+    /// modifier.
+    fn noise_count(&self, modifier: &Modifier, x: i32, z: i32) -> Option<i32> {
+        let (x, z) = (f64::from(x), f64::from(z));
+        Some(match *modifier {
+            Modifier::NoiseBasedCount {
+                ratio,
+                factor,
+                offset,
+            } => {
+                let v = self.generator.biome_info(x / factor, z / factor);
+                ((v + offset) * f64::from(ratio)).ceil() as i32
+            }
+            Modifier::NoiseThresholdCount {
+                level,
+                below,
+                above,
+            } => {
+                // dcmpg/ifge: NaN counts as above.
+                if self.generator.biome_info(x / 200.0, z / 200.0) < level {
+                    below
+                } else {
+                    above
+                }
+            }
+            _ => return None,
+        })
+    }
+
     /// Whether `biome` lists `placed` in any step (`BiomeGenerationSettings.hasFeature`).
     fn lists(&self, biome: BiomeId, placed: PlacedRef) -> bool {
         self.settings
             .lists(biome)
             .iter()
             .any(|list| list.contains(&placed))
+    }
+}
+
+/// Where a try can be when the blocks aren't known: a box of positions (`docs/specs/features.md#neighbours`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TryBox {
+    /// The placed feature.
+    pub placed: PlacedRef,
+    /// Its decoration step.
+    pub step: usize,
+    /// Its index in the step's order.
+    pub index: usize,
+    /// The least corner.
+    pub min: [i32; 3],
+    /// The greatest corner.
+    pub max: [i32; 3],
+}
+
+/// What boxes of tries need to know about a chunk they don't have the blocks of.
+pub trait Ground {
+    /// Whether `placed` runs in the chunk: a biome stored in it or its neighbours lists it.
+    fn runs(&self, placed: PlacedRef) -> bool;
+    /// The least and greatest first free y heightmap `h` can give over the columns from `lo`
+    /// to `hi` (x and z) when the chunk is decorated, whatever decorated before.
+    fn heights(&self, h: Heightmap, lo: [i32; 2], hi: [i32; 2]) -> (i32, i32);
+}
+
+impl Decorator<'_> {
+    /// Every place a try of the placed features asked for can be in chunk `chunk`, whatever the
+    /// blocks: the tries are run with each coordinate a range. Draws stay known until a try
+    /// reaches its feature, which draws what its blocks decide; after that, each modifier
+    /// gives every value it can. A modifier that reads blocks gives the range it can.
+    pub fn try_boxes(
+        &self,
+        [cx, cz]: [i32; 2],
+        min_y: i32,
+        max_y: i32,
+        ground: &dyn Ground,
+    ) -> Vec<TryBox> {
+        let mut random = WorldgenRandom::new(0);
+        let (x0, z0) = (cx.wrapping_shl(4), cz.wrapping_shl(4));
+        let decoration = random.set_decoration_seed(self.seed, x0, z0);
+        let mut out = Vec::new();
+        for (step, order) in self.settings.order().iter().enumerate() {
+            for (index, placed) in order.iter().enumerate() {
+                let Some((_, modifiers)) = self.wanted.iter().find(|(r, _)| r == placed) else {
+                    continue;
+                };
+                if !ground.runs(*placed) {
+                    continue;
+                }
+                random.set_feature_seed(decoration, index as i32, step as i32);
+                let mut run = Boxes {
+                    ground,
+                    decorator: self,
+                    random: &mut random,
+                    known: true,
+                    out: &mut out,
+                    placed: *placed,
+                    step,
+                    index,
+                    min_y,
+                    max_y,
+                };
+                let origin = [x0, self.origin_y, z0];
+                run.apply(modifiers, origin, origin);
+            }
+        }
+        out.dedup();
+        out
+    }
+}
+
+/// One placed feature's try boxes in a chunk.
+struct Boxes<'r, 'a> {
+    decorator: &'r Decorator<'a>,
+    ground: &'r dyn Ground,
+    random: &'r mut WorldgenRandom,
+    /// Whether the random's draws are still the game's.
+    known: bool,
+    out: &'r mut Vec<TryBox>,
+    placed: PlacedRef,
+    step: usize,
+    index: usize,
+    min_y: i32,
+    max_y: i32,
+}
+
+impl Boxes<'_, '_> {
+    fn apply(&mut self, modifiers: &[Modifier], lo: [i32; 3], hi: [i32; 3]) {
+        let Some((modifier, rest)) = modifiers.split_first() else {
+            let t = TryBox {
+                placed: self.placed,
+                step: self.step,
+                index: self.index,
+                min: lo,
+                max: hi,
+            };
+            if self.out.last() != Some(&t) {
+                self.out.push(t);
+            }
+            // The feature draws what its blocks decide.
+            self.known = false;
+            return;
+        };
+        let add = |v: [i32; 3], d: [i32; 3]| {
+            [
+                v[0].saturating_add(d[0]),
+                v[1].saturating_add(d[1]),
+                v[2].saturating_add(d[2]),
+            ]
+        };
+        match modifier {
+            Modifier::Count(count) => {
+                if self.known {
+                    let n = count.sample(self.random);
+                    for _ in 0..n {
+                        let was = self.known;
+                        self.apply(rest, lo, hi);
+                        // A copy that began unknown gave every box; the rest give the same.
+                        if !was {
+                            break;
+                        }
+                    }
+                } else if count.max() > 0 {
+                    self.apply(rest, lo, hi);
+                }
+            }
+            Modifier::Rarity(chance) => {
+                if !self.known || self.random.next_float() < 1.0 / *chance as f32 {
+                    self.apply(rest, lo, hi);
+                }
+            }
+            Modifier::NoiseBasedCount { .. } | Modifier::NoiseThresholdCount { .. } => {
+                // No draws: a single position's count is known, a range's could be anything.
+                let n = if lo == hi {
+                    self.decorator
+                        .noise_count(modifier, lo[0], lo[2])
+                        .unwrap_or(0)
+                } else {
+                    1
+                };
+                for _ in 0..n {
+                    let was = self.known;
+                    self.apply(rest, lo, hi);
+                    if !was {
+                        break;
+                    }
+                }
+            }
+            Modifier::InSquare => {
+                if self.known {
+                    let dx = self.random.next_int_bounded(16);
+                    let dz = self.random.next_int_bounded(16);
+                    self.apply(rest, add(lo, [dx, 0, dz]), add(hi, [dx, 0, dz]));
+                } else {
+                    self.apply(rest, lo, add(hi, [15, 0, 15]));
+                }
+            }
+            Modifier::HeightRange(height) => {
+                let (a, b) = if self.known {
+                    let y = height.sample(self.random, self.decorator.anchors);
+                    (y, y)
+                } else {
+                    height.range(self.decorator.anchors)
+                };
+                self.apply(rest, [lo[0], a, lo[2]], [hi[0], b, hi[2]]);
+            }
+            Modifier::Offset(providers) => {
+                if self.known {
+                    let d = [
+                        providers[0].sample(self.random),
+                        providers[1].sample(self.random),
+                        providers[2].sample(self.random),
+                    ];
+                    self.apply(rest, add(lo, d), add(hi, d));
+                } else {
+                    let dl = [providers[0].min(), providers[1].min(), providers[2].min()];
+                    let dh = [providers[0].max(), providers[1].max(), providers[2].max()];
+                    self.apply(rest, add(lo, dl), add(hi, dh));
+                }
+            }
+            Modifier::Biome => {
+                // A single column can be ruled out, at every height it can be.
+                if lo[0] == hi[0] && lo[2] == hi[2] && hi[1] - lo[1] <= 512 {
+                    let any = (lo[1].max(self.min_y)..=hi[1].min(self.max_y)).any(|y| {
+                        let lookup = self.decorator.generator.block_biome([lo[0], y, lo[2]]);
+                        std::iter::once(lookup.biome())
+                            .chain(lookup.candidates().iter().copied())
+                            .any(|b| self.decorator.lists(b, self.placed))
+                    });
+                    if !any {
+                        return;
+                    }
+                }
+                self.apply(rest, lo, hi);
+            }
+            Modifier::ReadsBlocks { shape, .. } => match shape {
+                Some(Read::EnvironmentScan {
+                    down, max_steps, ..
+                }) => {
+                    let (a, b) = if *down {
+                        (lo[1].saturating_sub(*max_steps), hi[1])
+                    } else {
+                        (lo[1], hi[1].saturating_add(*max_steps))
+                    };
+                    self.apply(rest, [lo[0], a, lo[2]], [hi[0], b, hi[2]]);
+                }
+                Some(
+                    Read::SurfaceRelativeThreshold { .. }
+                    | Read::Filter(_)
+                    | Read::SurfaceWaterDepth { .. },
+                ) => {
+                    self.apply(rest, lo, hi);
+                }
+                Some(Read::Heightmap(h)) => {
+                    let (a, b) = self.ground.heights(*h, [lo[0], lo[2]], [hi[0], hi[2]]);
+                    // HeightmapPlacement: nothing at the level's bottom.
+                    if b <= self.min_y {
+                        return;
+                    }
+                    self.apply(rest, [lo[0], a, lo[2]], [hi[0], b, hi[2]]);
+                }
+                // A modifier not ported: anywhere in the column.
+                _ => self.apply(rest, [lo[0], self.min_y, lo[2]], [hi[0], self.max_y, hi[2]]),
+            },
+        }
     }
 }
 
@@ -225,6 +482,12 @@ impl Run<'_, '_, '_, '_> {
             Modifier::Rarity(chance) => {
                 // fcmpg/ifge: NaN fails.
                 if self.random.next_float() < 1.0 / *chance as f32 {
+                    self.apply(rest, pos);
+                }
+            }
+            Modifier::NoiseBasedCount { .. } | Modifier::NoiseThresholdCount { .. } => {
+                let n = self.decorator.noise_count(modifier, x, z).unwrap_or(0);
+                for _ in 0..n {
                     self.apply(rest, pos);
                 }
             }
@@ -301,6 +564,12 @@ impl Run<'_, '_, '_, '_> {
                 (lo <= i64::from(y) && i64::from(y) <= hi).then_some(pos)
             }
             Read::Filter(p) => p.test(region, pos).then_some(pos),
+            Read::SurfaceWaterDepth { max } => {
+                let depth = region
+                    .height(Heightmap::WorldSurface, x, z)
+                    .wrapping_sub(region.height(Heightmap::OceanFloor, x, z));
+                (depth <= *max).then_some(pos)
+            }
         };
         let doubt = region.take_doubt();
         if let Some(why) = doubt_before {

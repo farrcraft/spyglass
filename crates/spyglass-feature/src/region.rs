@@ -20,6 +20,9 @@ pub enum Doubt {
     Tie,
     /// It read outside the region, which vanilla features don't.
     OutsideRegion,
+    /// A neighbour decorated first could have written what it read: this placed feature of a
+    /// neighbour's (ADR 0055).
+    Neighbours(crate::order::PlacedRef),
     /// A feature spyglass doesn't place, this placed feature, ran earlier in the chunk and could
     /// have changed what it read.
     OtherFeature(crate::order::PlacedRef),
@@ -33,8 +36,9 @@ pub enum Doubt {
 #[derive(Debug, Clone)]
 struct Column {
     chunk: Chunk,
-    /// [`LIVE`]'s, then `WORLD_SURFACE_WG` and `OCEAN_FLOOR_WG`, frozen.
-    maps: [[i32; 256]; 6],
+    /// [`LIVE`]'s, then `WORLD_SURFACE_WG` and `OCEAN_FLOOR_WG`, frozen, then [`LIVE`]'s as
+    /// terrain left them.
+    maps: [[i32; 256]; 10],
 }
 
 /// The 3 × 3 chunks around one being decorated.
@@ -59,7 +63,7 @@ impl<'b> Region<'b> {
         let columns = chunks
             .into_iter()
             .map(|chunk| {
-                let mut maps = [[min_y; 256]; 6];
+                let mut maps = [[min_y; 256]; 10];
                 for (i, column) in (0..256).enumerate() {
                     let (x, z) = (column % 16, column / 16);
                     for (m, h) in LIVE
@@ -68,6 +72,9 @@ impl<'b> Region<'b> {
                         .enumerate()
                     {
                         maps[m][i] = first_free(blocks, &chunk, *h, x, z, min_y + height);
+                    }
+                    for m in 0..4 {
+                        maps[6 + m][i] = maps[m][i];
                     }
                 }
                 Column { chunk, maps }
@@ -181,6 +188,22 @@ impl<'b> Region<'b> {
             Heightmap::OceanFloorWg => 5,
         };
         self.columns[i].maps[m][((z & 15) * 16 + (x & 15)) as usize]
+    }
+
+    /// The heightmap's first free y at `(x, z)` as terrain left it, before any feature (the
+    /// `_WG` ones never change): `None` outside the region. Without doubt.
+    pub fn terrain_height(&self, h: Heightmap, x: i32, z: i32) -> Option<i32> {
+        let i = self.column(x, z)?;
+        let c = ((z & 15) * 16 + (x & 15)) as usize;
+        let m = match h {
+            Heightmap::WorldSurface => 6,
+            Heightmap::OceanFloor => 7,
+            Heightmap::MotionBlocking => 8,
+            Heightmap::MotionBlockingNoLeaves => 9,
+            Heightmap::WorldSurfaceWg => 4,
+            Heightmap::OceanFloorWg => 5,
+        };
+        Some(self.columns[i].maps[m][c])
     }
 
     /// The first doubt since the last [`Region::take_doubt`], which clears it.

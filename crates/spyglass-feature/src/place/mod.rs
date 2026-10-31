@@ -17,7 +17,9 @@ use spyglass_rng::WorldgenRandom;
 
 use crate::blocks::Blocks;
 use crate::decorate::{Decorator, Drawn, Try};
+use crate::neighbours::Foreign;
 use crate::order::PlacedRef;
+use crate::reach::Changes;
 use crate::region::{Doubt, Region};
 use crate::settings::FeatureSettings;
 
@@ -55,9 +57,16 @@ pub enum Outcome {
 pub struct Placement {
     /// The try.
     pub at: Try,
-    /// What it did.
+    /// What it did, for the chunk decorated before its neighbours (certain on its own).
     pub outcome: Outcome,
+    /// Why neighbours decorated first could change it, if they could; `None` where it holds
+    /// whatever the neighbours do (`docs/specs/features.md#certainty`).
+    pub neighbours: Option<Doubt>,
 }
+
+/// Offsets a try reads, around its position: the least, the greatest, and whether y is any y.
+#[derive(Debug, Clone, Copy)]
+struct ReadBox([i32; 3], [i32; 3], bool);
 
 /// A configured feature spyglass places.
 #[derive(Debug, Clone)]
@@ -162,6 +171,33 @@ impl Placer {
         Ok(Placer { features })
     }
 
+    /// The boxes a placed feature's try can read, around its position, and whether a block
+    /// turning into another solid one (an ore) can change its answer. Whole columns where y is
+    /// any y; `None` for one not placed here.
+    fn reads(&self, placed: PlacedRef) -> Option<(&'static [ReadBox], bool)> {
+        let (_, feature) = self.features.iter().find(|(r, _)| *r == placed)?;
+        Some(match feature {
+            // The lake's box, and the scan down to it.
+            Configured::Lake(_) => (
+                &[
+                    ReadBox([-8, -4, -8], [7, 3, 7], false),
+                    ReadBox([0, 0, 0], [0, 0, 0], true),
+                ],
+                true,
+            ),
+            Configured::Geode(_) => (&[ReadBox([-16; 3], [16; 3], false)], true),
+            Configured::MonsterRoom(_) => (&[ReadBox([-4, -2, -4], [4, 4, 4], false)], false),
+            // Its footprint's heightmap is terrain's; its y anywhere below.
+            Configured::Fossil(_) => (&[ReadBox([-7, 0, -7], [7, 0, 7], true)], false),
+            // The heightmap's column, and the well's box.
+            Configured::DesertWell(_) | Configured::Overlay(_) => {
+                (&[ReadBox([-3, 0, -3], [3, 0, 3], true)], true)
+            }
+            Configured::BlockBlob(_) => (&[ReadBox([-5, 0, -5], [5, 0, 5], true)], true),
+            Configured::LargeDripstone(_) => (&[ReadBox([-32, 0, -32], [32, 0, 32], true)], true),
+        })
+    }
+
     /// Whether `placed`'s feature is one spyglass places.
     pub fn places(&self, placed: PlacedRef) -> bool {
         self.features.iter().any(|(r, _)| *r == placed)
@@ -191,43 +227,100 @@ impl Placer {
     }
 
     /// Decorates the region's chunk with `decorator`'s placed features: those this placer places
-    /// are placed, and each try's outcome returned in decoration order; any other that reaches
-    /// its feature puts everything after it in doubt (`docs/specs/features.md#certainty`).
+    /// are placed, and each try's outcome returned in decoration order
+    /// (`docs/specs/features.md#certainty`).
+    ///
+    /// A try is a candidate where something spyglass doesn't place exactly could have written
+    /// what it reads: what the chunk's own placed features could write wherever their tries
+    /// are (`own`, [`crate::NeighbourBounds::own_writes`]), counted for those spyglass doesn't
+    /// place, and for those it places from their first candidate on. A placed feature's tries
+    /// after its first candidate are candidates too: its draws aren't known. Whether an answer
+    /// holds whatever the neighbours do adds what they could write if decorated first
+    /// (`foreign`, [`crate::NeighbourBounds::writes`]; ADR 0056).
     pub fn decorate(
         &self,
         decorator: &Decorator<'_>,
         region: &mut Region<'_>,
         seed: i64,
+        foreign: &[Foreign],
+        own: &[Foreign],
     ) -> Vec<Placement> {
         let mut out = Vec::new();
-        let mut after: Option<Doubt> = None;
+        // The placed features whose writes aren't known, with why: on the chunk's own, and
+        // whatever the neighbours do.
+        let mut unsure: Vec<(PlacedRef, Doubt)> = Vec::new();
+        let mut unsure_anyway: Vec<(PlacedRef, Doubt)> = Vec::new();
         let mut place = |t: &Try, random: &mut WorldgenRandom, region: &mut Region<'_>| {
-            // Once something in the chunk is in doubt, everything after it is: a candidate's
-            // blocks may not be the game's.
             region.take_doubt();
-            if let Some(why) = after.or((!t.certain).then_some(Doubt::Tie)) {
+            let ours = self.reads(t.placed);
+            if ours.is_none() || !t.exact {
+                // Not placed here, or where isn't known: what it writes isn't.
+                let why = Doubt::OtherFeature(t.placed);
+                for list in [&mut unsure, &mut unsure_anyway] {
+                    if !list.iter().any(|(r, _)| *r == t.placed) {
+                        list.push((t.placed, why));
+                    }
+                }
+                return Drawn::Unknown;
+            }
+            let (boxes, identity) = ours.unwrap_or((&[], true));
+            let reads = |f: &Foreign| {
+                (identity || f.changes == Changes::Any)
+                    && boxes.iter().any(|ReadBox(lo, hi, column)| {
+                        (0..3).all(|i| {
+                            let (a, b) = if i == 1 && *column {
+                                (i32::MIN, i32::MAX)
+                            } else {
+                                (
+                                    t.pos[i].saturating_add(lo[i]),
+                                    t.pos[i].saturating_add(hi[i]),
+                                )
+                            };
+                            a <= f.max[i] && f.min[i] <= b
+                        })
+                    })
+            };
+            // Its own earlier draws, or an earlier unsure feature's writes it reads.
+            let doubt = |unsure: &[(PlacedRef, Doubt)]| {
+                let find = |r: PlacedRef| unsure.iter().find(|(u, _)| *u == r).map(|(_, d)| *d);
+                find(t.placed).or_else(|| {
+                    own.iter()
+                        .filter(|f| f.order < (t.step, t.index) && reads(f))
+                        .find_map(|f| find(f.placed))
+                })
+            };
+            let tie = (!t.certain).then_some(Doubt::Tie);
+            let why = tie.or_else(|| doubt(&unsure));
+            let anyway = foreign
+                .iter()
+                .find(|f| reads(f))
+                .map(|f| Doubt::Neighbours(f.placed))
+                .or_else(|| doubt(&unsure_anyway));
+            if let Some(why) = why {
                 region.doubt(why);
             }
-            if !t.exact {
-                // Where it went isn't known, so neither is what it wrote.
-                after.get_or_insert(Doubt::OtherFeature(t.placed));
-                return Drawn::Unknown;
-            }
             let Some(placed) = self.place(t.placed, region, random, t.pos, seed) else {
-                // Not placed here: whatever it wrote is unknown.
-                after.get_or_insert(Doubt::OtherFeature(t.placed));
                 return Drawn::Unknown;
             };
-            let why = region.take_doubt();
-            if let Some(why) = why {
-                after.get_or_insert(why);
+            let why = region.take_doubt().or(why);
+            let anyway = why.or(anyway);
+            for (list, d) in [(&mut unsure, why), (&mut unsure_anyway, anyway)] {
+                if let Some(d) = d
+                    && !list.iter().any(|(r, _)| *r == t.placed)
+                {
+                    list.push((t.placed, d));
+                }
             }
             let outcome = match why {
                 Some(why) => Outcome::Candidate { placed, why },
                 None if placed => Outcome::Placed,
                 None => Outcome::Declined,
             };
-            out.push(Placement { at: *t, outcome });
+            out.push(Placement {
+                at: *t,
+                outcome,
+                neighbours: anyway,
+            });
             Drawn::Known
         };
         decorator.decorate(region, &mut place);

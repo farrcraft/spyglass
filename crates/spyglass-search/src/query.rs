@@ -30,8 +30,11 @@ pub const MAX_FEATURE_SIDE: u32 = 1024;
 /// A parsed query: its `find` line, if any, and its constraints in order.
 #[derive(Debug, Clone)]
 pub struct Query {
+    /// The `find` line's number and what it asks for, if there is one.
     find: Option<(usize, Find)>,
+    /// The constraints, in the order written.
     constraints: Vec<Constraint>,
+    /// Each constraint's line, from 1, by index into `constraints`.
     lines: Vec<usize>,
 }
 

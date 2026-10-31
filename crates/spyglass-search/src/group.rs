@@ -11,6 +11,11 @@ pub fn distance_sqr<const N: usize>(a: [i32; N], b: [i32; N]) -> u64 {
 
 /// The largest group of `points` (up to `cap` members) every two of which are at most `apart`
 /// blocks apart, as indices: the first such group in index order.
+///
+/// A branch-and-bound search: each point in turn starts a group, which grows only with later
+/// points near every member so far. A branch stops once even all its remaining candidates
+/// couldn't beat the best group found, or once a group reaches `cap`. The point counts are
+/// small (starts or features in one place), so the worst case doesn't arise in practice.
 pub fn largest_group<const N: usize>(points: &[[i32; N]], apart: u32, cap: usize) -> Vec<usize> {
     let limit = u64::from(apart).pow(2);
     let near = |a: usize, b: usize| distance_sqr(points[a], points[b]) <= limit;

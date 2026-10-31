@@ -20,6 +20,7 @@ pub struct ParseError {
     pub message: String,
 }
 
+/// The query language's words, which a bare id can't be (`minecraft:end` can).
 const KEYWORDS: [&str; 28] = [
     "find",
     "feature",
@@ -54,16 +55,21 @@ const KEYWORDS: [&str; 28] = [
 /// A word of a line, and its column.
 #[derive(Debug, Clone, Copy)]
 struct Token<'a> {
+    /// The word.
     text: &'a str,
+    /// Its first character's column, from 1.
     column: usize,
 }
 
-/// Splits a line into tokens, dropping its comment.
+/// Splits a line into tokens, dropping its comment. A `#` at the start of a word starts a
+/// comment when it's the line's first word or a word on its own; otherwise it's a tag, as in
+/// `#minecraft:village`.
 fn tokens(line: &str) -> Vec<Token<'_>> {
     let mut out = Vec::new();
     let mut start: Option<(usize, usize)> = None; // byte offset and column of the current token
     let mut chars = line.char_indices().enumerate().peekable();
-    while let Some((i, (at, c))) = chars.next() {
+    // `index` counts characters, for columns; `at` is the byte offset, for slicing.
+    while let Some((index, (at, c))) = chars.next() {
         let blank = c == ' ' || c == '\t';
         if blank {
             if let Some((from, column)) = start.take() {
@@ -83,7 +89,7 @@ fn tokens(line: &str) -> Vec<Token<'_>> {
             }
         }
         if start.is_none() {
-            start = Some((at, i + 1));
+            start = Some((at, index + 1));
         }
     }
     if let Some((from, column)) = start {
@@ -97,7 +103,9 @@ fn tokens(line: &str) -> Vec<Token<'_>> {
 
 /// A parsed query: its `find` line and its constraints, each with its line.
 pub(crate) struct ParsedQuery {
+    /// The `find` line's number and what it asks for, if there is one.
     pub find: Option<(usize, Find)>,
+    /// Each constraint with its line's number, in order.
     pub constraints: Vec<(usize, Constraint)>,
 }
 
@@ -145,8 +153,11 @@ pub(crate) fn query(text: &str) -> Result<ParsedQuery, ParseError> {
 
 /// One line's tokens, read left to right.
 struct Parser<'t, 'a> {
+    /// The line's number, from 1, for errors.
     line: usize,
+    /// The line's tokens.
     tokens: &'t [Token<'a>],
+    /// The index of the next token to read.
     next: usize,
     /// The column just past the last token, where "end of line" errors point.
     end_column: usize,
@@ -370,14 +381,14 @@ impl<'a> Parser<'_, 'a> {
             }
             "height" => {
                 self.next += 1;
-                let a = self.signed("a height", MAX_HEIGHT)?;
+                let one = self.signed("a height", MAX_HEIGHT)?;
                 self.keyword("to")?;
-                let b = self.signed("a height", MAX_HEIGHT)?;
+                let other = self.signed("a height", MAX_HEIGHT)?;
                 let place = self.place(true)?;
                 let step = self.height_step(&place)?;
                 Ok(Kind::Height {
-                    min: a.min(b),
-                    max: a.max(b),
+                    min: one.min(other),
+                    max: one.max(other),
                     place,
                     step,
                 })
@@ -448,7 +459,9 @@ impl<'a> Parser<'_, 'a> {
 
     /// `place`, or `within R of STRUCTURE place`.
     fn region(&mut self) -> Parsed<Region> {
-        let at = self.next;
+        // `within R of` starts both forms: the word after `of` tells them apart, and for a
+        // place the parser goes back to read it whole.
+        let start = self.next;
         if self.eat("within") {
             let radius = self.radius()?;
             self.keyword("of")?;
@@ -462,7 +475,7 @@ impl<'a> Parser<'_, 'a> {
                     place,
                 });
             }
-            self.next = at;
+            self.next = start;
         }
         Ok(Region::Place(self.place(true)?))
     }
@@ -502,10 +515,10 @@ impl<'a> Parser<'_, 'a> {
             Some("in") => {
                 self.next += 1;
                 let first = self.peek();
-                let a = self.point("a point `x,z`")?;
+                let corner = self.point("a point `x,z`")?;
                 self.keyword("to")?;
-                let b = self.point("a point `x,z`")?;
-                if (0..2).any(|i| a[i].abs_diff(b[i]) >= MAX_PLACE_SIDE) {
+                let other = self.point("a point `x,z`")?;
+                if (0..2).any(|i| corner[i].abs_diff(other[i]) >= MAX_PLACE_SIDE) {
                     let message = format!("a box may be at most {MAX_PLACE_SIDE} blocks on a side");
                     return Err(match first {
                         Some(t) => self.error_at(t, message),
@@ -513,8 +526,8 @@ impl<'a> Parser<'_, 'a> {
                     });
                 }
                 Ok(Place::Box {
-                    min: [a[0].min(b[0]), a[1].min(b[1])],
-                    max: [a[0].max(b[0]), a[1].max(b[1])],
+                    min: [corner[0].min(other[0]), corner[1].min(other[1])],
+                    max: [corner[0].max(other[0]), corner[1].max(other[1])],
                 })
             }
             _ => Err(self.expected("`within` or `in`")),
@@ -687,10 +700,11 @@ impl<'a> Parser<'_, 'a> {
 
     fn point(&mut self, what: &str) -> Parsed<[i32; 2]> {
         let token = self.take(what)?;
-        let p = point(token.text).ok_or_else(|| {
+        let xz = point(token.text).ok_or_else(|| {
             self.error_at(token, format!("expected {what}, found `{}`", token.text))
         })?;
-        if p.iter()
+        if xz
+            .iter()
             .any(|c| c.unsigned_abs() > MAX_COORDINATE.unsigned_abs())
         {
             return Err(self.error_at(
@@ -698,7 +712,7 @@ impl<'a> Parser<'_, 'a> {
                 format!("coordinates must be -{MAX_COORDINATE} to {MAX_COORDINATE}"),
             ));
         }
-        Ok(p)
+        Ok(xz)
     }
 }
 
@@ -721,9 +735,9 @@ fn point(text: &str) -> Option<[i32; 2]> {
 /// one.
 fn full_id(text: &str) -> Option<String> {
     let (namespace, path) = text.split_once(':').unwrap_or(("minecraft", text));
-    let valid = |s: &str, extra: &[u8]| {
-        !s.is_empty()
-            && s.bytes().all(|b| {
+    let valid = |part: &str, extra: &[u8]| {
+        !part.is_empty()
+            && part.bytes().all(|b| {
                 b.is_ascii_lowercase()
                     || b.is_ascii_digit()
                     || b"_.-".contains(&b)

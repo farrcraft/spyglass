@@ -174,8 +174,8 @@ impl SeedSource {
         match self {
             SeedSource::All => None,
             SeedSource::Range { first, last } => {
-                let n = (i128::from(*last) - i128::from(*first) + 1).max(0);
-                u64::try_from(n).ok()
+                let count = (i128::from(*last) - i128::from(*first) + 1).max(0);
+                u64::try_from(count).ok()
             }
             SeedSource::List(seeds) => Some(seeds.len() as u64),
         }
@@ -312,9 +312,13 @@ pub enum Checked {
 /// What one batch found.
 #[derive(Default)]
 struct Batch {
+    /// Seeds the prefilter rejected.
     prefiltered: u64,
+    /// Seeds checked.
     checked: u64,
+    /// Seeds reported, scored or below the threshold.
     reported: u64,
+    /// The batch's best hits, ranked and cut to the top list's length.
     top: Vec<Hit>,
 }
 
@@ -327,6 +331,14 @@ struct Batch {
 /// limit passes, or when it has run for a second. What's kept is every index below the first
 /// one not finished, so `next` still means every index below it is done; the rest is left for
 /// the next round (`docs/specs/search.md#seed-sources`).
+///
+/// The top list is the same for any thread count, throttle and timing, because nothing in it
+/// depends on which thread finished first. Every seed in a round is checked against the same
+/// threshold, fixed when the round begins. A seed scored below it can't be in the final list
+/// either, since the list's last score only rises, so a higher or lower threshold (rounds sized
+/// differently) changes how much work is skipped, not what's found. The batches are merged in
+/// index order, ties in score go to the lower index, and a cut keeps only a prefix of indices,
+/// so `next` always means the same set of seeds was done.
 pub fn run<E: Send>(
     pool: &rayon::ThreadPool,
     options: &RunOptions,
@@ -342,7 +354,7 @@ pub fn run<E: Send>(
     let from = u128::from(options.from).min(len);
     let end = options
         .seeds
-        .map_or(len, |n| (from + u128::from(n)).min(len));
+        .map_or(len, |count| (from + u128::from(count)).min(len));
     let threads = pool.current_num_threads() as u128;
     // The first round has a batch of one index for each thread; later rounds' batches aim at
     // BATCH_TIME, and their rounds at ROUND, with a batch for every thread at least.
@@ -361,7 +373,8 @@ pub fn run<E: Send>(
     };
     let mut cursor = from;
     while cursor < end {
-        let mut stop = end.min(cursor + round);
+        // The round covers `cursor..round_end`, unless it's cut short.
+        let mut round_end = end.min(cursor + round);
         let started = Instant::now();
         let cut_off = started + MAX_ROUND_TIME;
         let threshold = if state.top.len() == top_n {
@@ -372,27 +385,28 @@ pub fn run<E: Send>(
         // The indices to check. In `All`, one prefilter answer covers each group of seeds
         // sharing their lower 48 bits, and rejected groups are skipped whole. Once
         // MAX_ROUND_CHECKS indices are accepted, the round ends at the next group.
-        let mut ranges = vec![(cursor, stop)];
+        let mut ranges = vec![(cursor, round_end)];
         let mut rejected = Vec::new();
         if grouped {
+            // Each group as `(start, end)`, cut at the round's ends.
             let mut groups = Vec::new();
-            let mut a = cursor;
-            while a < stop {
-                let b = ((a / GROUP + 1) * GROUP).min(stop);
-                groups.push((a, b));
-                a = b;
+            let mut group_start = cursor;
+            while group_start < round_end {
+                let group_end = ((group_start / GROUP + 1) * GROUP).min(round_end);
+                groups.push((group_start, group_end));
+                group_start = group_end;
             }
             let accepted: Vec<bool> = pool.install(|| {
                 groups
                     .par_iter()
-                    .map(|&(a, _)| accepts(options.source.seed(a as u64)))
+                    .map(|&(group_start, _)| accepts(options.source.seed(group_start as u64)))
                     .collect()
             });
             ranges.clear();
             let mut checks = 0;
             for (range, accepted) in groups.into_iter().zip(accepted) {
                 if checks >= MAX_ROUND_CHECKS {
-                    stop = range.0;
+                    round_end = range.0;
                     break;
                 }
                 if accepted {
@@ -403,11 +417,16 @@ pub fn run<E: Send>(
                 }
             }
         }
+        // Each range in pieces of `batch_len`, as `(start, end)`, in index order.
         let batches: Vec<(u128, u128)> = ranges
             .into_iter()
-            .flat_map(|(a, b)| {
-                (0..(b - a).div_ceil(batch_len))
-                    .map(move |k| (a + k * batch_len, (a + (k + 1) * batch_len).min(b)))
+            .flat_map(|(range_start, range_end)| {
+                (0..(range_end - range_start).div_ceil(batch_len)).map(move |k| {
+                    (
+                        range_start + k * batch_len,
+                        (range_start + (k + 1) * batch_len).min(range_end),
+                    )
+                })
             })
             .collect();
         // Whether to leave the seed at `index` for later. The round's first index is never
@@ -421,10 +440,10 @@ pub fn run<E: Send>(
         let results: Vec<Result<(Batch, u128), E>> = pool.install(|| {
             batches
                 .par_iter()
-                .map(|&(a, b)| {
+                .map(|&(batch_start, batch_end)| {
                     let _working = options.throttle.enter(&options.stop);
                     let mut batch = Batch::default();
-                    for index in a..b {
+                    for index in batch_start..batch_end {
                         if cut(index) {
                             return Ok((batch, index));
                         }
@@ -444,20 +463,20 @@ pub fn run<E: Send>(
                             }
                         }
                     }
-                    Ok((batch, b))
+                    Ok((batch, batch_end))
                 })
                 .collect()
         });
         // Keep the batches in index order up to the first that stopped short, with that one's
         // part, and drop the rest: the next round checks their indices again.
-        let mut reached = stop;
-        for (&(_, b), result) in batches.iter().zip(results) {
+        let mut reached = round_end;
+        for (&(_, batch_end), result) in batches.iter().zip(results) {
             let (batch, got_to) = result?;
             state.prefiltered += batch.prefiltered;
             state.checked += batch.checked;
             state.reported += batch.reported;
             merge(&mut state.top, batch.top, top_n);
-            if got_to < b {
+            if got_to < batch_end {
                 reached = got_to;
                 break;
             }
@@ -466,9 +485,10 @@ pub fn run<E: Send>(
         // after it.
         state.prefiltered += rejected
             .iter()
-            .filter(|&&(_, b)| b <= reached)
-            .map(|&(a, b)| (b - a) as u64)
+            .filter(|&&(_, group_end)| group_end <= reached)
+            .map(|&(group_start, group_end)| (group_end - group_start) as u64)
             .sum::<u64>();
+        // Size the next round's batches and the round itself from this one's speed.
         let took = started.elapsed().as_secs_f64().max(1e-6);
         let per_second = (reached - cursor) as f64 / took;
         // Per thread, so checks that keep every thread busy fill a batch as fast as one alone.
@@ -534,11 +554,11 @@ mod tests {
 
     /// A made-up score: reported when the seed is odd, scored by a hash of it.
     fn score(seed: i64, threshold: u64) -> Result<Checked, Infallible> {
-        let s = (seed as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 54; // 0 to 1023
-        Ok(match (seed & 1 == 1, s >= threshold) {
+        let hash = (seed as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 54; // 0 to 1023
+        Ok(match (seed & 1 == 1, hash >= threshold) {
             (false, _) => Checked::Failed,
             (true, false) => Checked::Below,
-            (true, true) => Checked::Scored(s),
+            (true, true) => Checked::Scored(hash),
         })
     }
 

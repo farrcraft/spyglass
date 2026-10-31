@@ -176,6 +176,7 @@ impl App {
                     .map(|s| world.structure_query(s))
                     .collect::<spyglass::Result<_>>()
                     .map_err(|e| e.to_string())?,
+                features: Vec::new(),
                 slime_chunks: export.slime_chunks && export.area.scale <= spyglass::MAX_SLIME_SCALE,
                 spawn: export.spawn,
                 confirm: export.confirm,

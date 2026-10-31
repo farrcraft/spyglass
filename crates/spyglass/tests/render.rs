@@ -824,6 +824,11 @@ fn the_real_world_renders_the_same_in_tiles() {
                 world.structure_query("#minecraft:village").unwrap(),
                 world.structure_query("minecraft:stronghold").unwrap(),
             ],
+            features: if scale <= spyglass::MAX_FEATURE_SCALE {
+                vec![world.feature_query("minecraft:monster_room").unwrap()]
+            } else {
+                Vec::new()
+            },
             slime_chunks: scale <= spyglass::MAX_SLIME_SCALE,
             spawn: true,
             confirm: true,

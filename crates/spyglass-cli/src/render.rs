@@ -50,6 +50,11 @@ pub fn run(args: &Render) -> Result<()> {
             .iter()
             .map(|s| world.structure_query(s))
             .collect::<spyglass::Result<_>>()?,
+        features: args
+            .features
+            .iter()
+            .map(|f| world.feature_query(f))
+            .collect::<spyglass::Result<_>>()?,
         slime_chunks: args.slime,
         spawn: args.spawn,
         confirm: args.confirm,
@@ -61,7 +66,7 @@ pub fn run(args: &Render) -> Result<()> {
         pins: args.pins.clone(),
     };
     let features = session.map_features(&area, &layers)?;
-    let image = session.render(&area, &layers)?;
+    let image = session.render_with(&area, &layers, &features)?;
     let path = &args.output;
     let file = File::create(path).with_context(|| format!("creating {}", path.display()))?;
     image
@@ -98,6 +103,7 @@ pub fn run(args: &Render) -> Result<()> {
                     ties: layers.ties,
                     highlight: &args.highlight,
                     structures: &args.structures,
+                    features: &args.features,
                     slime_chunks: layers.slime_chunks,
                     spawn: layers.spawn,
                     confirm: layers.confirm,
@@ -108,7 +114,12 @@ pub fn run(args: &Render) -> Result<()> {
                     carvers: layers.carvers,
                 },
                 structures,
-                slime_chunks: features.slime_chunks,
+                features: features
+                    .features
+                    .iter()
+                    .map(|f| json::FeatureHit::new(f, None))
+                    .collect(),
+                slime_chunks: features.slime_chunks.clone(),
                 spawn: features.spawn.map(|s| json::SpawnAnswer::new(&s)),
                 pins: features.pins.iter().map(json::PinMark::new).collect(),
             },
@@ -149,6 +160,14 @@ pub fn run(args: &Render) -> Result<()> {
             } else {
                 "not in view"
             },
+        );
+    }
+    if !layers.features.is_empty() {
+        let certain = features.features.iter().filter(|f| f.certain).count();
+        out!(
+            "  {} features ({certain} certain, {} likely candidates)",
+            features.features.len(),
+            features.features.len() - certain,
         );
     }
     out.warn();

@@ -330,6 +330,11 @@ pub struct Render {
     /// Structures to mark: ids or `#tags`, separated by commas.
     #[arg(long, value_delimiter = ',')]
     pub structures: Vec<String>,
+    /// Features to mark (scales up to 2): placed or configured feature ids, separated by
+    /// commas, such as `minecraft:monster_room`. Each chunk they could be in is placed, which
+    /// takes a while.
+    #[arg(long, value_delimiter = ',')]
+    pub features: Vec<String>,
     /// Biomes to keep bright, separated by commas; the rest are dimmed.
     #[arg(long, value_delimiter = ',')]
     pub highlight: Vec<String>,

@@ -53,9 +53,9 @@ pub use features::{FeatureLocate, FeatureOptions, FeatureQuery, FoundFeature, Ne
 pub use game::{Game, GameSession};
 pub use render::{
     BiomeMap, CarverKind, CarvingMap, DEFAULT_MAP_Y, HeightMap, Image, Layers, MARKER_REACH,
-    MAX_PIXELS, MAX_SCALE, MAX_SIDE, MAX_SLIME_SCALE, MAX_TERRAIN_SCALE, MAX_UNDERGROUND_SCALE,
-    MapArea, MapFeatures, Pin, UndergroundMap, Vein, VeinPart, biome_colour, display_name,
-    structure_colour, vein_colour,
+    MAX_FEATURE_SCALE, MAX_PIXELS, MAX_SCALE, MAX_SIDE, MAX_SLIME_SCALE, MAX_TERRAIN_SCALE,
+    MAX_UNDERGROUND_SCALE, MapArea, MapFeatures, Pin, UndergroundMap, Vein, VeinPart, biome_colour,
+    display_name, feature_colour, structure_colour, vein_colour,
 };
 pub use save::{
     LauncherSave, PackConcern, SaveInfo, SaveInspector, SaveLocation, SaveReport, SaveWarning,

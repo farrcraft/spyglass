@@ -10,14 +10,14 @@ use std::io;
 
 use spyglass_biome::{BiomeId, Lookup};
 
-pub use palette::{biome_colour, display_name, structure_colour};
+pub use palette::{biome_colour, display_name, feature_colour, structure_colour};
 pub use underground::{
     CarverKind, CarvingMap, MAX_UNDERGROUND_SCALE, UndergroundMap, Vein, VeinPart, vein_colour,
 };
 
 use crate::{
-    BiomeAt, BiomeQuery, Dimension, Error, Heightmap, Result, Session, SpawnOrigin, StructureQuery,
-    StructureStart, World,
+    BiomeAt, BiomeQuery, Dimension, Error, FeatureOptions, FeatureQuery, FoundFeature, Heightmap,
+    Result, Session, SpawnOrigin, StructureQuery, StructureStart, World,
 };
 
 /// The height biomes are sampled at unless asked otherwise.
@@ -33,6 +33,9 @@ pub const MAX_SLIME_SCALE: u32 = 16;
 /// The largest scale terrain layers (relief, surface biomes) are drawn at: each pixel needs a
 /// column's height, and a chunk's heights take milliseconds.
 pub const MAX_TERRAIN_SCALE: u32 = 4;
+/// The largest scale features (dungeons, geodes and the rest) are drawn at: each chunk they
+/// could be in is placed, at about 30 ms a chunk (`docs/specs/render.md#layers`).
+pub const MAX_FEATURE_SCALE: u32 = 2;
 /// How many pixels a marker reaches from its centre. An area includes the features whose
 /// centre is within this of it.
 pub const MARKER_REACH: u32 = 5;
@@ -173,6 +176,9 @@ pub struct Layers {
     pub highlight: Vec<BiomeQuery>,
     /// Structures to mark, by id or tag.
     pub structures: Vec<StructureQuery>,
+    /// Features to mark, at scales up to [`MAX_FEATURE_SCALE`]: their certain and likely
+    /// answers.
+    pub features: Vec<FeatureQuery>,
     /// Slime chunks, at scales up to [`MAX_SLIME_SCALE`].
     pub slime_chunks: bool,
     /// The world spawn's origin.
@@ -217,6 +223,7 @@ impl Default for Layers {
             ties: false,
             highlight: Vec::new(),
             structures: Vec::new(),
+            features: Vec::new(),
             slime_chunks: false,
             spawn: false,
             confirm: false,
@@ -268,6 +275,9 @@ impl Layers {
 pub struct MapFeatures {
     /// Structure starts and candidates, in drawing order: by set id, then chunk z, then x.
     pub structures: Vec<StructureStart>,
+    /// Features, certain and likely, in drawing order: by z, then x, then y, then placed
+    /// feature.
+    pub features: Vec<FoundFeature>,
     /// Slime chunks overlapping the area, by z, then x.
     pub slime_chunks: Vec<[i32; 2]>,
     /// The spawn's origin, if its marker reaches the area.
@@ -606,6 +616,16 @@ fn structure_marker(colour: [u8; 3], certain: bool) -> impl Fn(i64, i64) -> Opti
     }
 }
 
+/// A feature marker: a diamond 9 pixels across with a black border, hollow for a candidate.
+fn feature_marker(colour: [u8; 3], certain: bool) -> impl Fn(i64, i64) -> Option<[u8; 3]> {
+    move |dx, dy| match dx.abs() + dy.abs() {
+        4 => Some(BLACK),
+        2 | 3 => Some(colour),
+        0 | 1 if certain => Some(colour),
+        _ => None,
+    }
+}
+
 /// The spawn marker: a white cross over a wider black one.
 fn spawn_marker(dx: i64, dy: i64) -> Option<[u8; 3]> {
     let (ax, ay) = (dx.abs(), dy.abs());
@@ -765,9 +785,10 @@ impl Session<'_> {
         self.biome_at([x, y, z])
     }
 
-    /// The structure starts, slime chunks, spawn and pins that `area` draws with `layers`
-    /// (`docs/specs/render.md#layers`): structures, the spawn and pins whose marker reaches the
-    /// area, and slime chunks that overlap it.
+    /// The structure starts, features, slime chunks, spawn and pins that `area` draws with
+    /// `layers` (`docs/specs/render.md#layers`): structures, features, the spawn and pins whose
+    /// marker reaches the area, and slime chunks that overlap it. Features place every chunk
+    /// their markers could come from, which takes a while ([`Session::features_in`]).
     pub fn map_features(&self, area: &MapArea, layers: &Layers) -> Result<MapFeatures> {
         area.check()?;
         layers.check(self.world)?;
@@ -801,6 +822,31 @@ impl Session<'_> {
             });
             features.structures = starts;
         }
+        if !layers.features.is_empty() {
+            if area.scale > MAX_FEATURE_SCALE {
+                return Err(invalid(format!(
+                    "features are drawn at scales up to {MAX_FEATURE_SCALE}, not {}",
+                    area.scale
+                )));
+            }
+            // The chunks a reaching marker's position can be in.
+            let [[x0, x1], [z0, z1]] = area.reach_blocks();
+            let min = [saturate(x0 >> 4), saturate(z0 >> 4)];
+            let max = [saturate(x1 >> 4), saturate(z1 >> 4)];
+            for query in &layers.features {
+                for f in self.features_in(query, min, max, FeatureOptions::default())? {
+                    if area.reaches([f.position[0], f.position[2]])
+                        && !features.features.contains(&f)
+                    {
+                        features.features.push(f);
+                    }
+                }
+            }
+            features.features.sort_by(|a, b| {
+                let key = |f: &FoundFeature| (f.position[2], f.position[0], f.position[1]);
+                key(a).cmp(&key(b)).then_with(|| a.feature.cmp(&b.feature))
+            });
+        }
         if layers.slime_chunks {
             if area.scale > MAX_SLIME_SCALE {
                 return Err(invalid(format!(
@@ -833,6 +879,19 @@ impl Session<'_> {
     /// can keep a [`CarvingMap`] and draw the steps themselves.
     pub fn render(&self, area: &MapArea, layers: &Layers) -> Result<Image> {
         let features = self.map_features(area, layers)?;
+        self.render_with(area, layers, &features)
+    }
+
+    /// [`render`](Self::render) with `features` already found for the same area and layers
+    /// ([`Session::map_features`]), for a front end that lists them too.
+    pub fn render_with(
+        &self,
+        area: &MapArea,
+        layers: &Layers,
+        features: &MapFeatures,
+    ) -> Result<Image> {
+        area.check()?;
+        layers.check(self.world)?;
         let heights = if layers.need_heights() {
             Some(self.height_map(area)?)
         } else {
@@ -859,7 +918,7 @@ impl Session<'_> {
         if layers.need_underground() {
             image.draw_underground(&self.underground_map(area, layers, None)?, layers);
         }
-        image.draw_features(area, &features);
+        image.draw_features(area, features);
         Ok(image)
     }
 }
@@ -877,7 +936,7 @@ impl Image {
     }
 
     /// Draws `features` over the image of `area`, which must be the image's size: slime chunks,
-    /// then structure markers, then the spawn, then pins. [`Session::render`] is
+    /// then structure markers, then feature markers, then the spawn, then pins. [`Session::render`] is
     /// [`BiomeMap::colorize`] (or [`background`](Self::background)), then this, with
     /// [`Session::map_features`]; front ends that cache biome maps can do the steps
     /// themselves, and leave out features they draw another way.
@@ -895,6 +954,14 @@ impl Image {
             let centre = area.pixel([start.position[0], start.position[2]]);
             let marker = structure_marker(structure_colour(&start.set), start.certain);
             self.stamp(centre, 4, marker);
+        }
+        for f in &features.features {
+            let centre = area.pixel([f.position[0], f.position[2]]);
+            self.stamp(
+                centre,
+                4,
+                feature_marker(feature_colour(&f.feature), f.certain),
+            );
         }
         if let Some(origin) = &features.spawn {
             self.stamp(area.pixel(origin.map_block()), 5, spawn_marker);
@@ -985,6 +1052,14 @@ mod tests {
         assert_eq!(image.pixel([4, 4]), [1, 1, 1]);
         image.stamp([4, 4], 4, structure_marker([9, 9, 9], true));
         assert_eq!(image.pixel([4, 4]), [9, 9, 9]);
+        let mut image = Image::filled([9, 9], [1, 1, 1]);
+        image.stamp([4, 4], 4, feature_marker([9, 9, 9], false));
+        assert_eq!(image.pixel([0, 0]), [1, 1, 1]);
+        assert_eq!(image.pixel([0, 4]), BLACK);
+        assert_eq!(image.pixel([2, 4]), [9, 9, 9]);
+        assert_eq!(image.pixel([4, 5]), [1, 1, 1]);
+        image.stamp([4, 4], 4, feature_marker([9, 9, 9], true));
+        assert_eq!(image.pixel([4, 5]), [9, 9, 9]);
         // Clipped at the edges without panicking.
         image.stamp([-3, 10], 5, spawn_marker);
         let mut image = Image::filled([11, 11], [1, 1, 1]);

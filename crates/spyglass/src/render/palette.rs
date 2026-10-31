@@ -108,6 +108,18 @@ const STRUCTURE_SETS: &[(&str, [u8; 3])] = &[
     ("end_cities", [0xd0, 0xa0, 0xe0]),
 ];
 
+/// Feature markers' colours, by placed feature id without the namespace.
+const FEATURES: &[(&str, [u8; 3])] = &[
+    ("monster_room", [0x9c, 0x9c, 0x9c]),
+    ("monster_room_deep", [0x70, 0x70, 0x78]),
+    ("amethyst_geode", [0xb0, 0x70, 0xe8]),
+    ("desert_well", [0xe8, 0xd0, 0x80]),
+    ("fossil_upper", [0xf0, 0xec, 0xd8]),
+    ("fossil_lower", [0xc8, 0xd8, 0xf0]),
+    ("lake_lava_underground", [0xff, 0x70, 0x20]),
+    ("lake_lava_surface", [0xff, 0xa0, 0x30]),
+];
+
 fn find(table: &[(&str, [u8; 3])], id: &str) -> Option<[u8; 3]> {
     let name = id.strip_prefix("minecraft:")?;
     table.iter().find(|(n, _)| *n == name).map(|(_, c)| *c)
@@ -130,6 +142,11 @@ pub fn biome_colour(id: &str) -> [u8; 3] {
 /// A structure set's marker colour, e.g. for `minecraft:villages`.
 pub fn structure_colour(set: &str) -> [u8; 3] {
     find(STRUCTURE_SETS, set).unwrap_or_else(|| hashed(set))
+}
+
+/// A feature marker's colour, by placed feature id, e.g. `minecraft:monster_room`.
+pub fn feature_colour(placed: &str) -> [u8; 3] {
+    find(FEATURES, placed).unwrap_or_else(|| hashed(placed))
 }
 
 /// An id as a front end shows it (`docs/specs/render.md#colours`): `minecraft:cherry_grove` is

@@ -59,3 +59,4 @@ Start from [template.md](template.md). Files are named `NNNN-kebab-case-title.md
 | [0051](0051-sha-256-from-the-sha2-crate.md)                     | SHA-256 from the sha2 crate                                                    | Accepted                                                             |
 | [0052](0052-features-in-their-own-crate.md)                     | Features in a crate of their own                                               | Accepted                                                             |
 | [0053](0053-the-oracle-decorates-chunks-on-their-own.md)        | The oracle decorates chunks on their own, recording the target features' calls | Accepted                                                             |
+| [0054](0054-block-behaviour-from-the-running-game.md)           | Block behaviour from the running game, by a committed dumper class             | Proposed                                                             |

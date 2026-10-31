@@ -74,6 +74,7 @@ fn needs(path: &str) -> Scope {
     }
     let oracle = (path.starts_with("crates/") && !path.starts_with("crates/spyglass-viewer/"))
         || path.starts_with("oracle/")
+        || path.starts_with("extractor-java/")
         || ORACLE_FILES.contains(&path);
     let linux_only = specs || LINUX_ONLY.contains(&path) || path.starts_with(".devcontainer/");
     Scope {
@@ -157,6 +158,7 @@ mod tests {
         assert_eq!(scope(&["crates/spyglass-terrain/src/lib.rs"]), ALL);
         assert_eq!(scope(&["Cargo.lock", "README.md"]), ALL);
         assert_eq!(scope(&["oracle/src/Harness.java"]), ALL);
+        assert_eq!(scope(&["extractor-java/BlockReport.java"]), ALL);
         assert_eq!(scope(&[".github/workflows/ci.yml"]), ALL);
         assert_eq!(scope(&["xtask/src/oracle.rs"]), ALL);
     }

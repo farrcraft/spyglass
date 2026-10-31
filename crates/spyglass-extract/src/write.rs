@@ -26,6 +26,7 @@ pub const REPORTS: &[&str] = &[
     "reports/biome_parameters/minecraft/overworld.json",
     "reports/biome_parameters/minecraft/nether.json",
     "reports/blocks.json",
+    crate::datagen::BLOCK_BEHAVIOUR,
 ];
 
 /// Why a bundle couldn't be written.
@@ -329,6 +330,7 @@ mod tests {
                 "data/minecraft/worldgen/noise/a.json",
                 "reports/biome_parameters/minecraft/nether.json",
                 "reports/biome_parameters/minecraft/overworld.json",
+                "reports/block_behaviour.json",
                 "reports/blocks.json",
             ]
         );

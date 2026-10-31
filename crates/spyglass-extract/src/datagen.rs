@@ -1,9 +1,11 @@
-//! Running the game's data generator for the reports a bundle needs. See
-//! `docs/specs/data-sources.md`.
+//! Running the game's data generator, and the block behaviour report (ADR 0054), for the reports
+//! a bundle needs. See `docs/specs/data-sources.md`.
 
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+use crate::bundler::Classpath;
 
 /// The generator's main class, run through the server jar's bundler.
 pub const MAIN_CLASS: &str = "net.minecraft.data.Main";
@@ -11,7 +13,14 @@ pub const MAIN_CLASS: &str = "net.minecraft.data.Main";
 /// How many trailing lines of the generator's output to keep when it fails.
 const OUTPUT_TAIL: usize = 20;
 
-/// Why the data generator couldn't be run.
+/// The block behaviour report's class (ADR 0054), compiled from `extractor-java/BlockReport.java`
+/// by `cargo xtask java-report`.
+const BLOCK_REPORT_CLASS: &[u8] = include_bytes!("../../../extractor-java/BlockReport.class");
+
+/// The block behaviour report, relative to the generator's output directory, as in the bundle.
+pub const BLOCK_BEHAVIOUR: &str = "reports/block_behaviour.json";
+
+/// Why the data generator or the block report couldn't be run.
 #[derive(Debug, thiserror::Error)]
 pub enum DatagenError {
     /// Java couldn't be started, or the working directory couldn't be prepared.
@@ -22,14 +31,21 @@ pub enum DatagenError {
         /// The underlying error.
         source: io::Error,
     },
-    /// The generator exited unsuccessfully.
-    #[error("the data generator failed ({status}); last output:\n{tail}")]
+    /// The program exited unsuccessfully.
+    #[error("{what} failed ({status}); last output:\n{tail}")]
     Failed {
+        /// Which program: the data generator or the block report.
+        what: &'static str,
         /// How it exited.
         status: std::process::ExitStatus,
         /// The end of its combined output.
         tail: String,
     },
+}
+
+fn io_err(program: &Path) -> impl FnOnce(io::Error) -> DatagenError {
+    let program = program.to_path_buf();
+    move |source| DatagenError::Io { program, source }
 }
 
 /// Runs `java -DbundlerMainClass=net.minecraft.data.Main -jar <server_jar> --reports` with
@@ -42,14 +58,58 @@ pub fn run_reports(
     server_jar: &Path,
     work_dir: &Path,
 ) -> Result<PathBuf, DatagenError> {
-    let io_err = |program: &Path| {
-        let program = program.to_path_buf();
-        move |source| DatagenError::Io { program, source }
-    };
     std::fs::create_dir_all(work_dir).map_err(io_err(work_dir))?;
     // The working directory changes, so a relative jar path would break.
     let server_jar = std::path::absolute(server_jar).map_err(io_err(server_jar))?;
     let out = work_dir.join("generated");
+    let mut command = java_command(java);
+    command
+        .arg(format!("-DbundlerMainClass={MAIN_CLASS}"))
+        .arg("-jar")
+        .arg(&server_jar)
+        .arg("--reports")
+        .arg("--output")
+        .arg(&out)
+        .current_dir(work_dir);
+    run(&mut command, java, "the data generator")?;
+    Ok(out)
+}
+
+/// Runs the block behaviour report (ADR 0054) on the unpacked game, `classpath`, with
+/// `work_dir` as the working directory, writing [`BLOCK_BEHAVIOUR`] under `reports_dir`.
+pub fn run_block_report(
+    java: &Path,
+    classpath: &Classpath,
+    work_dir: &Path,
+    reports_dir: &Path,
+) -> Result<(), DatagenError> {
+    let classes = work_dir.join("classes");
+    std::fs::create_dir_all(&classes).map_err(io_err(&classes))?;
+    let class = classes.join("BlockReport.class");
+    std::fs::write(&class, BLOCK_REPORT_CLASS).map_err(io_err(&class))?;
+    let out = reports_dir.join(BLOCK_BEHAVIOUR);
+    let parent = out.parent().unwrap_or(reports_dir);
+    std::fs::create_dir_all(parent).map_err(io_err(parent))?;
+    let jars = std::iter::once(classes.as_path()).chain(classpath.jars());
+    let jars: Vec<PathBuf> = jars
+        .map(|p| std::path::absolute(p).map_err(io_err(p)))
+        .collect::<Result<_, _>>()?;
+    let joined = std::env::join_paths(&jars).map_err(|e| DatagenError::Io {
+        program: classes.clone(),
+        source: io::Error::new(io::ErrorKind::InvalidInput, e),
+    })?;
+    let out = std::path::absolute(&out).map_err(io_err(&out))?;
+    let mut command = java_command(java);
+    command
+        .arg("-cp")
+        .arg(joined)
+        .arg("BlockReport")
+        .arg(&out)
+        .current_dir(work_dir);
+    run(&mut command, java, "the block report")
+}
+
+fn java_command(java: &Path) -> Command {
     let mut command = Command::new(java);
     #[cfg(windows)]
     {
@@ -58,16 +118,11 @@ pub fn run_reports(
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         command.creation_flags(CREATE_NO_WINDOW);
     }
-    let output = command
-        .arg(format!("-DbundlerMainClass={MAIN_CLASS}"))
-        .arg("-jar")
-        .arg(&server_jar)
-        .arg("--reports")
-        .arg("--output")
-        .arg(&out)
-        .current_dir(work_dir)
-        .output()
-        .map_err(io_err(java))?;
+    command
+}
+
+fn run(command: &mut Command, java: &Path, what: &'static str) -> Result<(), DatagenError> {
+    let output = command.output().map_err(io_err(java))?;
     if !output.status.success() {
         let text = format!(
             "{}{}",
@@ -77,9 +132,10 @@ pub fn run_reports(
         let lines: Vec<_> = text.lines().collect();
         let tail = lines[lines.len().saturating_sub(OUTPUT_TAIL)..].join("\n");
         return Err(DatagenError::Failed {
+            what,
             status: output.status,
             tail,
         });
     }
-    Ok(out)
+    Ok(())
 }

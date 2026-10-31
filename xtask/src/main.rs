@@ -13,6 +13,7 @@ mod ci_scope;
 mod code_diff;
 mod dist;
 mod fuzz;
+mod java_report;
 mod links;
 mod linux_check;
 mod locate;
@@ -65,6 +66,10 @@ enum Cmd {
         #[arg(long, default_value = "latest")]
         game_version: String,
     },
+    /// Compile the extractor's block behaviour report, `extractor-java/BlockReport.java`, into
+    /// its committed class; with `--check`, fail if the class doesn't match the source
+    /// (docs/adr/0054-block-behaviour-from-the-running-game.md).
+    JavaReport(java_report::JavaReport),
     /// Check a fresh clone, scripts/setup.sh and the extractor on a clean Ubuntu machine, in Docker.
     LinuxCheck(linux_check::LinuxCheck),
     /// Check that every relative link and anchor in the repo's Markdown resolves.
@@ -117,6 +122,7 @@ fn main() -> ExitCode {
         Cmd::Doctor { game_version, java } => doctor(&game_version, java.as_deref()),
         Cmd::Fuzz(args) => fuzz::run(&args),
         Cmd::JdkStatus { game_version } => jdk_status(&game_version),
+        Cmd::JavaReport(args) => java_report::run(&args),
         Cmd::LinuxCheck(args) => linux_check::run(&args),
         Cmd::Links => links::run(),
         Cmd::Msrv { print } => msrv(print),

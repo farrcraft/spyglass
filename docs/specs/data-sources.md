@@ -79,6 +79,35 @@ The game stores climate parameters as quantized longs: `quantizeCoord(f) = (long
 
 Recover `q` by parsing the number as `f32` and rounding `value * 10000` to the **nearest** integer, in `f64`. That inverse is exact for every `|q| <= 40000` (checked exhaustively on 2026-10-25), which covers the codec's `[-2, 2]` range. Re-quantizing the way the game's own codec does (`f32` multiply, then truncation) is **not** exact in general: it is off by one for 2,286 values of `q` in `[-20000, 20000]`. It happens to be exact for the 39 distinct values in 26.3's overworld list (range `-12000..=11000`), but the extractor must not rely on that.
 
+### Block report
+
+Placing features reads block behaviour that no report has, because the game computes it in code when it boots (from collision shapes and per-block overrides). So after the data generator, the extractor runs a small program of its own on the unpacked game ([ADR 0054](../adr/0054-block-behaviour-from-the-running-game.md)): `extractor-java/BlockReport.java`, compiled into the committed `BlockReport.class` and embedded in the extractor. It calls the game only through reflection, so the same class works in every version, and it runs on the same Java runtime:
+
+```sh
+java -cp <class dir><sep><game jar><sep><libraries…> BlockReport <bundle>/reports/block_behaviour.json
+```
+
+It runs `SharedConstants.tryDetectVersion` and `Bootstrap.bootStrap`, then writes every state in `Block.BLOCK_STATE_REGISTRY`, one object per line, by the state ids `reports/blocks.json` lists:
+
+```json
+{
+  "format": 1,
+  "states": [
+    { "id": 0, "air": true, "replaceable": true },
+    {
+      "id": 89,
+      "liquid": true,
+      "replaceable": true,
+      "fluid": { "id": "minecraft:water", "amount": 8, "source": true }
+    }
+  ]
+}
+```
+
+Only the flags that are true are written: `air` (`isAir`), `liquid`, `solid` (`isSolid`, the legacy solid flag), `replaceable` (`canBeReplaced()`), `solid_render` (`isSolidRender`), `blocks_motion` (`blocksMotion`, a method only 26.2 has: written where the version has it) and `leaves` (the block is a `LeavesBlock`). `fluid` is the state's fluid when it isn't empty: its id, `getAmount` and `isSource`. For 26.3 it takes about 5 seconds and lists 35,723 states (1.8 MB).
+
+`cargo xtask java-report` rebuilds the class with a JDK 25's `javac --release 21`; `--check`, a commit hook, fails when the committed class isn't what the source compiles to, and skips on machines without a JDK 25.
+
 ## Licensing
 
 Mojang's data and code are never committed or redistributed. The extractor runs locally against a jar the user downloads themselves, the same approach Amidst used. Generated bundles go in `/bundles`, which is gitignored.

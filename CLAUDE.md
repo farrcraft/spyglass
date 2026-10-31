@@ -24,6 +24,7 @@ cargo xtask viewer-timing [<scenario>...]     # time the viewer's cold start in 
 cargo xtask dist [--target <triple>]          # one target's release archive, in target/archives/
 cargo xtask release <version>                 # set the version and date the changelog, for a PR
 cargo xtask doctor                            # is this machine ready? (check-only)
+cargo xtask java-report [--check]             # rebuild (or check) the extractor's block report class
 cargo xtask links                             # every relative Markdown link and anchor resolves
 cargo xtask fuzz <nbt|region>                 # fuzz a reader of untrusted files (nightly, cargo-fuzz)
 cargo xtask msrv                              # build with the minimum supported Rust version
@@ -38,6 +39,7 @@ All checks are defined in `.pre-commit-config.yaml` and run as git hooks (commit
 - `crates/` holds one crate per layer (rng → noise → density → biome/terrain → structure → search, with `data` feeding versioned parameters and `viewer` on top). Keep dependencies flowing in that direction; lower crates must not depend on higher ones.
 - `docs/` holds getting-started, architecture, the development process, `specs/` (behavior the code must match), `adr/` (decision records), `research/` (prior art, open questions), `roadmap/` (one file per milestone) and `plans/` (implementation plans). `roadmap/` and `plans/` each have a `completed/` subdirectory.
 - `xtask/` holds project commands (`cargo xtask <cmd>`; [ADR 0003](docs/adr/0003-cargo-xtask-for-project-commands.md)). It's tooling: no crate may depend on it. Add new project commands here, in Rust, rather than as scripts.
+- `extractor-java/` holds the extractor's block report, the only Java outside `oracle/`: a reflection-only program and its committed class, rebuilt with `cargo xtask java-report` ([ADR 0054](docs/adr/0054-block-behaviour-from-the-running-game.md)).
 - `fuzz/` holds cargo-fuzz targets for the readers of untrusted files, a workspace of its own that needs nightly ([ADR 0036](docs/adr/0036-fuzzing-with-cargo-fuzz.md)).
 - `scripts/` holds only the setup scripts, in PowerShell and POSIX sh, because they run before Rust exists. Keep the pair in sync.
 

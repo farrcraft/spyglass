@@ -20,11 +20,15 @@ use crate::load::{
 /// Loads 26.2's named density functions and noises, sharing each one however often it's
 /// referenced.
 pub struct Loader<'r, R: Resources + ?Sized> {
+    /// Where named functions and noises are read from.
     resources: &'r R,
+    /// Each named function loaded so far, by full id.
     functions: HashMap<String, Df>,
+    /// Each noise loaded so far, by full id.
     noises: HashMap<String, NormalNoiseParameters>,
     /// Named functions being loaded, outermost first, for cycle detection.
     loading: Vec<String>,
+    /// How deeply nested the function being read is, against the codec's limit.
     depth: Depth,
 }
 
@@ -44,9 +48,9 @@ impl<'r, R: Resources + ?Sized> Loader<'r, R> {
     /// [`DensityFunction::Reference`] to it.
     pub fn function(&mut self, id: &str) -> LoadResult<Df> {
         let id = full_id(id);
-        if let Some(f) = self.functions.get(&id).cloned() {
+        if let Some(function) = self.functions.get(&id).cloned() {
             self.depth.reuse(&id, &At::root(&id))?;
-            return Ok(f);
+            return Ok(function);
         }
         if let Some(start) = self.loading.iter().position(|l| *l == id) {
             let mut cycle = self.loading[start..].to_vec();
@@ -63,25 +67,25 @@ impl<'r, R: Resources + ?Sized> Loader<'r, R> {
         let parsed = self.parse_function(&json, &at);
         self.depth.finish(&id, outer, parsed.is_ok());
         self.loading.pop();
-        let f = parsed?;
-        self.functions.insert(id, f.clone());
-        Ok(f)
+        let function = parsed?;
+        self.functions.insert(id, function.clone());
+        Ok(function)
     }
 
     /// The noise `id`'s parameters, loaded once.
     pub fn noise(&mut self, id: &str) -> LoadResult<NormalNoiseParameters> {
         let id = full_id(id);
-        if let Some(p) = self.noises.get(&id) {
-            return Ok(p.clone());
+        if let Some(parameters) = self.noises.get(&id) {
+            return Ok(parameters.clone());
         }
         let at = At::root(&id);
         let json = self
             .resources
             .resource(NOISE, &id)
             .map_err(|e| at.error(e.into()))?;
-        let p = parse_noise(&json, &at)?;
-        self.noises.insert(id, p.clone());
-        Ok(p)
+        let parameters = parse_noise(&json, &at)?;
+        self.noises.insert(id, parameters.clone());
+        Ok(parameters)
     }
 
     /// A density function written inline in another resource, such as a noise router entry.
@@ -117,6 +121,7 @@ impl<'r, R: Resources + ?Sized> Loader<'r, R> {
         parsed
     }
 
+    /// A density function object, by its `type`.
     fn parse_typed(&mut self, obj: &Map<String, Value>, at: &At<'_>) -> LoadResult<Df> {
         let kind = obj
             .get("type")
@@ -130,9 +135,9 @@ impl<'r, R: Resources + ?Sized> Loader<'r, R> {
         };
         let value = |name: &'static str| noise_value(field(obj, name, at)?, &at.child(name));
         if let Some(op) = two_argument_type(&kind) {
-            let f =
+            let function =
                 DensityFunction::TwoArgument(op, arg(self, "argument1")?, arg(self, "argument2")?);
-            return Ok(Arc::new(f));
+            return Ok(Arc::new(function));
         }
         if let Some(op) = mapped_type(&kind) {
             return Ok(Arc::new(DensityFunction::Mapped(
@@ -146,7 +151,7 @@ impl<'r, R: Resources + ?Sized> Loader<'r, R> {
                 arg(self, "argument")?,
             )));
         }
-        let f = match kind.as_str() {
+        let function = match kind.as_str() {
             "minecraft:constant" => DensityFunction::Constant(value("argument")?),
             // Noise.CODEC: the scales are plain Codec.DOUBLE, both required.
             "minecraft:noise" => DensityFunction::Noise {
@@ -218,7 +223,7 @@ impl<'r, R: Resources + ?Sized> Loader<'r, R> {
                 }));
             }
         };
-        Ok(Arc::new(f))
+        Ok(Arc::new(function))
     }
 
     /// A noise id field, loaded so it can be bound later.
@@ -372,9 +377,9 @@ fn marker_type(kind: &str) -> Option<Marker> {
 
 /// `DensityFunctions.NOISE_VALUE_CODEC` in 26.2: `Codec.doubleRange(-1000000, 1000000)`.
 fn noise_value(json: &Value, at: &At<'_>) -> LoadResult<f64> {
-    let v = double(json, at)?;
-    if (-1_000_000.0..=1_000_000.0).contains(&v) {
-        Ok(v)
+    let value = double(json, at)?;
+    if (-1_000_000.0..=1_000_000.0).contains(&value) {
+        Ok(value)
     } else {
         Err(at.error(out_of_range(json, -1_000_000, 1_000_000)))
     }

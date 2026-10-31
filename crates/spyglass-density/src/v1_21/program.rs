@@ -25,7 +25,9 @@ use crate::sampler::sample_multipoint;
 /// An operation's input: a constant, or another operation's value.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Arg {
+    /// A constant input.
     Const(f64),
+    /// The value of the operation at this index of the program.
     Op(u32),
 }
 
@@ -117,12 +119,17 @@ enum Remember {
 /// A compiled graph: its operations, and the [`Arg`] of each root it was compiled from.
 #[derive(Debug)]
 pub(crate) struct Program {
+    /// Tells programs apart in the thread's memo ([`PROGRAMS`]).
     id: u64,
+    /// The operations, each one's inputs before it.
     ops: Vec<Op>,
+    /// What each operation's value is remembered for.
     remember: Vec<Remember>,
+    /// Whether each operation's value depends only on the column ([`Function`]'s `columnar`).
     columnar: Vec<bool>,
 }
 
+/// How many programs have been compiled, for their ids.
 static PROGRAMS: AtomicU64 = AtomicU64::new(0);
 
 /// One remembered value: the stamp it's for, the program, and the value.
@@ -142,9 +149,13 @@ thread_local! {
 
 /// Builds a [`Program`] from bound functions, one operation per distinct node.
 struct Compiler {
+    /// The operations compiled so far.
     ops: Vec<Op>,
+    /// Whether each operation is columnar.
     columnar: Vec<bool>,
+    /// How many places reference each operation.
     refs: Vec<u32>,
+    /// Each compiled node's operation, so a node the graph shares compiles once.
     by_node: HashMap<*const Node, u32>,
     /// The functions compiled, kept alive so their addresses stay theirs.
     keep: Vec<Function>,
@@ -153,16 +164,16 @@ struct Compiler {
 impl Program {
     /// Compiles `roots` into one program; returns it and each root's [`Arg`].
     pub(crate) fn compile(roots: &[&Function]) -> (Program, Vec<Arg>) {
-        let mut c = Compiler {
+        let mut compiler = Compiler {
             ops: Vec::new(),
             columnar: Vec::new(),
             refs: Vec::new(),
             by_node: HashMap::new(),
             keep: Vec::new(),
         };
-        let args = roots.iter().map(|f| c.arg(f)).collect();
-        let remember = (0..c.ops.len())
-            .map(|i| match (c.refs[i] > 1, c.columnar[i]) {
+        let args = roots.iter().map(|f| compiler.arg(f)).collect();
+        let remember = (0..compiler.ops.len())
+            .map(|i| match (compiler.refs[i] > 1, compiler.columnar[i]) {
                 (true, _) => Remember::Shared,
                 (false, true) => Remember::Column,
                 (false, false) => Remember::Not,
@@ -170,9 +181,9 @@ impl Program {
             .collect();
         let program = Program {
             id: PROGRAMS.fetch_add(1, Ordering::Relaxed),
-            ops: c.ops,
+            ops: compiler.ops,
             remember,
-            columnar: c.columnar,
+            columnar: compiler.columnar,
         };
         (program, args)
     }
@@ -190,6 +201,8 @@ impl Program {
         }
     }
 
+    /// Operation `i`'s value at `ctx`, from the memo when it's remembered for this context or
+    /// its column.
     fn eval_op(&self, i: usize, ctx: &Ctx<'_>, memo: &mut Memo) -> f64 {
         let shares_column = ctx.column != ctx.stamp;
         let stamp = match self.remember[i] {
@@ -199,11 +212,11 @@ impl Program {
             Remember::Shared if self.columnar[i] && shares_column => ctx.column,
             Remember::Shared => ctx.stamp,
         };
-        if let Some(r) = memo.0.get(i)
-            && r.stamp == stamp
-            && r.program == self.id
+        if let Some(remembered) = memo.0.get(i)
+            && remembered.stamp == stamp
+            && remembered.program == self.id
         {
-            return r.value;
+            return remembered.value;
         }
         let value = self.compute(i, ctx, memo);
         if memo.0.len() <= i {
@@ -230,24 +243,28 @@ impl Program {
         match &self.ops[i] {
             Op::Add(a, b) => eval(*a, memo) + eval(*b, memo),
             Op::Mul(a, b) => {
-                let v = eval(*a, memo);
+                let first = eval(*a, memo);
                 // dcmpl/ifne: −0.0 and +0.0 both give +0.0, without evaluating argument2.
-                if v == 0.0 { 0.0 } else { v * eval(*b, memo) }
+                if first == 0.0 {
+                    0.0
+                } else {
+                    first * eval(*b, memo)
+                }
             }
             Op::Min(a, b, b_min) => {
-                let v = eval(*a, memo);
-                if v < *b_min {
-                    v
+                let first = eval(*a, memo);
+                if first < *b_min {
+                    first
                 } else {
-                    java::min_f64(v, eval(*b, memo))
+                    java::min_f64(first, eval(*b, memo))
                 }
             }
             Op::Max(a, b, b_max) => {
-                let v = eval(*a, memo);
-                if v > *b_max {
-                    v
+                let first = eval(*a, memo);
+                if first > *b_max {
+                    first
                 } else {
-                    java::max_f64(v, eval(*b, memo))
+                    java::max_f64(first, eval(*b, memo))
                 }
             }
             Op::AddConstant(input, c) => eval(*input, memo) + c,
@@ -293,8 +310,8 @@ impl Program {
                 when_in_range,
                 when_out_of_range,
             } => {
-                let v = eval(*input, memo);
-                if v >= *min_inclusive && v < *max_exclusive {
+                let value = eval(*input, memo);
+                if value >= *min_inclusive && value < *max_exclusive {
                     eval(*when_in_range, memo)
                 } else {
                     eval(*when_out_of_range, memo)
@@ -305,13 +322,13 @@ impl Program {
                 thresholds,
                 functions,
             } => {
-                let v = eval(*input, memo);
+                let value = eval(*input, memo);
                 // dcmpg/ifge: NaN is below no threshold.
-                let k = thresholds
+                let chosen = thresholds
                     .iter()
-                    .position(|t| v < *t)
+                    .position(|t| value < *t)
                     .unwrap_or(functions.len() - 1);
-                eval(functions[k], memo)
+                eval(functions[chosen], memo)
             }
             Op::Spline(spline) => f64::from(self.spline(spline, ctx, memo)),
             Op::FindTopSurface {
@@ -363,38 +380,43 @@ impl Program {
                 values,
                 derivatives,
             } => {
-                let c = self.eval(*coordinate, ctx, memo) as f32;
-                sample_multipoint(c, locations, values, derivatives, &mut |v: &Spline| {
-                    self.spline(v, ctx, memo)
-                })
+                let coordinate_value = self.eval(*coordinate, ctx, memo) as f32;
+                sample_multipoint(
+                    coordinate_value,
+                    locations,
+                    values,
+                    derivatives,
+                    &mut |v: &Spline| self.spline(v, ctx, memo),
+                )
             }
         }
     }
 }
 
 impl Compiler {
-    /// `f` as an operand: a constant, or its operation, compiled once.
-    fn arg(&mut self, f: &Function) -> Arg {
-        if let Node::Constant(v) = &*f.node {
+    /// `function` as an operand: a constant, or its operation, compiled once.
+    fn arg(&mut self, function: &Function) -> Arg {
+        if let Node::Constant(v) = &*function.node {
             return Arg::Const(*v);
         }
-        let key = Arc::as_ptr(&f.node);
+        let key = Arc::as_ptr(&function.node);
         if let Some(&i) = self.by_node.get(&key) {
             self.refs[i as usize] += 1;
             return Arg::Op(i);
         }
-        let op = self.op(f);
+        let op = self.op(function);
         let i = self.ops.len() as u32;
         self.ops.push(op);
-        self.columnar.push(f.columnar);
+        self.columnar.push(function.columnar);
         self.refs.push(1);
         self.by_node.insert(key, i);
-        self.keep.push(f.clone());
+        self.keep.push(function.clone());
         Arg::Op(i)
     }
 
-    fn op(&mut self, f: &Function) -> Op {
-        match &*f.node {
+    /// `function`'s operation, its inputs compiled first.
+    fn op(&mut self, function: &Function) -> Op {
+        match &*function.node {
             Node::Constant(_) => unreachable!("constants are operands"),
             Node::Add(a, b) => Op::Add(self.arg(a), self.arg(b)),
             Node::Mul(a, b) => Op::Mul(self.arg(a), self.arg(b)),

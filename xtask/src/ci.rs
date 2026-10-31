@@ -246,7 +246,7 @@ mod tests {
         assert_eq!(selected(&[Heights], &[]), [Heights]);
         assert_eq!(
             selected(&[], &[Heights]),
-            [Probe, Biomes, Structures, Spawn, Blocks, Locate]
+            [Probe, Biomes, Structures, Spawn, Blocks, Features, Locate]
         );
     }
 
@@ -259,6 +259,7 @@ mod tests {
             &[Input::Heights, Input::Bundle],
             &[Input::Probe, Input::Bundle],
             &[Input::Locate, Input::Bundle],
+            &[Input::Features, Input::Bundle],
             &[Input::Bundle],
             &[Input::Extracted],
         ];

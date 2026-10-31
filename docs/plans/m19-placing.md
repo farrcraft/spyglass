@@ -7,7 +7,7 @@
 
 ## Goal
 
-Whether each try from [m19-decoration](m19-decoration.md) places, and the blocks it writes, for the five target features. Each answer is certain, or a candidate with its reason. It meets the milestone's first exit criterion: every feature in scope matches the game in the golden area, and no answer reported as certain is wrong.
+Whether each try from [m19-decoration](completed/m19-decoration.md) places, and the blocks it writes, for the five target features. Each answer is certain, or a candidate with its reason. It meets the milestone's first exit criterion: every feature in scope matches the game in the golden area, and no answer reported as certain is wrong.
 
 ## Approach
 

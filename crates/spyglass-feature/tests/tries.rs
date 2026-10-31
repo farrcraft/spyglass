@@ -24,6 +24,9 @@ struct Report {
     /// Tries not compared: after a modifier that reads blocks, after a call whose draws
     /// aren't known, or on a tied biome.
     skipped: usize,
+    /// Chunks decorated, and the time their tries took.
+    chunks: usize,
+    time: std::time::Duration,
 }
 
 fn check(path: &Path) -> Report {
@@ -105,7 +108,10 @@ fn check(path: &Path) -> Report {
                 _ => Drawn::Unknown,
             }
         };
+        let start = std::time::Instant::now();
         let tries = decorator.tries(chunk.chunk, &mut feature);
+        report.time += start.elapsed();
+        report.chunks += 1;
         let mut by_feature: HashMap<String, Vec<&Try>> = HashMap::new();
         for t in &tries {
             by_feature.entry(name(t)).or_default().push(t);
@@ -186,10 +192,13 @@ fn tries_match_the_game() {
     let matched: usize = reports.iter().map(|r| r.matched).sum();
     let skipped: usize = reports.iter().map(|r| r.skipped).sum();
     let failures: Vec<&String> = reports.iter().flat_map(|r| &r.failures).collect();
+    let chunks: usize = reports.iter().map(|r| r.chunks).sum();
+    let time: std::time::Duration = reports.iter().map(|r| r.time).sum();
     println!(
-        "{} files: {matched} tries match, {skipped} not compared, {} differences",
+        "{} files: {matched} tries match, {skipped} not compared, {} differences; {:.1} µs a chunk's tries",
         files.len(),
-        failures.len()
+        failures.len(),
+        time.as_secs_f64() * 1e6 / chunks.max(1) as f64
     );
     assert!(
         failures.is_empty(),

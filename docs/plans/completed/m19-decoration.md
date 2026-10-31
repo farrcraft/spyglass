@@ -1,13 +1,13 @@
 # m19. Decoration: where features try to place
 
-- Status: In progress
-- Milestone: [19. Features](../roadmap/19-features.md)
+- Status: Completed
+- Milestone: [19. Features](../../roadmap/19-features.md)
 - Started: 2026-10-30
-- Completed: YYYY-MM-DD
+- Completed: 2026-10-30
 
 ## Goal
 
-Where each target feature tries to place in a chunk, exactly as the game decorates it. That covers the order of steps and features, each feature's random seed, and its placement modifiers. The targets are `monster_room` (dungeons), `amethyst_geode`, `desert_well`, `fossil` (coal and diamond) and `lake` (lava lakes). This plan stops at the tries: a try is a position the game hands to the feature, which may then decline to place. Whether it places is [m19-placing](m19-placing.md)'s. The oracle gains feature golden files that record every try and its result, which both plans compare against.
+Where each target feature tries to place in a chunk, exactly as the game decorates it. That covers the order of steps and features, each feature's random seed, and its placement modifiers. The targets are `monster_room` (dungeons), `amethyst_geode`, `desert_well`, `fossil` (coal and diamond) and `lake` (lava lakes). This plan stops at the tries: a try is a position the game hands to the feature, which may then decline to place. Whether it places is [m19-placing](../m19-placing.md)'s. The oracle gains feature golden files that record every try and its result, which both plans compare against.
 
 It meets none of the milestone's exit criteria alone. It's the ground for the first one.
 
@@ -18,7 +18,7 @@ It meets none of the milestone's exit criteria alone. It's the ground for the fi
 - **Which features run in a chunk:** the biomes stored in the chunk and its 8 neighbours, kept to those the biome source can give. A placed feature runs if any of those biomes lists it.
 - **The order:** step by step (`raw_generation`, `lakes`, `local_modifications`, `underground_structures`, `surface_structures`, …), with the step's structure pieces first and then its features. Within a step, features go in one global order per dimension: `FeatureSorter.buildFeaturesPerStep` sorts every possible biome's lists into one order, and fails if two biomes disagree.
 - **The seeds:** a `WorldgenRandom`, with `setDecorationSeed(seed, chunk min x, chunk min z)`, then `setFeatureSeed(decoration seed, index, step)` before each feature. `index` is the feature's place in its step's global order. A feature's tries don't depend on the features before it.
-- **Tries and the feature share the random.** Positions go depth first: each try passes the remaining modifiers and reaches the feature before the next try's modifiers draw. So a placed feature's later tries depend on how many numbers its earlier ones drew, and that depends on whether they placed. Of the targets, only dungeons have more than one try per chunk (`count` 10 and 4). A dungeon's first try is exact here. Its later tries are exact only while every earlier try declined, which takes the monster room's own check; [m19-placing](m19-placing.md) makes them all exact.
+- **Tries and the feature share the random.** Positions go depth first: each try passes the remaining modifiers and reaches the feature before the next try's modifiers draw. So a placed feature's later tries depend on how many numbers its earlier ones drew, and that depends on whether they placed. Of the targets, only dungeons have more than one try per chunk (`count` 10 and 4). A dungeon's first try is exact here. Its later tries are exact only while every earlier try declined, which takes the monster room's own check; [m19-placing](../m19-placing.md) makes them all exact.
 - **The modifiers** turn the chunk's corner into positions. The targets use `count`, `rarity_filter`, `in_square`, `height_range`, `biome`, `heightmap`, `offset`, `block_predicate_filter`, `environment_scan` and `surface_relative_threshold_filter`. `biome` checks the biome at the try's block, as the level's `getBiome` zooms it (`ChunkGenerator::block_biome`), not the stored quart. Height providers come from `spyglass_data::providers`, from the carvers' work.
 
 **In the targets' biomes, the early steps are nearly theirs alone.** In 26.3's Overworld, `lakes` holds the lava lakes, `local_modifications` the geode, `underground_structures` fossils and dungeons, and `surface_structures` the desert well. A few biomes put other features in those steps:
@@ -29,34 +29,34 @@ It meets none of the milestone's exit criteria alone. It's the ground for the fi
 - sulfur springs and pools;
 - the Nether's basalt and deltas, and the End's islands.
 
-Mineshafts, buried treasure, trail ruins and trial chambers place their pieces at the start of `underground_structures`, and surface structures at the start of `surface_structures`. Those matter for whether a try places, so they're [m19-placing](m19-placing.md)'s. The global order and the seeds still need every feature of every biome, by id.
+Mineshafts, buried treasure, trail ruins and trial chambers place their pieces at the start of `underground_structures`, and surface structures at the start of `surface_structures`. Those matter for whether a try places, so they're [m19-placing](../m19-placing.md)'s. The global order and the seeds still need every feature of every biome, by id.
 
 **Where it lives.** A new crate after `spyglass-blocks`, `spyglass-feature`, since placing needs a chunk's blocks. It's a crate boundary, so it gets an ADR. It holds:
 
 - `FeatureSettings`: a dimension's placed and configured features, its steps and global order. Every placed feature is loaded by id. Only the targets and their modifiers are loaded as types. 26.3 keeps configured features in `worldgen/feature` with their config flattened, and 26.2 in `worldgen/configured_feature`.
 - `Decorator::tries(chunk)`: for one seed, each target feature's tries in the chunk, in decoration order, each with its placed feature, step, index and position.
 
-The API (`Session::feature_tries`) and the CLI come with [m19-queries](m19-queries.md), unless the oracle tests want them sooner.
+The API (`Session::feature_tries`) and the CLI come with [m19-queries](../m19-queries.md), unless the oracle tests want them sooner.
 
-**Modifiers that read blocks.** `heightmap` (`MOTION_BLOCKING`), `block_predicate_filter`, `environment_scan` and `surface_relative_threshold_filter` read the chunk as decoration finds it. This plan reads the chunk before features, which is the game's answer unless an earlier feature in the chunk, or a neighbour's, changed those blocks. Each try says whether it read blocks, and whether it follows a try of its feature that may have placed. The golden comparison expects exact positions for the rest, and reports these differences separately.
+**Modifiers that read blocks.** `heightmap` (`MOTION_BLOCKING`), `block_predicate_filter`, `environment_scan` and `surface_relative_threshold_filter` read the chunk as decoration finds it. A try after one is marked not exact here, with the position where the modifier was reached: computing it needs the heightmaps and block predicates that placing needs anyway, so it's [m19-placing](../m19-placing.md)'s (see the notes). Each try also says whether it follows a try of its feature whose draws aren't known. The golden comparison expects exact positions for the rest, and counts the others apart.
 
-**The oracle** ([oracle.md](../specs/oracle.md), [ADR 0049](../adr/0049-the-oracle-generates-chunks-with-stand-ins.md)): `cargo xtask oracle features` decorates each golden chunk on its own. Its 3 × 3 neighbours are generated through carvers, not decorated, and there are no structures, as for block golden files. For each chunk, the file lists every try of every placed feature in steps up to `surface_structures`: the step, the index, the placed feature, the position the feature is called with, and whether it placed. It also lists each step's global order. How the harness sees tries is the spike's to decide. One way is a copy of the decoration loop that calls the game's own placed and configured features; another is a level wrapper. Either is an ADR, or an amendment to 0049.
+**The oracle** ([oracle.md](../../specs/oracle.md), [ADR 0049](../../adr/0049-the-oracle-generates-chunks-with-stand-ins.md)): `cargo xtask oracle features` decorates each golden chunk on its own. Its 3 × 3 neighbours are generated through carvers, not decorated, and there are no structures, as for block golden files. For each chunk, the file lists every try of every placed feature in steps up to `surface_structures`: the step, the index, the placed feature, the position the feature is called with, and whether it placed. It also lists each step's global order. How the harness sees tries is the spike's to decide. One way is a copy of the decoration loop that calls the game's own placed and configured features; another is a level wrapper. Either is an ADR, or an amendment to 0049.
 
 **The golden area.** Tries are rare: a well is one try in a thousand desert chunks, and a fossil one in 64. The block files' 4 × 4 squares aren't enough. Each golden seed gets a square of 32 × 32 chunks around the origin, and the harness adds a desert window found by its own decoration, so wells place. The spike measures the cost.
 
 ## Tasks
 
-- [x] **Spike:** decoration in 26.2, 26.3 and 26.4-snapshot-6: `applyBiomeDecoration`, `FeatureSorter`, `WorldgenRandom`'s decoration and feature seeds and the random source behind them, and each target modifier. Note what each version changes, and turn any change that doesn't show in the data into a switch ([ADR 0026](../adr/0026-how-game-versions-coexist.md)). Record findings here.
-- [x] **ADR:** the `spyglass-feature` crate ([ADR 0052](../adr/0052-features-in-their-own-crate.md), proposed) and its place in the layers (`docs/architecture.md`).
-- [ ] **Data:** placed features and the target configured features, in both layouts, with fixture tests for each modifier's loading and errors.
-- [ ] **The order:** the global order per step from every possible biome's lists, with the game's failure when they disagree. Fixture tests, and an ignored test against the golden files' orders. _Sorter, list loading and fixture tests done; every version's real lists load and sort (`every_dimension_sorts`). The comparison with the game's order waits for the oracle._
-- [x] **Seeds:** `WorldgenRandom` over Xoroshiro, and the decoration and feature seeds, in `spyglass-rng` ([rng.md](../specs/rng.md)), checked against the oracle's probe files in every version.
-- [ ] **Tries:** which features run in a chunk, and each modifier. Tries in decoration order.
-- [ ] **Oracle:** `cargo xtask oracle features`, in the core and each adapter, for the golden seeds and dimensions; `golden` runs it. Its file format in oracle.md. A determinism check, as the other files have.
-- [ ] **Comparison:** an ignored test, in `cargo xtask oracle-test`'s list, comparing every try's position with the game's, for every supported version. Position-only tries must match exactly; tries that read blocks are counted apart.
-- [ ] **Cost:** `cargo xtask bench` gains a chunk's tries. Record it here.
-- [ ] **Spec:** `docs/specs/features.md`: decoration, the order, seeds, modifiers and tries, with per-version notes.
-- [ ] `cargo xtask check` and `cargo xtask oracle-test`. Complete the plan.
+- [x] **Spike:** decoration in 26.2, 26.3 and 26.4-snapshot-6: `applyBiomeDecoration`, `FeatureSorter`, `WorldgenRandom`'s decoration and feature seeds and the random source behind them, and each target modifier. Note what each version changes, and turn any change that doesn't show in the data into a switch ([ADR 0026](../../adr/0026-how-game-versions-coexist.md)). Record findings here.
+- [x] **ADR:** the `spyglass-feature` crate ([ADR 0052](../../adr/0052-features-in-their-own-crate.md), proposed) and its place in the layers (`docs/architecture.md`).
+- [x] **Data:** placed features and their modifiers, with fixture tests. _The target configured features' own data is loaded with placing, in m19-placing._
+- [x] **The order:** the global order per step from every possible biome's lists, with the game's failure when they disagree. Fixture tests, and an ignored test against the golden files' orders. _Every version's lists load and sort (`every_dimension_sorts`), and match the game's order in every dimension (`tries_match_the_game`)._
+- [x] **Seeds:** `WorldgenRandom` over Xoroshiro, and the decoration and feature seeds, in `spyglass-rng` ([rng.md](../../specs/rng.md)), checked against the oracle's probe files in every version.
+- [x] **Tries:** which features run in a chunk, and each modifier. Tries in decoration order.
+- [x] **Oracle:** `cargo xtask oracle features`, in the core and each adapter, for the golden seeds and dimensions; `golden` runs it. Its file format in oracle.md. A determinism check, as the other files have.
+- [x] **Comparison:** an ignored test, in `cargo xtask oracle-test`'s list, comparing every try's position with the game's, for every supported version. Position-only tries must match exactly; tries that read blocks are counted apart.
+- [x] **Cost:** a chunk's tries, timed in the comparison test (below). _A `cargo xtask bench` line comes with the API, in m19-queries: `spyglass` doesn't depend on the crate before then._
+- [x] **Spec:** `docs/specs/features.md`: decoration, the order, seeds, modifiers and tries, with per-version notes.
+- [x] `cargo xtask check` and `cargo xtask oracle-test`. Complete the plan.
 
 ## Verification
 
@@ -66,15 +66,20 @@ The API (`Session::feature_tries`) and the CLI come with [m19-queries](m19-queri
 
 ## Durable outputs
 
-- [ ] `docs/specs/features.md`: decoration, the order, seeds, modifiers, tries.
-- [ ] rng.md: the decoration and feature seeds.
-- [ ] oracle.md: feature golden files and how the harness makes them.
-- [ ] An ADR for the crate, and one (or an amendment to ADR 0049) for how the oracle decorates.
-- [ ] architecture.md: the new crate.
+- [x] `docs/specs/features.md`: decoration, the order, seeds, modifiers, tries.
+- [x] rng.md: the decoration and feature seeds.
+- [x] oracle.md: feature golden files and how the harness makes them.
+- [x] An ADR for the crate ([0052](../../adr/0052-features-in-their-own-crate.md)), and one for how the oracle decorates ([0053](../../adr/0053-the-oracle-decorates-chunks-on-their-own.md)), both proposed.
+- [x] architecture.md: the new crate.
 
 ## Notes
 
-- 2026-10-30: **How the oracle sees tries.** Wrap each target's feature in the registry with one that records the origin it's called with and the result, and delegates to the real feature; then run the game's own `applyBiomeDecoration`, untouched. For the level, a real `WorldGenRegion`, built by its constructor over stand-ins ([ADR 0049](../adr/0049-the-oracle-generates-chunks-with-stand-ins.md)'s way): a server level answering `getSeed`, `getLevelData`, `getChunkSource().randomState()`, `dimensionType` and `uncachedBiomeResolver`; chunk holders handing out the neighbourhood's proto chunks; and the `FEATURES` chunk step. The region's own `setBlock`, write-radius checks, heightmaps and ticks then run as the game's. In 26.3 `Feature` is an interface and configured features are records, so the wrapper is per adapter.
+- 2026-10-30: **The golden area shrank.** 32 × 32 chunks with every chunk's 9 generated fresh would take the CI jobs' hosted runners past their hour. It's 16 × 16 around the origin, plus chunks found for the rare targets: where the game's own `WorldgenRandom` passes the rarity filter and the chunk's middle biome lists the feature (8 for the well, 4 per fossil). Dimensions with no target (the Nether, the End) write only the order.
+- 2026-10-30: **Modifiers that read blocks moved to m19-placing.** `heightmap` needs `MOTION_BLOCKING`, which needs which blocks block motion, and `block_predicate_filter` and `environment_scan` need block predicates (`matching_blocks`, `volume_match`, …): the same machinery placing needs, on blocks placing changes. Here those tries are marked not exact and counted apart: desert wells, surface and underground lava lakes.
+- 2026-10-30: **Every golden seed** (10 seeds, three dimensions, every version): about 37,600 tries match the game's positions in each version, with 264 to 281 not compared, and no differences. A chunk's tries take about 50 to 100 µs (timed in the comparison test, which runs in parallel). The harness writes the same bytes twice, and takes 8 to 20 seconds a seed on 16 cores.
+- 2026-10-30: **First comparison.** Seeds 0 and 1, every version: each step's order matches in all three dimensions, and 7,507 tries match the game's positions, with 46 to 48 not compared (lava lakes and wells after a modifier that reads blocks, and dungeons after one that placed). No differences.
+
+- 2026-10-30: **How the oracle sees tries.** Wrap each target's feature in the registry with one that records the origin it's called with and the result, and delegates to the real feature; then run the game's own `applyBiomeDecoration`, untouched. For the level, a real `WorldGenRegion`, built by its constructor over stand-ins ([ADR 0049](../../adr/0049-the-oracle-generates-chunks-with-stand-ins.md)'s way): a server level answering `getSeed`, `getLevelData`, `getChunkSource().randomState()`, `dimensionType` and `uncachedBiomeResolver`; chunk holders handing out the neighbourhood's proto chunks; and the `FEATURES` chunk step. The region's own `setBlock`, write-radius checks, heightmaps and ticks then run as the game's. In 26.3 `Feature` is an interface and configured features are records, so the wrapper is per adapter.
 - 2026-10-30: **Spike, 26.2 and 26.4** (diffs of the same classes):
   - 26.2's loop, seeds and random are 26.3's. It places through `PlacedFeature.placeWithContext`, a stream with a `flatMap` per modifier, which in a sequential stream is depth first too, so the order of draws is the same. Its modifiers are the same algorithms as `getPositions` streams.
   - 26.2's sorter numbers features in an `Object2IntOpenHashMap`, by equality, where 26.3's `Reference2IntOpenHashMap` goes by identity. `PlacedFeature` is a record, so in 26.2 two placed features with the same configured feature and equal modifiers share a number. 26.2's data has four such pairs (`acacia` and `acacia_checked`, and oak's, pine's and spruce's), none in a biome's list, so vanilla's order doesn't change. It's a switch, for data packs.

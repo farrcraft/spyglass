@@ -23,5 +23,6 @@ A spec is **Stable** when the behavior it describes is implemented and checked: 
 | [search.md](search.md)                           | Seed search: the query language, dimensions, scoring, seed order.         | Stable |
 | [material.md](material.md)                       | The material rule: a chunk's blocks after the noise fill, before carvers. | Draft  |
 | [carvers.md](carvers.md)                         | Carvers: the caves and canyons cut after the material rule.               | Draft  |
+| [features.md](features.md)                       | Decoration: the feature order, seeds, placement modifiers and tries.      | Draft  |
 | [providers.md](providers.md)                     | Int, float and height providers.                                          | Draft  |
 | [user-data.md](user-data.md)                     | The viewer's markers, done places and saved worlds; the view text.        | Stable |

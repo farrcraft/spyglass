@@ -1,8 +1,8 @@
 # 19. Features
 
-- Status: Planned
+- Status: In progress
 - Depends on: [18](completed/18-surface-veins-and-carvers.md)
-- Plans, in order: [m19-decoration](../plans/m19-decoration.md), [m19-placing](../plans/m19-placing.md), [m19-queries](../plans/m19-queries.md)
+- Plans, in order: [m19-decoration](../plans/completed/m19-decoration.md), [m19-placing](../plans/m19-placing.md), [m19-queries](../plans/m19-queries.md)
 
 ## Goal
 

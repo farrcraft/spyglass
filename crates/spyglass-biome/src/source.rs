@@ -37,17 +37,24 @@ const END_BIOMES: [&str; 5] = [
 /// seed.
 #[derive(Debug, Clone)]
 pub struct BiomeSource {
+    /// The dimension's climate functions, unbound.
     router: ClimateRouter,
+    /// How it picks a biome from the climate.
     kind: Kind,
+    /// Every biome it can give, by [`BiomeId`].
     names: BiomeNames,
+    /// The id of the dimension's noise settings.
     noise_settings: String,
 }
 
+/// The kinds of biome source.
 #[derive(Debug, Clone)]
 enum Kind {
     /// `MultiNoiseBiomeSource`: the nearest parameter point to the climate.
     MultiNoise {
+        /// The points, in the list's order.
         parameters: ParameterList,
+        /// The same points, for the nearest search.
         tree: SearchTree,
     },
     /// `TheEndBiomeSource`: the main island, then thresholds on erosion.
@@ -274,7 +281,9 @@ impl BiomeSource {
 /// A biome source bound to a seed.
 #[derive(Debug, Clone)]
 pub struct Biomes<'s> {
+    /// The source, independent of the seed.
     source: &'s BiomeSource,
+    /// Its climate router, bound to the seed.
     climate: ClimateSampler,
 }
 
@@ -295,9 +304,11 @@ impl Biomes<'_> {
     }
 
     /// [`biome_at`](Self::biome_at), with a buffer the multi-noise search reuses.
-    pub(crate) fn lookup_at(&self, qx: i32, qy: i32, qz: i32, hits: &mut Vec<u32>) -> Lookup {
+    pub(crate) fn lookup_at(&self, qx: i32, qy: i32, qz: i32, scratch: &mut Vec<u32>) -> Lookup {
         match &self.source.kind {
-            Kind::MultiNoise { tree, .. } => tree.lookup_with(&self.climate_at(qx, qy, qz), hits),
+            Kind::MultiNoise { tree, .. } => {
+                tree.lookup_with(&self.climate_at(qx, qy, qz), scratch)
+            }
             Kind::TheEnd => Lookup::Unique(self.end_biome(qx, qy, qz)),
             Kind::Checkerboard { biomes, shift } => {
                 Lookup::Unique(checkerboard_biome(biomes, *shift, qx, qz))
@@ -311,21 +322,23 @@ impl Biomes<'_> {
     /// value is the sampler's `f32` widened; in 26.2's it is the `f64` evaluation itself.
     fn end_biome(&self, qx: i32, qy: i32, qz: i32) -> BiomeId {
         // QuartPos.toBlock, then SectionPos.blockToSectionCoord.
-        let sx = qx.wrapping_shl(2) >> 4;
-        let sz = qz.wrapping_shl(2) >> 4;
-        let (lx, lz) = (i64::from(sx), i64::from(sz));
+        let section_x = qx.wrapping_shl(2) >> 4;
+        let section_z = qz.wrapping_shl(2) >> 4;
+        // Squared in `long`, so far sections can't overflow; 4096 is 64².
+        let (lx, lz) = (i64::from(section_x), i64::from(section_z));
         if lx * lx + lz * lz <= 4096 {
             return BiomeId(0);
         }
+        // The quart of a section's centre block.
         let quart = |s: i32| s.wrapping_mul(4).wrapping_add(2);
         let erosion = match self.climate.v1_21() {
             // 26.2: erosion().compute(new SinglePointContext(...)), never narrowed.
             Some(sampler) => sampler.functions()[3].compute(
-                quart(sx).wrapping_mul(4),
+                quart(section_x).wrapping_mul(4),
                 qy.wrapping_mul(4),
-                quart(sz).wrapping_mul(4),
+                quart(section_z).wrapping_mul(4),
             ),
-            None => f64::from(self.climate.sample(quart(sx), qy, quart(sz))[3]),
+            None => f64::from(self.climate.sample(quart(section_x), qy, quart(section_z))[3]),
         };
         // dcmpl/ifle, dcmpl/iflt, dcmpg/ifge: NaN fails every test and gives barrens.
         if erosion > 0.25 {
@@ -402,29 +415,32 @@ impl Biomes<'_> {
     /// could be one. With `find_closest`, the scan stops at the first certain hit, since nothing
     /// after it changes the closest one.
     fn scan_cells(&self, area: &HorizontalArea, matches: &impl Fn(BiomeId) -> bool) -> Vec<Cell> {
+        // With `find_closest`, square rings of growing radius, each scanned z outer and x
+        // inner but only on its edge (the inside was an earlier ring). Otherwise one pass at
+        // the full radius, edge and inside alike: the whole square.
         let [x, y, z] = area.center;
-        let (qx, qy, qz, qr) = (x >> 2, y >> 2, z >> 2, area.radius >> 2);
+        let (qx, qy, qz, quart_radius) = (x >> 2, y >> 2, z >> 2, area.radius >> 2);
         let step = area.increment;
         let mut cells = Vec::new();
-        let mut r = if area.find_closest { 0 } else { qr };
-        while r <= qr {
-            let mut dz = -r;
-            while dz <= r {
-                let z_edge = dz.wrapping_abs() == r;
-                let mut dx = -r;
-                while dx <= r {
-                    if area.find_closest && dx.wrapping_abs() != r && !z_edge {
+        let mut ring = if area.find_closest { 0 } else { quart_radius };
+        while ring <= quart_radius {
+            let mut dz = -ring;
+            while dz <= ring {
+                let z_edge = dz.wrapping_abs() == ring;
+                let mut dx = -ring;
+                while dx <= ring {
+                    if area.find_closest && dx.wrapping_abs() != ring && !z_edge {
                         dx = dx.wrapping_add(step);
                         continue;
                     }
-                    let (cx, cz) = (qx.wrapping_add(dx), qz.wrapping_add(dz));
-                    let lookup = self.biome_at(cx, qy, cz);
+                    let (cell_x, cell_z) = (qx.wrapping_add(dx), qz.wrapping_add(dz));
+                    let lookup = self.biome_at(cell_x, qy, cell_z);
                     let hit = matches(lookup.biome());
                     let tied = lookup.candidates().iter().any(|&b| matches(b) != hit);
                     if hit || tied {
                         cells.push(Cell {
-                            x: cx,
-                            z: cz,
+                            x: cell_x,
+                            z: cell_z,
                             lookup,
                             tied,
                         });
@@ -436,7 +452,7 @@ impl Biomes<'_> {
                 }
                 dz = dz.wrapping_add(step);
             }
-            r = r.wrapping_add(step);
+            ring = ring.wrapping_add(step);
         }
         cells
     }
@@ -452,14 +468,14 @@ impl Biomes<'_> {
             .expect("a region small enough to count its cells");
         let mut cells = vec![BiomeId(0); count];
         let mut ties = BTreeMap::new();
-        let mut hits = Vec::new();
+        let mut scratch = Vec::new();
         for z in 0..sz {
             let qz = min[2].wrapping_add(z as i32);
             for x in 0..sx {
                 let qx = min[0].wrapping_add(x as i32);
                 for y in 0..sy {
                     let qy = min[1].wrapping_add(y as i32);
-                    let lookup = self.lookup_at(qx, qy, qz, &mut hits);
+                    let lookup = self.lookup_at(qx, qy, qz, &mut scratch);
                     let index = (y * sz + z) * sx + x;
                     cells[index] = lookup.biome();
                     if let Lookup::Tied(set) = lookup {
@@ -481,13 +497,13 @@ impl Biomes<'_> {
     /// [`biome_at`](Self::biome_at)'s answer; positions wrap like the game's `int`s.
     pub fn biome_grid(&self, origin: [i32; 2], qy: i32, step: i32, size: [u32; 2]) -> Vec<Lookup> {
         let [sx, sz] = size;
-        let mut hits = Vec::new();
+        let mut scratch = Vec::new();
         let mut cells = Vec::with_capacity(sx as usize * sz as usize);
         for z in 0..sz {
             let qz = origin[1].wrapping_add(step.wrapping_mul(z as i32));
             for x in 0..sx {
                 let qx = origin[0].wrapping_add(step.wrapping_mul(x as i32));
-                cells.push(self.lookup_at(qx, qy, qz, &mut hits));
+                cells.push(self.lookup_at(qx, qy, qz, &mut scratch));
             }
         }
         cells
@@ -511,8 +527,11 @@ pub struct HorizontalArea {
 
 /// A cell [`Biomes::find_biome_horizontal`] kept: a hit, or a tie that could be one.
 struct Cell {
+    /// The quart's x.
     x: i32,
+    /// The quart's z.
     z: i32,
+    /// The biome there, with ties.
     lookup: Lookup,
     /// Whether the cell's candidates disagree on `matches`.
     tied: bool,
@@ -551,6 +570,8 @@ fn replay_ties<R: RandomSource + Clone>(
     matches: &impl Fn(BiomeId) -> bool,
     start: &R,
 ) -> Vec<Option<usize>> {
+    // Each bit of `mask` flips one tied cell's outcome; 0, every cell as `matches` gives it, is
+    // the answer already found.
     let tied: Vec<usize> = (0..cells.len()).filter(|&i| cells[i].tied).collect();
     (1_u32..1 << tied.len())
         .map(|mask| {
@@ -601,7 +622,9 @@ impl HorizontalSearch {
 /// Biomes over a box of quarts, from [`Biomes::biomes_in`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BiomeRegion {
+    /// The minimum quart corner.
     min: [i32; 3],
+    /// The size in quarts.
     size: [u32; 3],
     /// Each cell's answer, x fastest, then z, then y.
     cells: Vec<BiomeId>,

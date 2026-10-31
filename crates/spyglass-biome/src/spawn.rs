@@ -25,7 +25,9 @@ enum Targets {
     /// 26.3's: each a `SpawnTargetPoint`, density functions each with the range its value
     /// should be in. Also any family's empty list, which never samples.
     Functions {
+        /// Each target's density functions, unbound, with the range each should be in.
         points: Vec<Vec<(Df, Parameter)>>,
+        /// The noises the functions name, which binding them to a seed needs.
         noises: HashMap<String, NormalNoiseParameters>,
         /// What vertical anchors resolve against, as for [`ClimateRouter`].
         anchors: Option<AnchorHeights>,
@@ -33,7 +35,9 @@ enum Targets {
     /// 26.2's (the 1.21 family, ADR 0026): each a `Climate.ParameterPoint`, measured against
     /// the dimension's climate sampler.
     Points {
+        /// The targets.
         points: Vec<ParameterPoint>,
+        /// The climate they're measured against, unbound.
         router: Box<ClimateRouter>,
     },
 }
@@ -208,11 +212,16 @@ pub struct SpawnOrigin {
 #[derive(Debug, Clone)]
 pub struct SpawnSearch(Search);
 
+/// [`Targets`] bound to a seed.
 #[derive(Debug, Clone)]
 enum Search {
+    /// 26.3's: each target's bound functions, with the range each should be in.
     Functions(Vec<Vec<(Sampler, Parameter)>>),
+    /// 26.2's: the targets, and the seed's climate sampler.
     Points {
+        /// The targets.
         points: Vec<ParameterPoint>,
+        /// The climate they're measured against.
         climate: Box<ClimateSampler>,
     },
 }
@@ -231,12 +240,12 @@ impl SpawnSearch {
         let climate = match &self.0 {
             Search::Functions(points) => {
                 // QuartPos.toBlock(QuartPos.fromBlock(x)).
-                let (qx, qz) = ((x >> 2) << 2, (z >> 2) << 2);
+                let (quart_x, quart_z) = ((x >> 2) << 2, (z >> 2) << 2);
                 points
                     .iter()
                     .map(|point| {
-                        point.iter().fold(0_i64, |sum, (f, range)| {
-                            let value = quantize(f.sample(qx, 0, qz));
+                        point.iter().fold(0_i64, |sum, (function, range)| {
+                            let value = quantize(function.sample(quart_x, 0, quart_z));
                             sum.wrapping_add(square(range.distance(value)))
                         })
                     })
@@ -276,7 +285,10 @@ impl SpawnSearch {
         max_radius: f32,
         step: f32,
     ) -> (SpawnPoint, bool) {
-        let [cx, cz] = best.position;
+        // The rings stay centred on the starting best, even as the best moves: it's a sweep
+        // of fixed circles, not a walk. Each ring's points are about `step` blocks apart,
+        // since the angle steps by `step / radius`.
+        let [centre_x, centre_z] = best.position;
         let mut best = best;
         let mut platform_dependent = false;
         let mut angle = 0.0_f32;
@@ -284,18 +296,21 @@ impl SpawnSearch {
         while radius <= max_radius {
             let (dx, other_x) = trig_offset(angle, f64::sin, radius);
             let (dz, other_z) = trig_offset(angle, f64::cos, radius);
-            let sample = self.fitness_at(cx.wrapping_add(dx), cz.wrapping_add(dz));
+            let sample = self.fitness_at(centre_x.wrapping_add(dx), centre_z.wrapping_add(dz));
             let replaces = sample.fitness < best.fitness;
             if other_x.is_some() || other_z.is_some() {
-                let xs = [Some(dx), other_x];
-                let zs = [Some(dz), other_z];
+                // Where another platform's sine or cosine could put this sample. If the
+                // sample here or at any of those decides whether the best changes, the
+                // answer may depend on the platform.
+                let candidate_xs = [Some(dx), other_x];
+                let candidate_zs = [Some(dz), other_z];
                 // The other positions only; `replaces` already answers for (dx, dz).
                 platform_dependent |= replaces
-                    || xs.iter().flatten().any(|&x| {
-                        zs.iter().flatten().any(|&z| {
+                    || candidate_xs.iter().flatten().any(|&x| {
+                        candidate_zs.iter().flatten().any(|&z| {
                             (x, z) != (dx, dz)
                                 && self
-                                    .fitness_at(cx.wrapping_add(x), cz.wrapping_add(z))
+                                    .fitness_at(centre_x.wrapping_add(x), centre_z.wrapping_add(z))
                                     .fitness
                                     < best.fitness
                         })
@@ -330,6 +345,9 @@ impl SpawnSearch {
                 platform_dependent: false,
             };
         }
+        // A coarse sweep finds the region with the best climate near the origin, and a fine
+        // one around its best point settles the spot. The squared distance in the fitness
+        // breaks ties toward the origin.
         let (coarse, coarse_dependent) = self.radial_search(self.fitness_at(0, 0), 2048.0, 512.0);
         let (found, fine_dependent) = self.radial_search(coarse, 512.0, 32.0);
         SpawnOrigin {
@@ -357,10 +375,10 @@ fn trig_offset(angle: f32, trig: fn(f64) -> f64, radius: f32) -> (i32, Option<i3
     for _ in 0..4 {
         up = up.next_up();
         down = down.next_down();
-        for v in [up, down] {
-            let t = (v * radius) as i32;
-            if t != answer {
-                other = Some(t);
+        for nudged in [up, down] {
+            let offset = (nudged * radius) as i32;
+            if offset != answer {
+                other = Some(offset);
             }
         }
     }

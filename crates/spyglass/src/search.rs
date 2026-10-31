@@ -29,8 +29,9 @@ use crate::{BiomeQuery, Dimension, Error, FeatureQuery, Game, Result, StructureQ
 pub struct SearchQuery {
     /// The id of the world each dimension the query reads was resolved against.
     worlds: [Option<u64>; 3],
+    /// The parsed query.
     query: Query,
-    /// By constraint.
+    /// Each constraint's dimension and names, by constraint.
     resolved: Vec<Resolved>,
     /// Necessary conditions on the seed's lower 48 bits, in each dimension that has any.
     prefilters: Vec<(Dimension, Prefilter)>,
@@ -43,16 +44,22 @@ pub struct SearchQuery {
 /// A `find` line's target, resolved: what's looked for, and the dimension it's in.
 #[derive(Debug, Clone)]
 pub(crate) struct Found {
+    /// The dimension the targets are in.
     pub dimension: Dimension,
+    /// What's looked for.
     pub target: Looked,
 }
 
 /// What a `find` query looks for.
 #[derive(Debug, Clone)]
 pub(crate) enum Looked {
+    /// A structure's starts.
     Structure(StructureQuery),
+    /// The biome grid's points in a biome.
     Biome(BiomeQuery),
+    /// A feature's tries that placed, or might have.
     Feature(FeatureQuery),
+    /// Every point of the grid.
     Point,
 }
 
@@ -68,6 +75,7 @@ struct Resolved {
     anchor: Option<(Dimension, StructureQuery)>,
 }
 
+/// What a constraint counts, resolved.
 #[derive(Debug, Clone)]
 enum Target {
     Structure(StructureQuery),
@@ -310,7 +318,12 @@ fn resolve(scope: Scope<'_>, text: &str) -> Result<SearchQuery> {
         }
         _ => None,
     };
+    // Each constraint's dimension: written, or inferred from what it counts. Its places, and
+    // any spawn, `here` or structure anchor, are then checked against the dimensions they're
+    // in, and its names resolved there.
     let mut resolved = Vec::with_capacity(query.constraints().len());
+    // The constraints whose written dimension is the inferred one: the canonical text leaves
+    // it out.
     let mut forget = Vec::new();
     for (i, (constraint, &line)) in query.constraints().iter().zip(query.lines()).enumerate() {
         let message = |message: String| Error::InvalidQuery {
@@ -319,10 +332,11 @@ fn resolve(scope: Scope<'_>, text: &str) -> Result<SearchQuery> {
             message,
         };
         let at_line = |e: Error| message(e.to_string());
-        let mut world = |d: Dimension| -> Result<&World> {
-            let w = scope.world(d).map_err(at_line)?;
-            worlds[d.index()] = Some(w.id);
-            Ok(w)
+        // A dimension's world, noted as one the query reads.
+        let mut world = |dimension: Dimension| -> Result<&World> {
+            let world = scope.world(dimension).map_err(at_line)?;
+            worlds[dimension.index()] = Some(world.id);
+            Ok(world)
         };
         let kind = &constraint.kind;
         let subject = match kind {
@@ -362,27 +376,27 @@ fn resolve(scope: Scope<'_>, text: &str) -> Result<SearchQuery> {
                 dimension.name()
             )));
         }
-        // A disc around a `find` target in dimension `d` is around the target, converted.
-        let here_in = |p: &Place, d: Dimension| -> Result<()> {
+        // A disc around a `find` target in `place_in` is around the target, converted.
+        let here_in = |place: &Place, place_in: Dimension| -> Result<()> {
             let Some(found) = &find else {
                 return Ok(());
             };
-            if here_anchored(p)
-                && found.dimension != d
-                && (found.dimension == Dimension::End || d == Dimension::End)
+            if here_anchored(place)
+                && found.dimension != place_in
+                && (found.dimension == Dimension::End || place_in == Dimension::End)
             {
                 return Err(at_line(Error::NotLinked {
                     from: found.dimension,
-                    to: d,
+                    to: place_in,
                 }));
             }
             Ok(())
         };
-        // A disc around the spawn in dimension `d` is around the Overworld's, converted.
-        let mut spawn_in = |p: &Place, d: Dimension| -> Result<()> {
-            if !spawn_anchored(p) {
+        // A disc around the spawn in `place_in` is around the Overworld's, converted.
+        let mut spawn_in = |place: &Place, place_in: Dimension| -> Result<()> {
+            if !spawn_anchored(place) {
                 Ok(())
-            } else if d == Dimension::End {
+            } else if place_in == Dimension::End {
                 Err(message(
                     "`spawn` isn't linked to the End: its coordinates aren't the Overworld's"
                         .to_string(),
@@ -404,21 +418,25 @@ fn resolve(scope: Scope<'_>, text: &str) -> Result<SearchQuery> {
                     // The constraint's own dimension if it places the anchor, else the
                     // anchor's.
                     let subject = Subject::Structure(structure);
-                    let d = if Scope::places(here, subject).map_err(at_line)? {
+                    let anchor_in = if Scope::places(here, subject).map_err(at_line)? {
                         dimension
                     } else {
                         scope.infer(subject).map_err(at_line)?
                     };
-                    if d != dimension && (d == Dimension::End || dimension == Dimension::End) {
+                    if anchor_in != dimension
+                        && (anchor_in == Dimension::End || dimension == Dimension::End)
+                    {
                         return Err(at_line(Error::NotLinked {
-                            from: d,
+                            from: anchor_in,
                             to: dimension,
                         }));
                     }
-                    spawn_in(place, d)?;
-                    here_in(place, d)?;
-                    let anchor = world(d)?.structure_query(structure).map_err(at_line)?;
-                    Some((d, anchor))
+                    spawn_in(place, anchor_in)?;
+                    here_in(place, anchor_in)?;
+                    let anchor = world(anchor_in)?
+                        .structure_query(structure)
+                        .map_err(at_line)?;
+                    Some((anchor_in, anchor))
                 }
             },
             Kind::Cluster { place, .. }
@@ -467,36 +485,41 @@ fn resolve(scope: Scope<'_>, text: &str) -> Result<SearchQuery> {
     let mut prefilters = Vec::new();
     // A `find` query's places are around its targets, which a seed's lower 48 bits don't
     // decide; and it judges one seed, so there's nothing to skip.
-    for d in Dimension::ALL.into_iter().filter(|_| find.is_none()) {
-        let mine: Vec<usize> = (0..resolved.len())
-            .filter(|&i| resolved[i].dimension == d)
+    // Each dimension's prefilter, from the constraints in it. An anchor in another dimension
+    // isn't placed by this one's sets, so it's left out.
+    for dimension in Dimension::ALL.into_iter().filter(|_| find.is_none()) {
+        let in_dimension: Vec<usize> = (0..resolved.len())
+            .filter(|&i| resolved[i].dimension == dimension)
             .collect();
-        if mine.is_empty() {
+        if in_dimension.is_empty() {
             continue;
         }
-        let world = scope.world(d)?;
-        let subset: Vec<_> = mine.iter().map(|&i| constraints[i].clone()).collect();
-        let named: Vec<Named<'_>> = mine
+        let world = scope.world(dimension)?;
+        let subset: Vec<_> = in_dimension
+            .iter()
+            .map(|&i| constraints[i].clone())
+            .collect();
+        let named: Vec<Named<'_>> = in_dimension
             .iter()
             .map(|&i| {
-                let r = &resolved[i];
+                let names = &resolved[i];
                 Named {
-                    target: match &r.target {
-                        Some(Target::Structure(q)) => Some(&q.targets[..]),
+                    target: match &names.target {
+                        Some(Target::Structure(structure)) => Some(&structure.targets[..]),
                         _ => None,
                     },
-                    anchor: r
+                    anchor: names
                         .anchor
                         .as_ref()
-                        .filter(|(anchor_in, _)| *anchor_in == d)
-                        .map(|(_, q)| &q.targets[..]),
+                        .filter(|(anchor_in, _)| *anchor_in == dimension)
+                        .map(|(_, anchor)| &anchor.targets[..]),
                 }
             })
             .collect();
-        let uses_spawn = mine
+        let uses_spawn = in_dimension
             .iter()
             .any(|&i| evaluate::uses_spawn(&constraints[i].kind));
-        let reach = if d == Dimension::Overworld || !uses_spawn {
+        let reach = if dimension == Dimension::Overworld || !uses_spawn {
             SPAWN_REACH
         } else {
             // Converted and rounded down, the spawn is at most a block further on each axis.
@@ -506,7 +529,7 @@ fn resolve(scope: Scope<'_>, text: &str) -> Result<SearchQuery> {
         };
         let prefilter = Prefilter::new(&world.sets, &subset, &named, reach);
         if !prefilter.is_empty() {
-            prefilters.push((d, prefilter));
+            prefilters.push((dimension, prefilter));
         }
     }
     let costs = (0..resolved.len())
@@ -559,19 +582,22 @@ fn check_y(world: &World, dimension: Dimension, y: i32) -> std::result::Result<(
 /// conditions by size (a few milliseconds a column), and last features by size (tens of
 /// milliseconds a chunk).
 fn cost(scope: Scope<'_>, kind: &Kind, resolved: &Resolved) -> Result<(u8, u64)> {
-    let rings = |d: Dimension, q: &StructureQuery| -> Result<bool> {
-        Ok(scope.world(d)?.sets.sets().iter().any(|s| {
-            s.possible
-                && matches!(s.placement.kind, PlacementKind::ConcentricRings(_))
-                && s.entries.iter().any(|e| q.targets.contains(&e.structure))
+    let rings = |dimension: Dimension, structure: &StructureQuery| -> Result<bool> {
+        Ok(scope.world(dimension)?.sets.sets().iter().any(|set| {
+            set.possible
+                && matches!(set.placement.kind, PlacementKind::ConcentricRings(_))
+                && set
+                    .entries
+                    .iter()
+                    .any(|entry| structure.targets.contains(&entry.structure))
         }))
     };
     let target_on_rings = match &resolved.target {
-        Some(Target::Structure(q)) => rings(resolved.dimension, q)?,
+        Some(Target::Structure(structure)) => rings(resolved.dimension, structure)?,
         _ => false,
     };
     let anchor_on_rings = match &resolved.anchor {
-        Some((d, q)) => rings(*d, q)?,
+        Some((anchor_in, anchor)) => rings(*anchor_in, anchor)?,
         None => false,
     };
     Ok(match kind {

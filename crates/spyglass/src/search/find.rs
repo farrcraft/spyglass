@@ -131,11 +131,13 @@ impl GameSession<'_> {
 
 /// A target, before it's judged.
 struct Target {
+    /// Its block `[x, z]`, in the target's dimension: where `here` is set.
     position: [i32; 2],
     /// Its distance squared from the find place's centre.
     distance_sqr: u64,
     /// Whether it certainly is what's looked for.
     certain: bool,
+    /// The structure start, feature or biome sample it is; `None` for a point.
     feature: Option<Feature>,
 }
 
@@ -164,14 +166,17 @@ fn find<'w>(
     let top = options.top.max(1);
     let batch = 4 * pool.current_num_threads().max(1);
     let deadline = options.time.map(|t| start + t);
+    // The targets are judged in batches, nearest first, each batch in parallel. A batch's
+    // matches are kept in target order, so the matches are the same whatever the threads do:
+    // the first `top` targets that match and aren't within `apart` of a nearer match.
     let mut matches: Vec<FindMatch> = Vec::new();
     let mut judged = 0;
     let mut cut = false;
-    let near_a_match = |p: [i32; 2], matches: &[FindMatch]| {
+    let near_a_match = |position: [i32; 2], matches: &[FindMatch]| {
         apart > 0
             && matches
                 .iter()
-                .any(|m| distance_sqr(m.position, p) <= u64::from(apart).pow(2))
+                .any(|m| distance_sqr(m.position, position) <= u64::from(apart).pow(2))
     };
     while judged < targets.len() && matches.len() < top {
         if options.stop.is_stopped() || deadline.is_some_and(|d| Instant::now() >= d) {
@@ -188,11 +193,11 @@ fn find<'w>(
         })?;
         let done = results.len();
         for (&i, result) in todo.iter().zip(results) {
-            let Some(m) = result else {
+            let Some(found_match) = result else {
                 continue;
             };
             if matches.len() < top && !near_a_match(targets[i].position, &matches) {
-                matches.push(m);
+                matches.push(found_match);
             }
         }
         if done < todo.len() {

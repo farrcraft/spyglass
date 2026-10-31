@@ -119,11 +119,22 @@ impl Feature {
 }
 
 /// A constraint's answer in both cases, before the spawn's uncertainty is applied.
+///
+/// What spyglass doesn't decide (a candidate start or feature, a tied biome sample) could go
+/// either way, so each constraint is judged twice. The best case takes every undecided thing
+/// the way that helps: a candidate counts towards "at least", but not against "no". The worst
+/// case takes it the way that hurts: only certain ones count towards "at least", and every one
+/// counts against "no". Met in the worst case is met; met only in the best is possibly met.
 struct Judged {
+    /// Whether it holds in the best case.
     best: bool,
+    /// Whether it holds in the worst case.
     worst: bool,
+    /// Its satisfaction in the best case, 0 to 1,000.
     best_sat: u32,
+    /// Its satisfaction in the worst case, 0 to 1,000.
     worst_sat: u32,
+    /// What it matched, for showing.
     features: Vec<Feature>,
 }
 
@@ -225,6 +236,7 @@ pub(crate) struct Here {
 /// One evaluation's view of a seed's sessions: the spawn origin is found once, when first
 /// needed.
 struct Judge<'a, 'w> {
+    /// The seed's sessions, each dimension's bound when a constraint first reads it.
     sessions: &'a dyn Sessions<'w>,
     /// The Overworld spawn's origin.
     spawn: OnceCell<SpawnOrigin>,
@@ -403,21 +415,24 @@ fn check_with<'w>(
         Importance::Preferred { weight } => Some(u64::from(weight)),
         Importance::Required => None,
     };
+    // `remaining` is the most the preferred constraints not yet judged could add (each at
+    // most 1,000 times its weight): once the score can't reach the threshold even with all of
+    // it, the rest needn't be judged.
     let mut remaining: u64 = (0..constraints.len())
         .filter_map(weight)
         .map(|w| w * 1000)
         .sum();
     let mut score = 0;
     for &i in &query.order {
-        let Some(w) = weight(i) else {
+        let Some(constraint_weight) = weight(i) else {
             continue;
         };
         if score + remaining < threshold {
             return Ok(Checked::Below);
         }
         let result = judge.constraint(&constraints[i].kind, &query.resolved[i])?;
-        remaining -= w * 1000;
-        score += w * u64::from(if certain { result.worst } else { result.best });
+        remaining -= constraint_weight * 1000;
+        score += constraint_weight * u64::from(if certain { result.worst } else { result.best });
     }
     Ok(if score >= threshold {
         Checked::Scored(score)
@@ -429,7 +444,9 @@ fn check_with<'w>(
 /// A place in blocks.
 #[derive(Debug, Clone, Copy)]
 pub(super) enum Area {
+    /// The blocks at most `radius` from `centre`.
     Disc { centre: [i32; 2], radius: u32 },
+    /// The blocks in `min..=max`, corners included.
     Box { min: [i32; 2], max: [i32; 2] },
 }
 
@@ -481,15 +498,17 @@ impl Area {
         let mut out = Vec::new();
         match self {
             Area::Disc { centre, radius } => {
-                let k = i64::from(radius) / step;
-                for j in -k..=k {
-                    for i in -k..=k {
+                // The square of steps around the centre that holds the disc, then the points
+                // in it.
+                let steps = i64::from(radius) / step;
+                for j in -steps..=steps {
+                    for i in -steps..=steps {
                         let (dx, dz) = (i * step, j * step);
-                        let d2 = dx * dx + dz * dz;
-                        if d2 <= i64::from(radius).pow(2) {
+                        let squared = dx * dx + dz * dz;
+                        if squared <= i64::from(radius).pow(2) {
                             // Inside the disc, so within the world's coordinates.
                             let p = [centre[0] + dx as i32, centre[1] + dz as i32];
-                            out.push((p, d2.unsigned_abs().isqrt() as u32));
+                            out.push((p, squared.unsigned_abs().isqrt() as u32));
                         }
                     }
                 }
@@ -509,16 +528,17 @@ impl Area {
 
 /// `b`'s distance from `a`, `isqrt(dx² + dz²)`, if it's at most `radius`.
 fn within(a: [i32; 2], b: [i32; 2], radius: u32) -> Option<u32> {
-    let d2 = distance_sqr(a, b);
-    (d2 <= u64::from(radius).pow(2)).then(|| d2.isqrt() as u32)
+    let squared = distance_sqr(a, b);
+    (squared <= u64::from(radius).pow(2)).then(|| squared.isqrt() as u32)
 }
 
-/// The points one feature earns at distance `d` in a place of radius `radius`.
-fn points(d: u32, radius: u32) -> u64 {
+/// The points one feature earns at distance `distance` in a place of radius `radius`: 1,000 at
+/// the centre, falling evenly to 500 at the edge.
+fn points(distance: u32, radius: u32) -> u64 {
     if radius == 0 {
         1000
     } else {
-        500 + 500 * u64::from(radius - d) / u64::from(radius)
+        500 + 500 * u64::from(radius - distance) / u64::from(radius)
     }
 }
 
@@ -538,6 +558,7 @@ fn graded(mut distances: Vec<u32>, n: u32, radius: u32) -> u32 {
 struct Candidate {
     /// In the constraint's dimension's coordinates.
     position: [i32; 2],
+    /// Whether it certainly is there: only certain ones count in the worst case.
     certain: bool,
     /// For structure starts, the dimension, set and chunk: a start is never its own anchor.
     start: Option<(Dimension, String, [i32; 2])>,
@@ -545,14 +566,19 @@ struct Candidate {
 
 /// A feature in a region: its distance in each case, `None` where it isn't counted.
 struct Matched {
+    /// Its index in the candidates.
     index: usize,
+    /// Its distance in the best case.
     best: u32,
+    /// Its distance in the worst case, if it counts then.
     worst: Option<u32>,
 }
 
 /// A region with its anchors found.
 enum Within {
+    /// A place on its own.
     Area(Area),
+    /// Within `radius` of any anchor (a structure start), each in this dimension's coordinates.
     Anchors {
         radius: u32,
         anchors: Vec<Candidate>,
@@ -586,25 +612,28 @@ impl Within {
         }
     }
 
-    /// Whether `c` is in the region in each case, and how far it is from the centre or its
-    /// nearest anchor.
-    fn matches(&self, c: &Candidate) -> Option<(u32, Option<u32>)> {
+    /// Whether `candidate` is in the region in each case, and how far it is from the centre or
+    /// its nearest anchor. In the worst case it counts only if it's certain, and near a certain
+    /// anchor.
+    fn matches(&self, candidate: &Candidate) -> Option<(u32, Option<u32>)> {
         match self {
             Within::Area(area) => {
-                let d = area.distance(c.position)?;
-                Some((d, c.certain.then_some(d)))
+                let distance = area.distance(candidate.position)?;
+                Some((distance, candidate.certain.then_some(distance)))
             }
             Within::Anchors { radius, anchors } => {
                 let nearest = |certain_only: bool| {
                     anchors
                         .iter()
-                        .filter(|a| !certain_only || a.certain)
-                        .filter(|a| c.start.is_none() || a.start != c.start)
-                        .filter_map(|a| within(a.position, c.position, *radius))
+                        .filter(|anchor| !certain_only || anchor.certain)
+                        .filter(|anchor| {
+                            candidate.start.is_none() || anchor.start != candidate.start
+                        })
+                        .filter_map(|anchor| within(anchor.position, candidate.position, *radius))
                         .min()
                 };
                 let best = nearest(false)?;
-                Some((best, c.certain.then(|| nearest(true)).flatten()))
+                Some((best, candidate.certain.then(|| nearest(true)).flatten()))
             }
         }
     }
@@ -656,6 +685,7 @@ impl<'a, 'w> Judge<'a, 'w> {
         })
     }
 
+    /// Judges one constraint in full, in both cases (see [`Judged`]).
     fn constraint(&self, kind: &Kind, resolved: &Resolved) -> Result<ConstraintResult> {
         let dimension = resolved.dimension;
         let session = self.session(dimension)?;
@@ -724,15 +754,16 @@ impl<'a, 'w> Judge<'a, 'w> {
                     .filter(|f| f.certain)
                     .map(|f| f.position)
                     .collect();
+                // The best case groups every feature, the worst only the certain ones.
                 let cap = *size as usize;
                 let group = largest_group(&all, *apart, cap);
-                let worst = largest_group(&certain, *apart, cap).len();
-                let share = |g: usize| (1000 * g / cap) as u32; // g is at most cap
+                let worst_group = largest_group(&certain, *apart, cap).len();
+                let share = |grouped: usize| (1000 * grouped / cap) as u32; // at most cap
                 Judged {
                     best: group.len() >= cap,
-                    worst: worst >= cap,
+                    worst: worst_group >= cap,
                     best_sat: share(group.len()),
-                    worst_sat: share(worst),
+                    worst_sat: share(worst_group),
                     features: group
                         .iter()
                         .map(|&i| Feature::Placed(found[i].clone()))
@@ -776,13 +807,13 @@ impl<'a, 'w> Judge<'a, 'w> {
                 let certain: Vec<[i32; 2]> = starts.iter().filter(|s| s.certain).map(xz).collect();
                 let cap = *size as usize;
                 let group = largest_group(&all, *apart, cap);
-                let worst = largest_group(&certain, *apart, cap).len();
-                let share = |g: usize| (1000 * g / cap) as u32; // g is at most cap
+                let worst_group = largest_group(&certain, *apart, cap).len();
+                let share = |grouped: usize| (1000 * grouped / cap) as u32; // at most cap
                 Judged {
                     best: group.len() >= cap,
-                    worst: worst >= cap,
+                    worst: worst_group >= cap,
                     best_sat: share(group.len()),
-                    worst_sat: share(worst),
+                    worst_sat: share(worst_group),
                     features: group
                         .iter()
                         .map(|&i| Feature::Structure(starts[i].clone()))
@@ -822,11 +853,11 @@ impl<'a, 'w> Judge<'a, 'w> {
             (Kind::Spawn { place }, None) => {
                 let area = self.area(place, dimension)?;
                 let spawn = *self.spawn()?;
-                let d = area.distance(spawn.map_block());
-                let sat = d.map_or(0, |d| points(d, area.radius()) as u32);
+                let distance = area.distance(spawn.map_block());
+                let sat = distance.map_or(0, |d| points(d, area.radius()) as u32);
                 Judged {
-                    best: d.is_some(),
-                    worst: d.is_some(),
+                    best: distance.is_some(),
+                    worst: distance.is_some(),
                     best_sat: sat,
                     worst_sat: sat,
                     features: vec![Feature::Spawn(spawn)],
@@ -906,17 +937,20 @@ impl<'a, 'w> Judge<'a, 'w> {
         let area = self.area(place, dimension)?;
         // Certain mode keeps the worst case, which counts only certain features towards "at
         // least" and every feature against "no"; otherwise the best case.
+        // Features come chunk by chunk, so each is counted as it comes, and placing stops as
+        // soon as the answer can't change: enough found for "at least" or a cluster, or one
+        // that breaks "no".
         let mut counted: Vec<[i32; 3]> = Vec::new();
         let mut decided = None;
         self.features(session, target, place, area, dimension, |f| {
-            let p = f.position;
+            let position = f.position;
             match kind {
                 Kind::Features {
                     count: Count::AtLeast(n),
                     ..
                 } => {
                     if !certain || f.certain {
-                        counted.push(p);
+                        counted.push(position);
                     }
                     if counted.len() >= *n as usize {
                         decided = Some(true);
@@ -936,10 +970,10 @@ impl<'a, 'w> Judge<'a, 'w> {
                         let mut near: Vec<[i32; 3]> = counted
                             .iter()
                             .copied()
-                            .filter(|&q| distance_sqr(p, q) <= limit)
+                            .filter(|&other| distance_sqr(position, other) <= limit)
                             .collect();
-                        near.push(p);
-                        counted.push(p);
+                        near.push(position);
+                        counted.push(position);
                         let cap = *size as usize;
                         if largest_group(&near, *apart, cap).len() >= cap {
                             decided = Some(true);
@@ -1056,8 +1090,8 @@ pub(super) fn starts_in(
     // position = chunk · 16 + offset, so the chunks run from ceil((min − offset) / 16) to
     // floor((max − offset) / 16). Every value is far from overflowing.
     let chunks = |offset: [i32; 3]| {
-        let lo = |b: i32, o: i32| (b - o + 15).div_euclid(16);
-        let hi = |b: i32, o: i32| (b - o).div_euclid(16);
+        let lo = |block: i32, offset: i32| (block - offset + 15).div_euclid(16);
+        let hi = |block: i32, offset: i32| (block - offset).div_euclid(16);
         (
             [lo(min[0], offset[0]), lo(min[1], offset[2])],
             [hi(max[0], offset[0]), hi(max[1], offset[2])],
@@ -1087,11 +1121,16 @@ fn heights(session: &Session<'_>, area: &Area, step: u32) -> Vec<i32> {
 
 /// The slime chunks whose centre is in `min..=max`.
 fn slime_chunks(session: &Session<'_>, min: [i32; 2], max: [i32; 2]) -> Vec<[i32; 2]> {
-    let lo = min.map(|b| (b - 8 + 15).div_euclid(16));
-    let hi = max.map(|b| (b - 8).div_euclid(16));
+    // A chunk's centre is chunk · 16 + 8, so these are the chunks as `starts_in` finds them,
+    // with an offset of 8.
+    let lo = min.map(|block| (block - 8 + 15).div_euclid(16));
+    let hi = max.map(|block| (block - 8).div_euclid(16));
     session.slime_chunks(lo, hi)
 }
 
+/// Judges whether `target` is (`present`) or isn't in `area`'s biome samples. A tied sample
+/// possibly matches: presence holds in the best case with a possible match and in the worst
+/// with a certain one, and absence the other way round.
 fn biome_presence(
     session: &Session<'_>,
     present: bool,
@@ -1102,15 +1141,17 @@ fn biome_presence(
     // The nearest sample that possibly matches, and the nearest that certainly does.
     let mut possible: Option<([i32; 3], u32)> = None;
     let mut certain: Option<([i32; 3], u32)> = None;
-    for (p, d) in area.grid(sampling.step) {
-        let position = [p[0], sampling.y, p[1]];
+    for (point, distance) in area.grid(sampling.step) {
+        let position = [point[0], sampling.y, point[1]];
         let (maybe, sure) = sample(session, position, target);
-        let nearer = |best: Option<([i32; 3], u32)>| best.is_none_or(|(_, b)| d < b);
+        let nearer = |nearest: Option<([i32; 3], u32)>| {
+            nearest.is_none_or(|(_, nearest_distance)| distance < nearest_distance)
+        };
         if maybe && nearer(possible) {
-            possible = Some((position, d));
+            possible = Some((position, distance));
         }
         if sure && nearer(certain) {
-            certain = Some((position, d));
+            certain = Some((position, distance));
         }
     }
     let radius = area.radius();
@@ -1149,6 +1190,8 @@ fn biome_presence(
     }
 }
 
+/// Judges whether `target` covers at least `percent` of `area`'s biome samples: the best case
+/// counts the samples that possibly match, the worst those that certainly do.
 fn coverage(
     session: &Session<'_>,
     percent: u32,
@@ -1158,14 +1201,16 @@ fn coverage(
 ) -> Judged {
     let grid = area.grid(sampling.step);
     let (mut possible, mut certain) = (0_u64, 0_u64);
-    for &(p, _) in &grid {
-        let (maybe, sure) = sample(session, [p[0], sampling.y, p[1]], target);
+    for &(point, _) in &grid {
+        let (maybe, sure) = sample(session, [point[0], sampling.y, point[1]], target);
         possible += u64::from(maybe);
         certain += u64::from(sure);
     }
-    let total = grid.len() as u64 * u64::from(percent);
-    let holds = |m: u64| 100 * m >= total;
-    let sat = |m: u64| (100_000 * m / total).min(1000) as u32;
+    // In hundredths of a sample, so the percentage needs no division: `matching` samples are
+    // enough when 100 · matching ≥ samples · percent.
+    let needed = grid.len() as u64 * u64::from(percent);
+    let holds = |matching: u64| 100 * matching >= needed;
+    let sat = |matching: u64| (100_000 * matching / needed).min(1000) as u32;
     Judged {
         best: holds(possible),
         worst: holds(certain),
@@ -1197,6 +1242,7 @@ pub(super) fn sample(
     )
 }
 
+/// A start's map block, `[x, z]`.
 fn xz(s: &StructureStart) -> [i32; 2] {
     [s.position[0], s.position[2]]
 }
@@ -1239,6 +1285,8 @@ fn count_matches(
                 features: Vec::new(),
             }
         }
+        // "No" holds in the best case if nothing certain matched, and in the worst if nothing
+        // matched at all.
         Count::No => {
             let all_or_nothing = |holds: bool| if holds { 1000 } else { 0 };
             Judged {

@@ -30,7 +30,7 @@ Features as answers everywhere structures are: in an area, nearest, in `--json`,
 - [x] **Search:** feature targets and conditions in both searches, pairs within a distance ([ADR 0057](../adr/0057-features-in-the-search-language.md)). Done: `feature F` counts, `cluster N feature F` (apart in 3D) and `find feature F`, places at most 1,024 blocks a side, checked last, the fast path stopping once a required one is decided, and each chunk placed once an evaluation. Filtering on tries was dropped (see the notes).
 - [x] **Oracle:** an ignored test that a seed search's two-dungeon seeds have both dungeons in the game's decoration. `two_dungeon_seeds_are_the_game_s` searches seeds 0 to 127 in certain mode; in 26.3 it reports seed 56, whose two deep dungeons (28 −27 38 and 23 −21 51) the game places. It names the seeds whose feature files are missing (`cargo xtask oracle features --seed 56`).
 - [x] **Cost:** bench lines for a tile, a nearest query and the search's seeds per second. Check the viewer by eye with `run-viewer`. Done, with the search's batches sized to its checks (see the notes).
-- [ ] **Docs:** locate.md, search.md, render.md, getting-started, the changelog.
+- [x] **Docs:** locate.md, search.md, render.md, getting-started, the changelog.
 - [ ] `cargo xtask check` and `cargo xtask oracle-test`. Complete the plan, and the milestone.
 
 ## Verification
@@ -41,8 +41,8 @@ Features as answers everywhere structures are: in an area, nearest, in `--json`,
 
 ## Durable outputs
 
-- [ ] locate.md, search.md, render.md, cli-json.md and user-data.md: features. search.md and cli-json.md done.
-- [ ] getting-started: feature commands and layers.
+- [x] locate.md, search.md, render.md, cli-json.md and user-data.md: features.
+- [x] getting-started: feature commands and layers.
 
 ## Notes
 

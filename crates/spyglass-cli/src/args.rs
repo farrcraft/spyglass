@@ -32,8 +32,8 @@ pub enum Command {
     },
     /// Draw a map of a seed or world save as a PNG: biomes, and the layers you choose.
     Render(Render),
-    /// Find the seeds that fit a query best: required and preferred structures, biomes, slime
-    /// chunks and spawn, in any dimension.
+    /// Find the seeds that fit a query best: required and preferred structures, features,
+    /// biomes, slime chunks and spawn, in any dimension.
     Search(Search),
     /// Places in one seed or world save that fit a `find` query, nearest first: a target (a
     /// structure, a biome or a grid point) and constraints around it.

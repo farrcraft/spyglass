@@ -94,7 +94,7 @@ Things on the map that the user has marked done. They're keyed by place, not hel
 
 - **A structure** is a structure start: an icon on the map, a structure answer of a locate, or a structure that a search hit or `find` match found. Its place is the start's position (`StructureStart::position`, x and z), the block locate and the map use. A start's set and position don't change with confirmation or the game version, so it stays done.
 - **A biome** is a biome answer of a locate, or a biome that a search or `find` found, at the block reported.
-- **A place** is a `find` match on a point target, or a feature (a dungeon, geode, well, fossil or lava lake: a feature locate's answer or its icon on the map), at its x and z.
+- **A place** is a `find` match on a point target, or a feature (a dungeon, geode, well, fossil or lava lake: a feature locate's answer, its icon on the map, or a search match), at its x and z.
 
 A place's key is its `dimension`, `kind`, `id`, `x` and `z`. No two done places in a world have the same key.
 

@@ -247,11 +247,15 @@ cargo run --release -p spyglass-cli -- locate biome minecraft:cherry_grove --see
 cargo run --release -p spyglass-cli -- locate slime --seed 12345 --radius 4
 cargo run --release -p spyglass-cli -- locate spawn --seed 12345
 cargo run --release -p spyglass-cli -- locate structure minecraft:bastion_remnant --seed 12345 --dimension nether
+cargo run --release -p spyglass-cli -- locate feature minecraft:monster_room --seed 12345
+cargo run --release -p spyglass-cli -- features minecraft:amethyst_geode --seed 12345 --min -200,-200 --max 200,200
 cargo run --release -p spyglass-cli -- heights --seed 12345 --min 0,0 --max 15,15
 cargo run --release -p spyglass-cli -- blocks --seed 12345 --column 100,-37
 ```
 
 Or install it with `cargo install --path crates/spyglass-cli` and run `spyglass ...` directly.
+
+`locate feature` and `features` find dungeons (`minecraft:monster_room`, both kinds), amethyst geodes, desert wells, fossils and lava lakes, which the game has no `/locate` for. They place each chunk as the game decorates it, tens of milliseconds a chunk, so `locate feature` searches 8 chunks around `--from` unless `--radius` says more. Each answer is **certain**, or a **candidate** with the reason: something spyglass doesn't place, such as a mineshaft's pieces, could change it. `--all` adds the candidates that didn't place on spyglass's blocks, which are nearly every try ([specs/locate.md](specs/locate.md#features)).
 
 | Option                | Default        | What it does                                                                              |
 | --------------------- | -------------- | ----------------------------------------------------------------------------------------- |
@@ -306,6 +310,7 @@ cargo run --release -p spyglass-cli -- render --world "My World" --highlight min
 | `--relief`                        | off                | Shade by terrain height (scales up to 4). Slow: about a second per 256 × 256 at scale 1. |
 | `--veins`, `--caves`, `--carvers` | off                | Ore veins, noise caves, and carvers' caves and ravines at `--y` (scales up to 4).        |
 | `--structures <ids>`              | none               | Structure ids or `#tags` to mark, separated by commas. Hollow markers are candidates.    |
+| `--features <ids>`                | none               | Feature ids to mark (scales up to 2), such as `minecraft:monster_room`. Slow.            |
 | `--confirm`                       | off                | Decide structure markers with the seed's terrain, so nearly all are certain.             |
 | `--highlight <ids>`               | none               | Biomes to keep bright; the rest are dimmed.                                              |
 | `--slime`, `--spawn`, `--ties`    | off                | Slime chunks (scales up to 16), the spawn's origin, tied biome cells.                    |
@@ -343,6 +348,14 @@ Each constraint is in one dimension, inferred from what it counts: fortresses an
 
 The bundle options are as for `locate`; `--json` prints every hit with what each constraint matched. Searching every seed checks structure placement first, which depends only on the seed's lower 48 bits, so seeds that can't place enough structures are skipped 65,536 at a time. The same query, range, start and count always give the same list, on any machine.
 
+Features count too: `feature F` counts them in a place, and `cluster N feature F` asks for N within a distance of each other, measured in three dimensions, as a spawner farm needs:
+
+```sh
+cargo run --release -p spyglass-cli -- search --range 0..100000 --count 1000 -q 'require cluster 2 feature minecraft:monster_room within 16 of each other within 96 of spawn'
+```
+
+Each seed's dungeons are placed chunk by chunk, so this runs at about a seed a second, and a feature's place is at most 1,024 blocks on a side. Likely candidates count only towards **possibly** met; `--certain` keeps only seeds whose features are certain ([specs/search.md](specs/search.md#outcomes)).
+
 Most structures need terrain to confirm. Without `--confirm`, a constraint on them is usually **possibly** met rather than met: the structures are where the game tries them, and whether each one generates depends on the ground there. With it, terrain decides them, and only tied biomes and platform-dependent results stay uncertain. Confirming costs little on top of a search, since it runs only on seeds that pass everything else.
 
 ### Finding places in one seed
@@ -355,7 +368,7 @@ require flat 4 within 48 of here step 4'
 cargo run --release -p spyglass-cli -- find --world "My World" --from player -q 'find biome minecraft:mushroom_fields within 4096 step 32'
 ```
 
-The target is a structure or tag (each start), `biome B` (each sample of a grid), or `point` (each grid point). `within R` alone is around `--from` (default `0,0`). Matches come nearest first, up to `--top` (default 20); `--confirm`, `--certain`, `--threads`, `--time` and `--json` are as for `search`. Biome tags such as `#minecraft:is_ocean`, and the terrain conditions `height A to B` and `flat D` (over the terrain before structures and features), work in both kinds of query.
+The target is a structure or tag (each start), `feature F` (each feature), `biome B` (each sample of a grid), or `point` (each grid point). `within R` alone is around `--from` (default `0,0`). Matches come nearest first, up to `--top` (default 20); `--confirm`, `--certain`, `--threads`, `--time` and `--json` are as for `search`. Biome tags such as `#minecraft:is_ocean`, and the terrain conditions `height A to B` and `flat D` (over the terrain before structures and features), work in both kinds of query.
 
 ### Reading the answers
 
@@ -374,8 +387,8 @@ The viewer opens the newest release in the bundles folder (or the newest snapsho
 - **Move around:** drag to pan, scroll to zoom around the pointer, or use the arrow keys and `+`/`-`. **Go to** takes `x z` or `x y z`. The status bar shows the block, chunk and biome under the pointer.
 - **Seed or save:** type a seed and press **Show**, or open a save from the launchers' list or any folder. A save opens on its player, in the player's dimension, with anything that makes its answers inexact listed.
 - **Dimension:** switch between the Overworld, the Nether and the End; each keeps its own view. Slime chunks and the spawn are the Overworld's, and terrain layers aren't drawn in the Nether, whose surface is its ceiling.
-- **Layers:** tied biome cells, slime chunks, the world spawn, structures to mark (hover a marker for what it is), and biomes to highlight. **Height** sets the y biomes are drawn at, with **Surface**, **Underground** (y 0) and **Bottom** presets. Up close, **Underground** draws ore veins (copper orange, iron blue; filler stone fainter), noise caves (darkened) and the caves and ravines carvers cut (yellow and magenta) at that height; moving the height keeps the carvers already worked out. Up close (4 blocks per pixel or less), **Relief** shades the map by terrain height and **Biomes at the surface** draws each column's biome at its height; both are slow to fill in. **Confirm with terrain** (on by default) decides structure markers and locates with the seed's terrain, and draws the bounds of villages, other jigsaw structures and mineshafts up close. The status bar shows the terrain height under the pointer.
-- **Locate:** right-click the map for the nearest structure or biome from there, as `/locate` would. Hits are listed in the side panel (click one to go there) and pinned on the map. For a structure, where the nearest isn't `/locate`'s answer, both are listed and pinned, the nearest first.
+- **Layers:** tied biome cells, slime chunks, the world spawn, structures to mark (hover a marker for what it is), and biomes to highlight. **Height** sets the y biomes are drawn at, with **Surface**, **Underground** (y 0) and **Bottom** presets. Up close, **Underground** draws ore veins (copper orange, iron blue; filler stone fainter), noise caves (darkened) and the caves and ravines carvers cut (yellow and magenta) at that height; moving the height keeps the carvers already worked out. Up close (4 blocks per pixel or less), **Relief** shades the map by terrain height and **Biomes at the surface** draws each column's biome at its height; both are slow to fill in. Very close (2 blocks per pixel or less), **Features** marks dungeons, amethyst geodes, desert wells, fossils and lava lakes with diamonds, filled when certain and outlined when likely; each chunk is placed, so they fill in slowly. **Confirm with terrain** (on by default) decides structure markers and locates with the seed's terrain, and draws the bounds of villages, other jigsaw structures and mineshafts up close. The status bar shows the terrain height under the pointer.
+- **Locate:** right-click the map for the nearest structure, feature or biome from there, as `/locate` would. Hits are listed in the side panel (click one to go there) and pinned on the map. For a structure, where the nearest isn't `/locate`'s answer, both are listed and pinned, the nearest first.
 - **Markers:** right-click the map and **Add a marker here**, or press M over it, then name it and pick a colour. Click a marker to edit it. The **Markers** tab lists the world's markers in the dimension shown, and what you've marked done.
 - **Done:** right-click a structure, a locate pin or a search match and **Mark done**. Done things are drawn dimmed; untick **Done things** in the Layers tab to hide them. A structure stays done when you switch game versions.
 - **Worlds:** every seed and save you open is kept as a recent world, with its markers and where you left it. Name one in the Markers tab to keep it, and open any from **Worlds** in the toolbar.

@@ -85,6 +85,16 @@ A tied cell whose biomes disagree on the predicate is a candidate: the game's an
 
 _Versions:_ the search is the same in all three. 26.2's `BiomeSource.findClosestBiome3d` takes a `Climate.Sampler` and reads `getNoiseBiome(qx, qy, qz, sampler)`; 26.3 and 26.4-snapshot-5 take the `RandomState` and read through `createCachingResolver(randomState)`. Every unique cell's biome is the same, and a tied cell stays a candidate. In 26.4-snapshot-5 chunks store a biome per block ([world-saves.md](world-saves.md#chunk-biomes)), but `/locate biome` still tests quart biomes from the biome source, not stored ones.
 
+## Features
+
+Where the target features place: dungeons (`minecraft:monster_room`, `minecraft:monster_room_deep`), amethyst geodes, desert wells, fossils (`minecraft:fossil_upper` with coal, `minecraft:fossil_lower` with diamonds) and lava lakes ([features.md](features.md)). The game has no `/locate` for them; spyglass answers from its own placing.
+
+- **Naming:** an argument names every target placed feature whose id, or whose configured feature's id, it is: `minecraft:monster_room` is both dungeons, `minecraft:fossil_coal` the upper fossils. One that exists but that spyglass doesn't place is an error saying so.
+- **An answer** is a try that placed, or might have: the placed feature, the position the game calls the feature with, whether it's certain on its own and its reason if not, and whether it holds whatever the neighbours do ([features.md](features.md#certainty), [ADR 0056](../adr/0056-two-certainties-on-its-own-and-whatever-the-neighbours.md)). A candidate that didn't place on spyglass's blocks is _unlikely_; front ends leave those out unless asked.
+- **In an area** (`Session::features_in`): every chunk in it, z then x, each in decoration order.
+- **Nearest** (`Session::nearest_feature`): rings of chunks outwards from `from`'s, by horizontal distance, until a ring can't hold anything nearer than the nearest certain feature found: every candidate nearer than it, then it.
+- **Cost:** a chunk is placed only if a named feature's tries reach it (desert wells' rarity passes in 1 chunk in 1,000), and placing takes about 175 ms a chunk with its neighbours' blocks, structure starts and neighbour bounds.
+
 ## Limits
 
 The game's own searches have fixed sizes. The API takes others, up to limits that keep any one request to at most minutes of work and a bounded amount of memory:

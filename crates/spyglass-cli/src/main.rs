@@ -14,6 +14,7 @@ macro_rules! out {
 
 mod args;
 mod blocks;
+mod features;
 mod find;
 mod heights;
 mod json;
@@ -68,6 +69,7 @@ fn run(cli: Cli) -> Result<()> {
         Command::Find(args) => find::run(&args),
         Command::Heights(args) => heights::run(&args),
         Command::Blocks(args) => blocks::run(&args),
+        Command::Features(args) => features::run(&args),
     }
 }
 
@@ -109,6 +111,7 @@ fn run_locate(what: &Locate) -> Result<()> {
     let common = what.common();
     let player = match what {
         Locate::Structure { from, .. }
+        | Locate::Feature { from, .. }
         | Locate::Biome { from, .. }
         | Locate::Slime { from, .. } => {
             matches!(from.from, Origin::Player)
@@ -139,6 +142,13 @@ fn run_locate(what: &Locate) -> Result<()> {
             let from = out.origin(from.from)?;
             locate::structure(&out, target, from, &options, *bounds, *nearest)?;
         }
+        Locate::Feature {
+            target,
+            from,
+            radius,
+            all,
+            ..
+        } => locate::feature(&out, target, out.origin(from.from)?, *radius, *all)?,
         Locate::Biome {
             biome,
             from,

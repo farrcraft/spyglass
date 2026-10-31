@@ -74,6 +74,22 @@ Each hit:
 
 Each hit: `position` (`{x, y, z}`), `biome` (the biome there), `tied` (every biome the game may give there if the cell is tied, else empty), `certain` (false for a tied cell whose biomes disagree) and `blocks_away` (3D, rounded down).
 
+## `locate feature`
+
+| Field      | Type        | Meaning                                                                                                   |
+| ---------- | ----------- | --------------------------------------------------------------------------------------------------------- |
+| `target`   | string      | The feature id as given.                                                                                  |
+| `from`     | `[x, y, z]` | Where the search ran from. Distances are horizontal.                                                      |
+| `radius`   | int         | Chunks searched around `from`'s.                                                                          |
+| `complete` | bool        | Whether the hits end at a certain one.                                                                    |
+| `hits`     | array       | Nearest first: every candidate nearer than the nearest certain feature, then that one. Empty: none found. |
+
+Each hit ([locate.md](locate.md#features)): `feature` (the placed feature), `position` (`{x, y, z}`, where the game calls it), `certain`, `likely` (whether it placed on spyglass's blocks; a certain one always did), `reason` (why it's a candidate, or null), `neighbours` (why neighbours decorated first could change it, or null where it holds whatever they do) and `blocks_away`. Unlikely candidates are left out unless `--all`.
+
+## `features`
+
+`target`, `min` and `max` (`[x, z]`, the region asked for) and `features`: each feature in the region, chunk by chunk, as `locate feature`'s hits without `blocks_away`.
+
 ## `locate slime`
 
 `from` (`[x, y, z]`), `radius` (in chunks) and `chunks`: every slime chunk in the square of `radius` chunks around `from`'s chunk, nearest first.

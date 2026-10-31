@@ -126,6 +126,86 @@ pub fn structure(
     Ok(())
 }
 
+pub fn feature(out: &Out<'_>, target: &str, from: [i32; 3], radius: i32, all: bool) -> Result<()> {
+    let session = out.session;
+    let query = session.world().feature_query(target)?;
+    let found = session.nearest_feature(&query, from, radius)?;
+    let hits: Vec<&spyglass::FoundFeature> = found
+        .hits
+        .iter()
+        .filter(|f| all || f.certain || f.likely)
+        .collect();
+    if out.json {
+        return out.print(
+            "locate feature",
+            json::FeatureLocateAnswer {
+                target,
+                from,
+                radius,
+                complete: found.complete,
+                hits: hits
+                    .iter()
+                    .map(|f| json::FeatureHit::new(f, Some(from)))
+                    .collect(),
+            },
+        );
+    }
+    out!("nearest {target}{}", out.context(Some(from)));
+    if hits.is_empty() {
+        out!("  none within {radius} chunks");
+        return Ok(());
+    }
+    for f in hits.iter().take(SHOWN) {
+        feature_line(f, Some(from));
+    }
+    if hits.len() > SHOWN {
+        out!("  ... and {} more (--json lists all)", hits.len() - SHOWN);
+    }
+    feature_notes(&hits, all);
+    Ok(())
+}
+
+/// One feature, as text.
+pub fn feature_line(f: &spyglass::FoundFeature, from: Option<[i32; 3]>) {
+    let [x, y, z] = f.position;
+    let away = from.map_or(String::new(), |o| {
+        let (dx, dz) = (f64::from(x - o[0]), f64::from(z - o[2]));
+        format!(" {:>7} blocks", (dx * dx + dz * dz).sqrt() as i32)
+    });
+    let kind = match (f.certain, f.likely) {
+        (true, _) => "certain",
+        (false, true) => "candidate",
+        (false, false) => "unlikely",
+    };
+    let why = f
+        .reason
+        .as_deref()
+        .map_or(String::new(), |r| format!(" ({r})"));
+    out!(
+        "  {x:>9} {y:>4} {z:<9}{away}  {kind:<10} {}{why}",
+        f.feature
+    );
+}
+
+/// What the answers mean, after them.
+pub fn feature_notes(hits: &[&spyglass::FoundFeature], all: bool) {
+    if hits.iter().any(|f| !f.certain) {
+        out!(
+            "Candidates are where something spyglass can't know could change the answer: listed likely if they placed on spyglass's blocks{}.",
+            if all {
+                ", unlikely if not"
+            } else {
+                " (--all lists the unlikely ones too)"
+            }
+        );
+    }
+    if hits.iter().any(|f| f.neighbours.is_some()) {
+        out!(
+            "Certain is for the chunk decorated before its neighbours; a neighbour decorated first could change any of these."
+        );
+    }
+}
+
 pub fn biome(out: &Out<'_>, biome: &str, from: [i32; 3], radius: i32) -> Result<()> {
     let session = out.session;
     let query = session.world().biome_query(biome)?;

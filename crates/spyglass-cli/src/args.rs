@@ -44,6 +44,29 @@ pub enum Command {
     /// A chunk's blocks before features, as the game generates them, carvers included: one
     /// block, a column or a whole chunk.
     Blocks(Blocks),
+    /// Features in a region: dungeons, geodes, desert wells, fossils and lava lakes, each
+    /// certain or a candidate.
+    Features(Features),
+}
+
+/// `spyglass features` (`docs/specs/locate.md#features`).
+#[derive(Args)]
+pub struct Features {
+    /// Feature id: a placed feature (`minecraft:monster_room_deep`) or a configured one
+    /// (`minecraft:monster_room`, both dungeons).
+    pub target: String,
+    /// A region's corner, `x,z` in blocks, with `--max`: every chunk they touch.
+    #[arg(long, allow_hyphen_values = true, value_parser = xz)]
+    pub min: [i32; 2],
+    /// The region's other corner, `x,z`.
+    #[arg(long, allow_hyphen_values = true, value_parser = xz)]
+    pub max: [i32; 2],
+    /// Also list candidates that didn't place on spyglass's blocks, which the game may still
+    /// place.
+    #[arg(long)]
+    pub all: bool,
+    #[command(flatten)]
+    pub common: Common,
 }
 
 /// `spyglass blocks` (`docs/specs/material.md`).
@@ -483,6 +506,23 @@ pub enum Locate {
         #[arg(long)]
         nearest: bool,
     },
+    /// The nearest feature: dungeons, geodes, desert wells, fossils or lava lakes, by placed
+    /// feature (`minecraft:monster_room_deep`) or configured feature (`minecraft:monster_room`).
+    Feature {
+        /// Feature id.
+        target: String,
+        #[command(flatten)]
+        common: Common,
+        #[command(flatten)]
+        from: From,
+        /// How far to search, in chunks. Each chunk with a try takes a while to place.
+        #[arg(long, default_value_t = 8)]
+        radius: i32,
+        /// Also list candidates that didn't place on spyglass's blocks, which the game may
+        /// still place.
+        #[arg(long)]
+        all: bool,
+    },
     /// The nearest biome, searched in 3D from `--from`, as `/locate biome` does.
     Biome {
         /// Biome id, e.g. `minecraft:cherry_grove`.
@@ -517,6 +557,7 @@ impl Locate {
     pub fn common(&self) -> &Common {
         match self {
             Locate::Structure { common, .. }
+            | Locate::Feature { common, .. }
             | Locate::Biome { common, .. }
             | Locate::Slime { common, .. }
             | Locate::Spawn { common } => common,

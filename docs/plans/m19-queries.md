@@ -23,8 +23,8 @@ Features as answers everywhere structures are: in an area, nearest, in `--json`,
 
 ## Tasks
 
-- [ ] **API:** `features_in` and `nearest_feature`, naming, and the answers' certainty.
-- [ ] **CLI:** `locate feature`, `features`, cli-json.md.
+- [x] **API:** `features_in` and `nearest_feature`, naming, and the answers' certainty.
+- [x] **CLI:** `locate feature`, `features`, cli-json.md.
 - [ ] **Viewer:** icons, layers, Locate tab, view text names ([user-data.md](../specs/user-data.md)).
 - [ ] **Render:** feature markers in render.md, with tiling tests.
 - [ ] **Search:** feature targets and conditions in both searches, pairs within a distance, and filtering on tries.
@@ -45,5 +45,7 @@ Features as answers everywhere structures are: in an area, nearest, in `--json`,
 - [ ] getting-started: feature commands and layers.
 
 ## Notes
+
+- 2026-10-30: **First answers.** `spyglass locate feature minecraft:monster_room --seed 0` gives the game's nearest dungeon (a certain `monster_room_deep` at 59 −12 −13) in 17 s. In two golden squares every dungeon the game placed is an answer and every certain one is the game's (`spyglass/tests/features.rs`), at about 175 ms a chunk; most of the 1,532 candidates are unlikely (they declined on spyglass's blocks).
 
 - 2026-10-30: **Design before code.** A feature argument names every target placed feature whose id, or whose configured feature's id, is the argument (`minecraft:monster_room` both dungeons; `minecraft:fossil_coal` the upper fossils); one spyglass doesn't place is an error saying so. Each answer: the placed feature, the position, whether it's certain on its own and its reason if not, and whether it holds whatever the neighbours do ([ADR 0056](../adr/0056-two-certainties-on-its-own-and-whatever-the-neighbours.md)). Tries placed by spyglass and candidates are answers; a candidate that declined on spyglass's blocks is one too, marked unlikely. `nearest_feature` goes out in rings of chunks and places only those where the target's tries reach their feature.

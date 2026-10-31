@@ -231,6 +231,53 @@ pub struct BiomeHit<'a> {
 }
 
 #[derive(Serialize)]
+pub struct FeatureLocateAnswer<'a> {
+    pub target: &'a str,
+    pub from: [i32; 3],
+    pub radius: i32,
+    pub complete: bool,
+    pub hits: Vec<FeatureHit<'a>>,
+}
+
+#[derive(Serialize)]
+pub struct FeaturesInAnswer<'a> {
+    pub target: &'a str,
+    pub min: [i32; 2],
+    pub max: [i32; 2],
+    pub features: Vec<FeatureHit<'a>>,
+}
+
+#[derive(Serialize)]
+pub struct FeatureHit<'a> {
+    pub feature: &'a str,
+    pub position: Xyz,
+    pub certain: bool,
+    pub likely: bool,
+    pub reason: Option<&'a str>,
+    pub neighbours: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocks_away: Option<i32>,
+}
+
+impl<'a> FeatureHit<'a> {
+    pub fn new(f: &'a spyglass::FoundFeature, from: Option<[i32; 3]>) -> Self {
+        let [x, y, z] = f.position;
+        FeatureHit {
+            feature: &f.feature,
+            position: Xyz { x, y, z },
+            certain: f.certain,
+            likely: f.likely,
+            reason: f.reason.as_deref(),
+            neighbours: f.neighbours.as_deref(),
+            blocks_away: from.map(|o| {
+                let (dx, dz) = (i64::from(x - o[0]), i64::from(z - o[2]));
+                ((dx * dx + dz * dz) as f64).sqrt() as i32
+            }),
+        }
+    }
+}
+
+#[derive(Serialize)]
 pub struct SlimeAnswer {
     pub from: [i32; 3],
     pub radius: i32,

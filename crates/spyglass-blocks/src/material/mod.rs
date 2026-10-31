@@ -967,6 +967,67 @@ impl BoundMaterial {
         self.temperature.biome_info(x, z)
     }
 
+    /// The biomes whose extensions add blocks: eroded badlands' pillars and the frozen oceans'
+    /// icebergs.
+    pub fn extension_biomes(&self) -> Vec<BiomeId> {
+        std::iter::once(self.eroded_badlands)
+            .chain(self.frozen_oceans)
+            .flatten()
+            .collect()
+    }
+
+    /// Where the rule can give a position air (a block, band or vein block of it is air): in
+    /// the biomes returned, those every such block is under a `biome` condition for, or
+    /// `None` if anywhere. The noise fill's air and fluids it leaves alone.
+    pub fn air_biomes(&self, palette: &Palette) -> Option<Vec<BiomeId>> {
+        /// Adds to `out` the biomes in `within` (any if `None`) where `rule` gives air; false
+        /// if it can give air in any biome.
+        fn walk(
+            system: &BoundMaterial,
+            rule: &Bound,
+            within: Option<&[bool]>,
+            air: &dyn Fn(State) -> bool,
+            out: &mut Vec<bool>,
+        ) -> bool {
+            let found = match rule {
+                Bound::Block(s) => air(*s),
+                Bound::Bandlands => system.bands.iter().any(|&s| air(s)),
+                Bound::OreVein(v) => [v.ore, v.raw_ore, v.filler].into_iter().any(air),
+                Bound::Sequence(rules) => {
+                    return rules.iter().all(|r| walk(system, r, within, air, out));
+                }
+                Bound::Condition(condition, then) => {
+                    let BoundCondition::Biome(set) = &**condition else {
+                        return walk(system, then, within, air, out);
+                    };
+                    let narrowed: Vec<bool> = match within {
+                        Some(w) => set.iter().zip(w).map(|(a, b)| *a && *b).collect(),
+                        None => set.clone(),
+                    };
+                    return walk(system, then, Some(&narrowed), air, out);
+                }
+            };
+            match (found, within) {
+                (false, _) => true,
+                (true, None) => false,
+                (true, Some(w)) => {
+                    out.resize(out.len().max(w.len()), false);
+                    for (o, b) in out.iter_mut().zip(w) {
+                        *o |= b;
+                    }
+                    true
+                }
+            }
+        }
+        let mut out = Vec::new();
+        walk(self, &self.rule, None, &|s| palette.is_air(s), &mut out).then(|| {
+            (0..out.len())
+                .filter(|&i| out[i])
+                .map(|i| BiomeId(i as u16))
+                .collect()
+        })
+    }
+
     /// The quart block `pos` takes its biome from (`BiomeManager.getBiome`'s zoom).
     pub fn biome_quart(&self, pos: [i32; 3]) -> [i32; 3] {
         self.zoom.quart(pos)

@@ -19,6 +19,7 @@ use crate::blocks::Blocks;
 use crate::decorate::{Decorator, Drawn, Try};
 use crate::neighbours::Foreign;
 use crate::order::PlacedRef;
+use crate::outline::Outline;
 use crate::reach::Changes;
 use crate::region::{Doubt, Region};
 use crate::settings::FeatureSettings;
@@ -63,6 +64,25 @@ pub struct Placement {
     /// Why neighbours decorated first could change it, if they could; `None` where it holds
     /// whatever the neighbours do (`docs/specs/features.md#certainty`).
     pub neighbours: Option<Doubt>,
+}
+
+/// A box an earlier feature could write, for [`MonsterRoom::declines_on`], and whether it could
+/// write air there.
+#[derive(Debug, Clone, Copy)]
+pub struct Written {
+    /// The least corner.
+    pub min: [i32; 3],
+    /// The greatest corner.
+    pub max: [i32; 3],
+    /// Whether it could write air.
+    pub air: bool,
+}
+
+impl Written {
+    /// Whether `pos` is in the box.
+    pub fn holds(&self, pos: [i32; 3]) -> bool {
+        (0..3).all(|i| (self.min[i]..=self.max[i]).contains(&pos[i]))
+    }
 }
 
 /// Offsets a try reads, around its position: the least, the greatest, and whether y is any y.
@@ -228,6 +248,16 @@ impl Placer {
         self.features.iter().any(|(r, _)| *r == placed)
     }
 
+    /// Whether `placed`'s feature could write air: true unless it writes only one state that
+    /// isn't, or isn't ported.
+    pub fn writes_air(&self, placed: PlacedRef, blocks: &Blocks) -> bool {
+        match self.features.iter().find(|(r, _)| *r == placed) {
+            Some((_, Configured::BlockBlob(blob))) => blocks.is_air(blob.state()),
+            Some((_, Configured::LargeDripstone(dripstone))) => blocks.is_air(dripstone.state()),
+            _ => true,
+        }
+    }
+
     /// Places `placed`'s feature at `pos` for world `seed`: whether it placed, or `None` if it
     /// isn't ported.
     pub fn place(
@@ -249,6 +279,46 @@ impl Placer {
             Configured::BlockBlob(blob) => blob.place(region, random, pos),
             Configured::LargeDripstone(dripstone) => dripstone.place(region, random, pos),
         })
+    }
+
+    /// Whether no try of `decorator`'s placed features places in chunk `chunk` on its own,
+    /// surely, from the terrain in outline (`docs/specs/features.md#ruling-out`): each try is
+    /// one whose feature declines on the terrain alone, with what the features this placer
+    /// places could write earlier (`writes`, [`crate::NeighbourBounds::outline_writes`]) taken
+    /// as any block, and as air where they could write air. False where that isn't known: a
+    /// try whose feature can't be ruled out this way, or that isn't exact and certain.
+    pub fn none_place(
+        &self,
+        decorator: &Decorator<'_>,
+        blocks: &Blocks,
+        outline: &mut Outline<'_>,
+        chunk: [i32; 2],
+        writes: &[Foreign],
+    ) -> bool {
+        let mut ruled_out = true;
+        let mut rule_out = |t: &Try, random: &mut WorldgenRandom| {
+            let feature = self.features.iter().find(|(r, _)| *r == t.placed);
+            let Some((_, Configured::MonsterRoom(room))) = feature else {
+                ruled_out = false;
+                return Drawn::Unknown;
+            };
+            let earlier: Vec<Written> = writes
+                .iter()
+                .filter(|f| f.order < (t.step, t.index))
+                .map(|f| Written {
+                    min: f.min,
+                    max: f.max,
+                    air: self.writes_air(f.placed, blocks),
+                })
+                .collect();
+            if !ruled_out || !room.declines_on(outline, &earlier, random, t.pos) {
+                ruled_out = false;
+                return Drawn::Unknown;
+            }
+            Drawn::Known
+        };
+        let tries = decorator.tries(chunk, &mut rule_out);
+        ruled_out && tries.iter().all(|t| t.exact && t.certain)
     }
 
     /// Decorates the region's chunk with `decorator`'s placed features: those this placer places

@@ -7,13 +7,13 @@
 
 ## Goal
 
-Features as answers everywhere structures are: in an area, nearest, in `--json`, on the map, and in both kinds of search. It meets the milestone's second and third exit criteria. `spyglass locate feature minecraft:monster_room` answers on a real seed, the viewer draws dungeons at 1:4, and a seed search for two dungeons within 16 blocks of each other near spawn returns seeds the game confirms.
+Features as answers everywhere structures are: in an area, nearest, in `--json`, on the map, and in both kinds of search. It meets the milestone's second and third exit criteria. `spyglass locate feature minecraft:monster_room` answers on a real seed, the viewer draws dungeons up close (1:2 and nearer; 1:4 was the aim, see the notes), and a seed search for two dungeons within 16 blocks of each other near spawn returns seeds the game confirms.
 
 ## Approach
 
 **Queries** in the `spyglass` API, as [locate.md](../specs/locate.md) has them for structures: `Session::features_in(query, area)` and `Session::nearest_feature(query, from, radius)`. Each answer has its position, whether it's certain, and a candidate's reason from [m19-placing](completed/m19-placing.md). Features are named by placed feature (`minecraft:monster_room`, `minecraft:monster_room_deep`) or configured feature (`minecraft:monster_room` covers both). The spec decides which.
 
-**Cost first.** Placing needs a chunk's blocks, about 40 ms each, but tries are cheap. Each query works from tries first, and places only the chunks whose tries could answer it. The plan measures a 1:4 viewer tile of dungeons and a nearest dungeon from the origin.
+**Cost first.** Placing needs a chunk's blocks, about 20 to 30 ms each, but tries are cheap. Each query works from tries first, and places only the chunks whose tries could answer it. The plan measures a 1:4 viewer tile of dungeons and a nearest dungeon from the origin.
 
 **The CLI:** `spyglass locate feature <id>` and `spyglass features --min --max`, with `--json` (cli-json.md).
 
@@ -45,6 +45,12 @@ Features as answers everywhere structures are: in an area, nearest, in `--json`,
 - [ ] getting-started: feature commands and layers.
 
 ## Notes
+
+- 2026-10-31: **Dungeons at 1:4 aren't within reach; the viewer draws them up close.** At 4 blocks a pixel a full-HD screen is about 130,000 chunks. Measured on 26.3's golden squares (512 chunks):
+  - Chunk generation was the cost, and is now 3 to 5 times faster with the same blocks (the game comparisons pass in every version). A chunk's terrain is one volume instead of 256 columns, ore veins share their cells' corners (they were 38 ms of a chunk), and carvers ask the aquifer only where they carve. A 26.3 carved chunk went from about 80 ms to 17 to 30 ms, a 26.4 one from 50 ms to 20; 26.2's is unchanged at about 100 ms.
+  - A dungeon chunk now takes about 29 ms, from 71, with the chunk's own feature bounds limited to the steps before the targets.
+  - The pre-filter ([features.md](../specs/features.md#ruling-out)) is sound: it gives exactly the certain and likely answers of placing every chunk, in 26.3 and both 26.4 snapshots. It rules out 246 of 512 chunks at about 7 ms a chunk. But each kept chunk needs its 8 neighbours' carved blocks, so nearly every carved chunk is still built, and it saves little (27 ms a chunk against 29). Most kept chunks have a try beside a real cave.
+  - Decided (with the user): commit what's measured, and draw dungeons only at 1:1 and 1:2 (about 8,000 to 30,000 chunks a screen), progressively. Unlikely candidates are left out unless asked (`FeatureOptions::unlikely`, `--all`). Further ideas, not pursued: skip placing ruled-out tries inside kept chunks, and build neighbours only when something reads them.
 
 - 2026-10-30: **First answers.** `spyglass locate feature minecraft:monster_room --seed 0` gives the game's nearest dungeon (a certain `monster_room_deep` at 59 −12 −13) in 17 s. In two golden squares every dungeon the game placed is an answer and every certain one is the game's (`spyglass/tests/features.rs`), at about 175 ms a chunk; most of the 1,532 candidates are unlikely (they declined on spyglass's blocks).
 

@@ -988,6 +988,41 @@ pub(crate) struct Memo {
     point_stamp: u64,
     /// By slot: the stamp the value was computed under, and the value. Stamp 0 is never valid.
     entries: Vec<(u64, f32)>,
+    /// Interpolated and upscaled cells' corners, for points: by the input's binder and slot
+    /// and the corners' volume ([`corners_of`]). Cleared when it holds [`MAX_POINT_CELLS`].
+    cells: HashMap<CornersKey, Arc<[f32]>>,
+}
+
+/// A point's corners: the input's binder and slot, and the corners' least position, step and
+/// size.
+type CornersKey = (u64, u32, [i32; 3], [i32; 3], [i32; 3]);
+
+/// How many cells a [`Memo`] keeps the corners of: a few chunks' worth.
+const MAX_POINT_CELLS: usize = 1 << 14;
+
+/// `input` over a point's `corners`, through its volume path. For a position-only input,
+/// whose values are the same wherever they're asked from, they're kept in the memo, so the
+/// points of one cell share them.
+fn corners_of(memo: &mut Memo, input: &Sampler, corners: &Volume) -> Arc<[f32]> {
+    let kept = input.position_only && input.slot != NO_SLOT;
+    let key = (
+        input.binder,
+        input.slot,
+        corners.min,
+        corners.step,
+        corners.size,
+    );
+    if kept && let Some(values) = memo.cells.get(&key) {
+        return values.clone();
+    }
+    let values: Arc<[f32]> = input.volume_in(memo, corners).into();
+    if kept {
+        if memo.cells.len() >= MAX_POINT_CELLS {
+            memo.cells.clear();
+        }
+        memo.cells.insert(key, values.clone());
+    }
+    values
 }
 
 /// Where a [`Memo`] was, to go back after evaluating a child somewhere else.
@@ -1386,7 +1421,7 @@ impl Node {
                     [x.wrapping_sub(fx), y.wrapping_sub(fy), z.wrapping_sub(fz)],
                     [cxz, cy, cxz],
                 );
-                let c = input.volume_in(memo, &corners);
+                let c = corners_of(memo, input, &corners);
                 let at = |x, y, z| c[corners.index(x, y, z)];
                 mth::lerp3(
                     fx as f32 / cxz as f32,
@@ -1425,7 +1460,7 @@ impl Node {
                     [first(x, f[0], ax), first(y, f[1], ay), first(z, f[2], az)],
                     u.axes.map(|a| a.cell_size),
                 );
-                let samples = u.input.volume_in(memo, &corners);
+                let samples = corners_of(memo, &u.input, &corners);
                 u.upscaler.value(f, &samples)
             }
             // NearestNeighborSampler.sampleValue: the input at the cell's corner.

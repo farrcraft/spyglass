@@ -7,6 +7,8 @@ use spyglass_density::Resources;
 use spyglass_rng::{RandomSource, WorldgenRandom};
 
 use crate::blocks::{Blocks, Tag};
+use crate::outline::Outline;
+use crate::place::Written;
 use crate::region::Region;
 
 /// `Direction.Plane.HORIZONTAL`: north, east, south, west, as offsets.
@@ -48,6 +50,49 @@ impl MonsterRoom {
         if !region.blocks().is(here, self.cannot_replace) {
             region.set(pos, s);
         }
+    }
+
+    /// Whether it surely declines at `origin` on the terrain before features, with `written`
+    /// what earlier features could write (`docs/specs/features.md#ruling-out`), drawing what
+    /// it draws when it declines: its size. A floor or ceiling block that surely isn't solid,
+    /// or no wall block that could be air under air, and it declines.
+    pub fn declines_on(
+        &self,
+        outline: &mut Outline<'_>,
+        written: &[Written],
+        random: &mut WorldgenRandom,
+        origin: [i32; 3],
+    ) -> bool {
+        let xr = random.next_int_bounded(2) + 2;
+        let zr = random.next_int_bounded(2) + 2;
+        let [x, y, z] = origin;
+        let (min_x, max_x) = (x - xr - 1, x + xr + 1);
+        let (min_z, max_z) = (z - zr - 1, z + zr + 1);
+        let shape = outline.shape([min_x, y - 1, min_z], [max_x, y + 4, max_z]);
+        let written: Vec<&Written> = written
+            .iter()
+            .filter(|w| {
+                w.min[0] <= max_x
+                    && min_x <= w.max[0]
+                    && w.min[1] <= y + 4
+                    && y - 1 <= w.max[1]
+                    && w.min[2] <= max_z
+                    && min_z <= w.max[2]
+            })
+            .collect();
+        let open = |p: [i32; 3]| shape.never_solid(p) && !written.iter().any(|w| w.holds(p));
+        let air = |p: [i32; 3]| shape.maybe_air(p) || written.iter().any(|w| w.air && w.holds(p));
+        let mut openings = false;
+        for px in min_x..=max_x {
+            for pz in min_z..=max_z {
+                if open([px, y - 1, pz]) || open([px, y + 4, pz]) {
+                    return true;
+                }
+                let wall = px == min_x || px == max_x || pz == min_z || pz == max_z;
+                openings |= wall && air([px, y, pz]) && air([px, y + 1, pz]);
+            }
+        }
+        !openings
     }
 
     /// `MonsterRoomFeature.place`: whether it placed.

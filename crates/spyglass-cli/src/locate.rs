@@ -136,7 +136,10 @@ pub fn feature(
 ) -> Result<()> {
     let session = out.session;
     let query = session.world().feature_query(target)?;
-    let options = spyglass::FeatureOptions { neighbours };
+    let options = spyglass::FeatureOptions {
+        neighbours,
+        unlikely: all,
+    };
     let found = session.nearest_feature(&query, from, radius, options)?;
     let hits: Vec<&spyglass::FoundFeature> = found
         .hits

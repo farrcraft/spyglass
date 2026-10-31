@@ -27,6 +27,6 @@ Not in scope:
 ## Exit criteria
 
 - [x] Every feature in scope matches the game's positions in the golden area of each golden seed, for every supported version. Candidates are listed with their reason, and none is the game's answer reported as certain and wrong. _Certain on its own, for the chunk decorated before its neighbours ([ADR 0056](../adr/0056-two-certainties-on-its-own-and-whatever-the-neighbours.md)); m19-placing._
-- [ ] `spyglass locate feature minecraft:monster_room` answers from the origin on a real seed, and the viewer draws dungeons at 1:4.
+- [ ] `spyglass locate feature minecraft:monster_room` answers from the origin on a real seed, and the viewer draws dungeons up close, at 1:2 and nearer. (1:4 was the aim; at about 130,000 chunks a screen it isn't within reach: see the queries plan's notes.)
 - [ ] A seed search for two dungeons within 16 blocks of each other near spawn returns seeds whose pairs the game confirms (an ignored oracle test).
 - [ ] `cargo xtask check` and `cargo xtask oracle-test` pass.

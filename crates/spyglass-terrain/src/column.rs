@@ -5,6 +5,7 @@
 
 use spyglass_data::codec::LoadError;
 use spyglass_density::Volume;
+use std::collections::HashMap;
 
 use crate::aquifer::{Aquifer, Block, SurfaceLevels};
 use crate::settings::{BoundTerrain, Family, TerrainSettings};
@@ -576,6 +577,97 @@ impl Terrain {
         }
     }
 
+    /// The final density the noise fill gives each block of the box from `min`, `size` blocks
+    /// across, in [`Volume`] index order (y fastest, then x, then z): positive where the block
+    /// is the default block (or 26.2's vein), else the aquifer's. Sampled from the final
+    /// density's y alignment, as [`probes_on`](Self::probes_on) is, so the values are the
+    /// columns'. `None` for 26.2's terrain, and where the box leaves the level.
+    pub fn densities(&self, min: [i32; 3], size: [i32; 3]) -> Option<Vec<f32>> {
+        let Bound::Volume { bound, .. } = &self.family else {
+            return None;
+        };
+        let top = self.min_y + self.height;
+        let end = min[1].checked_add(size[1])?;
+        if size.iter().any(|&s| s <= 0) || min[1] < self.min_y || end > top {
+            return None;
+        }
+        let from = match bound.final_density.y_alignment() {
+            Some(align) => {
+                let mut from = min[1] - min[1].rem_euclid(align);
+                while end - from < 2 {
+                    from -= align;
+                }
+                from.max(self.min_y)
+            }
+            None => self.min_y,
+        };
+        let depth = end - from;
+        let part = Volume::blocks([size[0], depth, size[2]], [min[0], from, min[2]]);
+        let values = bound.final_density.sample_volume(&part);
+        let skip = (min[1] - from) as usize;
+        let mut out = Vec::with_capacity((size[0] * size[1] * size[2]) as usize);
+        for column in values.chunks_exact(depth as usize) {
+            out.extend_from_slice(&column[skip..]);
+        }
+        Some(out)
+    }
+
+    /// [`base_column`](Self::base_column) at every column of chunk `(cx, cz)`, z outer and x
+    /// inner, from one volume: a column's blocks have the same values in its chunk's volume
+    /// (`docs/specs/terrain.md#the-column`), and the volume shares its cells' corners.
+    pub fn base_columns(&self, cx: i32, cz: i32) -> Vec<BlockColumn> {
+        let (x0, z0) = (cx.wrapping_shl(4), cz.wrapping_shl(4));
+        let height = self.height.max(0) as usize;
+        let mut out: Vec<BlockColumn> = (0..256)
+            .map(|_| BlockColumn {
+                min_y: self.min_y,
+                blocks: vec![Block::Air; height],
+            })
+            .collect();
+        if height == 0 {
+            return out;
+        }
+        match &self.family {
+            Bound::Volume { bound, levels } => {
+                let tile = Volume::blocks([16, self.height, 16], [x0, self.min_y, z0]);
+                let density = bound.final_density.sample_volume(&tile);
+                let mut aquifer = Self::aquifer(bound, levels, &tile);
+                for (i, column) in out.iter_mut().enumerate() {
+                    let (dx, dz) = ((i & 15) as i32, (i >> 4) as i32);
+                    let first = tile.index(dx, 0, dz);
+                    self.scan_with(
+                        x0 + dx,
+                        z0 + dz,
+                        self.min_y,
+                        &density[first..first + height],
+                        aquifer.as_mut(),
+                        None,
+                        Some(&mut column.blocks),
+                    );
+                }
+            }
+            Bound::V1_21(chunk) => {
+                let columns = (0..256).map(|i| (x0 + (i & 15) as i32, z0 + (i >> 4) as i32, i));
+                chunk.scan(columns, true, |i, y, block| {
+                    out[i].blocks[(y - self.min_y) as usize] = block;
+                    false
+                });
+            }
+        }
+        out
+    }
+
+    /// The aquifer's answers at density 0 anywhere, one block at a time: what
+    /// [`aquifer_column`](Self::aquifer_column) gives with `Some(0.0)`, each chunk's aquifer
+    /// built once (26.2's, each column's).
+    pub fn substances(&self) -> Substances<'_> {
+        Substances {
+            terrain: self,
+            aquifers: HashMap::new(),
+            columns: HashMap::new(),
+        }
+    }
+
     /// The aquifer's answer at every block of column `(x, z)`, asked from the top down as the
     /// column asks it, with `density` at every block, or with the column's own final density:
     /// `computeSubstance` alone, so solid blocks are the default block, and 26.2's veins are
@@ -613,6 +705,44 @@ impl Terrain {
         BlockColumn {
             min_y: self.min_y,
             blocks,
+        }
+    }
+}
+
+/// [`Terrain::substances`]: the aquifer's answers at density 0.
+pub struct Substances<'t> {
+    terrain: &'t Terrain,
+    /// By chunk: its aquifer, if the terrain has them.
+    aquifers: HashMap<(i32, i32), Option<Aquifer<'t>>>,
+    /// 26.2's, by column.
+    columns: HashMap<(i32, i32), BlockColumn>,
+}
+
+impl Substances<'_> {
+    /// `computeSubstance(x, y, z, 0)`; air outside the level.
+    pub fn at(&mut self, x: i32, y: i32, z: i32) -> Block {
+        let t = self.terrain;
+        let (bound, levels) = match &t.family {
+            Bound::Volume { bound, levels } => (bound, levels),
+            Bound::V1_21(_) => {
+                return self
+                    .columns
+                    .entry((x, z))
+                    .or_insert_with(|| t.aquifer_column(x, z, Some(0.0)))
+                    .at(y);
+            }
+        };
+        if t.height <= 0 || !(t.min_y..t.min_y + t.height).contains(&y) {
+            return Block::Air;
+        }
+        let (cx, cz) = (x >> 4, z >> 4);
+        let aquifer = self.aquifers.entry((cx, cz)).or_insert_with(|| {
+            let tile = Volume::blocks([16, t.height, 16], [cx << 4, t.min_y, cz << 4]);
+            Terrain::aquifer(bound, levels, &tile)
+        });
+        match aquifer {
+            Some(aquifer) => aquifer.substance(x, y, z, 0.0),
+            None => bound.fluid_picker.status(y).at(y),
         }
     }
 }

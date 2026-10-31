@@ -10,14 +10,12 @@ pub mod state;
 pub mod temperature;
 pub mod zoom;
 
-use std::collections::HashMap;
-
 use spyglass_biome::{BiomeRegion, BiomeSource, Biomes};
 use spyglass_data::bundle::Bundle;
 use spyglass_data::codec::LoadError;
 use spyglass_rng::LegacyRandomSource;
 use spyglass_rng::worldgen::large_feature;
-use spyglass_terrain::{Block, BlockColumn, Probe, Terrain, TerrainSettings, VeinBlock};
+use spyglass_terrain::{Block, Probe, Substances, Terrain, TerrainSettings, VeinBlock};
 
 use carver::{Carver, CarverSettings, CarvingMask, Carvings, Legacy, Sink};
 pub use chunk::Chunk;
@@ -258,6 +256,44 @@ impl ChunkGenerator<'_> {
         carvings
     }
 
+    /// Every position a carver could carve in chunk `(cx, cz)`: [`carvings`](Self::carvings)'
+    /// positions, and where a start chunk's carver biome is tied, every candidate's.
+    pub fn carvable(&self, cx: i32, cz: i32) -> CarvingMask {
+        let (min_y, max_y) = self.mask_range();
+        let mut mask = CarvingMask::new(min_y, max_y);
+        let mut doubt = CarvingMask::new(min_y, max_y);
+        let anchors = self.settings.terrain.anchors();
+        self.visit_starts([cx, cz], &mut doubt, |carver, _, random, start| {
+            carver.carve(anchors, random, [cx, cz], start, &mut mask);
+        });
+        mask.add(&doubt);
+        mask
+    }
+
+    /// The level's lowest y and the y above its top.
+    pub fn level(&self) -> (i32, i32) {
+        let t = &self.settings.terrain;
+        (t.level_min_y, t.level_min_y + t.level_height)
+    }
+
+    /// The final density of the noise fill over a box, the columns' values
+    /// ([`Terrain::densities`]): positive where it fills the default block. `None` for 26.2.
+    pub fn densities(&self, min: [i32; 3], size: [i32; 3]) -> Option<Vec<f32>> {
+        self.terrain.densities(min, size)
+    }
+
+    /// The biomes where the material rule's extensions add blocks over the noise fill: eroded
+    /// badlands' pillars and the frozen oceans' icebergs.
+    pub fn extension_biomes(&self) -> Vec<spyglass_biome::BiomeId> {
+        self.material.extension_biomes()
+    }
+
+    /// Where the material rule can give a position air: in the biomes returned, or `None` if
+    /// anywhere ([`BoundMaterial::air_biomes`]).
+    pub fn rule_air_biomes(&self) -> Option<Vec<spyglass_biome::BiomeId>> {
+        self.material.air_biomes(&self.settings.palette)
+    }
+
     /// The carving mask's range: the generation context without its bottom block and top
     /// eight, or after 26.4-snapshot-5, the level without them (switch
     /// `carving_mask_level_bounds`).
@@ -298,7 +334,7 @@ impl ChunkGenerator<'_> {
         let mut mask = CarvingMask::new(min_y, max_y);
         // What a tied carver biome could carve instead.
         let mut doubt = CarvingMask::new(min_y, max_y);
-        let mut columns: HashMap<(i32, i32), BlockColumn> = HashMap::new();
+        let mut substances = self.terrain.substances();
         self.visit_starts(
             [cx, cz],
             &mut doubt,
@@ -312,7 +348,7 @@ impl ChunkGenerator<'_> {
                         lava_level: legacy.lava_level.resolve(anchors),
                         nether_lava: anchors.min_y + 31,
                         biomes: &biomes,
-                        columns: &mut columns,
+                        substances: &mut substances,
                         grass: false,
                     };
                     carver.carve(anchors, random, [cx, cz], start, &mut direct);
@@ -321,7 +357,7 @@ impl ChunkGenerator<'_> {
             },
         );
         if !v1_21 && !mask.is_empty() {
-            self.apply_carving_mask(&mut chunk, &mask, carving, &biomes, &mut columns);
+            self.apply_carving_mask(&mut chunk, &mask, carving, &biomes, &mut substances);
         }
         Self::mark_doubt(&mut chunk, &doubt);
         chunk
@@ -391,30 +427,27 @@ impl ChunkGenerator<'_> {
         let (x0, z0) = (cx.wrapping_shl(4), cz.wrapping_shl(4));
         // NoiseChunk.prepareColumn: the aquifer's answer up to each column's top.
         let mut columns: Vec<NoiseColumn> = Vec::with_capacity(256);
-        for dz in 0..16 {
-            for dx in 0..16 {
-                let column = self.terrain.base_column(x0 + dx, z0 + dz);
-                let slots: Vec<Slot> = column
-                    .blocks
-                    .iter()
-                    .map(|b| match b {
-                        Block::Air => Slot::Air,
-                        Block::Water => Slot::Fluid(state::WATER),
-                        Block::Lava => Slot::Fluid(state::LAVA),
-                        Block::Default | Block::Vein(_) => Slot::Solid,
-                    })
-                    .collect();
-                let top = slots
-                    .iter()
-                    .rposition(|s| *s != Slot::Air)
-                    .map_or(-1, |i| i as i32);
-                columns.push(NoiseColumn {
-                    min_y: column.min_y,
-                    slots,
-                    top,
-                    gradient: [0, 0],
-                });
-            }
+        for column in self.terrain.base_columns(cx, cz) {
+            let slots: Vec<Slot> = column
+                .blocks
+                .iter()
+                .map(|b| match b {
+                    Block::Air => Slot::Air,
+                    Block::Water => Slot::Fluid(state::WATER),
+                    Block::Lava => Slot::Fluid(state::LAVA),
+                    Block::Default | Block::Vein(_) => Slot::Solid,
+                })
+                .collect();
+            let top = slots
+                .iter()
+                .rposition(|s| *s != Slot::Air)
+                .map_or(-1, |i| i as i32);
+            columns.push(NoiseColumn {
+                min_y: column.min_y,
+                slots,
+                top,
+                gradient: [0, 0],
+            });
         }
         // The gradients: the neighbours' tops within the chunk, before any pillar.
         let tops: Vec<i32> = columns.iter().map(|c| c.top).collect();
@@ -444,7 +477,7 @@ impl ChunkGenerator<'_> {
             [6, (height >> 2) as u32, 6],
         );
         let biomes = ChunkBiomes::new(&region, min_y, height);
-        let mut substances: HashMap<(i32, i32), BlockColumn> = HashMap::new();
+        let mut substances = self.terrain.substances();
         self.material.build_terrain(
             &mut chunk,
             &settings.palette,
@@ -452,23 +485,16 @@ impl ChunkGenerator<'_> {
             &mut columns,
             mask.as_ref(),
             &settings.carvers.uncarvable,
-            &mut |pos| self.substance(&mut substances, pos),
+            &mut |pos| Self::substance(&mut substances, pos),
         );
         Self::mark_doubt(&mut chunk, &doubt);
         chunk
     }
 
     /// `computeSubstance(x, y, z, 0)`: the aquifer's block at a carved position, as a state, or
-    /// `None` where it's solid (the game's `null`). Columns are asked once.
-    fn substance(
-        &self,
-        columns: &mut HashMap<(i32, i32), BlockColumn>,
-        [x, y, z]: [i32; 3],
-    ) -> Option<State> {
-        let column = columns
-            .entry((x & 15, z & 15))
-            .or_insert_with(|| self.terrain.aquifer_column(x, z, Some(0.0)));
-        match column.at(y) {
+    /// `None` where it's solid (the game's `null`).
+    fn substance(substances: &mut Substances<'_>, [x, y, z]: [i32; 3]) -> Option<State> {
+        match substances.at(x, y, z) {
             Block::Air => Some(state::AIR),
             Block::Water => Some(state::WATER),
             Block::Lava => Some(state::LAVA),
@@ -485,7 +511,7 @@ impl ChunkGenerator<'_> {
         mask: &CarvingMask,
         carving: &Carving,
         biomes: &ChunkBiomes<'_>,
-        columns: &mut HashMap<(i32, i32), BlockColumn>,
+        substances: &mut Substances<'_>,
     ) {
         let palette = &self.settings.palette;
         let [cx, cz] = chunk.pos;
@@ -503,7 +529,7 @@ impl ChunkGenerator<'_> {
                 ) {
                     grass = true;
                 }
-                let Some(substance) = self.substance(columns, [x, y, z]) else {
+                let Some(substance) = Self::substance(substances, [x, y, z]) else {
                     continue;
                 };
                 chunk.set(palette, [x, y, z], substance);
@@ -538,9 +564,10 @@ impl ChunkGenerator<'_> {
             .default_block()
             .expect("chunks filled by default block have one");
         let (x0, z0) = (cx.wrapping_shl(4), cz.wrapping_shl(4));
+        let columns = self.terrain.base_columns(cx, cz);
         for dz in 0..16 {
             for dx in 0..16 {
-                let column = self.terrain.base_column(x0 + dx, z0 + dz);
+                let column = &columns[(dz * 16 + dx) as usize];
                 for y in min_y..min_y + height {
                     let state = match column.at(y) {
                         Block::Air => state::AIR,
@@ -579,7 +606,7 @@ struct Direct<'c, 'g> {
     /// The Nether carver's lava: up to 31 above the generation context's bottom.
     nether_lava: i32,
     biomes: &'c ChunkBiomes<'c>,
-    columns: &'c mut HashMap<(i32, i32), BlockColumn>,
+    substances: &'c mut Substances<'g>,
     /// Whether this column of this ellipsoid has carved grass or mycelium.
     grass: bool,
 }
@@ -629,7 +656,7 @@ impl Sink for Direct<'_, '_> {
         let substance = if y <= self.lava_level {
             state::LAVA
         } else {
-            match generator.substance(self.columns, pos) {
+            match ChunkGenerator::substance(self.substances, pos) {
                 Some(s) => s,
                 None => return,
             }

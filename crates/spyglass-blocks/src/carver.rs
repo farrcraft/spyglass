@@ -594,6 +594,14 @@ impl CarvingMask {
         self.bits[i / 64] & (1 << (i % 64)) != 0
     }
 
+    /// Carves every position `other` carves; both over the same range.
+    pub fn add(&mut self, other: &CarvingMask) {
+        debug_assert_eq!((self.min_y, self.max_y), (other.min_y, other.max_y));
+        for (a, b) in self.bits.iter_mut().zip(&other.bits) {
+            *a |= b;
+        }
+    }
+
     /// Whether nothing is carved.
     pub fn is_empty(&self) -> bool {
         self.bits.iter().all(|&b| b == 0)

@@ -198,6 +198,17 @@ Each decoration step places its structures' pieces in the chunk being decorated 
 4. **Each root** moves back into the ceiling or floor, up to `min(10, height)` blocks, until a circle of its radius is mostly in stone; lava on the way, or halving the radius to 1, gives up on that one.
 5. **Each column** within the radius: the height at its distance (`getSpeleothemHeight`, in `double`), cut to `0.8` to `1` of it when `nextFloat() < 0.2`, then the base block into air, water or lava along it (offset by the wind), stopping at base stone once it has placed one, and for a stalagmite at the `WORLD_SURFACE_WG` heightmap.
 
+### Ruling out
+
+Without the unlikely candidates (the tries that don't place on spyglass's blocks), a chunk where no target could place on its own needn't be placed. Only spyglass's blocks decide whether a try places: structure pieces, and features spyglass doesn't place, only put it in doubt. So a chunk is ruled out from the terrain in outline (`Outline`), without its blocks, when every try of every target is shown to decline. Ruling out is never a guess: a try that can't be shown to decline keeps the chunk.
+
+- **The outline:** the noise fill's final density at each position, sampled from the density's y alignment so the values are the chunk's ([terrain.md](terrain.md#the-column)); every position a carver could carve, every tied candidate's carvers included; and the chunks whose stored biomes (`chunk_biomes`, with tie candidates) are ones where the material rule can give air (in 26.3's and 26.4's rules, a frozen ocean's hole) or its extensions add blocks (eroded badlands' pillars, frozen oceans' icebergs). A block **could be air** outside the level, where the density isn't positive (air or a fluid), where a carver could carve, or in a chunk with the rule's air. It **surely isn't solid** outside the level, or where the density isn't positive in a chunk no extension reaches: the rule only replaces the noise fill's default block, and carvers only remove blocks. A rule that can give air in any biome, or 26.2's terrain, has no outline.
+- **Earlier features:** what the features spyglass places could write before the try (`NeighbourBounds::outline_writes`: their try boxes, with any heightmap giving any height, grown by their write bounds) can be any block, and air unless the feature writes one state that isn't (forest rock, large dripstone). The targets' own writes are left out, since a chunk is ruled out only if none of their tries place.
+- **A dungeon** draws its two sizes as the game does, so the next try is exact. It surely declines if a floor or ceiling block surely isn't solid and nothing earlier could write it, or if no wall block could be air under air.
+- A try that isn't exact or certain, or whose feature isn't a dungeon, keeps the chunk.
+
+Measured on 26.3's golden square (two seeds, 512 chunks), 246 chunks are ruled out, about 7 ms a chunk, and the answers are the same as placing every chunk. Most kept chunks have a dungeon try beside a cave. Each kept chunk still needs its 8 neighbours' carved blocks, so ruling out saves little: about 27 ms a chunk against 29.
+
 ## Testing
 
 Unit tests: the sorter on hand-built lists (merging, steps, a feature in two steps, a cycle), list loading, and `WorldgenRandom` against plain Xoroshiro. Ignored tests on the real bundle (`cargo xtask oracle-test`):
@@ -205,3 +216,4 @@ Unit tests: the sorter on hand-built lists (merging, steps, a feature in two ste
 - every dimension's lists load and sort;
 - `spyglass-feature/tests/tries.rs` compares each step's order and every target's tries with the feature golden files, position by position, until a try that isn't exact (a dungeon's declined calls are replayed by drawing its two sizes);
 - `spyglass-feature/tests/placing.rs` places every golden chunk on its carved 3 × 3 and compares each placed feature's calls, position and whether it placed, with the game's `tries`, up to its first candidate; where `after_neighbours` differs, spyglass must say the neighbours could change the call.
+- `spyglass/tests/features.rs` finds the dungeons of two seeds' golden squares: every one the game placed is an answer, every certain answer is one it placed, and ruling chunks out gives the same certain and likely answers as placing every chunk.

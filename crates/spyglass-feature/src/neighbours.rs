@@ -78,7 +78,7 @@ impl NeighbourBounds {
                     self.chunk_writes(
                         decorator,
                         settings,
-                        region,
+                        Heights::Region(region),
                         biomes,
                         [cx + dx, cz + dz],
                         &mut out,
@@ -103,7 +103,7 @@ impl NeighbourBounds {
         self.chunk_writes(
             decorator,
             settings,
-            region,
+            Heights::Region(region),
             biomes,
             region.center(),
             &mut out,
@@ -111,17 +111,43 @@ impl NeighbourBounds {
         out
     }
 
+    /// [`own_writes`](Self::own_writes) of chunk `chunk` before its blocks are built: a
+    /// heightmap can give any height in the level, `min_y..=max_y`.
+    pub fn outline_writes(
+        &self,
+        decorator: &Decorator<'_>,
+        settings: &FeatureSettings,
+        chunk: [i32; 2],
+        [min_y, max_y]: [i32; 2],
+        biomes: &mut dyn FnMut([i32; 2]) -> Vec<BiomeId>,
+    ) -> Vec<Foreign> {
+        let mut out = Vec::new();
+        let heights = Heights::Anywhere {
+            center: chunk,
+            min_y,
+            max_y,
+        };
+        self.chunk_writes(decorator, settings, heights, biomes, chunk, &mut out);
+        out
+    }
+
     fn chunk_writes(
         &self,
         decorator: &Decorator<'_>,
         settings: &FeatureSettings,
-        region: &Region<'_>,
+        heights: Heights<'_, '_>,
         biomes: &mut dyn FnMut([i32; 2]) -> Vec<BiomeId>,
         n: [i32; 2],
         out: &mut Vec<Foreign>,
     ) {
-        let [cx, cz] = region.center();
-        let (min_y, max_y) = (region.min_y(), region.max_y());
+        let ([cx, cz], min_y, max_y) = match heights {
+            Heights::Region(region) => (region.center(), region.min_y(), region.max_y()),
+            Heights::Anywhere {
+                center,
+                min_y,
+                max_y,
+            } => (center, min_y, max_y),
+        };
         let lo = [(cx - 1) * 16, min_y, (cz - 1) * 16];
         let hi = [(cx + 2) * 16 - 1, max_y, (cz + 2) * 16 - 1];
         // The placed features some biome around the chunk lists.
@@ -137,7 +163,7 @@ impl NeighbourBounds {
                 }
             }
         }
-        let ground = Chunk { listed, region };
+        let ground = Chunk { listed, heights };
         for t in decorator.try_boxes(n, min_y, max_y, &ground) {
             let Some(Some(reach)) = self.reaches.get(t.placed) else {
                 continue;
@@ -167,10 +193,23 @@ impl NeighbourBounds {
     }
 }
 
-/// A chunk's ground: which features run there, and the carved heightmaps.
+/// Where a chunk's heightmaps come from.
+#[derive(Clone, Copy)]
+enum Heights<'r, 'b> {
+    /// The carved terrain's, around the region's chunk.
+    Region(&'r Region<'b>),
+    /// Anywhere in the level, around `center`.
+    Anywhere {
+        center: [i32; 2],
+        min_y: i32,
+        max_y: i32,
+    },
+}
+
+/// A chunk's ground: which features run there, and the heightmaps.
 struct Chunk<'r, 'b> {
     listed: Vec<bool>,
-    region: &'r Region<'b>,
+    heights: Heights<'r, 'b>,
 }
 
 impl Ground for Chunk<'_, '_> {
@@ -180,7 +219,10 @@ impl Ground for Chunk<'_, '_> {
 
     fn heights(&self, h: Heightmap, lo: [i32; 2], hi: [i32; 2]) -> (i32, i32) {
         let frozen = matches!(h, Heightmap::WorldSurfaceWg | Heightmap::OceanFloorWg);
-        let region = self.region;
+        let region = match self.heights {
+            Heights::Region(region) => region,
+            Heights::Anywhere { min_y, max_y, .. } => return (min_y, max_y + 1),
+        };
         let anywhere = (region.min_y(), region.max_y() + 1);
         if hi[0] - lo[0] > 64 || hi[1] - lo[1] > 64 {
             return anywhere;

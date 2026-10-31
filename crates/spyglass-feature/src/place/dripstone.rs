@@ -95,6 +95,11 @@ fn float_in(
 }
 
 impl LargeDripstone {
+    /// The one state it writes: the base block's.
+    pub(crate) fn state(&self) -> State {
+        self.base
+    }
+
     /// From the configured feature's fields.
     pub fn load(
         o: &Map<String, Value>,

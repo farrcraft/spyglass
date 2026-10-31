@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use spyglass_biome::BiomeId;
 use spyglass_blocks::Chunk;
 use spyglass_feature::order::PlacedRef;
+use spyglass_feature::outline::Outline;
 use spyglass_feature::structures;
 use spyglass_feature::{
     Blocks, Decorator, Doubt, FeatureSettings, NeighbourBounds, Outcome, Placer, Reading, Region,
@@ -27,6 +28,11 @@ pub(crate) struct FeatureWorld {
     placing: Wanted,
     /// Every placed feature, by their modifiers' shapes, for boxes of tries.
     everything: Wanted,
+    /// The placed features of the steps up to the last target's, by their modifiers' shapes:
+    /// the ones that can write before a target.
+    early: Wanted,
+    /// Those of them spyglass places, whose writes the region holds.
+    early_placed: Wanted,
     /// Each target placed feature on its own, for whether a chunk has tries of it.
     alone: HashMap<PlacedRef, Wanted>,
     /// The last decoration step a target is in.
@@ -65,6 +71,13 @@ impl FeatureWorld {
         };
         let placing = Wanted::load(&settings, &early, Some(&mut reading))?;
         let everything = Wanted::load(&settings, &all, None)?;
+        let placed_early: Vec<PlacedRef> = early
+            .iter()
+            .copied()
+            .filter(|&r| placer.places(r))
+            .collect();
+        let early_placed = Wanted::load(&settings, &placed_early, None)?;
+        let early = Wanted::load(&settings, &early, None)?;
         let mut alone = HashMap::new();
         for &t in &targets {
             alone.insert(t, Wanted::load(&settings, &[t], None)?);
@@ -78,6 +91,8 @@ impl FeatureWorld {
             targets,
             placing,
             everything,
+            early,
+            early_placed,
             alone,
             last_step,
         })
@@ -191,6 +206,11 @@ pub enum Neighbours {
 pub struct FeatureOptions {
     /// Whether each answer holds whatever the neighbours do: about half a chunk's time.
     pub neighbours: bool,
+    /// Whether to answer the candidates that didn't place on spyglass's blocks (`likely`
+    /// false) too. Without them, a chunk is placed only where a target could place on its own,
+    /// which rules most chunks out from the terrain alone
+    /// (`docs/specs/features.md#ruling-out`).
+    pub unlikely: bool,
 }
 
 /// The answer to [`Session::nearest_feature`].
@@ -204,18 +224,34 @@ pub struct FeatureLocate {
     pub complete: bool,
 }
 
-/// What a query keeps between chunks: carved chunks and stored biomes.
-#[derive(Default)]
-struct Cache {
+/// What a query keeps between chunks: carved chunks, stored biomes and the terrain in
+/// outline.
+struct Cache<'g> {
     carved: HashMap<[i32; 2], Chunk>,
     biomes: HashMap<[i32; 2], Vec<BiomeId>>,
+    outline: Option<Outline<'g>>,
+}
+
+impl<'g> Cache<'g> {
+    fn new(generator: &'g spyglass_blocks::ChunkGenerator<'g>, options: FeatureOptions) -> Self {
+        Cache {
+            carved: HashMap::new(),
+            biomes: HashMap::new(),
+            outline: if options.unlikely {
+                None
+            } else {
+                Outline::new(generator)
+            },
+        }
+    }
 }
 
 impl<'w> Session<'w> {
     /// Every feature `query` names that placed, or might have, in chunks `min..=max` (chunk
     /// coordinates, inclusive), chunk by chunk (z, then x), each in decoration order. Places
     /// every chunk whose tries reach a feature the query names, which takes a while each: about
-    /// 40 ms with its neighbours' blocks (`docs/specs/locate.md#features`).
+    /// 30 ms with its neighbours' blocks, unless the options rule it out from the terrain
+    /// (`docs/specs/locate.md#features`).
     pub fn features_in(
         &self,
         query: &FeatureQuery,
@@ -224,7 +260,7 @@ impl<'w> Session<'w> {
         options: FeatureOptions,
     ) -> Result<Vec<FoundFeature>> {
         self.check_world(query.world, &query.argument)?;
-        let mut cache = Cache::default();
+        let mut cache = Cache::new(self.chunks()?, options);
         let mut out = Vec::new();
         for cz in min[1]..=max[1] {
             for cx in min[0]..=max[0] {
@@ -244,7 +280,7 @@ impl<'w> Session<'w> {
         options: FeatureOptions,
     ) -> Result<FeatureLocate> {
         self.check_world(query.world, &query.argument)?;
-        let mut cache = Cache::default();
+        let mut cache = Cache::new(self.chunks()?, options);
         let centre = [from[0] >> 4, from[2] >> 4];
         let dist = |p: [i32; 3]| {
             let (dx, dz) = (i64::from(p[0] - from[0]), i64::from(p[2] - from[2]));
@@ -296,7 +332,7 @@ impl<'w> Session<'w> {
         query: &FeatureQuery,
         chunk: [i32; 2],
         options: FeatureOptions,
-        cache: &mut Cache,
+        cache: &mut Cache<'_>,
     ) -> Result<Vec<FoundFeature>> {
         let world = self.world;
         let f = world.feature_world()?;
@@ -314,25 +350,62 @@ impl<'w> Session<'w> {
         if !reaches {
             return Ok(Vec::new());
         }
+        let Cache {
+            carved,
+            biomes: stored,
+            outline,
+        } = cache;
+        let mut biomes = |c: [i32; 2]| {
+            stored
+                .entry(c)
+                .or_insert_with(|| generator.chunk_biomes(c[0], c[1]))
+                .clone()
+        };
+        // Nothing could place on its own, from the terrain in outline: no likely answer.
+        if let Some(outline) = outline {
+            let (level_min, level_top) = generator.level();
+            let placed = Decorator::of(
+                &f.settings,
+                generator,
+                self.seed,
+                anchors,
+                min_y,
+                &f.early_placed,
+            );
+            // A target's own writes count only where one of its tries isn't ruled out.
+            let writes: Vec<_> = f
+                .bounds
+                .outline_writes(
+                    &placed,
+                    &f.settings,
+                    chunk,
+                    [level_min, level_top - 1],
+                    &mut biomes,
+                )
+                .into_iter()
+                .filter(|w| !query.targets.contains(&w.placed))
+                .collect();
+            let ruled_out = query.targets.iter().all(|t| {
+                f.alone.get(t).is_some_and(|w| {
+                    let d = Decorator::of(&f.settings, generator, self.seed, anchors, min_y, w);
+                    f.placer.none_place(&d, &f.blocks, outline, chunk, &writes)
+                })
+            });
+            if ruled_out {
+                return Ok(Vec::new());
+            }
+        }
         let mut chunks = Vec::with_capacity(9);
         for dz in -1..=1 {
             for dx in -1..=1 {
                 let key = [chunk[0] + dx, chunk[1] + dz];
-                let c = cache
-                    .carved
+                let c = carved
                     .entry(key)
                     .or_insert_with(|| generator.carved_chunk(key[0], key[1]));
                 chunks.push(c.clone());
             }
         }
         let mut region = Region::new(&f.blocks, chunk, chunks);
-        let mut biomes = |c: [i32; 2]| {
-            cache
-                .biomes
-                .entry(c)
-                .or_insert_with(|| generator.chunk_biomes(c[0], c[1]))
-                .clone()
-        };
         let everything = Decorator::of(
             &f.settings,
             generator,
@@ -347,9 +420,10 @@ impl<'w> Session<'w> {
         } else {
             Vec::new()
         };
+        let early = Decorator::of(&f.settings, generator, self.seed, anchors, min_y, &f.early);
         let own = f
             .bounds
-            .own_writes(&everything, &f.settings, &region, &mut biomes);
+            .own_writes(&early, &f.settings, &region, &mut biomes);
         let pools = world.pools()?;
         let starts = self.starts(true).with_pools(pools);
         let pieces = structures::pieces(
@@ -388,6 +462,7 @@ impl<'w> Session<'w> {
                 let (certain, likely, why) = match p.outcome {
                     Outcome::Placed => (true, true, None),
                     Outcome::Declined => return None,
+                    Outcome::Candidate { placed: false, .. } if !options.unlikely => return None,
                     Outcome::Candidate { placed, why } => (false, placed, Some(why)),
                 };
                 Some(FoundFeature {

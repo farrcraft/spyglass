@@ -19,6 +19,11 @@ pub struct BlockBlob {
 }
 
 impl BlockBlob {
+    /// The one state it writes.
+    pub(crate) fn state(&self) -> State {
+        self.state
+    }
+
     /// From the configured feature's fields.
     pub fn load(
         o: &Map<String, Value>,

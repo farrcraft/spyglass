@@ -33,6 +33,7 @@ pub fn run(args: &Features) -> Result<()> {
     let query = world.feature_query(&args.target)?;
     let options = spyglass::FeatureOptions {
         neighbours: args.neighbours,
+        unlikely: args.all,
     };
     let found = session.features_in(
         &query,

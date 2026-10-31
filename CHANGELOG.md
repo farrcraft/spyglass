@@ -31,6 +31,8 @@ Changes go under **Unreleased** as they're made. `cargo xtask release` turns tha
 ### Changed
 
 - **Mineshafts are decided exactly:** spyglass lays out a mineshaft's pieces as the game does, so its biome check is at the game's position and `locate`, searches and the map no longer leave mineshafts as candidates (without terrain, badlands mineshafts still can be). `--bounds`, `Session::structure_layout` and the viewer give mineshafts' bounds and pieces too ([structure-placement.md](docs/specs/structure-placement.md#mineshafts)).
+- **Chunks generate 3 to 5 times faster in 26.3 and 26.4,** with the same blocks: a chunk's terrain is sampled as one volume, ore veins share their cells' corners, and carvers ask the aquifer only where they carve. Blocks, the underground layers and feature queries all gain.
+- Feature queries leave out the unlikely candidates (those that don't place on spyglass's blocks) unless asked: `FeatureOptions::unlikely`, `--all` in the CLI. Without them, chunks where nothing could place are ruled out from the terrain alone ([features.md](docs/specs/features.md#ruling-out)).
 - Bundles now include the data generator's block report, `reports/blocks.json`. Extract bundles again to ask about blocks with them ([bundle-format.md](docs/specs/bundle-format.md#layout)).
 
 ### Fixed

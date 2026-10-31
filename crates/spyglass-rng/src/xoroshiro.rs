@@ -13,7 +13,9 @@ const DOUBLE_UNIT: f64 = 1.110_223_024_625_156_5e-16;
 /// `Xoroshiro128PlusPlus`: the generator itself.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Xoroshiro128PlusPlus {
+    /// The state's first half (`seedLo`).
     lo: i64,
+    /// The state's second half (`seedHi`).
     hi: i64,
 }
 
@@ -36,7 +38,8 @@ impl Xoroshiro128PlusPlus {
         Self::new(seed.lo, seed.hi)
     }
 
-    /// `nextLong()`.
+    /// `nextLong()`: the output is the "++" scrambler (add, rotate, add) of the old state, and
+    /// the state then steps by xoroshiro's XORs, shift and rotations.
     pub fn next_long(&mut self) -> i64 {
         let lo = self.lo;
         let mut hi = self.hi;
@@ -51,7 +54,9 @@ impl Xoroshiro128PlusPlus {
 /// `XoroshiroRandomSource`.
 #[derive(Debug, Clone)]
 pub struct XoroshiroRandomSource {
+    /// The generator every draw comes from.
     rng: Xoroshiro128PlusPlus,
+    /// The second value of the last Gaussian pair, while it's unused.
     gaussian: Gaussian,
 }
 
@@ -84,7 +89,7 @@ impl XoroshiroRandomSource {
         self.gaussian.reset();
     }
 
-    /// `nextBits(int)`: the top `bits` bits of the next long.
+    /// `nextBits(int)`: the top `bits` bits of the next long, by an unsigned shift (`>>>`).
     fn next_bits(&mut self, bits: u32) -> u64 {
         (self.rng.next_long() as u64) >> (64 - bits)
     }
@@ -110,7 +115,9 @@ impl RandomSource for XoroshiroRandomSource {
         self.rng.next_long() as i32
     }
 
-    /// Lemire's method: multiply, then reject the biased low range.
+    /// Lemire's method: the unsigned 32-bit draw times `bound` is a 64-bit product whose top
+    /// half is the result. A product whose low half is below `2^32 mod bound` would make some
+    /// results likelier than others, so it's drawn again.
     fn next_int_bounded(&mut self, bound: i32) -> i32 {
         assert!(bound > 0, "Bound must be positive");
         let bound64 = i64::from(bound);
@@ -160,7 +167,9 @@ impl RandomSource for XoroshiroRandomSource {
 /// `XoroshiroRandomSource.XoroshiroPositionalRandomFactory`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct XoroshiroPositionalRandomFactory {
+    /// What each source's first half is XORed with (`seedLo`).
     lo: i64,
+    /// What each source's second half is XORed with (`seedHi`).
     hi: i64,
 }
 

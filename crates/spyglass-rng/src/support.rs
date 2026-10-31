@@ -7,7 +7,8 @@ pub const GOLDEN_RATIO_64: i64 = -7_046_029_254_386_353_131;
 /// `RandomSupport.SILVER_RATIO_64`.
 pub const SILVER_RATIO_64: i64 = 7_640_891_576_956_012_809;
 
-/// `RandomSupport.mixStafford13(long)`: Stafford's "Mix13" 64-bit finalizer.
+/// `RandomSupport.mixStafford13(long)`: Stafford's "Mix13" 64-bit finalizer, which spreads
+/// each input bit over the whole output. The shifts are unsigned (`>>>`).
 pub fn mix_stafford13(mut z: i64) -> i64 {
     z = (z ^ ((z as u64) >> 30) as i64).wrapping_mul(-4_658_895_280_553_007_687);
     z = (z ^ ((z as u64) >> 27) as i64).wrapping_mul(-7_723_592_293_110_705_685);
@@ -41,7 +42,8 @@ impl Seed128 {
     }
 }
 
-/// `RandomSupport.upgradeSeedTo128bitUnmixed(long)`.
+/// `RandomSupport.upgradeSeedTo128bitUnmixed(long)`: a 64-bit seed stretched to two halves
+/// with the ratios, before mixing.
 pub fn upgrade_seed_to_128bit_unmixed(seed: i64) -> Seed128 {
     let lo = seed ^ SILVER_RATIO_64;
     Seed128 {

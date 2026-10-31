@@ -18,6 +18,8 @@ pub(crate) trait Bits {
 /// If `bound` isn't positive, where the game throws `IllegalArgumentException`.
 pub(crate) fn next_int_bounded(source: &mut impl Bits, bound: i32) -> i32 {
     assert!(bound > 0, "Bound must be positive");
+    // A power of two takes the top bits, which are better mixed than the low bits a
+    // remainder would keep.
     if bound & (bound - 1) == 0 {
         return ((i64::from(bound) * i64::from(source.next(31))) >> 31) as i32;
     }
@@ -48,7 +50,7 @@ pub(crate) fn next_float(source: &mut impl Bits) -> f32 {
     source.next(24) as f32 * FLOAT_MULTIPLIER
 }
 
-/// `nextDouble()`: 26 and 27 bits.
+/// `nextDouble()`: 26 bits and then 27, joined into the 53 a `double`'s mantissa holds.
 pub(crate) fn next_double(source: &mut impl Bits) -> f64 {
     let hi = source.next(26);
     let lo = source.next(27);

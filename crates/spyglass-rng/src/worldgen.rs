@@ -18,6 +18,7 @@ use crate::xoroshiro::{XoroshiroPositionalRandomFactory, XoroshiroRandomSource};
 /// the inner source's `nextLong()`, so every other draw is the legacy one built on `next`.
 #[derive(Debug, Clone)]
 pub struct WorldgenRandom {
+    /// The source every bit comes from, and what seeding reaches.
     inner: XoroshiroRandomSource,
     /// The legacy source's own Gaussian state. `setSeed` reaches only the inner source, so it
     /// never resets this.
@@ -42,11 +43,13 @@ impl WorldgenRandom {
     /// decoration seed, which the random is then seeded with.
     pub fn set_decoration_seed(&mut self, seed: i64, x: i32, z: i32) -> i64 {
         self.set_seed(seed);
-        let a = self.next_long() | 1;
-        let b = self.next_long() | 1;
+        // As in `large_feature`, two longs from the world seed weight x and z (the game's
+        // `a` and `b`, made odd).
+        let x_weight = self.next_long() | 1;
+        let z_weight = self.next_long() | 1;
         let decoration = i64::from(x)
-            .wrapping_mul(a)
-            .wrapping_add(i64::from(z).wrapping_mul(b))
+            .wrapping_mul(x_weight)
+            .wrapping_add(i64::from(z).wrapping_mul(z_weight))
             ^ seed;
         self.set_seed(decoration);
         decoration
@@ -120,17 +123,24 @@ impl RandomSource for WorldgenRandom {
     }
 }
 
-/// `WorldgenRandom.setLargeFeatureSeed(seed, chunkX, chunkZ)`.
+/// `WorldgenRandom.setLargeFeatureSeed(seed, chunkX, chunkZ)`: a chunk's own seed, for the
+/// structures that start in it.
+///
+/// Two longs drawn from the world seed weight the chunk's x and z, so neighbouring chunks get
+/// unrelated seeds, and the world seed is mixed back in at the end.
 pub fn large_feature(seed: i64, chunk_x: i32, chunk_z: i32) -> LegacyRandomSource {
     let mut random = LegacyRandomSource::new(seed);
-    let a = random.next_long();
-    let b = random.next_long();
+    let x_weight = random.next_long();
+    let z_weight = random.next_long();
     LegacyRandomSource::new(
-        (i64::from(chunk_x).wrapping_mul(a) ^ i64::from(chunk_z).wrapping_mul(b)) ^ seed,
+        (i64::from(chunk_x).wrapping_mul(x_weight) ^ i64::from(chunk_z).wrapping_mul(z_weight))
+            ^ seed,
     )
 }
 
-/// `WorldgenRandom.setLargeFeatureWithSalt(seed, x, z, salt)`.
+/// `WorldgenRandom.setLargeFeatureWithSalt(seed, x, z, salt)`: the seed for a structure set's
+/// placement in region `(x, z)`, the salt keeping each set's draws apart. The constants are
+/// the game's, and the sum wraps as Java's `long` does.
 pub fn large_feature_with_salt(seed: i64, x: i32, z: i32, salt: i32) -> LegacyRandomSource {
     LegacyRandomSource::new(
         i64::from(x)

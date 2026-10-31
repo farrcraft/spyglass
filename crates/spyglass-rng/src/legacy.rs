@@ -5,14 +5,19 @@ use crate::bits::{self, Bits};
 use crate::gaussian::Gaussian;
 use crate::source::{PositionalRandomFactory, RandomSource};
 
+/// The LCG's multiplier, `java.util.Random`'s. Setting a seed also XORs it in.
 const MULTIPLIER: i64 = 0x5_DEEC_E66D;
+/// The LCG's increment.
 const INCREMENT: i64 = 11;
+/// The state is 48 bits, and every step keeps only these.
 const MODULUS_MASK: i64 = (1 << 48) - 1;
 
 /// `LegacyRandomSource`, with the defaults it inherits from `BitRandomSource`.
 #[derive(Debug, Clone)]
 pub struct LegacyRandomSource {
+    /// The LCG's 48-bit state (the game's `seed`).
     seed: i64,
+    /// The second value of the last Gaussian pair, while it's unused.
     gaussian: Gaussian,
 }
 
@@ -102,6 +107,7 @@ impl RandomSource for LegacyRandomSource {
 /// `LegacyRandomSource.LegacyPositionalRandomFactory`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LegacyPositionalRandomFactory {
+    /// What each source's seed is XORed with.
     seed: i64,
 }
 

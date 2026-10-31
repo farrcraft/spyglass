@@ -3,7 +3,9 @@
 /// The state of `MarsagliaPolarGaussian`: each round produces two values and caches the second.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct Gaussian {
+    /// The cached second value (`nextNextGaussian`).
     next: f64,
+    /// Whether `next` is still to be returned (`haveNextNextGaussian`).
     have_next: bool,
 }
 
@@ -21,6 +23,9 @@ impl Gaussian {
             self.have_next = false;
             return self.next;
         }
+        // A uniform point in the square around the origin, kept when it's inside the unit
+        // circle. Its squared radius `s` then scales both coordinates into two independent
+        // normal values.
         loop {
             let v1 = 2.0 * next_double() - 1.0;
             let v2 = 2.0 * next_double() - 1.0;

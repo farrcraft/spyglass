@@ -22,6 +22,7 @@ pub enum Target {
 }
 
 impl Target {
+    /// What it's called: the id or tag, or the features' name.
     pub fn name(&self) -> &str {
         match self {
             Target::Structure(id) | Target::Biome(id) => id,
@@ -31,11 +32,11 @@ impl Target {
 }
 
 /// The place marking a feature done marks: the block at its x and z.
-pub fn feature_place(f: &spyglass::FoundFeature) -> Place {
+pub fn feature_place(feature: &spyglass::FoundFeature) -> Place {
     Place {
         kind: Kind::Place,
         id: String::new(),
-        at: [f.position[0], f.position[2]],
+        at: [feature.position[0], feature.position[2]],
     }
 }
 
@@ -48,6 +49,8 @@ pub struct Hit {
     pub z: i32,
     /// What's there: the structures that may start, or the biome (and its tie).
     pub what: String,
+    /// Whether the game certainly finds it: otherwise it's a candidate that depends on terrain,
+    /// a tied biome or the platform.
     pub certain: bool,
     /// The distance `/locate` prints.
     pub blocks_away: i32,
@@ -60,7 +63,9 @@ pub struct Hit {
 /// A locate's answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Found {
+    /// What was looked for.
     pub target: Target,
+    /// The block it was looked for from.
     pub from: [i32; 3],
     /// In the game's search order.
     pub hits: Vec<Hit>,
@@ -116,9 +121,12 @@ pub fn run(
             let near = session
                 .nearest_structure(&query, from, &options)
                 .map_err(|e| e.to_string())?;
-            let at =
-                |l: &spyglass::StructureLocate| l.certain_answer.map(|i| l.hits[i].start.position);
-            let (hits, nearest) = if at(&found) == at(&near) {
+            // The two searches differ in order, not in what they find: when their certain
+            // answers are the same start, one list says both.
+            let answer_at = |locate: &spyglass::StructureLocate| {
+                locate.certain_answer.map(|i| locate.hits[i].start.position)
+            };
+            let (hits, nearest) = if answer_at(&found) == answer_at(&near) {
                 (
                     structure_hits(&found, "Nearest, and /locate's answer"),
                     Vec::new(),
@@ -333,8 +341,8 @@ mod tests {
                     .map(|h| [h.x, h.z])
             };
             let nearest = near.certain_answer.map(|i| {
-                let p = near.hits[i].start.position;
-                [p[0], p[2]]
+                let position = near.hits[i].start.position;
+                [position[0], position[2]]
             });
             if found.nearest.is_empty() {
                 assert_eq!(

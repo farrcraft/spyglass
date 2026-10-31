@@ -121,16 +121,19 @@ impl App {
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
                 ui.horizontal(|ui| {
-                    for d in Dimension::ALL {
-                        if ui.selectable_label(d == here, dimension_label(d)).clicked() && d != here
+                    for dimension in Dimension::ALL {
+                        if ui
+                            .selectable_label(dimension == here, dimension_label(dimension))
+                            .clicked()
+                            && dimension != here
                         {
-                            picked = Some(d);
+                            picked = Some(dimension);
                         }
                     }
                 });
             });
-        if let Some(d) = picked {
-            self.switch_dimension(ui.ctx(), d);
+        if let Some(dimension) = picked {
+            self.switch_dimension(ui.ctx(), dimension);
         }
     }
 

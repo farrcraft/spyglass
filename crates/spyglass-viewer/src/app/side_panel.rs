@@ -7,10 +7,14 @@ use crate::style;
 /// The side panel's tabs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(super) enum Tab {
+    /// What the map shows.
     #[default]
     Layers,
+    /// Seed searches and finds in the seed shown.
     Search,
+    /// Locate's hits.
     Locate,
+    /// The user's markers and done places.
     Markers,
 }
 
@@ -36,11 +40,11 @@ impl App {
                 };
                 let response = ui.add(egui::Button::new(text).frame(false));
                 if selected {
-                    let r = response.rect;
+                    let tab_rect = response.rect;
                     ui.painter().line_segment(
                         [
-                            r.left_bottom() + egui::vec2(0.0, 3.0),
-                            r.right_bottom() + egui::vec2(0.0, 3.0),
+                            tab_rect.left_bottom() + egui::vec2(0.0, 3.0),
+                            tab_rect.right_bottom() + egui::vec2(0.0, 3.0),
                         ],
                         egui::Stroke::new(2.0, style::ACCENT),
                     );
@@ -282,8 +286,8 @@ impl App {
                     .on_hover_text("The terrain's top block at the centre of the view.")
                     .clicked()
             {
-                let h = shown.session.height_at(centre, Heightmap::WorldSurfaceWg);
-                self.settings.view.y = (h - 1).clamp(min_y, top);
+                let height = shown.session.height_at(centre, Heightmap::WorldSurfaceWg);
+                self.settings.view.y = (height - 1).clamp(min_y, top);
             }
             if ui
                 .small_button("Underground")

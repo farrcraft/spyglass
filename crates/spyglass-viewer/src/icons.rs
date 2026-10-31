@@ -21,8 +21,11 @@ macro_rules! icon {
 /// `minecraft:` namespace, its name, and its icon. Variants share one: `village_` covers the
 /// five villages.
 struct Family {
+    /// What the ids it covers start with, after `minecraft:`.
     prefix: &'static str,
+    /// The family's name, for the legend.
     name: &'static str,
+    /// The icon's URI for egui, and its SVG file.
     icon: (&'static str, &'static [u8]),
 }
 
@@ -142,6 +145,7 @@ const FAMILIES: &[Family] = &[
 /// For a structure no family covers: another namespace's, or one a new version adds.
 const UNKNOWN: (&str, &[u8]) = icon!("unknown");
 
+/// The family covering structure `id`, if one does: only the game's own structures have one.
 fn find(id: &str) -> Option<&'static Family> {
     let name = id.strip_prefix("minecraft:")?;
     FAMILIES.iter().find(|f| name.starts_with(f.prefix))
@@ -217,8 +221,11 @@ const DARK: u32 = 112;
 /// hollow (candidate) badge is drawn in, so dark sets still show on dark biomes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Badge {
+    /// The set's palette colour, a certain badge's fill.
     pub fill: Color32,
+    /// The glyph's colour on `fill`: white on dark sets, the ground colour on light ones.
     pub ink: Color32,
+    /// A hollow badge's outline and glyph.
     pub tint: Color32,
 }
 
@@ -228,6 +235,7 @@ pub fn badge(set: &str) -> Badge {
     let [r, g, b] = rgb;
     let fill = Color32::from_rgb(r, g, b);
     if lightness(rgb) < DARK {
+        // 45% of the way to white.
         let lighten = |c: u8| (u32::from(c) + (255 - u32::from(c)) * 45 / 100) as u8;
         Badge {
             fill,

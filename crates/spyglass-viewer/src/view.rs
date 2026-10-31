@@ -14,8 +14,11 @@ const MAX_CENTRE: f64 = 1_000_000_000.0;
 /// A tile: `TILE` × `TILE` pixels at a scale, numbered from the world origin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Tile {
+    /// Blocks per pixel.
     pub scale: u32,
+    /// The tile's column, east of the origin: its west edge is at `x * TILE * scale`.
     pub x: i32,
+    /// The tile's row, south of the origin: its north edge is at `z * TILE * scale`.
     pub z: i32,
 }
 
@@ -112,23 +115,25 @@ impl View {
     /// The pixel offset of the world's block grid: where block (0, 0)'s pixel corner is, from the
     /// map's centre, rounded so tiles land on whole pixels.
     pub fn origin(&self) -> [f64; 2] {
-        let s = f64::from(self.scale);
-        self.centre.map(|c| (-c / s).round())
+        let blocks_per_point = f64::from(self.scale);
+        self.centre.map(|c| (-c / blocks_per_point).round())
     }
 
     /// The block under a screen offset from the map's centre.
     pub fn block_at(&self, offset: [f32; 2]) -> [f64; 2] {
-        let s = f64::from(self.scale);
+        let blocks_per_point = f64::from(self.scale);
         let origin = self.origin();
-        [0, 1].map(|d| (f64::from(offset[d]) - origin[d]) * s)
+        [0, 1].map(|axis| (f64::from(offset[axis]) - origin[axis]) * blocks_per_point)
     }
 
     /// Moves the map by `delta` points, as when dragged.
     pub fn pan(&mut self, delta: [f32; 2]) {
-        let s = f64::from(self.scale);
+        let blocks_per_point = f64::from(self.scale);
         let centre = self.centre;
-        self.centre =
-            [0, 1].map(|d| (centre[d] - f64::from(delta[d]) * s).clamp(-MAX_CENTRE, MAX_CENTRE));
+        self.centre = [0, 1].map(|axis| {
+            (centre[axis] - f64::from(delta[axis]) * blocks_per_point)
+                .clamp(-MAX_CENTRE, MAX_CENTRE)
+        });
     }
 
     /// Zooms one step in (halving the scale) or out, keeping the block under `offset` still.
@@ -140,19 +145,22 @@ impl View {
         };
         let fixed = self.block_at(offset);
         self.scale = scale;
-        let s = f64::from(scale);
-        self.centre =
-            [0, 1].map(|d| (fixed[d] - f64::from(offset[d]) * s).clamp(-MAX_CENTRE, MAX_CENTRE));
+        let blocks_per_point = f64::from(scale);
+        self.centre = [0, 1].map(|axis| {
+            (fixed[axis] - f64::from(offset[axis]) * blocks_per_point)
+                .clamp(-MAX_CENTRE, MAX_CENTRE)
+        });
     }
 
     /// The tiles covering a map of `size` points, nearest the centre first.
     pub fn tiles(&self, size: [f32; 2]) -> Vec<Tile> {
         let side = f64::from(TILE);
         let origin = self.origin();
-        let range = |d: usize| {
-            let half = f64::from(size[d]) / 2.0;
-            let lo = ((-half - origin[d]) / side).floor() as i32;
-            let hi = ((half - origin[d]) / side).ceil() as i32 - 1;
+        // The tile numbers on one axis that overlap the map, from the edge's offset.
+        let range = |axis: usize| {
+            let half = f64::from(size[axis]) / 2.0;
+            let lo = ((-half - origin[axis]) / side).floor() as i32;
+            let hi = ((half - origin[axis]) / side).ceil() as i32 - 1;
             lo..=hi
         };
         let mut tiles: Vec<Tile> = range(1)
@@ -164,7 +172,7 @@ impl View {
             })
             .collect();
         let distance = |t: &Tile| {
-            let centre = |i: i32, d: usize| (f64::from(i) + 0.5) * side + origin[d];
+            let centre = |i: i32, axis: usize| (f64::from(i) + 0.5) * side + origin[axis];
             let (dx, dz) = (centre(t.x, 0), centre(t.z, 1));
             dx * dx + dz * dz
         };

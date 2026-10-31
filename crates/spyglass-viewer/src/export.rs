@@ -29,24 +29,38 @@ pub enum Source {
 /// An image of the map: what to draw, as `spyglass render` takes it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Export {
+    /// The blocks drawn, at the map's scale and height.
     pub area: MapArea,
+    /// The world: a seed or a save.
     pub source: Source,
     /// The dimension drawn.
     pub dimension: Dimension,
     /// The bundles folder, if it isn't `spyglass render`'s default.
     pub bundles: Option<PathBuf>,
+    /// Structure ids and `#tags` to mark.
     pub structures: Vec<String>,
     /// Placed feature ids, drawn up close.
     pub features: Vec<String>,
+    /// Biome ids to keep bright.
     pub highlight: Vec<String>,
+    // The layers, as the library's `Layers` names them.
+    /// Tied biome cells as a checker.
     pub ties: bool,
+    /// Slime chunks.
     pub slime_chunks: bool,
+    /// The world spawn.
     pub spawn: bool,
+    /// Structure starts decided with the seed's terrain.
     pub confirm: bool,
+    /// Shading by terrain height.
     pub relief: bool,
+    /// Biomes at the surface.
     pub surface: bool,
+    /// Ore veins at the area's height.
     pub veins: bool,
+    /// Noise caves at the area's height.
     pub noise_caves: bool,
+    /// Carvers' caves and canyons at the area's height.
     pub carvers: bool,
     /// The user's markers in view.
     pub pins: Vec<Pin>,
@@ -86,9 +100,10 @@ impl Export {
             Dimension::End => add("--dimension", "end".to_string()),
         }
         let [w, h] = self.area.size;
-        let s = i64::from(self.area.scale);
-        let centre =
-            [0, 1].map(|d| i64::from(self.area.min[d]) + i64::from(self.area.size[d] / 2) * s);
+        let scale = i64::from(self.area.scale);
+        let centre = [0, 1].map(|axis| {
+            i64::from(self.area.min[axis]) + i64::from(self.area.size[axis] / 2) * scale
+        });
         add("--centre", format!("{},{}", centre[0], centre[1]));
         add("--size", format!("{w}x{h}"));
         add("--scale", self.area.scale.to_string());

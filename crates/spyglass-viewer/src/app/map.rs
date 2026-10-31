@@ -24,13 +24,17 @@ const HATCH_GAP: f32 = 14.0;
 const SCALE_BAR: f32 = 120.0;
 
 impl App {
+    /// The map, each frame: input first (drag, zoom, keys), then the finished jobs into their
+    /// caches and a new list of the jobs wanted, then the tiles, with a coarser one scaled up
+    /// wherever a tile isn't ready, then areas, bounds and markers over every tile, and last the
+    /// controls and the context menu.
     pub(super) fn map(&mut self, ui: &mut egui::Ui) {
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         // The view's centre block's corner is pixel size / 2 from the top left, as in
         // `MapArea::centred_on`, and on a whole physical pixel, so texels and marker edges land
         // on screen pixels and an export covers the same blocks.
-        let ppp = ui.ctx().pixels_per_point();
-        let snap = |v: f32| (v * ppp).round() / ppp;
+        let pixels_per_point = ui.ctx().pixels_per_point();
+        let snap = |v: f32| (v * pixels_per_point).round() / pixels_per_point;
         let centre = Pos2::new(
             snap(rect.left()) + (rect.width() / 2.0).floor(),
             snap(rect.top()) + (rect.height() / 2.0).floor(),
@@ -39,10 +43,12 @@ impl App {
         let offset = |p: Pos2| [p.x - centre.x, p.y - centre.y];
         let view = &mut self.settings.view;
         if response.dragged() {
-            let d = response.drag_delta();
-            view.pan([d.x, d.y]);
+            let drag = response.drag_delta();
+            view.pan([drag.x, drag.y]);
         }
         if let Some(hover) = response.hover_pos() {
+            // Scrolling builds up until it's a whole step, so a trackpad's small deltas zoom as
+            // a wheel's notches do; a pinch is a step at once.
             let (scroll, zoom) = ui.input(|i| (i.smooth_scroll_delta.y, i.zoom_delta()));
             self.scrolled += scroll;
             if zoom > 1.0 {
@@ -98,6 +104,8 @@ impl App {
 
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 0.0, EMPTY);
+        // The hatch: lines at 45°, each from the bottom edge to the top, starting a height to
+        // the left so the bottom-left corner is covered too.
         let mut x = -rect.height();
         while x < rect.width() {
             painter.line_segment(
@@ -148,6 +156,7 @@ impl App {
         // The underground layers only on the view's own tiles: the coarser ones shown while
         // they load would cost as much again.
         let underground = self.underground();
+        // The key each tile's biomes are kept under, with the layers that tile can have.
         let key = |tile: Tile| {
             let terrain = tile.scale <= MAX_TERRAIN_SCALE;
             let deep = tile.scale == view.scale && tile.scale <= MAX_UNDERGROUND_SCALE;
@@ -180,35 +189,41 @@ impl App {
             selection,
             tile,
         };
-        for (done, result) in self.pool.finished() {
-            match (done, result) {
-                (JobKey::Biomes(k), result) if k.source == source => {
+        // Finished jobs into their caches; those for another world, seed or selection are
+        // dropped.
+        for (finished, result) in self.pool.finished() {
+            match (finished, result) {
+                (JobKey::Biomes(tile_key), result) if tile_key.source == source => {
                     let data = result.and_then(|out| match out {
                         Output::Biomes(data) => Ok(data),
                         _ => Err("not a biome tile".to_string()),
                     });
-                    self.cache.insert(k, Entry::new(data));
+                    self.cache.insert(tile_key, Entry::new(data));
                 }
-                (JobKey::Markers(k), result) if k.source == source && k.selection == selection => {
+                (JobKey::Markers(markers_key), result)
+                    if markers_key.source == source && markers_key.selection == selection =>
+                {
                     let starts = result.and_then(|out| match out {
                         Output::Markers(starts) => Ok(starts),
                         _ => Err("not markers".to_string()),
                     });
-                    self.markers.insert(k, starts);
+                    self.markers.insert(markers_key, starts);
                 }
-                (JobKey::Features(k), result) if k.source == source && k.selection == selection => {
+                (JobKey::Features(features_key), result)
+                    if features_key.source == source && features_key.selection == selection =>
+                {
                     let found = result.and_then(|out| match out {
                         Output::Features(found) => Ok(found),
                         _ => Err("not features".to_string()),
                     });
-                    self.feature_markers.insert(k, found);
+                    self.feature_markers.insert(features_key, found);
                 }
-                (JobKey::Layout(k), result) if k.source == source => {
+                (JobKey::Layout(layout_key), result) if layout_key.source == source => {
                     let layout = result.and_then(|out| match out {
                         Output::Layout(layout) => Ok(layout),
                         _ => Err("not a layout".to_string()),
                     });
-                    self.layouts.insert(k, layout);
+                    self.layouts.insert(layout_key, layout);
                 }
                 _ => {}
             }
@@ -302,15 +317,17 @@ impl App {
                 detailed += 1;
                 continue;
             }
-            // A coarser tile, scaled up, until this one is ready.
+            // A coarser tile, scaled up, until this one is ready. Each step up, the part of the
+            // parent this tile covers halves, and moves to the quarter the child is in: `uv` is
+            // that part, in the parent's texture coordinates.
             let mut child = tile;
             let mut uv = full_uv();
-            while let Some((parent, [qx, qz])) = child.parent() {
+            while let Some((parent, [quarter_x, quarter_z])) = child.parent() {
                 let half = uv.size() / 2.0;
                 uv = Rect::from_min_size(
                     Pos2::new(
-                        qx as f32 * 0.5 + uv.min.x * 0.5,
-                        qz as f32 * 0.5 + uv.min.y * 0.5,
+                        quarter_x as f32 * 0.5 + uv.min.x * 0.5,
+                        quarter_z as f32 * 0.5 + uv.min.y * 0.5,
                     ),
                     half,
                 );
@@ -321,6 +338,8 @@ impl App {
                     covered += 1;
                     break;
                 }
+                // Three steps up at most, eight times the scale; the stand-ins asked for are two
+                // up (`view::COARSE`).
                 if parent.scale >= view.scale * 8 {
                     break;
                 }
@@ -330,6 +349,8 @@ impl App {
         if made >= TEXTURES_PER_FRAME {
             ui.ctx().request_repaint();
         }
+        // For viewer-timing: when the view is first covered, and first fully drawn, since what's
+        // shown last changed.
         if timing::enabled() {
             let marked = !marking || tiles.iter().all(|&t| self.markers.contains(&marker_key(t)));
             let laid_out = layout_keys.iter().all(|(k, _)| self.layouts.contains(k));
@@ -361,21 +382,25 @@ impl App {
         if let Some(opened) = &self.opened
             && opened.seed == session.seed()
         {
-            for c in opened
+            for constraint in opened
                 .constraints
                 .iter()
                 .filter(|c| c.dimension == world.dimension_kind())
             {
-                draw_area(&painter, &view, centre, c.area);
+                draw_area(&painter, &view, centre, constraint.area);
             }
         }
 
         // Bounds under the markers, over every tile.
         for (key, set) in &layout_keys {
             if let Some(Ok(Some(layout))) = self.layouts.get(key) {
-                let b = layout.bounds;
-                let at =
-                    markers::block_rect(&view, centre, [b.min[0], b.min[2]], [b.max[0], b.max[2]]);
+                let bounds = layout.bounds;
+                let at = markers::block_rect(
+                    &view,
+                    centre,
+                    [bounds.min[0], bounds.min[2]],
+                    [bounds.max[0], bounds.max[2]],
+                );
                 if rect.intersects(at) {
                     markers::bounds(&painter, at, set);
                 }
@@ -405,6 +430,8 @@ impl App {
             starts.clear();
         }
         let size = Size::at(view.scale);
+        // Everything that can be picked, with its centre on screen and how far from it the
+        // pointer still picks it, in drawing order.
         let mut placed: Vec<(Pos2, f32, Picked<'_>)> = Vec::new();
         let mut in_view: HashMap<String, usize> = HashMap::new();
         for start in &starts {
@@ -417,10 +444,11 @@ impl App {
             }
         }
         self.in_view = in_view;
-        for f in &found_features {
-            let at = markers::pixel_centre(&view, centre, [f.position[0], f.position[2]]);
+        for feature in &found_features {
+            let at =
+                markers::pixel_centre(&view, centre, [feature.position[0], feature.position[2]]);
             if rect.expand(12.0).contains(at) {
-                placed.push((at, 11.0, Picked::Feature(f)));
+                placed.push((at, 11.0, Picked::Feature(feature)));
             }
         }
         let spawn_at = (self.settings.spawn && self.spawn_allowed())
@@ -434,22 +462,22 @@ impl App {
                 placed.push((at, 10.0, Picked::Hit(hit)));
             }
         }
-        for m in &user {
-            let at = markers::pixel_centre(&view, centre, [m.x, m.z]);
+        for marker in &user {
+            let at = markers::pixel_centre(&view, centre, [marker.x, marker.z]);
             if rect.expand(30.0).contains(at) {
-                placed.push((at, 11.0, Picked::Marker(m)));
+                placed.push((at, 11.0, Picked::Marker(marker)));
             }
         }
         if let Some(opened) = &self.opened
             && opened.seed == session.seed()
         {
-            for m in opened
+            for found_match in opened
                 .matches
                 .iter()
                 .filter(|m| m.dimension == world.dimension_kind())
             {
-                let at = markers::pixel_centre(&view, centre, m.at);
-                placed.push((at, 15.0, Picked::Match(m)));
+                let at = markers::pixel_centre(&view, centre, found_match.at);
+                placed.push((at, 15.0, Picked::Match(found_match)));
             }
         }
         // What's done: dimmed, or left out while done things are hidden.
@@ -463,7 +491,7 @@ impl App {
         let faded: Vec<bool> = placed.iter().map(|(_, _, what)| is_done(what)).collect();
         let mut dimmed = painter.clone();
         dimmed.multiply_opacity(DONE_OPACITY);
-        let paint = |i: usize| if faded[i] { &dimmed } else { &painter };
+        let painter_for = |i: usize| if faded[i] { &dimmed } else { &painter };
         let hovered = response
             .hover_pos()
             .filter(|_| !response.dragged())
@@ -480,34 +508,39 @@ impl App {
         // and the user's markers over everything.
         for (i, (at, _, what)) in placed.iter().enumerate() {
             if let Picked::Match(m) = what {
-                markers::ring(paint(i), *at, m.certain);
+                markers::ring(painter_for(i), *at, m.certain);
             }
         }
         for (i, (at, _, what)) in placed.iter().enumerate() {
             match what {
                 Picked::Structure(start) if Some(i) != hovered => {
-                    markers::structure(ui, paint(i), *at, start, size, false, faded[i]);
+                    markers::structure(ui, painter_for(i), *at, start, size, false, faded[i]);
                 }
                 Picked::Feature(f) if Some(i) != hovered => {
-                    markers::feature(paint(i), *at, f, false);
+                    markers::feature(painter_for(i), *at, f, false);
                 }
                 Picked::Spawn(_) => markers::spawn(&painter, *at),
-                Picked::Hit(hit) => markers::pin(paint(i), *at, hit.certain),
+                Picked::Hit(hit) => markers::pin(painter_for(i), *at, hit.certain),
                 _ => {}
             }
         }
         for (i, (at, _, what)) in placed.iter().enumerate() {
             if let Picked::Marker(m) = what {
-                markers::user(paint(i), *at, m, size == Size::Full || Some(i) == hovered);
+                markers::user(
+                    painter_for(i),
+                    *at,
+                    m,
+                    size == Size::Full || Some(i) == hovered,
+                );
             }
         }
         if let Some(i) = hovered {
             let (at, _, what) = &placed[i];
             match what {
                 Picked::Structure(start) => {
-                    markers::structure(ui, paint(i), *at, start, size, true, faded[i]);
+                    markers::structure(ui, painter_for(i), *at, start, size, true, faded[i]);
                 }
-                Picked::Feature(f) => markers::feature(paint(i), *at, f, true),
+                Picked::Feature(f) => markers::feature(painter_for(i), *at, f, true),
                 _ => {}
             }
             response
@@ -797,11 +830,12 @@ impl App {
                 style::overlay()
                     .inner_margin(egui::Margin::same(4))
                     .show(ui, |ui| {
-                        let (r, response) = ui.allocate_exact_size(button, Sense::click());
+                        let (button_rect, response) =
+                            ui.allocate_exact_size(button, Sense::click());
                         if response.hovered() {
-                            ui.painter().rect_filled(r, 5.0, style::RAISED);
+                            ui.painter().rect_filled(button_rect, 5.0, style::RAISED);
                         }
-                        markers::spawn_sized(ui.painter(), r.center(), 7.0);
+                        markers::spawn_sized(ui.painter(), button_rect.center(), 7.0);
                         if response.on_hover_text("Centre on the spawn").clicked() {
                             self.settings.view.centre =
                                 [f64::from(spawn[0]) + 0.5, f64::from(spawn[1]) + 0.5];
@@ -816,8 +850,11 @@ impl App {
     fn map_legend(&self, ui: &egui::Ui, rect: Rect, world: &World) {
         /// A legend row's swatch.
         enum Key<'a> {
+            /// A structure's family, by its first structure id.
             Structure(&'a str),
+            /// A highlighted biome, by id.
             Biome(&'a str),
+            /// The world spawn.
             Spawn,
             /// Families past the first few, unlisted.
             More,
@@ -873,25 +910,32 @@ impl App {
         );
         for (i, ((key, _), galley)) in rows.iter().zip(galleys).enumerate() {
             let top = frame.top() + pad + row * i as f32;
-            let r = Rect::from_min_size(Pos2::new(frame.left() + pad, top), Vec2::splat(swatch));
+            let swatch_rect =
+                Rect::from_min_size(Pos2::new(frame.left() + pad, top), Vec2::splat(swatch));
             match key {
                 Key::Structure(id) => {
                     if let Some(badge) = world.structure_set(id).map(icons::badge) {
                         painter.rect(
-                            r,
+                            swatch_rect,
                             egui::CornerRadius::same(4),
                             badge.fill,
                             egui::Stroke::new(1.0, style::GROUND),
                             egui::StrokeKind::Inside,
                         );
-                        icons::glyph(id).tint(badge.ink).paint_at(ui, r.shrink(2.5));
+                        icons::glyph(id)
+                            .tint(badge.ink)
+                            .paint_at(ui, swatch_rect.shrink(2.5));
                     }
                 }
                 Key::Biome(id) => {
-                    let [cr, cg, cb] = spyglass::biome_colour(id);
-                    painter.rect_filled(r.shrink(1.5), 2.0, Color32::from_rgb(cr, cg, cb));
+                    let [red, green, blue] = spyglass::biome_colour(id);
+                    painter.rect_filled(
+                        swatch_rect.shrink(1.5),
+                        2.0,
+                        Color32::from_rgb(red, green, blue),
+                    );
                 }
-                Key::Spawn => markers::spawn_sized(&painter, r.center(), 6.5),
+                Key::Spawn => markers::spawn_sized(&painter, swatch_rect.center(), 6.5),
                 Key::More => {}
             }
             let colour = if matches!(key, Key::More) {
@@ -899,7 +943,10 @@ impl App {
             } else {
                 style::TEXT
             };
-            let at = Pos2::new(r.right() + gap, r.center().y - galley.size().y / 2.0);
+            let at = Pos2::new(
+                swatch_rect.right() + gap,
+                swatch_rect.center().y - galley.size().y / 2.0,
+            );
             painter.galley(at, galley, colour);
         }
     }
@@ -914,7 +961,10 @@ impl App {
         made: &mut usize,
     ) -> Option<egui::TextureId> {
         let entry = self.cache.get(&key)?;
-        let stale = entry.texture.as_ref().is_none_or(|(s, _)| s != style);
+        let stale = entry
+            .texture
+            .as_ref()
+            .is_none_or(|(made_in, _)| made_in != style);
         if stale
             && *made < TEXTURES_PER_FRAME
             && let Ok(data) = &entry.data
@@ -959,6 +1009,8 @@ impl App {
         entry.texture.as_ref().map(|(_, t)| t.id())
     }
 
+    /// The bar under the map: the block under the pointer, its chunk and biome (or a hint),
+    /// and on the right the dimension, version and how many tiles are left.
     pub(super) fn status_bar(&self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 16.0;
@@ -1056,9 +1108,9 @@ fn hit_card(ui: &mut egui::Ui, opened: &Opened) -> isize {
                 }
             }
         });
-        for c in &opened.constraints {
+        for constraint in &opened.constraints {
             ui.horizontal(|ui| {
-                let (mark, colour, what) = match c.outcome {
+                let (mark, colour, what) = match constraint.outcome {
                     Outcome::Met => ("Met", style::GOOD, "It holds whatever is undecided."),
                     Outcome::PossiblyMet => (
                         "Maybe",
@@ -1073,7 +1125,10 @@ fn hit_card(ui: &mut egui::Ui, opened: &Opened) -> isize {
                     egui::Label::new(egui::RichText::new(mark).size(11.5).strong().color(colour)),
                 )
                 .on_hover_text(what);
-                ui.add(egui::Label::new(super::search_panel::highlight(&c.line, 12.0)).truncate());
+                ui.add(
+                    egui::Label::new(super::search_panel::highlight(&constraint.line, 12.0))
+                        .truncate(),
+                );
             });
         }
     });
@@ -1086,23 +1141,28 @@ fn draw_area(painter: &egui::Painter, view: &View, centre: Pos2, area: Area) {
     let fill = style::ACCENT.gamma_multiply(0.07);
     let points: Vec<Pos2> = match area {
         Area::Disc { centre: at, radius } => {
-            let c = markers::pixel_centre(view, centre, at);
-            let r = radius as f32 / view.scale as f32;
-            painter.circle_filled(c, r, fill);
-            let steps = ((r * 0.5) as usize).clamp(24, 256);
+            let disc_centre = markers::pixel_centre(view, centre, at);
+            let radius_points = radius as f32 / view.scale as f32;
+            painter.circle_filled(disc_centre, radius_points, fill);
+            // A point every two points of the edge or so, so a large disc stays round.
+            let steps = ((radius_points * 0.5) as usize).clamp(24, 256);
             (0..=steps)
-                .map(|i| c + Vec2::angled(std::f32::consts::TAU * i as f32 / steps as f32) * r)
+                .map(|i| {
+                    disc_centre
+                        + Vec2::angled(std::f32::consts::TAU * i as f32 / steps as f32)
+                            * radius_points
+                })
                 .collect()
         }
         Area::Box { min, max } => {
-            let r = markers::block_rect(view, centre, min, max);
-            painter.rect_filled(r, 0.0, fill);
+            let box_rect = markers::block_rect(view, centre, min, max);
+            painter.rect_filled(box_rect, 0.0, fill);
             vec![
-                r.left_top(),
-                r.right_top(),
-                r.right_bottom(),
-                r.left_bottom(),
-                r.left_top(),
+                box_rect.left_top(),
+                box_rect.right_top(),
+                box_rect.right_bottom(),
+                box_rect.left_bottom(),
+                box_rect.left_top(),
             ]
         }
     };
@@ -1135,8 +1195,8 @@ fn bar_length(scale: u32, max: f32) -> (u32, f32) {
     let mut best = 1;
     let mut step: u32 = 1;
     'search: loop {
-        for m in [1, 2, 5] {
-            let Some(blocks) = step.checked_mul(m) else {
+        for multiple in [1, 2, 5] {
+            let Some(blocks) = step.checked_mul(multiple) else {
                 break 'search;
             };
             if blocks as f32 / scale as f32 > max {
@@ -1167,15 +1227,21 @@ fn thousands(n: u32) -> String {
 
 /// What the map's context menu asked for.
 pub(super) enum Action {
+    /// Find the nearest of something from the block clicked.
     Locate(Target),
+    /// Centre the map on the block clicked.
     Centre,
+    /// Add a marker at the block clicked.
     AddMarker,
-    /// Edit, mark done or not, or delete the marker with this id.
+    /// Edit the marker with this id.
     Edit(String),
+    /// Mark the marker with this id done or not.
     MarkerDone(String, bool),
+    /// Delete the marker with this id.
     Delete(String),
     /// Mark a place done or not.
     Done(Place, bool),
+    /// Copy the view text.
     CopyView,
 }
 
@@ -1273,10 +1339,12 @@ pub(super) fn describe(ui: &mut egui::Ui, picked: &Picked<'_>, done: bool) {
     }
 }
 
+/// The whole of a texture, in texture coordinates.
 pub(super) fn full_uv() -> Rect {
     Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0))
 }
 
+/// The library's image as egui's.
 pub(super) fn color_image(image: &Image) -> egui::ColorImage {
     let [w, h] = image.size();
     egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], image.rgba())

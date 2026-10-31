@@ -10,7 +10,9 @@ use crate::userdata::{COLOURS, Kind, Place, WorldData, WorldKey};
 /// What the map's context menu was opened on, besides a block.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) enum MenuTarget {
+    /// One of the user's markers, by id.
     Marker(String),
+    /// Something that can be marked done.
     Place(Place),
 }
 
@@ -159,27 +161,27 @@ impl App {
     /// The view shown, as a view text carries it.
     pub(super) fn shared_view(&self) -> Option<SharedView> {
         let (shown, world) = (self.shown.as_ref()?, self.world?);
-        let s = &self.settings;
+        let settings = &self.settings;
         Some(SharedView {
             seed: shown.session.seed(),
             version: Some(world.version().to_string()),
             dimension: world.dimension_kind(),
-            centre: s.view.centre.map(|c| c.floor() as i32),
-            scale: s.view.scale,
-            y: s.view.y,
-            structures: s.structures.clone(),
-            highlight: s.highlight.clone(),
-            features: s.features.clone(),
+            centre: settings.view.centre.map(|c| c.floor() as i32),
+            scale: settings.view.scale,
+            y: settings.view.y,
+            structures: settings.structures.clone(),
+            highlight: settings.highlight.clone(),
+            features: settings.features.clone(),
             flags: Flags {
-                ties: s.ties,
-                slime: s.slime_chunks,
-                spawn: s.spawn,
-                confirm: s.confirm,
-                relief: s.relief,
-                surface: s.surface,
-                veins: s.veins,
-                caves: s.noise_caves,
-                carvers: s.carvers,
+                ties: settings.ties,
+                slime: settings.slime_chunks,
+                spawn: settings.spawn,
+                confirm: settings.confirm,
+                relief: settings.relief,
+                surface: settings.surface,
+                veins: settings.veins,
+                caves: settings.noise_caves,
+                carvers: settings.carvers,
             },
         })
     }
@@ -199,19 +201,19 @@ impl App {
     pub(super) fn open_view_text(&mut self, ctx: &egui::Context, text: &str) -> bool {
         match SharedView::decode(text) {
             Ok(view) => {
-                let s = &mut self.settings;
-                s.structures = view.structures.clone();
-                s.highlight = view.highlight.clone();
-                s.features = view.features.clone();
-                s.ties = view.flags.ties;
-                s.slime_chunks = view.flags.slime;
-                s.spawn = view.flags.spawn;
-                s.confirm = view.flags.confirm;
-                s.relief = view.flags.relief;
-                s.surface = view.flags.surface;
-                s.veins = view.flags.veins;
-                s.noise_caves = view.flags.caves;
-                s.carvers = view.flags.carvers;
+                let settings = &mut self.settings;
+                settings.structures = view.structures.clone();
+                settings.highlight = view.highlight.clone();
+                settings.features = view.features.clone();
+                settings.ties = view.flags.ties;
+                settings.slime_chunks = view.flags.slime;
+                settings.spawn = view.flags.spawn;
+                settings.confirm = view.flags.confirm;
+                settings.relief = view.flags.relief;
+                settings.surface = view.flags.surface;
+                settings.veins = view.flags.veins;
+                settings.noise_caves = view.flags.caves;
+                settings.carvers = view.flags.carvers;
                 let centre = view.centre.map(|c| f64::from(c) + 0.5);
                 let shown = View {
                     centre,
@@ -427,33 +429,35 @@ impl App {
             );
         }
         let mut go = None;
-        for m in &markers {
+        for marker in &markers {
             ui.horizontal(|ui| {
-                let [r, g, b] = m.colour;
+                let [r, g, b] = marker.colour;
                 let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), Sense::hover());
                 ui.painter()
                     .circle_filled(rect.center(), 5.5, Color32::from_rgb(r, g, b));
-                let name = if m.name.is_empty() {
+                let name = if marker.name.is_empty() {
                     egui::RichText::new("Unnamed").italics().color(style::MUTED)
-                } else if m.done {
-                    egui::RichText::new(&m.name)
+                } else if marker.done {
+                    egui::RichText::new(&marker.name)
                         .strikethrough()
                         .color(style::MUTED)
                 } else {
-                    egui::RichText::new(&m.name)
+                    egui::RichText::new(&marker.name)
                 };
                 if ui
                     .add(egui::Button::new(name).frame(false))
-                    .on_hover_text(format!("{}, {} · click to go there", m.x, m.z))
+                    .on_hover_text(format!("{}, {} · click to go there", marker.x, marker.z))
                     .clicked()
                 {
-                    go = Some([m.x, m.z]);
+                    go = Some([marker.x, marker.z]);
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.small_button("Edit").clicked() {
-                        self.editing = Some(m.id.clone());
+                        self.editing = Some(marker.id.clone());
                     }
-                    ui.label(style::mono(format!("{}, {}", m.x, m.z)).color(style::MUTED));
+                    ui.label(
+                        style::mono(format!("{}, {}", marker.x, marker.z)).color(style::MUTED),
+                    );
                 });
             });
         }
@@ -544,17 +548,17 @@ impl App {
                     if saved.is_empty() {
                         style::hint(ui, "Name a world in the Markers tab to keep it here.");
                     }
-                    for w in &saved {
-                        if row(ui, w) {
-                            chosen = Some(w.key.clone());
+                    for world in &saved {
+                        if row(ui, world) {
+                            chosen = Some(world.key.clone());
                             ui.close();
                         }
                     }
                     ui.add_space(4.0);
                     style::heading(ui, "Recent");
-                    for w in &recent {
-                        if row(ui, w) {
-                            chosen = Some(w.key.clone());
+                    for world in &recent {
+                        if row(ui, world) {
+                            chosen = Some(world.key.clone());
                             ui.close();
                         }
                     }

@@ -76,12 +76,15 @@ pub const PRESETS: &[(&str, &str)] = &[
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SearchSettings {
+    /// Searching seeds, or places in the seed shown.
     pub mode: Mode,
+    /// The seed search's query.
     pub query: String,
     /// The `find` query, kept apart so switching modes doesn't lose either.
     pub find: String,
     /// How many places to find.
     pub find_top: usize,
+    /// How many of the best seeds to keep.
     pub top: usize,
     /// How many seeds to search; empty for no limit.
     pub seeds: String,
@@ -89,10 +92,13 @@ pub struct SearchSettings {
     pub seconds: u64,
     /// Search `first..=last` instead of every seed.
     pub range: bool,
+    /// The range's first seed, as typed.
     pub first: String,
+    /// The range's last seed, as typed.
     pub last: String,
     /// The index to start at; a finished search's `next` continues it.
     pub from: u64,
+    /// Only hits whose required constraints hold whatever is undecided.
     pub certain: bool,
     /// Decide structure starts with each seed's terrain.
     pub confirm: bool,
@@ -188,9 +194,13 @@ pub fn threads() -> usize {
 
 /// A search running on its own thread, reporting progress `P` and ending with `O`.
 pub struct Running<P, O> {
+    /// Asks the search to stop.
     stop: SearchStop,
+    /// How many threads the search may use now.
     throttle: SearchThrottle,
+    /// The latest progress the search reported.
     progress: Arc<Mutex<Option<P>>>,
+    /// The outcome, sent when the thread ends.
     done: Receiver<Result<O, String>>,
 }
 
@@ -333,8 +343,11 @@ impl<P, O> Drop for Running<P, O> {
 pub struct Match {
     /// The dimension `at` is in.
     pub dimension: Dimension,
+    /// Its block, x and z.
     pub at: [i32; 2],
+    /// What it is, for its tooltip.
     pub what: String,
+    /// Whether it matched whatever is undecided.
     pub certain: bool,
     /// The constraint's canonical line.
     pub constraint: String,
@@ -399,31 +412,31 @@ pub fn matches(query: &SearchQuery, evaluation: &Evaluation) -> Vec<Match> {
 }
 
 /// Everything a `find` match shows: the target itself, then what its constraints matched.
-pub fn find_matches(query: &SearchQuery, dimension: Dimension, m: &FindMatch) -> Vec<Match> {
-    let (what, certain) = match &m.target {
+pub fn find_matches(query: &SearchQuery, dimension: Dimension, found: &FindMatch) -> Vec<Match> {
+    let (what, certain) = match &found.target {
         Some(Feature::Structure(s)) => (s.structures.join(" or "), s.certain),
         Some(Feature::Placed(f)) => (f.feature.clone(), f.certain),
         Some(Feature::Biome { biome, certain, .. }) => (biome.biome.clone(), *certain),
         _ => ("Here".to_string(), true),
     };
     let first_line = query.to_string().lines().next().unwrap_or("").to_string();
-    let place = m.target.as_ref().map_or(
+    let place = found.target.as_ref().map_or(
         Some(userdata::Place {
             kind: Kind::Place,
             id: String::new(),
-            at: m.position,
+            at: found.position,
         }),
         place_of,
     );
     let mut out = vec![Match {
         dimension,
-        at: m.position,
+        at: found.position,
         what,
         certain,
         constraint: first_line,
         place,
     }];
-    out.extend(matches(query, &m.evaluation));
+    out.extend(matches(query, &found.evaluation));
     out
 }
 
@@ -466,7 +479,9 @@ fn place(kind: &ConstraintKind) -> Place {
 /// Where a place is on the map, with `spawn` for a spawn anchor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Area {
+    /// Blocks within `radius` of `centre`.
     Disc { centre: [i32; 2], radius: u32 },
+    /// Blocks from `min` to `max`, both included.
     Box { min: [i32; 2], max: [i32; 2] },
 }
 
@@ -486,6 +501,7 @@ impl Area {
         }
     }
 
+    /// The area's middle block.
     fn centre(self) -> [i32; 2] {
         match self {
             Area::Disc { centre, .. } => centre,

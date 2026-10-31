@@ -19,15 +19,19 @@ pub const FILE: &str = "spyglass-data.json";
 const FORMAT: i64 = 1;
 /// The largest file read.
 const MAX_FILE: u64 = 16 << 20;
+/// Worlds in the file.
 const MAX_WORLDS: usize = 1_000;
 /// Markers, and done places, per world.
 const MAX_ENTRIES: usize = 10_000;
 /// Characters in a name, an id, a version or a save's name.
 const MAX_TEXT: usize = 200;
+/// Characters in a save's folder.
 const MAX_PATH: usize = 4_096;
+/// Characters in a marker's id.
 const MAX_ID: usize = 64;
 /// How far from 0 a coordinate may be: past the world border.
 const MAX_COORD: i64 = 30_000_000;
+/// The latest time: 2⁵³ milliseconds, which a double still holds exactly.
 const MAX_TIME: i64 = 1 << 53;
 /// Unsaved worlds kept with nothing in them.
 const RECENT: usize = 20;
@@ -62,12 +66,16 @@ fn later(before: i64) -> i64 {
 /// A world: a seed, or a save by its level name.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct WorldKey {
+    /// The world's seed.
     pub seed: i64,
+    /// The save's level name, for a world opened from a save; `None` for a seed.
     pub save: Option<String>,
 }
 
+/// What's kept for one world.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WorldData {
+    /// Which world.
     pub key: WorldKey,
     /// Where the save was last opened from.
     pub save_dir: Option<String>,
@@ -75,14 +83,19 @@ pub struct WorldData {
     pub name: Option<String>,
     /// When `name` or `save_dir` last changed.
     pub modified: i64,
+    /// When it was last shown, which orders the recent list.
     pub opened: i64,
+    /// The game version it was last shown in.
     pub version: Option<String>,
     /// The dimension last shown, by id.
     pub dimension: String,
     /// Each dimension's last view, by id.
     pub views: BTreeMap<String, View>,
+    /// The user's markers, deleted ones kept as tombstones.
     pub markers: Vec<Marker>,
+    /// The places marked done, or once done and since not.
     pub done: Vec<DonePlace>,
+    /// Fields this viewer doesn't know, kept to be written back.
     extra: Map<String, Value>,
 }
 
@@ -191,6 +204,7 @@ impl WorldData {
         }
     }
 
+    /// Records where the save was opened from.
     pub fn set_save_dir(&mut self, dir: &Path) {
         let dir = Some(clip(&dir.display().to_string(), MAX_PATH));
         if self.save_dir != dir {
@@ -203,29 +217,41 @@ impl WorldData {
 /// A random marker id that `taken` doesn't know.
 fn new_id(taken: impl Fn(&str) -> bool) -> String {
     loop {
-        let n = std::collections::hash_map::RandomState::new()
+        // A new `RandomState` is seeded at random, so its hash of nothing is a random number.
+        let random = std::collections::hash_map::RandomState::new()
             .build_hasher()
             .finish();
-        let id = format!("m{n:016x}");
+        let id = format!("m{random:016x}");
         if !taken(&id) {
             return id;
         }
     }
 }
 
+/// A marker the user placed.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Marker {
+    /// Unique in its world, so copies of it merge.
     pub id: String,
+    /// The dimension it's in, by id.
     pub dimension: String,
+    /// The block it's on, x.
     pub x: i32,
+    /// The block's height, if the user gave one.
     pub y: Option<i32>,
+    /// The block it's on, z.
     pub z: i32,
+    /// The user's name for it; may be empty.
     pub name: String,
+    /// Its colour, red, green and blue.
     pub colour: [u8; 3],
+    /// Whether it's marked done.
     pub done: bool,
-    /// A tombstone.
+    /// A tombstone, so a merge doesn't bring a deleted marker back.
     pub deleted: bool,
+    /// When it last changed: the later change wins a merge.
     pub modified: i64,
+    /// Fields this viewer doesn't know, kept to be written back.
     extra: Map<String, Value>,
 }
 
@@ -245,12 +271,16 @@ impl Marker {
 /// What a done place is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Kind {
+    /// A structure start, by its set.
     Structure,
+    /// A biome, by its id.
     Biome,
+    /// A plain block.
     Place,
 }
 
 impl Kind {
+    /// Its name in the file.
     fn name(self) -> &'static str {
         match self {
             Kind::Structure => "structure",
@@ -264,30 +294,42 @@ impl Kind {
 /// position, a biome by its id and block, or a plain block.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Place {
+    /// What it is.
     pub kind: Kind,
+    /// The structure set or biome id; empty for a plain block.
     pub id: String,
+    /// Its block, x and z.
     pub at: [i32; 2],
 }
 
+/// A place marked done, or once done and since not.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DonePlace {
+    /// The dimension it's in, by id.
     pub dimension: String,
+    /// What and where it is.
     pub place: Place,
+    /// Whether it's done now: kept when it isn't, so a merge doesn't mark it done again.
     pub done: bool,
+    /// When it last changed: the later change wins a merge.
     pub modified: i64,
+    /// Fields this viewer doesn't know, kept to be written back.
     extra: Map<String, Value>,
 }
 
 /// Everything in the file.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct UserData {
+    /// Every world kept, in no particular order until written.
     pub worlds: Vec<WorldData>,
+    /// Top-level fields this viewer doesn't know, kept to be written back.
     extra: Map<String, Value>,
 }
 
 /// A file read: what could be, and what couldn't.
 #[derive(Debug, Default)]
 pub struct Read {
+    /// What could be read.
     pub data: UserData,
     /// What was skipped or ignored, each with its place in the file.
     pub problems: Vec<String>,
@@ -298,10 +340,12 @@ pub struct Read {
 }
 
 impl UserData {
+    /// The world with `key`, if it's kept.
     pub fn world(&self, key: &WorldKey) -> Option<&WorldData> {
         self.worlds.iter().find(|w| w.key == *key)
     }
 
+    /// The world with `key`, if it's kept, to change.
     pub fn world_mut(&mut self, key: &WorldKey) -> Option<&mut WorldData> {
         self.worlds.iter_mut().find(|w| w.key == *key)
     }
@@ -317,14 +361,15 @@ impl UserData {
         }
     }
 
+    /// Drops the world with `key` and everything kept for it.
     pub fn forget(&mut self, key: &WorldKey) {
         self.worlds.retain(|w| w.key != *key);
     }
 
     /// Merges `other` in by the spec's rules: by key, and the later change wins.
     pub fn merge(&mut self, other: UserData) {
-        for (k, v) in other.extra {
-            self.extra.entry(k).or_insert(v);
+        for (field, value) in other.extra {
+            self.extra.entry(field).or_insert(value);
         }
         for theirs in other.worlds {
             match self.worlds.iter().position(|w| w.key == theirs.key) {
@@ -358,8 +403,8 @@ impl UserData {
             "worlds".into(),
             Value::Array(self.worlds.iter().map(world_json).collect()),
         );
-        for (k, v) in &self.extra {
-            top.entry(k.clone()).or_insert_with(|| v.clone());
+        for (field, value) in &self.extra {
+            top.entry(field.clone()).or_insert_with(|| value.clone());
         }
         let mut text = serde_json::to_string_pretty(&Value::Object(top)).unwrap_or_default();
         text.push('\n');
@@ -375,6 +420,7 @@ impl UserData {
     }
 }
 
+/// Merges another copy of the same world in: each part from whichever copy changed it later.
 fn merge_world(ours: &mut WorldData, theirs: WorldData) {
     if theirs.modified > ours.modified {
         ours.name = theirs.name;
@@ -387,8 +433,8 @@ fn merge_world(ours: &mut WorldData, theirs: WorldData) {
         ours.dimension = theirs.dimension;
         ours.views = theirs.views;
     }
-    for (k, v) in theirs.extra {
-        ours.extra.entry(k).or_insert(v);
+    for (field, value) in theirs.extra {
+        ours.extra.entry(field).or_insert(value);
     }
     for marker in theirs.markers {
         match ours.markers.iter().position(|m| m.id == marker.id) {
@@ -409,6 +455,7 @@ fn merge_world(ours: &mut WorldData, theirs: WorldData) {
     }
 }
 
+/// A colour as `#rrggbb`.
 fn colour_text([r, g, b]: [u8; 3]) -> String {
     format!("#{r:02x}{g:02x}{b:02x}")
 }
@@ -423,72 +470,75 @@ pub fn parse_colour(text: &str) -> Option<[u8; 3]> {
     Some([byte(0)?, byte(2)?, byte(4)?])
 }
 
-fn world_json(w: &WorldData) -> Value {
-    let mut o = Map::new();
-    o.insert("seed".into(), json!(w.key.seed.to_string()));
-    o.insert("save".into(), json!(w.key.save));
-    o.insert("save_dir".into(), json!(w.save_dir));
-    o.insert("name".into(), json!(w.name));
-    o.insert("modified".into(), json!(w.modified));
-    o.insert("opened".into(), json!(w.opened));
-    o.insert("version".into(), json!(w.version));
-    o.insert("dimension".into(), json!(w.dimension));
-    let views: Map<String, Value> = w
+/// A world as the file's object, its fields in the spec's order and then the unknown ones.
+fn world_json(world: &WorldData) -> Value {
+    let mut object = Map::new();
+    object.insert("seed".into(), json!(world.key.seed.to_string()));
+    object.insert("save".into(), json!(world.key.save));
+    object.insert("save_dir".into(), json!(world.save_dir));
+    object.insert("name".into(), json!(world.name));
+    object.insert("modified".into(), json!(world.modified));
+    object.insert("opened".into(), json!(world.opened));
+    object.insert("version".into(), json!(world.version));
+    object.insert("dimension".into(), json!(world.dimension));
+    let views: Map<String, Value> = world
         .views
         .iter()
-        .map(|(d, v)| {
+        .map(|(dimension, view)| {
             (
-                d.clone(),
-                json!({"centre": v.centre, "scale": v.scale, "y": v.y}),
+                dimension.clone(),
+                json!({"centre": view.centre, "scale": view.scale, "y": view.y}),
             )
         })
         .collect();
-    o.insert("views".into(), Value::Object(views));
-    o.insert(
+    object.insert("views".into(), Value::Object(views));
+    object.insert(
         "markers".into(),
-        Value::Array(w.markers.iter().map(marker_json).collect()),
+        Value::Array(world.markers.iter().map(marker_json).collect()),
     );
-    o.insert(
+    object.insert(
         "done".into(),
-        Value::Array(w.done.iter().map(done_json).collect()),
+        Value::Array(world.done.iter().map(done_json).collect()),
     );
-    extend(&mut o, &w.extra);
-    Value::Object(o)
+    extend(&mut object, &world.extra);
+    Value::Object(object)
 }
 
-fn marker_json(m: &Marker) -> Value {
-    let mut o = Map::new();
-    o.insert("id".into(), json!(m.id));
-    o.insert("dimension".into(), json!(m.dimension));
-    o.insert("x".into(), json!(m.x));
-    o.insert("y".into(), json!(m.y));
-    o.insert("z".into(), json!(m.z));
-    o.insert("name".into(), json!(m.name));
-    o.insert("colour".into(), json!(colour_text(m.colour)));
-    o.insert("done".into(), json!(m.done));
-    o.insert("deleted".into(), json!(m.deleted));
-    o.insert("modified".into(), json!(m.modified));
-    extend(&mut o, &m.extra);
-    Value::Object(o)
+/// A marker as the file's object.
+fn marker_json(marker: &Marker) -> Value {
+    let mut object = Map::new();
+    object.insert("id".into(), json!(marker.id));
+    object.insert("dimension".into(), json!(marker.dimension));
+    object.insert("x".into(), json!(marker.x));
+    object.insert("y".into(), json!(marker.y));
+    object.insert("z".into(), json!(marker.z));
+    object.insert("name".into(), json!(marker.name));
+    object.insert("colour".into(), json!(colour_text(marker.colour)));
+    object.insert("done".into(), json!(marker.done));
+    object.insert("deleted".into(), json!(marker.deleted));
+    object.insert("modified".into(), json!(marker.modified));
+    extend(&mut object, &marker.extra);
+    Value::Object(object)
 }
 
-fn done_json(d: &DonePlace) -> Value {
-    let mut o = Map::new();
-    o.insert("dimension".into(), json!(d.dimension));
-    o.insert("kind".into(), json!(d.place.kind.name()));
-    o.insert("id".into(), json!(d.place.id));
-    o.insert("x".into(), json!(d.place.at[0]));
-    o.insert("z".into(), json!(d.place.at[1]));
-    o.insert("done".into(), json!(d.done));
-    o.insert("modified".into(), json!(d.modified));
-    extend(&mut o, &d.extra);
-    Value::Object(o)
+/// A done place as the file's object.
+fn done_json(done: &DonePlace) -> Value {
+    let mut object = Map::new();
+    object.insert("dimension".into(), json!(done.dimension));
+    object.insert("kind".into(), json!(done.place.kind.name()));
+    object.insert("id".into(), json!(done.place.id));
+    object.insert("x".into(), json!(done.place.at[0]));
+    object.insert("z".into(), json!(done.place.at[1]));
+    object.insert("done".into(), json!(done.done));
+    object.insert("modified".into(), json!(done.modified));
+    extend(&mut object, &done.extra);
+    Value::Object(object)
 }
 
-/// Adds the fields of `extra` that `o` doesn't have.
-fn extend(o: &mut Map<String, Value>, extra: &Map<String, Value>) {
-    for (k, v) in extra {
-        o.entry(k.clone()).or_insert_with(|| v.clone());
+/// Adds the fields of `extra` that `object` doesn't have.
+fn extend(object: &mut Map<String, Value>, extra: &Map<String, Value>) {
+    for (field, value) in extra {
+        object.entry(field.clone()).or_insert_with(|| value.clone());
     }
 }
 
@@ -499,8 +549,11 @@ fn clip(text: &str, max: usize) -> String {
 
 /// Reading one object's fields, noting what's wrong at `path`.
 struct Fields<'a> {
+    /// Where the object is in the file, such as `worlds[2].markers[0]`, for problems.
     path: String,
+    /// The fields not taken yet.
     map: Map<String, Value>,
+    /// Where problems with optional fields are noted.
     problems: &'a mut Vec<String>,
 }
 
@@ -508,10 +561,12 @@ struct Fields<'a> {
 struct Skip(String);
 
 impl Fields<'_> {
+    /// A field, taken out of what's left; `None` if it's missing or null.
     fn take(&mut self, key: &str) -> Option<Value> {
         self.map.remove(key).filter(|v| !v.is_null())
     }
 
+    /// A required field: missing or wrong, and the object is skipped.
     fn required<T>(
         &mut self,
         key: &str,
@@ -519,7 +574,7 @@ impl Fields<'_> {
     ) -> Result<T, Skip> {
         match self.take(key) {
             None => Err(Skip(format!("{key} is missing"))),
-            Some(v) => read(&v).map_err(|e| Skip(format!("{key}: {e}"))),
+            Some(value) => read(&value).map_err(|e| Skip(format!("{key}: {e}"))),
         }
     }
 
@@ -529,9 +584,9 @@ impl Fields<'_> {
         key: &str,
         read: impl FnOnce(&Value) -> Result<T, String>,
     ) -> Option<T> {
-        let v = self.take(key)?;
-        match read(&v) {
-            Ok(t) => Some(t),
+        let value = self.take(key)?;
+        match read(&value) {
+            Ok(read) => Some(read),
             Err(e) => {
                 self.problems
                     .push(format!("{}: {key}: {e}; ignored", self.path));
@@ -546,6 +601,7 @@ impl Fields<'_> {
     }
 }
 
+/// An integer in `range`.
 fn integer(v: &Value, range: std::ops::RangeInclusive<i64>) -> Result<i64, String> {
     v.as_i64().filter(|n| range.contains(n)).ok_or_else(|| {
         format!(
@@ -556,27 +612,32 @@ fn integer(v: &Value, range: std::ops::RangeInclusive<i64>) -> Result<i64, Strin
     })
 }
 
+/// A block coordinate, within `MAX_COORD` of 0.
 fn coordinate(v: &Value) -> Result<i32, String> {
     integer(v, -MAX_COORD..=MAX_COORD).map(|n| n as i32)
 }
 
+/// A time in milliseconds since the Unix epoch.
 fn time(v: &Value) -> Result<i64, String> {
     integer(v, 0..=MAX_TIME)
 }
 
+/// A reader of strings of at most `max` characters.
 fn text(max: usize) -> impl Fn(&Value) -> Result<String, String> {
     move |v| match v.as_str() {
-        Some(s) if s.chars().count() <= max => Ok(s.to_string()),
+        Some(text) if text.chars().count() <= max => Ok(text.to_string()),
         Some(_) => Err(format!("longer than {max} characters")),
         None => Err(format!("{v} is not a string")),
     }
 }
 
+/// `true` or `false`.
 fn boolean(v: &Value) -> Result<bool, String> {
     v.as_bool()
         .ok_or_else(|| format!("{v} is not true or false"))
 }
 
+/// A marker's id: letters, digits, `-` and `_`.
 fn marker_id(v: &Value) -> Result<String, String> {
     let id = text(MAX_ID)(v)?;
     let ok = !id.is_empty()
@@ -590,20 +651,21 @@ fn marker_id(v: &Value) -> Result<String, String> {
     }
 }
 
+/// A dimension's view, fixed as settings' views are.
 fn view(v: &Value) -> Result<View, String> {
-    let o = v.as_object().ok_or("not an object")?;
-    let centre = o
+    let object = v.as_object().ok_or("not an object")?;
+    let centre = object
         .get("centre")
         .and_then(Value::as_array)
         .filter(|a| a.len() == 2)
         .and_then(|a| Some([a[0].as_f64()?, a[1].as_f64()?]))
         .ok_or("centre is not two numbers")?;
-    let scale = o
+    let scale = object
         .get("scale")
         .and_then(Value::as_u64)
-        .and_then(|s| u32::try_from(s).ok())
+        .and_then(|scale| u32::try_from(scale).ok())
         .ok_or("scale is not an integer")?;
-    let y = o
+    let y = object
         .get("y")
         .and_then(Value::as_i64)
         .and_then(|y| i32::try_from(y).ok())
@@ -645,6 +707,7 @@ fn objects(
     out
 }
 
+/// What a JSON value is, for problems.
 fn kind_of(v: &Value) -> &'static str {
     match v {
         Value::Null => "null",
@@ -710,52 +773,56 @@ pub fn parse(bytes: &[u8]) -> Read {
     read
 }
 
+/// A world's object, its markers and done places read one by one; duplicates merge as copies
+/// from two files would.
 fn parse_world(
     path: String,
     map: Map<String, Value>,
     problems: &mut Vec<String>,
 ) -> Result<WorldData, Skip> {
-    let mut f = Fields {
+    let mut fields = Fields {
         path: path.clone(),
         map,
         problems,
     };
-    let seed = f.required("seed", |v| {
+    let seed = fields.required("seed", |v| {
         v.as_str()
-            .and_then(|s| s.parse::<i64>().ok())
+            .and_then(|seed| seed.parse::<i64>().ok())
             .ok_or_else(|| format!("{v} is not a 64-bit integer in a string"))
     })?;
-    let save = f.optional("save", text(MAX_TEXT));
-    let save_dir = f.optional("save_dir", text(MAX_PATH));
-    let name = f.optional("name", text(MAX_TEXT));
-    let modified = f.optional("modified", time).unwrap_or(0);
-    let opened = f.optional("opened", time).unwrap_or(0);
-    let version = f.optional("version", text(MAX_TEXT));
-    let dimension = f
+    let save = fields.optional("save", text(MAX_TEXT));
+    let save_dir = fields.optional("save_dir", text(MAX_PATH));
+    let name = fields.optional("name", text(MAX_TEXT));
+    let modified = fields.optional("modified", time).unwrap_or(0);
+    let opened = fields.optional("opened", time).unwrap_or(0);
+    let version = fields.optional("version", text(MAX_TEXT));
+    let dimension = fields
         .optional("dimension", text(MAX_TEXT))
         .unwrap_or_else(|| Dimension::Overworld.id().to_string());
     let mut views = BTreeMap::new();
-    match f.take("views") {
+    match fields.take("views") {
         None => {}
         Some(Value::Object(map)) => {
-            for (d, v) in map.into_iter().take(16) {
-                match view(&v) {
-                    Ok(v) => {
-                        views.insert(clip(&d, MAX_TEXT), v);
+            for (dimension, value) in map.into_iter().take(16) {
+                match view(&value) {
+                    Ok(view) => {
+                        views.insert(clip(&dimension, MAX_TEXT), view);
                     }
-                    Err(e) => f.problems.push(format!("{path}.views.{d}: {e}; ignored")),
+                    Err(e) => fields
+                        .problems
+                        .push(format!("{path}.views.{dimension}: {e}; ignored")),
                 }
             }
         }
-        Some(v) => f.problems.push(format!(
+        Some(v) => fields.problems.push(format!(
             "{path}.views: {} is not an object; ignored",
             kind_of(&v)
         )),
     }
-    let markers_value = f.take("markers");
-    let done_value = f.take("done");
-    let problems = f.problems;
-    let extra = std::mem::take(&mut f.map);
+    let markers_value = fields.take("markers");
+    let done_value = fields.take("done");
+    let problems = fields.problems;
+    let extra = std::mem::take(&mut fields.map);
     let mut world = WorldData {
         key: WorldKey { seed, save },
         save_dir,
@@ -769,63 +836,66 @@ fn parse_world(
         done: Vec::new(),
         extra,
     };
-    for (p, map) in objects(
+    for (entry_path, map) in objects(
         markers_value,
         &format!("{path}.markers"),
         MAX_ENTRIES,
         problems,
     ) {
-        match parse_marker(p.clone(), map, problems) {
-            Ok(m) => match world.markers.iter_mut().find(|o| o.id == m.id) {
-                Some(o) if m.modified > o.modified => *o = m,
+        match parse_marker(entry_path.clone(), map, problems) {
+            Ok(marker) => match world.markers.iter_mut().find(|m| m.id == marker.id) {
+                Some(earlier) if marker.modified > earlier.modified => *earlier = marker,
                 Some(_) => {}
-                None => world.markers.push(m),
+                None => world.markers.push(marker),
             },
-            Err(Skip(why)) => problems.push(format!("{p}: {why}; skipped")),
+            Err(Skip(why)) => problems.push(format!("{entry_path}: {why}; skipped")),
         }
     }
-    for (p, map) in objects(done_value, &format!("{path}.done"), MAX_ENTRIES, problems) {
-        match parse_done(p.clone(), map, problems) {
-            Ok(d) => {
-                let same = |o: &&mut DonePlace| o.dimension == d.dimension && o.place == d.place;
+    for (entry_path, map) in objects(done_value, &format!("{path}.done"), MAX_ENTRIES, problems) {
+        match parse_done(entry_path.clone(), map, problems) {
+            Ok(done) => {
+                let same = |earlier: &&mut DonePlace| {
+                    earlier.dimension == done.dimension && earlier.place == done.place
+                };
                 match world.done.iter_mut().find(same) {
-                    Some(o) if d.modified > o.modified => *o = d,
+                    Some(earlier) if done.modified > earlier.modified => *earlier = done,
                     Some(_) => {}
-                    None => world.done.push(d),
+                    None => world.done.push(done),
                 }
             }
-            Err(Skip(why)) => problems.push(format!("{p}: {why}; skipped")),
+            Err(Skip(why)) => problems.push(format!("{entry_path}: {why}; skipped")),
         }
     }
     Ok(world)
 }
 
+/// A marker's object.
 fn parse_marker(
     path: String,
     map: Map<String, Value>,
     problems: &mut Vec<String>,
 ) -> Result<Marker, Skip> {
-    let mut f = Fields {
+    let mut fields = Fields {
         path,
         map,
         problems,
     };
-    let id = f.required("id", marker_id)?;
-    let dimension = f.required("dimension", text(MAX_TEXT))?;
-    let x = f.required("x", coordinate)?;
-    let z = f.required("z", coordinate)?;
-    let y = f.optional("y", coordinate);
-    let name = f.optional("name", text(MAX_TEXT)).unwrap_or_default();
-    let colour = f
+    let id = fields.required("id", marker_id)?;
+    let dimension = fields.required("dimension", text(MAX_TEXT))?;
+    let x = fields.required("x", coordinate)?;
+    let z = fields.required("z", coordinate)?;
+    let y = fields.optional("y", coordinate);
+    let name = fields.optional("name", text(MAX_TEXT)).unwrap_or_default();
+    let colour = fields
         .optional("colour", |v| {
             v.as_str()
                 .and_then(parse_colour)
                 .ok_or_else(|| format!("{v} is not #rrggbb"))
         })
         .unwrap_or(COLOURS[0].1);
-    let done = f.optional("done", boolean).unwrap_or(false);
-    let deleted = f.optional("deleted", boolean).unwrap_or(false);
-    let modified = f.optional("modified", time).unwrap_or(0);
+    let done = fields.optional("done", boolean).unwrap_or(false);
+    let deleted = fields.optional("deleted", boolean).unwrap_or(false);
+    let modified = fields.optional("modified", time).unwrap_or(0);
     Ok(Marker {
         id,
         dimension,
@@ -837,32 +907,33 @@ fn parse_marker(
         done,
         deleted,
         modified,
-        extra: f.rest(),
+        extra: fields.rest(),
     })
 }
 
+/// A done place's object.
 fn parse_done(
     path: String,
     map: Map<String, Value>,
     problems: &mut Vec<String>,
 ) -> Result<DonePlace, Skip> {
-    let mut f = Fields {
+    let mut fields = Fields {
         path,
         map,
         problems,
     };
-    let dimension = f.required("dimension", text(MAX_TEXT))?;
-    let kind = f.required("kind", |v| match v.as_str() {
+    let dimension = fields.required("dimension", text(MAX_TEXT))?;
+    let kind = fields.required("kind", |v| match v.as_str() {
         Some("structure") => Ok(Kind::Structure),
         Some("biome") => Ok(Kind::Biome),
         Some("place") => Ok(Kind::Place),
         _ => Err(format!("{v} is not structure, biome or place")),
     })?;
-    let x = f.required("x", coordinate)?;
-    let z = f.required("z", coordinate)?;
-    let id = f.optional("id", text(MAX_TEXT)).unwrap_or_default();
-    let done = f.optional("done", boolean).unwrap_or(true);
-    let modified = f.optional("modified", time).unwrap_or(0);
+    let x = fields.required("x", coordinate)?;
+    let z = fields.required("z", coordinate)?;
+    let id = fields.optional("id", text(MAX_TEXT)).unwrap_or_default();
+    let done = fields.optional("done", boolean).unwrap_or(true);
+    let modified = fields.optional("modified", time).unwrap_or(0);
     Ok(DonePlace {
         dimension,
         place: Place {
@@ -872,33 +943,40 @@ fn parse_done(
         },
         done,
         modified,
-        extra: f.rest(),
+        extra: fields.rest(),
     })
 }
 
 /// The data file on disk and the data in memory: loaded once, written after changes.
 pub struct Store {
+    /// The file.
     path: PathBuf,
+    /// What's in memory, the file's and this session's changes.
     pub data: UserData,
     /// What reading found wrong, for the user.
     pub problems: Vec<String>,
+    /// Never written: a newer format, a file that couldn't be read for now, or no folder.
     pub read_only: bool,
     /// The file couldn't be read at all; it's moved aside before the first write.
     unreadable: bool,
     /// A hash of the file as last read or written, to see whether another viewer wrote it.
     seen: Option<u64>,
+    /// Whether the file was copied to `.bak` this session, as it is before the first write.
     backed_up: bool,
+    /// Changes not written yet.
     dirty: bool,
+    /// When the file was last written, so writes come at most every `WRITE_EVERY`.
     last_write: Option<Instant>,
     /// The last write's failure.
     pub error: Option<String>,
 }
 
+/// The bytes' hash, to compare with the file's next time.
 fn hash(bytes: &[u8]) -> u64 {
     // A fixed hasher, so the same bytes hash the same within a run.
-    let mut h = std::hash::DefaultHasher::new();
-    h.write(bytes);
-    h.finish()
+    let mut hasher = std::hash::DefaultHasher::new();
+    hasher.write(bytes);
+    hasher.finish()
 }
 
 /// The file's bytes, `None` if there's no file, or an error.
@@ -961,6 +1039,7 @@ impl Store {
         store
     }
 
+    /// The file's path.
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -984,6 +1063,9 @@ impl Store {
         self.error = self.write().err();
     }
 
+    /// Writes the file: merges what another viewer wrote since, backs the old file up the
+    /// first time (or moves it aside if it couldn't be read), and replaces it through a
+    /// temporary file, so a crash never leaves half a file.
     fn write(&mut self) -> Result<(), String> {
         let on_disk = read_bytes(&self.path)?;
         if let Some(bytes) = &on_disk

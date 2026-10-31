@@ -10,19 +10,27 @@ use crate::style;
 /// A search hit or `find` match on the map: its seed, what its constraints matched, and each
 /// constraint's line, outcome and area.
 pub(super) struct Opened {
+    /// The hit's seed.
     pub seed: i64,
     /// What the card on the map calls it.
     pub title: String,
     /// For a `find` match: its index and how many there are, for stepping through them.
     pub step: Option<(usize, usize)>,
+    /// What its constraints matched, to ring on the map.
     pub matches: Vec<Match>,
+    /// Its constraints, for the card and their areas.
     pub constraints: Vec<OpenedConstraint>,
 }
 
+/// One of an opened hit's constraints.
 pub(super) struct OpenedConstraint {
+    /// The constraint's canonical line.
     pub line: String,
+    /// Whether it held.
     pub outcome: Outcome,
+    /// The dimension it was judged in.
     pub dimension: Dimension,
+    /// Where it was judged.
     pub area: Area,
 }
 
@@ -83,7 +91,7 @@ impl App {
     fn seeds_section(&mut self, ui: &mut egui::Ui, game: &'static Game) {
         let text = self.settings.search.query.clone();
         let parsed = self.parsed_query(ui.ctx(), game, &text);
-        let s = &mut self.settings.search;
+        let search_settings = &mut self.settings.search;
         style::heading(ui, "Query");
         let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap: f32| {
             let mut job = highlight(text.as_str(), 13.0);
@@ -91,7 +99,7 @@ impl App {
             ui.fonts_mut(|f| f.layout_job(job))
         };
         ui.add(
-            egui::TextEdit::multiline(&mut s.query)
+            egui::TextEdit::multiline(&mut search_settings.query)
                 .code_editor()
                 .desired_rows(4)
                 .desired_width(f32::INFINITY)
@@ -99,7 +107,7 @@ impl App {
                 .layouter(&mut layouter),
         );
         // The text being typed is checked on the next frame.
-        let parsed = parsed.filter(|_| s.query == text);
+        let parsed = parsed.filter(|_| search_settings.query == text);
         let parsed = parsed.as_ref();
         match parsed {
             Some(Ok(query)) if query.find_dimension().is_some() => {
@@ -133,50 +141,56 @@ impl App {
             .spacing([12.0, 6.0])
             .show(ui, |ui| {
                 ui.label("Keep the best");
-                ui.add(egui::DragValue::new(&mut s.top).range(1..=1000));
+                ui.add(egui::DragValue::new(&mut search_settings.top).range(1..=1000));
                 ui.end_row();
                 ui.label("Time limit");
-                ui.add(egui::DragValue::new(&mut s.seconds).suffix(" s"))
+                ui.add(egui::DragValue::new(&mut search_settings.seconds).suffix(" s"))
                     .on_hover_text("0 for no time limit.");
                 ui.end_row();
                 ui.label("Seed limit");
                 ui.add(
-                    egui::TextEdit::singleline(&mut s.seeds)
+                    egui::TextEdit::singleline(&mut search_settings.seeds)
                         .hint_text("none")
                         .desired_width(90.0),
                 );
                 ui.end_row();
             });
-        ui.checkbox(&mut s.confirm, "Confirm with terrain").on_hover_text(
+        ui.checkbox(&mut search_settings.confirm, "Confirm with terrain").on_hover_text(
             "Decide structure starts with each seed's terrain, as the game does. Slower, but only \
              ties and platform-dependent results stay uncertain.",
         );
-        ui.checkbox(&mut s.certain, "Certain only").on_hover_text(
+        ui.checkbox(&mut search_settings.certain, "Certain only").on_hover_text(
             "Only seeds whose required constraints hold whatever is left undecided, ranked by the \
              worst case. Without confirming, most structures are undecided.",
         );
         egui::CollapsingHeader::new("Seed range and start")
-            .default_open(s.range || s.from > 0)
+            .default_open(search_settings.range || search_settings.from > 0)
             .show(ui, |ui| {
-                ui.checkbox(&mut s.range, "Only seeds in a range")
+                ui.checkbox(&mut search_settings.range, "Only seeds in a range")
                     .on_hover_text(
                         "Otherwise every 64-bit seed, with structure placement checked first.",
                     );
-                if s.range {
+                if search_settings.range {
                     ui.horizontal(|ui| {
-                        ui.add(egui::TextEdit::singleline(&mut s.first).desired_width(100.0));
+                        ui.add(
+                            egui::TextEdit::singleline(&mut search_settings.first)
+                                .desired_width(100.0),
+                        );
                         ui.label("to");
-                        ui.add(egui::TextEdit::singleline(&mut s.last).desired_width(100.0));
+                        ui.add(
+                            egui::TextEdit::singleline(&mut search_settings.last)
+                                .desired_width(100.0),
+                        );
                     });
                 }
                 ui.horizontal(|ui| {
                     ui.label("Start at index");
-                    ui.add(egui::DragValue::new(&mut s.from));
+                    ui.add(egui::DragValue::new(&mut search_settings.from));
                 });
             });
 
-        let options = s.options(search::threads());
-        let limit = s.seconds;
+        let options = search_settings.options(search::threads());
+        let limit = search_settings.seconds;
         let running = self
             .search_run
             .as_ref()
@@ -382,9 +396,9 @@ impl App {
             .dimension(Dimension::Overworld)
             .map(|s| s.spawn_origin().map_block())
             .ok();
-        let spawn_in = |d: Dimension| {
+        let spawn_in = |target: Dimension| {
             overworld_spawn
-                .and_then(|at| game.convert(at, Dimension::Overworld, d).ok())
+                .and_then(|at| game.convert(at, Dimension::Overworld, target).ok())
                 .unwrap_or([0, 0])
         };
         let spawn = spawn_in(dimension);
@@ -426,14 +440,14 @@ impl App {
     fn find_section(&mut self, ui: &mut egui::Ui, game: &'static Game) {
         let text = self.settings.search.find.clone();
         let parsed = self.parsed_query(ui.ctx(), game, &text);
-        let s = &mut self.settings.search;
+        let search_settings = &mut self.settings.search;
         ui.horizontal(|ui| {
             style::heading(ui, "Query");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.menu_button("Presets", |ui| {
                     for (name, preset) in PRESETS {
                         if ui.button(*name).clicked() {
-                            s.find = (*preset).to_string();
+                            search_settings.find = (*preset).to_string();
                             ui.close();
                         }
                     }
@@ -446,14 +460,14 @@ impl App {
             ui.fonts_mut(|f| f.layout_job(job))
         };
         ui.add(
-            egui::TextEdit::multiline(&mut s.find)
+            egui::TextEdit::multiline(&mut search_settings.find)
                 .code_editor()
                 .desired_rows(4)
                 .desired_width(f32::INFINITY)
                 .hint_text("find minecraft:swamp_hut within 4096")
                 .layouter(&mut layouter),
         );
-        let parsed = parsed.filter(|_| s.find == text);
+        let parsed = parsed.filter(|_| search_settings.find == text);
         let query = match &parsed {
             None => {
                 ui.horizontal(|ui| {
@@ -488,16 +502,17 @@ impl App {
         style::heading(ui, "Options");
         ui.horizontal(|ui| {
             ui.label("Find at most");
-            ui.add(egui::DragValue::new(&mut s.find_top).range(1..=1000));
+            ui.add(egui::DragValue::new(&mut search_settings.find_top).range(1..=1000));
         });
-        ui.checkbox(&mut s.confirm, "Confirm with terrain").on_hover_text(
+        ui.checkbox(&mut search_settings.confirm, "Confirm with terrain").on_hover_text(
             "Decide structure starts with the seed's terrain, as the game does. Slower, but only \
              ties and platform-dependent results stay uncertain.",
         );
-        ui.checkbox(&mut s.certain, "Certain only").on_hover_text(
-            "Only places whose required constraints hold whatever is left undecided. Without \
+        ui.checkbox(&mut search_settings.certain, "Certain only")
+            .on_hover_text(
+                "Only places whose required constraints hold whatever is left undecided. Without \
              confirming, most structures are undecided.",
-        );
+            );
         ui.label(
             egui::RichText::new("Searches around the view's centre, nearest first.")
                 .size(12.0)
@@ -594,9 +609,9 @@ impl App {
                                 ui.label(egui::RichText::new(head).size(11.0).color(style::MUTED));
                             }
                             ui.end_row();
-                            for (i, m) in outcome.matches.iter().enumerate() {
+                            for (i, found) in outcome.matches.iter().enumerate() {
                                 ui.label(style::mono((i + 1).to_string()).color(style::MUTED));
-                                let [x, z] = m.position;
+                                let [x, z] = found.position;
                                 if ui
                                     .selectable_label(
                                         run.current == Some(i),
@@ -607,8 +622,8 @@ impl App {
                                 {
                                     open = Some(i);
                                 }
-                                ui.label(style::mono(m.distance.to_string()));
-                                ui.label(style::mono(m.score.to_string()).color(style::ACCENT));
+                                ui.label(style::mono(found.distance.to_string()));
+                                ui.label(style::mono(found.score.to_string()).color(style::ACCENT));
                                 ui.end_row();
                             }
                         });
@@ -675,7 +690,7 @@ impl App {
         let Some(Ok(outcome)) = &run.outcome else {
             return;
         };
-        let Some(m) = outcome.matches.get(index).cloned() else {
+        let Some(found) = outcome.matches.get(index).cloned() else {
             return;
         };
         run.current = Some(index);
@@ -684,10 +699,10 @@ impl App {
         if self.settings.dimension() != dimension {
             self.switch_dimension(ctx, dimension);
         }
-        let [x, z] = m.position;
+        let [x, z] = found.position;
         self.settings.view.centre = [f64::from(x) + 0.5, f64::from(z) + 0.5];
-        let mut ids = search::structures(&m.evaluation);
-        if let Some(spyglass::Feature::Structure(s)) = &m.target {
+        let mut ids = search::structures(&found.evaluation);
+        if let Some(spyglass::Feature::Structure(s)) = &found.target {
             ids.extend(s.structures.iter().cloned());
         }
         for id in ids {
@@ -705,22 +720,23 @@ impl App {
                 .map_block();
             Some((game, at))
         });
-        let spawn_in = |d: Dimension| {
+        let spawn_in = |target: Dimension| {
             spawn
-                .and_then(|(game, at)| game.convert(at, Dimension::Overworld, d).ok())
+                .and_then(|(game, at)| game.convert(at, Dimension::Overworld, target).ok())
                 .unwrap_or([0, 0])
         };
         let constraints = search::constraint_lines(&query)
             .into_iter()
-            .zip(&m.evaluation.constraints)
+            .zip(&found.evaluation.constraints)
             .zip(query.query().constraints())
             .map(|((line, result), constraint)| {
                 // `here` in another dimension is the match, converted.
                 let here = spawn
                     .and_then(|(game, _)| {
-                        game.convert(m.position, dimension, result.dimension).ok()
+                        game.convert(found.position, dimension, result.dimension)
+                            .ok()
                     })
-                    .unwrap_or(m.position);
+                    .unwrap_or(found.position);
                 OpenedConstraint {
                     line,
                     outcome: result.outcome,
@@ -733,7 +749,7 @@ impl App {
             seed,
             title: format!("Match {} of {count}", index + 1),
             step: Some((index, count)),
-            matches: search::find_matches(&query, dimension, &m),
+            matches: search::find_matches(&query, dimension, &found),
             constraints,
         });
     }
@@ -787,6 +803,8 @@ pub(super) fn highlight(text: &str, size: f32) -> egui::text::LayoutJob {
         "height",
         "flat",
     ];
+    // Word by word: a word runs to the next space or comma, and each space or comma is a
+    // word of its own, so the text is coloured with nothing lost.
     let mut rest = text;
     while !rest.is_empty() {
         let end = rest

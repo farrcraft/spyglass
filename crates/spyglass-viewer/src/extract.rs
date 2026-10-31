@@ -15,7 +15,9 @@ use spyglass_extract::manifest::{self, VersionManifest};
 /// A game version that can be extracted.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Offer {
+    /// The version's id, such as `26.3`.
     pub id: String,
+    /// A release, not a snapshot.
     pub release: bool,
     /// Whether this build was checked against it (ADR 0039).
     pub checked: bool,
@@ -64,9 +66,11 @@ pub fn preferred(offers: &[Offer]) -> Option<&Offer> {
 
 /// An extraction on its own thread.
 pub struct Running {
+    /// The version being extracted.
     pub version: String,
     /// The step under way, for a person.
     step: Arc<Mutex<String>>,
+    /// The outcome, sent when the thread ends.
     done: Receiver<Result<(), String>>,
 }
 
@@ -111,6 +115,7 @@ impl Running {
     }
 }
 
+/// Extracts `version` into `out` with the shared jar cache, telling `step` each step in words.
 fn run(version: &str, out: PathBuf, mut step: impl FnMut(String)) -> Result<(), String> {
     let cache = JarCache::open_default().map_err(|e| e.to_string())?;
     let options = extract::Options {

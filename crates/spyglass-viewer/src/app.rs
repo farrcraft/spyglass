@@ -60,8 +60,8 @@ const EMPTY: Color32 = Color32::from_rgb(0x20, 0x20, 0x20);
 const CACHE_MARKERS: usize = 512;
 /// The most structure markers drawn at once; more is a zoom level too far out to read.
 const MAX_MARKERS: usize = 2_000;
-/// The largest scale jigsaw structures' and mineshafts' bounds are drawn at: a village is then 30 pixels or
-/// more across, and few enough are in view to lay them all out.
+/// The largest scale jigsaw structures' and mineshafts' bounds are drawn at: a village is then
+/// 30 pixels or more across, and few enough are in view to lay them all out.
 const MAX_BOUNDS_SCALE: u32 = 4;
 /// Structure layouts kept.
 const CACHE_LAYOUTS: usize = 512;
@@ -70,17 +70,23 @@ const CACHE_LAYOUTS: usize = 512;
 #[derive(Serialize, Deserialize)]
 #[serde(default)]
 struct Settings {
+    /// The folder bundles are looked for in.
     bundles: PathBuf,
     /// The game version last shown.
     version: Option<String>,
+    /// The seed box's text, as typed.
     seed: String,
     /// The dimension shown, by id.
     dimension: String,
+    /// Where the map looks in the dimension shown.
     view: View,
     /// The other dimensions' views, by id, to go back to.
     views: BTreeMap<String, View>,
+    /// Show tied biome cells as a checker of their candidates.
     ties: bool,
+    /// Draw slime chunks, up close.
     slime_chunks: bool,
+    /// Mark the world spawn.
     spawn: bool,
     /// Decide structure starts and locates with the seed's terrain.
     confirm: bool,
@@ -100,6 +106,7 @@ struct Settings {
     features: Vec<String>,
     /// Biome ids to keep bright.
     highlight: Vec<String>,
+    /// The Search tab's query and options.
     search: SearchSettings,
     /// Draw what's marked done, dimmed; otherwise hide it.
     show_done: bool,
@@ -155,6 +162,8 @@ fn dimension_label(dimension: Dimension) -> &'static str {
 struct Pending<T>(Receiver<T>);
 
 impl<T: Send + 'static> Pending<T> {
+    /// Runs `work` on a thread of its own, and repaints when it's done so the result is picked
+    /// up.
     fn spawn(ctx: &egui::Context, work: impl FnOnce() -> T + Send + 'static) -> Self {
         let (send, receive) = channel();
         let ctx = ctx.clone();
@@ -217,7 +226,9 @@ type Loading = (
 struct Shown {
     /// Numbers tile keys; new for every session.
     id: u64,
+    /// The world and seed.
     session: Arc<Session<'static>>,
+    /// Where the game's spawn search starts, worked out once.
     spawn: SpawnOrigin,
 }
 
@@ -225,7 +236,9 @@ struct Shown {
 struct Selection {
     /// Numbers marker keys; new for every change.
     id: u64,
+    /// The structures to mark.
     queries: Arc<[StructureQuery]>,
+    /// The features to mark, up close.
     features: Arc<[FeatureQuery]>,
 }
 
@@ -239,46 +252,71 @@ impl Default for Selection {
     }
 }
 
+/// The viewer's state between frames.
 pub struct App {
+    /// What's remembered between runs.
     settings: Settings,
+    /// The bundles found in the bundles folder, or why it couldn't be read.
     bundles: Result<Vec<BundleInfo>, String>,
+    /// Every bundle opened this run.
     games: Games,
     /// The bundle shown, every dimension of it.
     game: Option<&'static Game>,
     /// The dimension shown.
     world: Option<&'static World>,
+    /// A world being loaded in the background.
     loading: Option<Loading>,
+    /// Why the last load failed.
     load_error: Option<String>,
+    /// The world and seed on the map; `None` while loading or with a bad seed.
     shown: Option<Shown>,
+    /// Why the seed box's text isn't a seed.
     seed_error: Option<String>,
+    /// The last number given to a session or a selection, so keys from older ones never match.
     next_id: u64,
+    /// The worker threads computing tiles.
     pool: Pool,
+    /// Biome tiles and their textures.
     cache: Cache<TileKey, Entry>,
+    /// Each tile's structure starts.
     markers: Cache<MarkerKey, Result<Vec<StructureStart>, String>>,
+    /// Each tile's features, up close.
     feature_markers: Cache<FeatureKey, Result<Vec<FoundFeature>, String>>,
+    /// Structure layouts, for their bounds; `None` for a structure that has none.
     layouts: Cache<LayoutKey, Result<Option<StructureLayout>, String>>,
+    /// The structures and features marked.
     selection: Selection,
+    /// The Layers tab's structure filter, as typed.
     structure_filter: String,
+    /// The Layers tab's biome filter, as typed.
     biome_filter: String,
     /// Whether the last frame had more markers than it could show.
     too_many_markers: bool,
     /// The block the map's context menu was opened on.
     menu_block: Option<[i32; 2]>,
+    /// A locate running.
     locating: Option<Pending<Result<Found, String>>>,
+    /// The last locate's hits, or why it failed.
     found: Option<Result<Found, String>>,
     /// Saves in the launchers' folders, listed when first wanted.
     saves: Option<Vec<LauncherSave>>,
+    /// A save being read.
     inspecting: Option<Pending<Result<SaveReport, String>>>,
     /// The save on the map, if it came from one.
     save: Option<SaveReport>,
+    /// Why the last save couldn't be opened or shown.
     save_error: Option<String>,
+    /// The saves list's filter, as typed.
     save_filter: String,
     /// The map's size in pixels, for exports.
     map_size: [u32; 2],
+    /// An export being drawn and saved.
     exporting: Option<Pending<Result<PathBuf, String>>>,
     /// The last export's outcome, or a copied command.
     export_note: Option<Result<String, String>>,
+    /// The go-to box's text.
     goto: String,
+    /// Whether the go-to box's text didn't parse.
     goto_error: bool,
     /// Scrolling not yet turned into a zoom step.
     scrolled: f32,
@@ -296,12 +334,15 @@ pub struct App {
     opening: Option<Pending<Result<(i64, Evaluation), String>>>,
     /// The hit last opened: its seed, and what its constraints matched and where.
     opened: Option<Opened>,
+    /// Why the last search or find couldn't run or open.
     search_error: Option<String>,
     /// Game versions that can be extracted, listed when first wanted.
     offers: Option<Result<Vec<Offer>, String>>,
+    /// The versions being listed.
     offering: Option<Pending<Result<Vec<Offer>, String>>>,
     /// The version picked to extract.
     extract_version: Option<String>,
+    /// An extraction running.
     extracting: Option<extract::Running>,
     /// The last extraction's outcome.
     extract_note: Option<Result<String, String>>,
@@ -309,6 +350,7 @@ pub struct App {
     offer_user_folder: bool,
     /// The side panel's tab.
     tab: Tab,
+    /// Whether the settings window is open.
     settings_open: bool,
     /// How many starts of each structure the map showed last frame, for the Layers tab.
     in_view: HashMap<String, usize>,
@@ -336,20 +378,27 @@ pub struct App {
 
 /// A search and its query.
 struct SearchRun {
+    /// The query searched for.
     query: SearchQuery,
     /// Whether the search decided starts with terrain, so opening a hit does too.
     confirm: bool,
+    /// The search, while it runs.
     running: Option<SeedRun>,
+    /// The hits once it's done, or why it failed.
     outcome: Option<Result<SearchOutcome, String>>,
 }
 
 /// A `find` in one seed: its query, where it ran, and its matches.
 struct FindState {
+    /// The query whose `find` it is.
     query: SearchQuery,
+    /// The seed it ran in.
     seed: i64,
     /// The dimension its targets are in.
     dimension: Dimension,
+    /// The find, while it runs.
     running: Option<FindRun>,
+    /// The matches once it's done, or why it failed.
     outcome: Option<Result<FindOutcome, String>>,
     /// The match open on the map, by index.
     current: Option<usize>,
@@ -670,10 +719,10 @@ impl App {
         // members, so the structure list shows what's marked and can turn each off. One with
         // no members here is kept for the dimensions that have them.
         let mut chosen: Vec<String> = Vec::new();
-        for s in &self.settings.structures {
-            let members = if s.starts_with('#') {
+        for id in &self.settings.structures {
+            let members = if id.starts_with('#') {
                 world
-                    .structure_query(s)
+                    .structure_query(id)
                     .and_then(|q| {
                         world
                             .query_structures(&q)
@@ -684,7 +733,7 @@ impl App {
                 Vec::new()
             };
             if members.is_empty() {
-                chosen.push(s.clone());
+                chosen.push(id.clone());
             } else {
                 chosen.extend(members);
             }
@@ -696,14 +745,14 @@ impl App {
             .settings
             .structures
             .iter()
-            .filter_map(|s| world.structure_query(s).ok())
+            .filter_map(|id| world.structure_query(id).ok())
             .collect();
         // Features the world doesn't place are kept in the settings but not marked.
         let features: Vec<FeatureQuery> = self
             .settings
             .features
             .iter()
-            .filter_map(|f| world.feature_query(f).ok())
+            .filter_map(|id| world.feature_query(id).ok())
             .collect();
         self.next_id += 1;
         self.selection = Selection {
@@ -759,6 +808,7 @@ impl App {
         }
     }
 
+    /// How tiles are coloured now: each layer only where it can be drawn.
     fn style(&self) -> Style {
         Style {
             ties: self.settings.ties,

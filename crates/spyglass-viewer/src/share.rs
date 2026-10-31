@@ -8,22 +8,33 @@ use spyglass::{DEFAULT_MAP_Y, Dimension, MAX_SCALE};
 const PREFIX: &str = "spyglass:";
 /// The format this viewer writes, and the newest it reads.
 const FORMAT: u32 = 1;
+/// The longest text read.
 const MAX_LEN: usize = 4_096;
 /// How far from 0 a centre may be, as the viewer clamps views.
 const MAX_CENTRE: i64 = 1_000_000_000;
+/// The namespace a text leaves out of ids, and puts back.
 const NAMESPACE: &str = "minecraft:";
 
 /// The layers a text can turn on, by the names it uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Flags {
+    /// Tied biome cells as a checker.
     pub ties: bool,
+    /// Slime chunks.
     pub slime: bool,
+    /// The world spawn.
     pub spawn: bool,
+    /// Structure starts decided with the seed's terrain.
     pub confirm: bool,
+    /// Shading by terrain height.
     pub relief: bool,
+    /// Biomes at the surface.
     pub surface: bool,
+    /// Ore veins.
     pub veins: bool,
+    /// Noise caves.
     pub caves: bool,
+    /// Carvers' caves and canyons.
     pub carvers: bool,
 }
 
@@ -45,6 +56,7 @@ impl Default for Flags {
 }
 
 impl Flags {
+    /// The names of the layers on, in the order a text lists them.
     fn names(self) -> Vec<&'static str> {
         [
             (self.ties, "ties"),
@@ -66,13 +78,17 @@ impl Flags {
 /// A view as a text carries it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SharedView {
+    /// The world's seed.
     pub seed: i64,
     /// The game version; `None` means the one shown.
     pub version: Option<String>,
+    /// The dimension shown.
     pub dimension: Dimension,
     /// The block at the centre.
     pub centre: [i32; 2],
+    /// Blocks per pixel.
     pub scale: u32,
+    /// The height biomes are drawn at.
     pub y: i32,
     /// Structure ids and `#tags`, with their namespaces.
     pub structures: Vec<String>,
@@ -80,6 +96,7 @@ pub struct SharedView {
     pub highlight: Vec<String>,
     /// Placed feature ids, with their namespaces.
     pub features: Vec<String>,
+    /// The layers on.
     pub flags: Flags,
 }
 

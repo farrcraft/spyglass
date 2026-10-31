@@ -16,6 +16,7 @@ pub const SURFACE: Color32 = Color32::from_rgb(0x25, 0x26, 0x2b);
 pub const RAISED: Color32 = Color32::from_rgb(0x33, 0x35, 0x3b);
 /// Lines between panels and around controls.
 pub const BORDER: Color32 = Color32::from_rgb(0x3a, 0x3c, 0x42);
+/// Text.
 pub const TEXT: Color32 = Color32::from_rgb(0xe6, 0xe6, 0xe6);
 /// Labels and hints: still 7:1 on `PANEL`.
 pub const MUTED: Color32 = Color32::from_rgb(0xa3, 0xa6, 0xad);
@@ -23,7 +24,9 @@ pub const MUTED: Color32 = Color32::from_rgb(0xa3, 0xa6, 0xad);
 pub const ACCENT: Color32 = Color32::from_rgb(0xe5, 0xa8, 0x4b);
 /// Text that says something holds.
 pub const GOOD: Color32 = Color32::from_rgb(0x8f, 0xdc, 0x9f);
+/// Text that warns: something only maybe holds, or needs the user's attention.
 pub const WARN: Color32 = Color32::from_rgb(0xf2, 0xc2, 0x7a);
+/// Text that says something failed.
 pub const ERROR: Color32 = Color32::from_rgb(0xf0, 0x80, 0x78);
 /// Floating frames over the map: `PANEL`, nearly opaque.
 pub const OVERLAY: Color32 = Color32::from_rgba_premultiplied(0x1a, 0x1b, 0x1f, 0xf0);
@@ -39,43 +42,51 @@ pub fn apply(ctx: &egui::Context) {
         spacing.menu_margin = Margin::same(6);
         spacing.window_margin = Margin::same(12);
 
-        let v = &mut style.visuals;
-        v.dark_mode = true;
-        v.panel_fill = PANEL;
-        v.window_fill = PANEL;
-        v.window_stroke = Stroke::new(1.0, BORDER);
-        v.window_corner_radius = CornerRadius::same(10);
-        v.menu_corner_radius = CornerRadius::same(8);
-        v.window_shadow = Shadow {
+        let visuals = &mut style.visuals;
+        visuals.dark_mode = true;
+        visuals.panel_fill = PANEL;
+        visuals.window_fill = PANEL;
+        visuals.window_stroke = Stroke::new(1.0, BORDER);
+        visuals.window_corner_radius = CornerRadius::same(10);
+        visuals.menu_corner_radius = CornerRadius::same(8);
+        visuals.window_shadow = Shadow {
             offset: [0, 6],
             blur: 20,
             spread: 0,
             color: Color32::from_black_alpha(110),
         };
-        v.popup_shadow = v.window_shadow;
-        v.extreme_bg_color = GROUND;
-        v.text_edit_bg_color = Some(GROUND);
-        v.faint_bg_color = SURFACE;
-        v.code_bg_color = GROUND;
-        v.hyperlink_color = ACCENT;
-        v.warn_fg_color = WARN;
-        v.error_fg_color = ERROR;
-        v.selection.bg_fill = Color32::from_rgb(0x5a, 0x43, 0x1e);
-        v.selection.stroke = Stroke::new(1.0, ACCENT);
-        v.slider_trailing_fill = true;
+        visuals.popup_shadow = visuals.window_shadow;
+        visuals.extreme_bg_color = GROUND;
+        visuals.text_edit_bg_color = Some(GROUND);
+        visuals.faint_bg_color = SURFACE;
+        visuals.code_bg_color = GROUND;
+        visuals.hyperlink_color = ACCENT;
+        visuals.warn_fg_color = WARN;
+        visuals.error_fg_color = ERROR;
+        visuals.selection.bg_fill = Color32::from_rgb(0x5a, 0x43, 0x1e);
+        visuals.selection.stroke = Stroke::new(1.0, ACCENT);
+        visuals.slider_trailing_fill = true;
 
         let radius = CornerRadius::same(6);
-        let w = &mut v.widgets;
-        w.noninteractive.bg_fill = PANEL;
-        w.noninteractive.weak_bg_fill = PANEL;
-        w.noninteractive.bg_stroke = Stroke::new(1.0, Color32::from_rgb(0x2c, 0x2e, 0x33));
-        w.noninteractive.fg_stroke = Stroke::new(1.0, TEXT);
-        w.noninteractive.corner_radius = radius;
+        let widgets = &mut visuals.widgets;
+        widgets.noninteractive.bg_fill = PANEL;
+        widgets.noninteractive.weak_bg_fill = PANEL;
+        widgets.noninteractive.bg_stroke = Stroke::new(1.0, Color32::from_rgb(0x2c, 0x2e, 0x33));
+        widgets.noninteractive.fg_stroke = Stroke::new(1.0, TEXT);
+        widgets.noninteractive.corner_radius = radius;
         for (state, fill, stroke) in [
-            (&mut w.inactive, SURFACE, BORDER),
-            (&mut w.hovered, RAISED, Color32::from_rgb(0x4a, 0x4c, 0x52)),
-            (&mut w.active, Color32::from_rgb(0x3e, 0x40, 0x47), ACCENT),
-            (&mut w.open, RAISED, BORDER),
+            (&mut widgets.inactive, SURFACE, BORDER),
+            (
+                &mut widgets.hovered,
+                RAISED,
+                Color32::from_rgb(0x4a, 0x4c, 0x52),
+            ),
+            (
+                &mut widgets.active,
+                Color32::from_rgb(0x3e, 0x40, 0x47),
+                ACCENT,
+            ),
+            (&mut widgets.open, RAISED, BORDER),
         ] {
             state.bg_fill = fill;
             state.weak_bg_fill = fill;

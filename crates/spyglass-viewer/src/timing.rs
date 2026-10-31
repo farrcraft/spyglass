@@ -41,7 +41,9 @@ pub fn job<T>(kind: impl FnOnce() -> String, f: impl FnOnce() -> T) -> T {
 pub struct Fill {
     /// What the window shows, hashed, and when it started showing it.
     shown: Option<(u64, Instant)>,
+    /// Whether "covered" was reported for what's shown.
     coarse: bool,
+    /// Whether "full" was reported for what's shown.
     full: bool,
 }
 

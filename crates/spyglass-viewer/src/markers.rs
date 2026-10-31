@@ -1,8 +1,11 @@
 //! What's drawn over the map: structure and feature icons, the spawn, locate pins and search
-//! rings, the user's markers, and jigsaw and mineshaft bounds. Markers sit where the library's `Image::draw_features` puts its own
-//! (`docs/specs/render.md#layers`): one tile pixel is one point, and a marker's centre is the
-//! pixel `floor(block / scale)` on the world-aligned grid. Their shapes are the viewer's own
-//! (ADR 0044), in the library's set colours.
+//! rings, the user's markers, and jigsaw and mineshaft bounds. Markers sit where the library's
+//! `Image::draw_features` puts its own (`docs/specs/render.md#layers`): one tile pixel is one
+//! point, and a marker's centre is the pixel `floor(block / scale)` on the world-aligned grid.
+//! Their shapes are the viewer's own (ADR 0044), in the library's set colours.
+//!
+//! These are painted straight onto the map's painter each frame, not laid out as widgets: the
+//! map draws hundreds of them, and picks the one under the pointer itself (`pick`).
 
 use eframe::egui::{
     self, Align2, Color32, CornerRadius, FontId, Painter, Pos2, Rect, Shape, Stroke, StrokeKind,
@@ -21,9 +24,10 @@ pub const DONE_OPACITY: f32 = 0.4;
 
 /// The screen position of the centre of the pixel containing `block`.
 pub fn pixel_centre(view: &View, map_centre: Pos2, block: [i32; 2]) -> Pos2 {
-    let s = i64::from(view.scale);
+    let scale = i64::from(view.scale);
     let origin = view.origin();
-    let at = |d: usize| (i64::from(block[d]).div_euclid(s) as f64 + origin[d]) as f32 + 0.5;
+    let at =
+        |axis: usize| (i64::from(block[axis]).div_euclid(scale) as f64 + origin[axis]) as f32 + 0.5;
     map_centre + Vec2::new(at(0), at(1))
 }
 
@@ -31,8 +35,11 @@ pub fn pixel_centre(view: &View, map_centre: Pos2, block: [i32; 2]) -> Pos2 {
 /// with their glyph up close.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Size {
+    /// A dot in the set's colour, far out.
     Dot,
+    /// A small badge.
     Small,
+    /// A badge large enough to read its glyph, up close.
     Full,
 }
 
@@ -46,6 +53,7 @@ impl Size {
         }
     }
 
+    /// The badge's side, or the dot's diameter, in points.
     fn side(self) -> f32 {
         match self {
             Size::Dot => 7.0,
@@ -67,12 +75,13 @@ pub fn feature(painter: &Painter, centre: Pos2, found: &FoundFeature, hovered: b
     let [r, g, b] = feature_colour(&found.feature);
     let colour = Color32::from_rgb(r, g, b);
     let half = if hovered { 13.0 } else { 9.0 };
-    let diamond = |h: f32| {
+    // A diamond's corners, `half_width` from the centre.
+    let diamond = |half_width: f32| {
         vec![
-            centre + Vec2::new(0.0, -h),
-            centre + Vec2::new(h, 0.0),
-            centre + Vec2::new(0.0, h),
-            centre + Vec2::new(-h, 0.0),
+            centre + Vec2::new(0.0, -half_width),
+            centre + Vec2::new(half_width, 0.0),
+            centre + Vec2::new(0.0, half_width),
+            centre + Vec2::new(-half_width, 0.0),
         ]
     };
     if hovered {
@@ -171,9 +180,10 @@ pub fn label(painter: &Painter, left: Pos2, text: &str) {
 
 /// The screen rectangle covering blocks `min..=max` (x and z).
 pub fn block_rect(view: &View, map_centre: Pos2, min: [i32; 2], max: [i32; 2]) -> Rect {
-    let s = f64::from(view.scale);
+    let scale = f64::from(view.scale);
     let origin = view.origin();
-    let edge = |b: i64, d: usize| (b as f64 / s + origin[d]) as f32;
+    // A block edge's screen offset on one axis.
+    let edge = |block: i64, axis: usize| (block as f64 / scale + origin[axis]) as f32;
     Rect::from_min_max(
         map_centre + Vec2::new(edge(i64::from(min[0]), 0), edge(i64::from(min[1]), 1)),
         map_centre
@@ -206,16 +216,16 @@ pub fn spawn(painter: &Painter, centre: Pos2) {
     spawn_sized(painter, centre, 9.0);
 }
 
-/// The spawn's marker with radius `r`, for the legend and buttons too.
-pub fn spawn_sized(painter: &Painter, centre: Pos2, r: f32) {
+/// The spawn's marker with radius `radius`, for the legend and buttons too.
+pub fn spawn_sized(painter: &Painter, centre: Pos2, radius: f32) {
     painter.circle(
         centre,
-        r,
+        radius,
         Color32::WHITE,
-        Stroke::new(r / 4.5, style::GROUND),
+        Stroke::new(radius / 4.5, style::GROUND),
     );
-    let stroke = Stroke::new(r / 4.0, style::GROUND);
-    let arm = r * 0.6;
+    let stroke = Stroke::new(radius / 4.0, style::GROUND);
+    let arm = radius * 0.6;
     painter.line_segment([centre - Vec2::X * arm, centre + Vec2::X * arm], stroke);
     painter.line_segment([centre - Vec2::Y * arm, centre + Vec2::Y * arm], stroke);
 }
@@ -245,21 +255,25 @@ pub fn user(painter: &Painter, tip: Pos2, marker: &Marker, named: bool) {
     }
 }
 
-/// A pin: a circle of radius `r` whose centre is `2r` above `tip`, and the two tangents to it from
-/// the tip, a convex teardrop, with a dot in the middle.
-fn teardrop(painter: &Painter, tip: Pos2, r: f32, fill: Color32, line: Color32, dot: Color32) {
-    let d = 2.0 * r;
-    let head = tip - Vec2::Y * d;
-    let spread = (r / d).acos();
+/// A pin: a circle of radius `radius` whose centre is twice that above `tip`, and the two
+/// tangents to it from the tip, a convex teardrop, with a dot in the middle.
+fn teardrop(painter: &Painter, tip: Pos2, radius: f32, fill: Color32, line: Color32, dot: Color32) {
+    let height = 2.0 * radius;
+    let head = tip - Vec2::Y * height;
+    // A tangent from the tip touches the circle this far round from straight down (y is down
+    // on screen, so down is a quarter turn): the outline is the tip, then the arc from one
+    // tangent point round the top to the other.
+    let spread = (radius / height).acos();
     let down = std::f32::consts::FRAC_PI_2;
     let steps = 18;
     let mut points = vec![tip];
     for i in 0..=steps {
-        let a = down + spread + (std::f32::consts::TAU - 2.0 * spread) * i as f32 / steps as f32;
-        points.push(head + Vec2::angled(a) * r);
+        let angle =
+            down + spread + (std::f32::consts::TAU - 2.0 * spread) * i as f32 / steps as f32;
+        points.push(head + Vec2::angled(angle) * radius);
     }
     painter.add(Shape::convex_polygon(points, fill, Stroke::new(2.0, line)));
-    painter.circle_filled(head, r * 0.4, dot);
+    painter.circle_filled(head, radius * 0.4, dot);
 }
 
 /// Something a search hit's constraint matched: a ring around it, white if certain.
@@ -276,9 +290,13 @@ pub fn ring(painter: &Painter, centre: Pos2, certain: bool) {
 /// Something on the map the pointer can point at.
 #[derive(Clone)]
 pub enum Picked<'a> {
+    /// A structure start's icon.
     Structure(&'a StructureStart),
+    /// A feature's icon.
     Feature(&'a FoundFeature),
+    /// The world spawn.
     Spawn(&'a SpawnOrigin),
+    /// A locate hit's pin.
     Hit(&'a Hit),
     /// Something a search hit's constraint matched.
     Match(&'a crate::search::Match),
@@ -296,8 +314,8 @@ impl Picked<'_> {
                 at: [start.position[0], start.position[2]],
             }),
             Picked::Hit(hit) => Some(hit.place.clone()),
-            Picked::Match(m) => m.place.clone(),
-            Picked::Feature(f) => Some(crate::locate::feature_place(f)),
+            Picked::Match(found) => found.place.clone(),
+            Picked::Feature(feature) => Some(crate::locate::feature_place(feature)),
             Picked::Spawn(_) | Picked::Marker(_) => None,
         }
     }
@@ -312,7 +330,7 @@ pub fn pick<'a>(
         .into_iter()
         .enumerate()
         .map(|(i, (at, reach, what))| ((at - pointer).length(), reach, i, what))
-        .filter(|(d, reach, _, _)| d <= reach)
+        .filter(|(distance, reach, _, _)| distance <= reach)
         .min_by(|a, b| a.0.total_cmp(&b.0))
         .map(|(_, _, i, what)| (i, what))
 }

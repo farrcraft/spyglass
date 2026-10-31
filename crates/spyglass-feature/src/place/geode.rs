@@ -26,28 +26,48 @@ const DIRECTIONS: [([i32; 3], &str); 6] = [
 /// A geode's configuration, with the codec's defaults.
 #[derive(Debug, Clone)]
 pub struct Geode {
+    /// The middle (air in vanilla).
     filling: State,
+    /// The inner layer (amethyst in vanilla).
     inner: State,
+    /// The inner layer's other block, at `alternate_chance` (budding amethyst in vanilla).
     alternate_inner: State,
+    /// The middle layer (calcite in vanilla).
     middle: State,
+    /// The outer layer (smooth basalt in vanilla).
     outer: State,
-    /// Each inner placement's states, by direction (in [`DIRECTIONS`]' order), then
-    /// waterlogged (false, true).
+    /// The buds a budding block grows (in vanilla, small to large buds and clusters), each by direction (in
+    /// [`DIRECTIONS`]' order), then waterlogged (false, true).
     placements: Vec<[[State; 2]; 6]>,
+    /// Blocks no write replaces.
     cannot_replace: Tag,
+    /// Blocks a point mustn't be in, with air (see `invalid_threshold`).
     invalid: Tag,
+    /// Each layer's size, filling first: a larger one reaches further from the points.
     layers: [f64; 4],
+    /// How likely a crack is.
     crack_chance: f64,
+    /// The crack's base size: larger is a wider crack.
     crack_size: f64,
+    /// What softens the crack's field, as a point's offset does.
     crack_offset: i32,
+    /// How likely a budding block is a bud site.
     potential_chance: f64,
+    /// How likely an inner block is budding.
     alternate_chance: f64,
+    /// Whether only budding blocks can be bud sites.
     require_alternate: bool,
+    /// How far each point is from the origin, on each axis.
     outer_wall: IntProvider,
+    /// How many points.
     points: IntProvider,
+    /// Each point's offset, added to the squared distance: larger is a softer field.
     point_offset: IntProvider,
+    /// The cube around the origin that's written, on each axis.
     gen_offsets: [i32; 2],
+    /// The noise's weight in each point's term.
     noise_multiplier: f64,
+    /// How many points may be in air or invalid blocks before the geode declines.
     invalid_threshold: i32,
     /// The noise: 26.2's, or the parity noise from 26.3.
     noise: GeodeNoise,
@@ -215,6 +235,13 @@ impl Geode {
     }
 
     /// `GeodeFeature.place`: whether it placed.
+    ///
+    /// The shape is a field around a few points near `origin`: at each block, the sum over the
+    /// points of `1 / √(distance² + offset)`, plus a little noise. The sum is large near the
+    /// points and falls off away from them, so each layer is the blocks where it's above that
+    /// layer's threshold: the filling (air) innermost, then the inner layer (amethyst), the
+    /// middle (calcite) and the outer (smooth basalt). The crack is the same kind of field
+    /// around three points stacked on one side, carved to air.
     pub fn place(
         &self,
         region: &mut Region<'_>,
@@ -223,7 +250,7 @@ impl Geode {
         seed: i64,
     ) -> bool {
         let blocks = region.blocks();
-        let n = self.points.sample(random);
+        let point_count = self.points.sample(random);
         let noise = match &self.noise {
             GeodeNoise::V1_21 => Seeded::V1_21(v1_21::NormalNoise::create(
                 &mut LegacyRandomSource::new(seed),
@@ -231,105 +258,121 @@ impl Geode {
             )),
             GeodeNoise::Parity(p) => Seeded::Parity(p.create(&mut LegacyRandomSource::new(seed))),
         };
-        let d9 = f64::from(n) / f64::from(self.outer_wall.max());
-        let filling_d = 1.0 / self.layers[0].sqrt();
-        let inner_d = 1.0 / (self.layers[1] + d9).sqrt();
-        let middle_d = 1.0 / (self.layers[2] + d9).sqrt();
-        let outer_d = 1.0 / (self.layers[3] + d9).sqrt();
-        let crack_size = 1.0
-            / (self.crack_size + random.next_double() / 2.0 + if n > 3 { d9 } else { 0.0 }).sqrt();
-        let crack = f64::from(random.next_float()) < self.crack_chance;
+        // More points make a bigger field, so the layers' thresholds are pushed out by this
+        // much (the game's `d9`).
+        let spread = f64::from(point_count) / f64::from(self.outer_wall.max());
+        let filling_threshold = 1.0 / self.layers[0].sqrt();
+        let inner_threshold = 1.0 / (self.layers[1] + spread).sqrt();
+        let middle_threshold = 1.0 / (self.layers[2] + spread).sqrt();
+        let outer_threshold = 1.0 / (self.layers[3] + spread).sqrt();
+        let crack_threshold = 1.0
+            / (self.crack_size
+                + random.next_double() / 2.0
+                + if point_count > 3 { spread } else { 0.0 })
+            .sqrt();
+        let has_crack = f64::from(random.next_float()) < self.crack_chance;
+
+        // The points, each with the offset that softens its field. Too many in air or invalid
+        // blocks, and the geode declines before writing anything.
         let mut invalid = 0;
         let mut points: Vec<([i32; 3], i32)> = Vec::new();
-        for _ in 0..n {
+        for _ in 0..point_count {
             let dx = self.outer_wall.sample(random);
             let dy = self.outer_wall.sample(random);
             let dz = self.outer_wall.sample(random);
-            let p = add(origin, [dx, dy, dz]);
-            let s = region.get(p);
-            if blocks.is_air(s) || blocks.is(s, self.invalid) {
+            let point = add(origin, [dx, dy, dz]);
+            let state = region.get(point);
+            if blocks.is_air(state) || blocks.is(state, self.invalid) {
                 invalid += 1;
                 if invalid > self.invalid_threshold {
                     return false;
                 }
             }
-            points.push((p, self.point_offset.sample(random)));
+            points.push((point, self.point_offset.sample(random)));
         }
-        let mut cracks: Vec<[i32; 3]> = Vec::new();
-        if crack {
-            let r = random.next_int_bounded(4);
-            let len = n * 2 + 1;
-            let (cx, cz) = match r {
-                0 => (len, 0),
-                1 => (0, len),
-                2 => (len, len),
+
+        // The crack's points: one corner of the geode's footprint, at three heights.
+        let mut crack_points: Vec<[i32; 3]> = Vec::new();
+        if has_crack {
+            let side = point_count * 2 + 1;
+            let (crack_x, crack_z) = match random.next_int_bounded(4) {
+                0 => (side, 0),
+                1 => (0, side),
+                2 => (side, side),
                 _ => (0, 0),
             };
             for y in [7, 5, 1] {
-                cracks.push(add(origin, [cx, y, cz]));
+                crack_points.push(add(origin, [crack_x, y, crack_z]));
             }
         }
-        let mut potential: Vec<[i32; 3]> = Vec::new();
+
+        // Every block in the cube around the origin, in BlockPos.betweenClosed's order (x
+        // fastest, then y, then z), takes the layer its field is in. Budding blocks may grow
+        // buds, after the shell is done.
+        let mut bud_sites: Vec<[i32; 3]> = Vec::new();
         let [lo, hi] = self.gen_offsets;
-        // BlockPos.betweenClosed: x fastest, then y, then z.
         for z in lo..=hi {
             for y in lo..=hi {
                 for x in lo..=hi {
                     let pos = add(origin, [x, y, z]);
-                    let nz = noise.get(pos[0], pos[1], pos[2]) * self.noise_multiplier;
-                    let mut s = 0.0;
-                    for &(p, offset) in &points {
-                        s += inv_sqrt(dist_sqr(pos, p) + f64::from(offset)) + nz;
+                    let wobble = noise.get(pos[0], pos[1], pos[2]) * self.noise_multiplier;
+                    // The noise is added once per point, as the game adds it inside the sum.
+                    let mut field = 0.0;
+                    for &(point, offset) in &points {
+                        field += inv_sqrt(dist_sqr(pos, point) + f64::from(offset)) + wobble;
                     }
-                    if s < outer_d {
+                    if field < outer_threshold {
                         continue;
                     }
-                    if s >= filling_d {
+                    if field >= filling_threshold {
                         self.safe_set(region, pos, self.filling);
                         continue;
                     }
-                    let mut t = 0.0;
-                    for &c in &cracks {
-                        t += inv_sqrt(dist_sqr(pos, c) + f64::from(self.crack_offset)) + nz;
+                    let mut crack_field = 0.0;
+                    for &point in &crack_points {
+                        crack_field +=
+                            inv_sqrt(dist_sqr(pos, point) + f64::from(self.crack_offset)) + wobble;
                     }
-                    if crack && t >= crack_size {
+                    if has_crack && crack_field >= crack_threshold {
                         self.safe_set(region, pos, spyglass_blocks::state::AIR);
                         // The fluid ticks it schedules beside the crack change no blocks.
-                    } else if s >= inner_d {
-                        let alternate = f64::from(random.next_float()) < self.alternate_chance;
-                        let block = if alternate {
+                    } else if field >= inner_threshold {
+                        let budding = f64::from(random.next_float()) < self.alternate_chance;
+                        let block = if budding {
                             self.alternate_inner
                         } else {
                             self.inner
                         };
                         self.safe_set(region, pos, block);
-                        if (!self.require_alternate || alternate)
+                        if (!self.require_alternate || budding)
                             && f64::from(random.next_float()) < self.potential_chance
                         {
-                            potential.push(pos);
+                            bud_sites.push(pos);
                         }
-                    } else if s >= middle_d {
+                    } else if field >= middle_threshold {
                         self.safe_set(region, pos, self.middle);
-                    } else if s >= outer_d {
+                    } else if field >= outer_threshold {
                         self.safe_set(region, pos, self.outer);
                     }
                 }
             }
         }
-        for p in potential {
-            let placement =
+
+        // Each bud site grows one bud, of a random size, on its first side (down, up, north,
+        // south, west, east) with room for it, facing out of the block.
+        for site in bud_sites {
+            let bud =
                 &self.placements[random.next_int_bounded(self.placements.len() as i32) as usize];
-            for (d, (offset, _)) in DIRECTIONS.iter().enumerate() {
-                let q = add(p, *offset);
-                let ns = region.get(q);
-                let source = blocks.behaviour(ns).fluid.is_some_and(|f| f.source);
-                let state = placement[d][usize::from(source)];
+            for (direction, (step, _)) in DIRECTIONS.iter().enumerate() {
+                let neighbour = add(site, *step);
+                let there = region.get(neighbour);
+                let in_source = blocks.behaviour(there).fluid.is_some_and(|f| f.source);
                 // BuddingAmethystBlock.canClusterGrowAtState: air, or a full water block.
-                let grows = blocks.is_air(ns)
-                    || (blocks.palette().block_id(ns) == "minecraft:water"
-                        && blocks.behaviour(ns).fluid.is_some_and(|f| f.amount == 8));
-                if grows {
-                    self.safe_set(region, q, state);
+                let room = blocks.is_air(there)
+                    || (blocks.palette().block_id(there) == "minecraft:water"
+                        && blocks.behaviour(there).fluid.is_some_and(|f| f.amount == 8));
+                if room {
+                    self.safe_set(region, neighbour, bud[direction][usize::from(in_source)]);
                     break;
                 }
             }

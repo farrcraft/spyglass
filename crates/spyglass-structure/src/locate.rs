@@ -84,7 +84,7 @@ impl StructureSets {
             let at = values_at.child(&format!("[{i}]"));
             // TagEntry.CODEC: an id or #tag, or {"id": ..., "required": bool}.
             let (name, required) = match entry {
-                Value::String(s) => (s.as_str(), true),
+                Value::String(name) => (name.as_str(), true),
                 Value::Object(obj) => (
                     obj.get("id")
                         .and_then(Value::as_str)
@@ -240,9 +240,9 @@ impl Starts<'_> {
                 let certain = certain && exact;
                 let index = push(&mut search, set, chunk, structures, certain);
                 if certain {
-                    let d = search.hits[index].distance_sqr;
-                    if best.is_none_or(|(b, _)| d < b) {
-                        best = Some((d, index));
+                    let distance = search.hits[index].distance_sqr;
+                    if best.is_none_or(|(b, _)| distance < b) {
+                        best = Some((distance, index));
                     }
                     break;
                 }
@@ -266,22 +266,24 @@ impl Starts<'_> {
             search.certain_answer = best.map(|(_, i)| i);
             return search;
         }
-        let (cx, cz) = (from[0] >> 4, from[2] >> 4);
-        for r in 0..=radius.max(-1) {
+        let (from_chunk_x, from_chunk_z) = (from[0] >> 4, from[2] >> 4);
+        // `ring` is the game's `r`: how many cells out from `from`'s chunk the square ring is.
+        for ring in 0..=radius.max(-1) {
             let mut ring_has_certain = false;
             for &(set, spread) in &spreads {
                 let salt = sets.sets()[set].placement.salt;
-                'scan: for dx in -r..=r {
-                    let x_edge = dx == -r || dx == r;
-                    for dz in -r..=r {
-                        if !x_edge && dz != -r && dz != r {
+                'scan: for dx in -ring..=ring {
+                    let x_edge = dx == -ring || dx == ring;
+                    for dz in -ring..=ring {
+                        // Only the ring's edge: the inside was the earlier rings.
+                        if !x_edge && dz != -ring && dz != ring {
                             continue;
                         }
                         let chunk = spread.potential_chunk(
                             self.placements().seed(),
                             salt,
-                            cx.wrapping_add(spread.spacing.wrapping_mul(dx)),
-                            cz.wrapping_add(spread.spacing.wrapping_mul(dz)),
+                            from_chunk_x.wrapping_add(spread.spacing.wrapping_mul(dx)),
+                            from_chunk_z.wrapping_add(spread.spacing.wrapping_mul(dz)),
                         );
                         if !self
                             .placements()
@@ -296,9 +298,9 @@ impl Starts<'_> {
                         let index = push(&mut search, set, chunk, structures, certain);
                         if certain {
                             ring_has_certain = true;
-                            let d = search.hits[index].distance_sqr;
-                            if best.is_none_or(|(b, _)| d < b) {
-                                best = Some((d, index));
+                            let distance = search.hits[index].distance_sqr;
+                            if best.is_none_or(|(b, _)| distance < b) {
+                                best = Some((distance, index));
                             }
                             break 'scan;
                         }

@@ -244,18 +244,26 @@ static FEATURE_JIGSAW_NAMED_BOTTOM: LazyLock<JigsawData> = LazyLock::new(|| Jigs
 /// and top) in the template, and its fields.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TemplateJigsaw {
+    /// Its position in the template.
     pos: [i32; 3],
+    /// The way it faces: a child piece attaches on this side.
     front: Direction,
+    /// Which way is up for it, which an aligned joint must match.
     top: Direction,
+    /// Its block-entity fields.
     data: JigsawData,
 }
 
 /// A jigsaw block placed with its piece: moved and rotated.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PlacedJigsaw<'a> {
+    /// Its block position in the world.
     pub(crate) pos: [i32; 3],
+    /// Its front, rotated with the piece.
     pub(crate) front: Direction,
+    /// Its top, rotated with the piece.
     pub(crate) top: Direction,
+    /// Its block-entity fields, the template's.
     pub(crate) data: &'a JigsawData,
 }
 
@@ -285,8 +293,9 @@ pub struct Template {
 impl Template {
     /// `StructureTemplate.load`, keeping the size and the jigsaw blocks of each palette
     /// (`palettes`, or the single `palette`). Palette entries name their block by `id` and
-    /// hold its state in `properties` (`NbtUtils.readBlockState`). The game data-fixes a template saved by an older version
-    /// before loading it; spyglass doesn't, so `DataVersion` must be `data_version`.
+    /// hold its state in `properties` (`NbtUtils.readBlockState`). The game data-fixes a
+    /// template saved by an older version before loading it; spyglass doesn't, so
+    /// `DataVersion` must be `data_version`.
     pub fn from_nbt(root: &Tag, id: &str, data_version: u32) -> LoadResult<Self> {
         let at = At::root(id);
         let saved = root.get("DataVersion").and_then(Tag::as_int);
@@ -373,9 +382,9 @@ impl Template {
         palette
             .iter()
             .map(|j| {
-                let r = rotation.transform(j.pos);
+                let rotated = rotation.transform(j.pos);
                 PlacedJigsaw {
-                    pos: [0, 1, 2].map(|i| r[i].wrapping_add(pos[i])),
+                    pos: [0, 1, 2].map(|i| rotated[i].wrapping_add(pos[i])),
                     front: rotation.rotate(j.front),
                     top: rotation.rotate(j.top),
                     data: &j.data,
@@ -428,8 +437,8 @@ fn int3(tag: Option<&Tag>, at: &At<'_>) -> LoadResult<[i32; 3]> {
         .filter(|l| l.len() == 3)
         .ok_or_else(|| at.error(LoadErrorKind::Shape("a list of three ints")))?;
     let mut out = [0; 3];
-    for (o, t) in out.iter_mut().zip(list) {
-        *o = t
+    for (value, item) in out.iter_mut().zip(list) {
+        *value = item
             .as_int()
             .ok_or_else(|| at.error(LoadErrorKind::Shape("a list of three ints")))?;
     }
@@ -690,7 +699,9 @@ pub enum JigsawCheck {
 pub(crate) struct StartPiece<'a> {
     /// `(minX, start height, minZ)`.
     pub(crate) start: [i32; 3],
+    /// The piece's rotation, drawn after the start height.
     pub(crate) rotation: Rotation,
+    /// The element picked from the start pool.
     pub(crate) element: &'a PoolElement,
     /// The start jigsaw's position relative to `start`, or zero.
     pub(crate) offset: [i32; 3],
@@ -729,14 +740,16 @@ impl Jigsaw {
         if matches!(element, PoolElement::Empty) {
             return None;
         }
+        // With a start jigsaw name, the piece moves so that jigsaw, not its corner, is at the
+        // start position.
         let offset = match &self.start_jigsaw_name {
             None => [0; 3],
             Some(name) => {
                 let jigsaws = element.shuffled_jigsaws(start, rotation, random);
-                let j = jigsaws
+                let start_jigsaw = jigsaws
                     .iter()
                     .find(|j| j.data.name.as_ref() == Some(name))?;
-                [0, 1, 2].map(|i| j.pos[i].wrapping_sub(start[i]))
+                [0, 1, 2].map(|i| start_jigsaw.pos[i].wrapping_sub(start[i]))
             }
         };
         let pos = [0, 1, 2].map(|i| start[i].wrapping_sub(offset[i]));
@@ -798,24 +811,24 @@ impl Jigsaw {
 
     /// Every pool id the structure names directly: its start pool and its aliases' targets.
     pub(crate) fn named_pools(&self) -> Vec<String> {
-        fn targets(b: &AliasBinding, out: &mut Vec<String>) {
-            match b {
+        fn targets(binding: &AliasBinding, out: &mut Vec<String>) {
+            match binding {
                 AliasBinding::Direct { target, .. } => out.push(target.clone()),
                 AliasBinding::Random { targets, .. } => {
                     out.extend(targets.iter().map(|(t, _)| t.clone()))
                 }
                 AliasBinding::RandomGroup { groups } => {
                     for (group, _) in groups {
-                        for b in group {
-                            targets(b, out);
+                        for binding in group {
+                            targets(binding, out);
                         }
                     }
                 }
             }
         }
         let mut out = vec![self.start_pool_id.clone()];
-        for b in &self.pool_aliases {
-            targets(b, &mut out);
+        for binding in &self.pool_aliases {
+            targets(binding, &mut out);
         }
         out
     }
@@ -828,7 +841,7 @@ fn alias_names(json: &Value) -> Vec<&str> {
         Value::Object(obj) => obj
             .iter()
             .flat_map(|(k, v)| match (k.as_str(), v) {
-                ("alias", Value::String(s)) => vec![s.as_str()],
+                ("alias", Value::String(alias)) => vec![alias.as_str()],
                 _ => alias_names(v),
             })
             .collect(),
@@ -838,12 +851,15 @@ fn alias_names(json: &Value) -> Vec<&str> {
 
 /// Loads template pools and templates, each once.
 pub(crate) struct JigsawLoader<'a> {
+    /// Where pools and templates are read from.
     bundle: &'a Bundle,
     /// Loads corner constraints' density functions.
     density: Loader<'a, Bundle>,
     /// The `feature_jigsaw_named_bottom` switch for the bundle's version.
     feature_jigsaw_named_bottom: bool,
+    /// Pools already loaded, by id.
     pools: HashMap<String, Arc<Pool>>,
+    /// Templates already loaded, by id.
     templates: HashMap<String, Arc<Template>>,
 }
 
@@ -937,10 +953,10 @@ impl<'a> JigsawLoader<'a> {
                         p.get("top").and_then(codec::int_of).unwrap_or(0),
                     ),
                     _ => {
-                        let n = codec::int_of(v).ok_or_else(|| {
+                        let both = codec::int_of(v).ok_or_else(|| {
                             at.error(LoadErrorKind::Shape("an int or {bottom, top}"))
                         })?;
-                        (n, n)
+                        (both, both)
                     }
                 };
                 Some((bottom, top))
@@ -1171,10 +1187,10 @@ fn max_distance(json: &Value, at: &At<'_>) -> LoadResult<(i32, i32)> {
             Ok((horizontal, field("vertical")?))
         }
         _ => {
-            let n = codec::int_of(json)
+            let both = codec::int_of(json)
                 .filter(|n| (1..=128).contains(n))
                 .ok_or_else(shape)?;
-            Ok((n, n))
+            Ok((both, both))
         }
     }
 }

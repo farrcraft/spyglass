@@ -15,6 +15,8 @@ const BIOME_TAG: &str = "tags/worldgen/biome";
 /// produce (the Nether's, in the overworld) aren't in it, since no lookup can return them.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct BiomeSet {
+    /// Bit `id % 64` of word `id / 64` is set if biome `id` is in the set. Words past the end
+    /// are all clear.
     words: Vec<u64>,
 }
 
@@ -61,8 +63,11 @@ impl BiomeSet {
 
 /// Resolves biome holder sets and tags, loading each tag once.
 pub(crate) struct Tags<'a> {
+    /// Where the biome registry and tags are read from.
     bundle: &'a Bundle,
+    /// The biome source's biomes, which give each biome its bit.
     biomes: &'a BiomeNames,
+    /// Tags already resolved, by full id.
     tags: HashMap<String, BiomeSet>,
     /// Tags being resolved, outermost first, for cycle detection.
     loading: Vec<String>,
@@ -82,9 +87,9 @@ impl<'a> Tags<'a> {
     /// list of biome ids.
     pub(crate) fn holder_set(&mut self, json: &Value, at: &At<'_>) -> LoadResult<BiomeSet> {
         match json {
-            Value::String(s) => match s.strip_prefix('#') {
+            Value::String(name) => match name.strip_prefix('#') {
                 Some(tag) => self.tag(tag, at),
-                None => self.biome(s, at),
+                None => self.biome(name, at),
             },
             Value::Array(items) => {
                 let mut set = BiomeSet::default();
@@ -154,7 +159,7 @@ impl<'a> Tags<'a> {
         for (i, entry) in values.iter().enumerate() {
             let at = values_at.child(&format!("[{i}]"));
             let (entry_id, required) = match entry {
-                Value::String(s) => (s.as_str(), true),
+                Value::String(name) => (name.as_str(), true),
                 Value::Object(obj) => (
                     obj.get("id")
                         .and_then(Value::as_str)

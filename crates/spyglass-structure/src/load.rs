@@ -154,9 +154,13 @@ pub struct StructureSet {
 /// source. Independent of the seed.
 #[derive(Debug, Clone)]
 pub struct StructureSets {
+    /// Every set, sorted by id.
     sets: Vec<StructureSet>,
+    /// Every structure a set names, in the order first named; entries index it.
     structures: Vec<Structure>,
+    /// The dimension's heights, as structures see them.
     heights: GenerationHeights,
+    /// The noise settings' `sea_level`.
     sea_level: i32,
     /// The noise settings' `noise.min_y` (`ChunkGenerator.getMinY`).
     generator_min_y: i32,
@@ -164,6 +168,7 @@ pub struct StructureSets {
     legacy_random_source: bool,
     /// The noises the start pools' corner constraints use.
     corner_noises: HashMap<String, NormalNoiseParameters>,
+    /// `#minecraft:required_ocean_monument_surrounding`, empty if the bundle lacks it.
     monument_surroundings: BiomeSet,
     /// The dimension's spawn targets, if a set is placed at the dimension origin.
     spawn: Option<SpawnTargets>,
@@ -257,15 +262,17 @@ impl StructureSets {
         // Bind the start pools' corner constraints once, so that checks can't fail to: binding
         // depends on the dimension, not the seed.
         let mut samplers = sets.corner_samplers(0);
-        for s in &sets.structures {
-            let Some(jigsaw) = &s.jigsaw else { continue };
+        for structure in &sets.structures {
+            let Some(jigsaw) = &structure.jigsaw else {
+                continue;
+            };
             for element in &jigsaw.start_pool.templates {
-                for f in element
+                for function in element
                     .corner_constraint()
                     .into_iter()
                     .flat_map(|c| c.functions())
                 {
-                    samplers.bind(f)?;
+                    samplers.bind(function)?;
                 }
             }
         }
@@ -423,20 +430,31 @@ fn dimension_heights(
 
 /// What [`dimension_heights`] reads from a dimension's type and noise settings.
 struct DimensionSettings {
+    /// The generation and level heights.
     heights: GenerationHeights,
+    /// `sea_level`.
     sea_level: i32,
+    /// `noise.min_y`.
     generator_min_y: i32,
+    /// `legacy_random_source`, false if absent.
     legacy_random_source: bool,
     /// The noise settings' id.
     noise_settings: String,
 }
 
+/// Loads structure sets, and each structure they name once.
 struct SetLoader<'a> {
+    /// Where sets and structures are read from.
     bundle: &'a Bundle,
+    /// Resolves the biome sets structures and rings name.
     tags: Tags<'a>,
+    /// Every structure loaded so far, in the order first named.
     structures: Vec<Structure>,
+    /// Each loaded structure's index in `structures`, by id.
     structure_index: HashMap<String, usize>,
+    /// Every set's index by id, for exclusion zones, which may name a set not loaded yet.
     set_index: &'a HashMap<String, usize>,
+    /// Loads jigsaw pools and templates.
     jigsaw: JigsawLoader<'a>,
 }
 
@@ -536,9 +554,9 @@ impl SetLoader<'_> {
             mineshaft,
             step,
         });
-        let i = self.structures.len() - 1;
-        self.structure_index.insert(id, i);
-        Ok(i)
+        let index = self.structures.len() - 1;
+        self.structure_index.insert(id, index);
+        Ok(index)
     }
 
     /// `MineshaftStructure.CODEC`'s own fields: `mineshaft_type` (`normal` or `mesa`), and the
@@ -654,16 +672,16 @@ impl SetLoader<'_> {
             None => 1.0,
             Some(v) => {
                 let at = at.child("frequency");
-                let f =
+                let frequency =
                     codec::f32_of(v).ok_or_else(|| at.error(LoadErrorKind::Shape("a number")))?;
-                if !(0.0..=1.0).contains(&f) {
+                if !(0.0..=1.0).contains(&frequency) {
                     return Err(at.error(LoadErrorKind::OutOfRange {
                         value: v.to_string(),
                         min: "0".into(),
                         max: "1".into(),
                     }));
                 }
-                f
+                frequency
             }
         };
         let salt = codec::int_of(field(obj, "salt", at)?)

@@ -24,11 +24,13 @@ use crate::load::StructureSets;
 /// structure templates, so it's separate from loading the sets.
 #[derive(Debug, Clone)]
 pub struct JigsawPools {
+    /// Every reachable pool the bundle has, by id.
     pools: HashMap<String, Arc<Pool>>,
     /// The noises corner constraints' functions use.
     noises: HashMap<String, NormalNoiseParameters>,
     /// How the dimension's `RandomState` binds them.
     legacy_random_source: bool,
+    /// The dimension's heights, which the functions' anchors resolve against.
     anchors: AnchorHeights,
 }
 
@@ -40,8 +42,8 @@ impl JigsawPools {
         let mut loader = JigsawLoader::new(bundle);
         let mut pools = HashMap::new();
         let mut queue: Vec<String> = Vec::new();
-        for s in sets.structures() {
-            if let Some(jigsaw) = &s.jigsaw {
+        for structure in sets.structures() {
+            if let Some(jigsaw) = &structure.jigsaw {
                 queue.extend(jigsaw.named_pools());
             }
         }
@@ -113,9 +115,13 @@ pub enum Assembly {
 
 /// A placed piece (`PoolElementStructurePiece`), as far as assembly needs it.
 struct Piece<'a> {
+    /// What it places.
     element: &'a PoolElement,
+    /// Its template origin: where its jigsaws and box are measured from.
     pos: [i32; 3],
+    /// How it's turned.
     rotation: Rotation,
+    /// The blocks it takes.
     bbox: BoundingBox,
 }
 
@@ -123,20 +129,25 @@ struct Piece<'a> {
 /// aren't in any of `taken`. The game builds it from whole blocks, and tests a piece by its box
 /// shrunk by a quarter, so a piece fits exactly when each of its blocks is free.
 struct Free {
+    /// The space's outer limit.
     bound: BoundingBox,
+    /// The pieces' boxes already in it.
     taken: Vec<BoundingBox>,
 }
 
 impl Free {
-    fn fits(&self, b: &BoundingBox) -> bool {
-        self.bound.contains_box(b) && !self.taken.iter().any(|t| t.intersects(b))
+    fn fits(&self, piece: &BoundingBox) -> bool {
+        self.bound.contains_box(piece) && !self.taken.iter().any(|t| t.intersects(piece))
     }
 }
 
 /// A piece waiting for its children (`PieceState`).
 struct Waiting {
+    /// Its index in the placer's pieces.
     piece: usize,
+    /// The index of the free space its children take room in.
     free: usize,
+    /// How deep in the tree it is: the start is 0.
     depth: i32,
 }
 
@@ -144,22 +155,26 @@ struct Waiting {
 /// equals.
 #[derive(Default)]
 struct Queue {
+    /// `(priority, order pushed, index in items)`: the max-heap pops the highest priority, then
+    /// the earliest pushed.
     heap: BinaryHeap<(i32, Reverse<u64>, usize)>,
+    /// The waiting pieces, taken out as they're popped.
     items: Vec<Option<Waiting>>,
+    /// The next push's place in the order.
     next: u64,
 }
 
 impl Queue {
-    fn push(&mut self, w: Waiting, priority: i32) {
+    fn push(&mut self, waiting: Waiting, priority: i32) {
         self.heap
             .push((priority, Reverse(self.next), self.items.len()));
-        self.items.push(Some(w));
+        self.items.push(Some(waiting));
         self.next += 1;
     }
 
     fn pop(&mut self) -> Option<Waiting> {
-        let (_, _, i) = self.heap.pop()?;
-        self.items[i].take()
+        let (_, _, index) = self.heap.pop()?;
+        self.items[index].take()
     }
 }
 
@@ -176,21 +191,21 @@ fn resolve_aliases(bindings: &[AliasBinding], pos: [i32; 3], seed: i64) -> HashM
     // WeightedList.getRandomOrThrow: nextInt(total), then the entry that index falls in.
     fn pick<'t, T>(list: &'t [(T, i32)], random: &mut LegacyRandomSource) -> &'t T {
         let total: i32 = list.iter().map(|(_, w)| w).sum();
-        let mut n = random.next_int_bounded(total);
-        for (item, w) in list {
-            n -= w;
-            if n < 0 {
+        let mut draw = random.next_int_bounded(total);
+        for (item, weight) in list {
+            draw -= weight;
+            if draw < 0 {
                 return item;
             }
         }
         unreachable!("an index below the total weight falls in some entry")
     }
     fn resolve(
-        b: &AliasBinding,
+        binding: &AliasBinding,
         random: &mut LegacyRandomSource,
         map: &mut HashMap<String, String>,
     ) {
-        match b {
+        match binding {
             AliasBinding::Direct { alias, target } => {
                 map.insert(alias.clone(), target.clone());
             }
@@ -198,26 +213,33 @@ fn resolve_aliases(bindings: &[AliasBinding], pos: [i32; 3], seed: i64) -> HashM
                 map.insert(alias.clone(), pick(targets, random).clone());
             }
             AliasBinding::RandomGroup { groups } => {
-                for b in pick(groups, random) {
-                    resolve(b, random, map);
+                for binding in pick(groups, random) {
+                    resolve(binding, random, map);
                 }
             }
         }
     }
-    for b in bindings {
-        resolve(b, &mut random, &mut map);
+    for binding in bindings {
+        resolve(binding, &mut random, &mut map);
     }
     map
 }
 
 /// The game's `Placer`, for one start.
 struct Placer<'a, 'h> {
+    /// The structure's settings: its depth, and whether it uses the expansion hack.
     jigsaw: &'a Jigsaw,
+    /// Every pool a jigsaw block can name.
     pools: &'a JigsawPools,
+    /// This start's pool aliases, resolved: alias to pool id.
     aliases: HashMap<String, String>,
+    /// The start's random, after the start piece's draws; every shuffle draws from it.
     random: LegacyRandomSource,
+    /// Every piece placed so far, the start first.
     pieces: Vec<Piece<'a>>,
+    /// The free spaces: the start's, then one for each piece with a jigsaw facing into itself.
     free: Vec<Free>,
+    /// Pieces waiting for their children.
     queue: Queue,
     /// `ChunkGenerator.getFirstFreeHeight(x, z, WORLD_SURFACE_WG)`, or `None` without terrain.
     first_free: &'h mut dyn FnMut(i32, i32, Heightmap) -> Option<i32>,
@@ -249,13 +271,13 @@ impl<'a> Placer<'a, '_> {
 
     /// The expansion hack's height for a child's jigsaw at the origin: if it faces into the
     /// child's own box, the tallest element its pool or the pool's fallback has.
-    fn expansion(&self, child_box: &BoundingBox, j: &crate::jigsaw::PlacedJigsaw<'_>) -> i32 {
-        let step = j.front.step();
-        let facing = [0, 1, 2].map(|i| j.pos[i].wrapping_add(step[i]));
+    fn expansion(&self, child_box: &BoundingBox, jigsaw: &crate::jigsaw::PlacedJigsaw<'_>) -> i32 {
+        let step = jigsaw.front.step();
+        let facing = [0, 1, 2].map(|i| jigsaw.pos[i].wrapping_add(step[i]));
         if !child_box.contains(facing) {
             return 0;
         }
-        let Some(pool) = self.pools.get(self.lookup(&j.data.pool)) else {
+        let Some(pool) = self.pools.get(self.lookup(&jigsaw.data.pool)) else {
             return 0;
         };
         let fallback = self.pools.get(&pool.fallback).map_or(0, |f| f.max_size);
@@ -263,6 +285,15 @@ impl<'a> Placer<'a, '_> {
     }
 
     /// `tryPlacingChildren`: one piece's children, each attached to one of its jigsaw blocks.
+    ///
+    /// Each of the piece's jigsaws (shuffled) gets at most one child. The candidates are the
+    /// jigsaw's pool, shuffled (unless the piece is at the deepest level), then its fallback
+    /// pool, shuffled. For each candidate, in each of the four rotations (shuffled), each of its
+    /// jigsaws (shuffled) that can attach is tried: the child moves so that jigsaw is in the
+    /// block in front of the parent's, and is placed if its box fits the free space and it
+    /// passes its corner constraint. The first placed is the child; an empty element reached in
+    /// the list means no child. Every shuffle draws
+    /// from the start's random, so the order of the loops is the order of the draws.
     fn try_placing_children(&mut self, at: Waiting) -> Result<(), NoTerrain> {
         let size = self.jigsaw.size;
         let piece = &self.pieces[at.piece];
@@ -273,8 +304,11 @@ impl<'a> Placer<'a, '_> {
         let mut internal: Option<usize> = None;
         'parents: for parent in element.shuffled_jigsaws(pos, rotation, &mut self.random) {
             let step = parent.front.step();
+            // The block the parent jigsaw faces, where the child's jigsaw goes.
             let target = [0, 1, 2].map(|i| parent.pos[i].wrapping_add(step[i]));
-            let rel_y = parent.pos[1].wrapping_sub(min_y);
+            // The parent jigsaw's height above the piece's floor.
+            let parent_rel_y = parent.pos[1].wrapping_sub(min_y);
+            // The first free height at the parent jigsaw, asked for at most once.
             let mut surface: Option<i32> = None;
             let Some((pool, fallback)) = self.pool_and_fallback(&parent.data.pool) else {
                 continue;
@@ -311,6 +345,8 @@ impl<'a> Placer<'a, '_> {
                     let origin_box = candidate
                         .bounding_box([0; 3], child_rotation)
                         .expect("non-empty elements have a box");
+                    // The expansion hack: a short piece reserves room above it for what its own
+                    // jigsaws may grow into.
                     let expand = if self.jigsaw.use_expansion_hack && origin_box.y_span() <= 16 {
                         child_jigsaws
                             .iter()
@@ -329,33 +365,40 @@ impl<'a> Placer<'a, '_> {
                             .bounding_box(offset, child_rotation)
                             .expect("non-empty elements have a box");
                         let child_rigid = candidate.projection() == Projection::Rigid;
+                        // The child jigsaw's y in its template, at the origin.
                         let child_y = child.pos[1];
-                        let jy = rel_y.wrapping_sub(child_y).wrapping_add(step[1]);
+                        // Where the child's floor goes: against the parent if both are rigid,
+                        // else with its jigsaw on the surface.
+                        let floor_offset = parent_rel_y.wrapping_sub(child_y).wrapping_add(step[1]);
                         let target_y = if rigid && child_rigid {
-                            min_y.wrapping_add(jy)
+                            min_y.wrapping_add(floor_offset)
                         } else {
-                            let s = match surface {
-                                Some(s) => s,
+                            let surface_y = match surface {
+                                Some(known) => known,
                                 None => {
-                                    let s = (self.first_free)(
+                                    let asked = (self.first_free)(
                                         parent.pos[0],
                                         parent.pos[2],
                                         Heightmap::WorldSurfaceWg,
                                     )
                                     .ok_or(NoTerrain)?;
-                                    *surface.insert(s)
+                                    *surface.insert(asked)
                                 }
                             };
-                            s.wrapping_sub(child_y)
+                            surface_y.wrapping_sub(child_y)
                         };
                         let dy = target_y.wrapping_sub(child_box.min[1]);
                         let mut moved = child_box.moved([0, dy, 0]);
                         let place = [offset[0], offset[1].wrapping_add(dy), offset[2]];
                         if expand > 0 {
-                            let h = expand
+                            let reserved_height = expand
                                 .wrapping_add(1)
                                 .max(moved.max[1].wrapping_sub(moved.min[1]));
-                            let top = [moved.min[0], moved.min[1].wrapping_add(h), moved.min[2]];
+                            let top = [
+                                moved.min[0],
+                                moved.min[1].wrapping_add(reserved_height),
+                                moved.min[2],
+                            ];
                             moved = moved.encapsulate(BoundingBox { min: top, max: top });
                         }
                         if !self.free[free].fits(&moved) {
@@ -420,7 +463,7 @@ impl Jigsaw {
                     return Assembly::NeedsTerrain;
                 };
                 match first_free(x, z, heightmap) {
-                    Some(h) => start.start[1].wrapping_add(h),
+                    Some(height) => start.start[1].wrapping_add(height),
                     None => return Assembly::NeedsTerrain,
                 }
             }
@@ -443,21 +486,25 @@ impl Jigsaw {
         let check_y = y.wrapping_add(start.offset[1]);
         // The free space: a box around the centre, padded off the world's limits, minus the
         // start piece. AABB orders its corners.
-        let (h, v) = self.max_distance;
+        let (horizontal, vertical) = self.max_distance;
         let (bottom, top) = self.dimension_padding.unwrap_or((0, 0));
         let lo = check_y
-            .wrapping_sub(v)
+            .wrapping_sub(vertical)
             .max(heights.level_min_y.wrapping_add(bottom));
         let hi = check_y
-            .wrapping_add(v)
+            .wrapping_add(vertical)
             .wrapping_add(1)
             .min(heights.level_max_y().wrapping_add(1).wrapping_sub(top));
         let bound = BoundingBox {
-            min: [x.wrapping_sub(h), lo.min(hi), z.wrapping_sub(h)],
+            min: [
+                x.wrapping_sub(horizontal),
+                lo.min(hi),
+                z.wrapping_sub(horizontal),
+            ],
             max: [
-                x.wrapping_add(h),
+                x.wrapping_add(horizontal),
                 lo.max(hi).wrapping_sub(1),
-                z.wrapping_add(h),
+                z.wrapping_add(horizontal),
             ],
         };
         let pos = [start.pos[0], start.pos[1].wrapping_add(dy), start.pos[2]];
@@ -481,13 +528,15 @@ impl Jigsaw {
             first_free,
             corners,
         };
+        // Breadth by priority: the start's children first, then each waiting piece's in the
+        // queue's order, until none is left.
         let mut next = Some(Waiting {
             piece: 0,
             free: 0,
             depth: 0,
         });
-        while let Some(w) = next {
-            if placer.try_placing_children(w).is_err() {
+        while let Some(waiting) = next {
+            if placer.try_placing_children(waiting).is_err() {
                 return Assembly::NeedsTerrain;
             }
             next = placer.queue.pop();

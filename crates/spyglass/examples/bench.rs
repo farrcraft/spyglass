@@ -204,6 +204,7 @@ fn main() -> spyglass::Result<()> {
     }
     viewer_tiles(&world, &mut seeds)?;
     underground_tiles(&world, &mut seeds)?;
+    feature_tiles(&world, &mut seeds)?;
     let view = spyglass::MapArea::centred_on([0, 0], [1024, 1024], 16, 64)?;
     let layers = spyglass::Layers {
         structures: vec![villages.clone(), stronghold.clone()],
@@ -300,6 +301,41 @@ fn main() -> spyglass::Result<()> {
             black_box(session.evaluate(&query, false).unwrap());
         });
     }
+    // Features: the nearest dungeon, and a search for two near the spawn (ADR 0057), whose
+    // seeds each place a hundred-odd chunks.
+    let dungeons = world.feature_query("minecraft:monster_room")?;
+    report("nearest_feature monster_room, new session", 3, || {
+        let session = world.session(*seeds.next().unwrap()).unwrap();
+        black_box(
+            session
+                .nearest_feature(
+                    &dungeons,
+                    [0, 64, 0],
+                    32,
+                    spyglass::FeatureOptions::default(),
+                )
+                .unwrap(),
+        );
+    });
+    let pair = world.search_query(
+        "require cluster 2 feature minecraft:monster_room within 16 of each other within 96 of spawn",
+    )?;
+    report("evaluate two dungeons near spawn, new session", 3, || {
+        let session = world.session(*seeds.next().unwrap()).unwrap();
+        black_box(session.evaluate(&pair, false).unwrap());
+    });
+    rate_world(
+        &world,
+        "search, two dungeons near spawn, all threads",
+        &pair,
+        spyglass::SeedSource::Range {
+            first: 0,
+            last: i64::MAX,
+        },
+        64,
+        None,
+        false,
+    );
     let huts = world.search_query(kinds[0].1)?;
     report("evaluate swamp hut count confirmed, new session", 5, || {
         let session = world.session(*seeds.next().unwrap()).unwrap();
@@ -568,6 +604,40 @@ fn underground_tiles<'a>(
     Ok(())
 }
 
+/// Dungeon markers on one of the viewer's 128 × 128 tiles, at each scale they're drawn at, in
+/// a session that has drawn the tile west of it (`docs/specs/render.md#layers`).
+fn feature_tiles<'a>(
+    world: &World,
+    seeds: &mut impl Iterator<Item = &'a i64>,
+) -> spyglass::Result<()> {
+    let layers = Layers {
+        biomes: false,
+        features: vec![world.feature_query("minecraft:monster_room")?],
+        ..Layers::default()
+    };
+    for scale in 1..=spyglass::MAX_FEATURE_SCALE {
+        let tile = |x: i32| MapArea {
+            min: [x * 128 * scale as i32, 0],
+            size: [128, 128],
+            scale,
+            y: 64,
+        };
+        report_after(
+            &format!("128 x 128 tile dungeons at 1:{scale}, next tile"),
+            3,
+            || {
+                let session = world.session(*seeds.next().unwrap()).unwrap();
+                black_box(session.map_features(&tile(0), &layers).unwrap());
+                session
+            },
+            |session| {
+                black_box(session.map_features(&tile(1), &layers).unwrap());
+            },
+        );
+    }
+    Ok(())
+}
+
 /// [`rate`] for a search in one world.
 fn rate_world(
     world: &World,
@@ -609,7 +679,7 @@ fn rate(
     let seconds = start.elapsed().as_secs_f64();
     let p = &outcome.progress;
     println!(
-        "{name:<50} {:>10.0} seeds/s ({} checked, {} reported)",
+        "{name:<50} {:>10.1} seeds/s ({} checked, {} reported)",
         count as f64 / seconds,
         p.checked,
         p.reported

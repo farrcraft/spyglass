@@ -68,8 +68,9 @@ switch ($Action) {
         if (-not (Test-Path $exe)) { throw "no ${exe}: cargo build --profile dist -p spyglass-viewer" }
         New-Item -ItemType Directory -Force $Out | Out-Null
         $bundles = (Join-Path $repo 'bundles') -replace '\\', '/'
-        $ids = ($Structures | ForEach-Object { '\"' + $_ + '\"' }) -join ','
-        $features = ($Features | ForEach-Object { '\"' + $_ + '\"' }) -join ','
+        # A quoted "a,b" arrives as one string: split it as an unquoted list would be.
+        $ids = ($Structures -split ',' | Where-Object { $_ } | ForEach-Object { '\"' + $_ + '\"' }) -join ','
+        $features = ($Features -split ',' | Where-Object { $_ } | ForEach-Object { '\"' + $_ + '\"' }) -join ','
         $flag = { param($b) if ($b) { 'true' } else { 'false' } }
         # The viewer's settings in RON, as eframe stores them; fields left out take defaults.
         $viewer = "(bundles:\`"$bundles\`",version:Some(\`"$Version\`"),seed:\`"$Seed\`"," +

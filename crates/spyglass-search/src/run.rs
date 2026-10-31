@@ -8,8 +8,11 @@ use std::time::{Duration, Instant};
 
 use rayon::prelude::*;
 
-/// Indices per batch of checks: small, since one check can take milliseconds.
+/// The most indices per batch of checks: small, since one check can take milliseconds.
 const BATCH: u128 = 16;
+/// How long a batch aims to take on its thread: batches of slow checks, which can take seconds
+/// each, hold fewer, so every thread has one and a cut round drops little.
+const BATCH_TIME: f64 = 0.01;
 /// Seeds that share their lower 48 bits in [`SeedSource::All`]: one prefilter answer each.
 const GROUP: u128 = 1 << 16;
 /// How long a round of batches aims to take: progress is reported between rounds, and each
@@ -341,9 +344,10 @@ pub fn run<E: Send>(
         .seeds
         .map_or(len, |n| (from + u128::from(n)).min(len));
     let threads = pool.current_num_threads() as u128;
-    // Every thread gets a batch in the first round; later rounds aim at ROUND.
-    let min_round = threads * BATCH;
-    let mut round = min_round;
+    // The first round has a batch of one index for each thread; later rounds' batches aim at
+    // BATCH_TIME, and their rounds at ROUND, with a batch for every thread at least.
+    let mut batch_len = 1;
+    let mut round = threads;
     let grouped = options.source.groups_share_lower_bits();
     let next = |cursor: u128| (cursor < len).then_some(cursor as u64);
     let mut state = Progress {
@@ -402,8 +406,8 @@ pub fn run<E: Send>(
         let batches: Vec<(u128, u128)> = ranges
             .into_iter()
             .flat_map(|(a, b)| {
-                (0..(b - a).div_ceil(BATCH))
-                    .map(move |k| (a + k * BATCH, (a + (k + 1) * BATCH).min(b)))
+                (0..(b - a).div_ceil(batch_len))
+                    .map(move |k| (a + k * batch_len, (a + (k + 1) * batch_len).min(b)))
             })
             .collect();
         // Whether to leave the seed at `index` for later. The round's first index is never
@@ -467,7 +471,10 @@ pub fn run<E: Send>(
             .sum::<u64>();
         let took = started.elapsed().as_secs_f64().max(1e-6);
         let per_second = (reached - cursor) as f64 / took;
-        round = ((per_second * ROUND.as_secs_f64()) as u128).clamp(min_round, MAX_ROUND);
+        // Per thread, so checks that keep every thread busy fill a batch as fast as one alone.
+        let per_thread = per_second / threads as f64;
+        batch_len = ((per_thread * BATCH_TIME) as u128).clamp(1, BATCH);
+        round = ((per_second * ROUND.as_secs_f64()) as u128).clamp(threads * batch_len, MAX_ROUND);
         cursor = reached;
         state.evaluated = u64::try_from(cursor - from).unwrap_or(u64::MAX);
         state.next = next(cursor);
@@ -732,6 +739,39 @@ mod tests {
             |_| ControlFlow::Continue(()),
         );
         assert_eq!(out.unwrap_err(), "bad seed");
+    }
+
+    #[test]
+    fn slow_checks_spread_over_the_threads_and_run_once() {
+        // Checks of 300 ms each, as a feature search's are. Each thread takes one seed at a
+        // time, so no round is cut with checks done but dropped, and none runs twice.
+        let source = SeedSource::Range {
+            first: 0,
+            last: 999,
+        };
+        let o = options(source.clone(), 0, Some(24), 5);
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let started = Instant::now();
+        let out = run(
+            &four(),
+            &o,
+            |_| true,
+            |seed, threshold| {
+                calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                std::thread::sleep(Duration::from_millis(300));
+                score(seed, threshold)
+            },
+            |_| ControlFlow::Continue(()),
+        )
+        .unwrap();
+        assert_eq!(calls.into_inner(), 24);
+        assert_eq!(out.top, brute_force(&source, 0, 24, 5));
+        // Six rounds of four: 1.8 s, where batches of 16 took over 5 s.
+        assert!(
+            started.elapsed() < Duration::from_secs(4),
+            "{:?}",
+            started.elapsed()
+        );
     }
 
     #[test]

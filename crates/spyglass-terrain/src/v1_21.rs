@@ -21,10 +21,15 @@ use crate::aquifer::{
 /// `OreVeinifier.VeinType`: a vein's blocks and the y range it occurs in, both ends included.
 #[derive(Debug, Clone, Copy)]
 struct VeinType {
+    /// The ore, most of the vein's richer blocks.
     ore: VeinBlock,
+    /// The rare raw-ore block among the ore.
     raw_ore_block: VeinBlock,
+    /// The stone around and between the ore.
     filler: VeinBlock,
+    /// The lowest y it occurs at.
     min_y: i32,
+    /// The highest y it occurs at.
     max_y: i32,
 }
 
@@ -70,9 +75,9 @@ fn vein(
     if strength + roundoff < f64::from(0.4f32) {
         return None;
     }
-    let mut r = random.at(x, y, z);
+    let mut draws = random.at(x, y, z);
     // VEIN_SOLIDNESS.
-    if r.next_float() > 0.7 {
+    if draws.next_float() > 0.7 {
         return None;
     }
     if ridged() >= 0.0 {
@@ -87,8 +92,8 @@ fn vein(
         f64::from(0.3f32),
     );
     // SKIP_ORE_IF_GAP_NOISE_IS_BELOW, (double) -0.3f; CHANCE_OF_RAW_ORE_BLOCK.
-    if f64::from(r.next_float()) < richness && gap() > f64::from(-0.3f32) {
-        return Some(if r.next_float() < 0.02 {
+    if f64::from(draws.next_float()) < richness && gap() > f64::from(-0.3f32) {
+        return Some(if draws.next_float() < 0.02 {
             kind.raw_ore_block
         } else {
             kind.ore
@@ -175,9 +180,16 @@ impl ChunkTerrain {
     /// The column's range, whole cells: its lowest y and its height (`cellNoiseMinY ·
     /// cellHeight`, `cellCountY · cellHeight`), the height 0 if no cell fits.
     pub(crate) fn range(noise: NoiseSettings) -> (i32, i32) {
-        let ch = noise.cell_height();
-        let min_y = noise.min_y.div_euclid(ch).wrapping_mul(ch);
-        let height = noise.height.div_euclid(ch).max(0).wrapping_mul(ch);
+        let cell_height = noise.cell_height();
+        let min_y = noise
+            .min_y
+            .div_euclid(cell_height)
+            .wrapping_mul(cell_height);
+        let height = noise
+            .height
+            .div_euclid(cell_height)
+            .max(0)
+            .wrapping_mul(cell_height);
         (min_y, height)
     }
 
@@ -294,10 +306,10 @@ impl ChunkTerrain {
         });
         for i in (0..height as usize).rev() {
             let y = min_y + i as i32;
-            let d = density.unwrap_or_else(|| chunk.interpolated_density(x, y, z));
+            let value = density.unwrap_or_else(|| chunk.interpolated_density(x, y, z));
             out[i] = match aquifer.as_mut() {
-                Some(aquifer) => aquifer.substance(x, y, z, d),
-                None if d > 0.0 => Block::Default,
+                Some(aquifer) => aquifer.substance(x, y, z, value),
+                None if value > 0.0 => Block::Default,
                 None => self.picker.status(y).at(y),
             };
         }

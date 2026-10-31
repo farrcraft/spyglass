@@ -168,10 +168,15 @@ impl SurfaceLevels {
 /// centre and fluid status, and surface levels, so asking about one block changes nothing
 /// another answer depends on: the answers don't depend on the order of questions.
 pub struct Aquifer<'s> {
+    /// What it samples.
     inputs: Inputs<'s>,
+    /// The seed's `minecraft:aquifer` factory, which places each cell's centre.
     random: XoroshiroPositionalRandomFactory,
+    /// The sea and the lava below it, which cells fall back on.
     picker: FluidPicker,
+    /// The region's lowest cell.
     min_grid: [i32; 3],
+    /// How many cells the region spans on each axis.
     grid_size: [i32; 3],
     /// `aquiferLocationCache`: each cell's centre.
     centres: Vec<Option<[i32; 3]>>,
@@ -181,6 +186,7 @@ pub struct Aquifer<'s> {
     surface_levels: HashMap<(i32, i32), i32>,
     /// The seed's surface levels, if shared.
     shared: Option<&'s SurfaceLevels>,
+    /// `skipSamplingAboveY`: above it, every block takes the fluid picker's answer.
     skip_sampling_above_y: i32,
 }
 
@@ -199,6 +205,8 @@ enum Inputs<'s> {
 /// `(double) 0.9f`.
 const DEEP_DARK_EROSION: f64 = -0.225f32 as f64;
 const DEEP_DARK_DEPTH: f64 = 0.9f32 as f64;
+
+// Aquifer cells are 16 blocks wide and 12 high, each with a centre somewhere in it.
 
 fn grid_x(x: i32) -> i32 {
     x >> 4
@@ -322,6 +330,8 @@ impl<'s> Aquifer<'s> {
             from_grid_xz(max_grid[0], 9),
             from_grid_xz(max_grid[2], 9),
         );
+        // A cell above the highest surface's: above that, every centre a block can see is
+        // high enough to take the fluid picker's status (`docs/specs/terrain.md#skipping`).
         let top_cell = grid_y(highest + 8 + 12) + 1;
         aquifer.skip_sampling_above_y = from_grid_y(top_cell, 11) - 1;
         aquifer
@@ -387,10 +397,10 @@ impl<'s> Aquifer<'s> {
             }
         }
         #[cfg(feature = "timing")]
-        let t = spyglass_density::timing::span("aquifer: surface levels");
+        let span = spyglass_density::timing::span("aquifer: surface levels");
         let values = samplers.surface_level.sample_volume(&volume);
         #[cfg(feature = "timing")]
-        drop(t);
+        drop(span);
         let mut highest = i32::MIN;
         for iz in 0..volume.size[2] {
             for ix in 0..volume.size[0] {
@@ -446,6 +456,12 @@ impl<'s> Aquifer<'s> {
 
     /// `computeSubstance(x, y, z, density)`: the default block (the game's `null`), or the fluid
     /// or air that fills the block.
+    ///
+    /// Each cell's centre has a fluid status: a fluid up to a level. An open block takes the
+    /// status of the nearest centre. Where a second or third centre is nearly as near, and its
+    /// status differs, the block may be a barrier of the default block instead: the more alike
+    /// the distances and the stronger the pressure between the two statuses, the likelier.
+    /// That keeps water at one level from spilling into air or lava beside it.
     pub fn substance(&mut self, x: i32, y: i32, z: i32, density: f64) -> Block {
         if density > 0.0 {
             return Block::Default;
@@ -472,10 +488,16 @@ impl<'s> Aquifer<'s> {
                 }
             }
         }
-        let [(d1, i1), (d2, i2), (d3, i3)] = nearest;
-        let s1 = self.status(i1);
-        let sim12 = similarity(d1, d2);
-        let state = s1.at(y);
+        // The spec's d1 to d3 and s1 to s3. `sim12` and the others say how nearly a pair of
+        // centres tie: 1 for a tie, 0 or less from 25 apart.
+        let [
+            (first_distance, first),
+            (second_distance, second),
+            (third_distance, third),
+        ] = nearest;
+        let first_status = self.status(first);
+        let sim12 = similarity(first_distance, second_distance);
+        let state = first_status.at(y);
         if sim12 <= 0.0 {
             return state;
         }
@@ -484,20 +506,25 @@ impl<'s> Aquifer<'s> {
         }
         // The barrier noise, sampled at most once, when a pressure first needs it.
         let mut barrier = f64::NAN;
-        let s2 = self.status(i2);
-        if density + sim12 * self.pressure(x, y, z, &mut barrier, s1, s2) > 0.0 {
-            return Block::Default;
-        }
-        let s3 = self.status(i3);
-        let sim13 = similarity(d1, d3);
-        if sim13 > 0.0
-            && density + sim12 * sim13 * self.pressure(x, y, z, &mut barrier, s1, s3) > 0.0
+        let second_status = self.status(second);
+        if density + sim12 * self.pressure(x, y, z, &mut barrier, first_status, second_status) > 0.0
         {
             return Block::Default;
         }
-        let sim23 = similarity(d2, d3);
+        let third_status = self.status(third);
+        let sim13 = similarity(first_distance, third_distance);
+        if sim13 > 0.0
+            && density
+                + sim12 * sim13 * self.pressure(x, y, z, &mut barrier, first_status, third_status)
+                > 0.0
+        {
+            return Block::Default;
+        }
+        let sim23 = similarity(second_distance, third_distance);
         if sim23 > 0.0
-            && density + sim12 * sim23 * self.pressure(x, y, z, &mut barrier, s2, s3) > 0.0
+            && density
+                + sim12 * sim23 * self.pressure(x, y, z, &mut barrier, second_status, third_status)
+                > 0.0
         {
             return Block::Default;
         }
@@ -507,35 +534,40 @@ impl<'s> Aquifer<'s> {
     /// A cell's centre: `positionalRandomFactory.at(cell)`, then offsets of `nextInt(10)`,
     /// `nextInt(9)` and `nextInt(10)` along x, y and z.
     fn centre(&mut self, index: usize, [gx, gy, gz]: [i32; 3]) -> [i32; 3] {
-        if let Some(c) = self.centres[index] {
-            return c;
+        if let Some(centre) = self.centres[index] {
+            return centre;
         }
-        let mut r = self.random.at(gx, gy, gz);
-        let ox = r.next_int_bounded(10);
-        let oy = r.next_int_bounded(9);
-        let oz = r.next_int_bounded(10);
-        let c = [
+        let mut random = self.random.at(gx, gy, gz);
+        let ox = random.next_int_bounded(10);
+        let oy = random.next_int_bounded(9);
+        let oz = random.next_int_bounded(10);
+        let centre = [
             from_grid_xz(gx, ox),
             from_grid_y(gy, oy),
             from_grid_xz(gz, oz),
         ];
-        self.centres[index] = Some(c);
-        c
+        self.centres[index] = Some(centre);
+        centre
     }
 
     /// `getAquiferStatus`: a cell's fluid status, computed at its centre once.
     fn status(&mut self, index: usize) -> FluidStatus {
-        if let Some(s) = self.statuses[index] {
-            return s;
+        if let Some(status) = self.statuses[index] {
+            return status;
         }
         let [x, y, z] = self.centres[index].expect("a status's centre is found first");
-        let s = self.compute_fluid(x, y, z);
-        self.statuses[index] = Some(s);
-        s
+        let status = self.compute_fluid(x, y, z);
+        self.statuses[index] = Some(status);
+        status
     }
 
     /// `calculatePressure`: how strongly two neighbouring statuses push a barrier into the
     /// block between them, from their blocks at y and their levels.
+    ///
+    /// Lava against water always calls for a barrier. Otherwise the pressure is positive in the
+    /// band between the two levels and falls off outside it; below the band's middle it reaches
+    /// 3 blocks further and falls off four times slower, so barriers reach further down than
+    /// up. Where it's moderate, the barrier noise roughens it.
     fn pressure(
         &self,
         x: i32,
@@ -556,17 +588,21 @@ impl<'s> Aquifer<'s> {
             return 0.0;
         }
         let average = 0.5 * f64::from(a.level + b.level);
+        // The spec's `e`: how far y is above the levels' middle.
         let offset = f64::from(y) + 0.5 - average;
         let half = f64::from(difference) / 2.0;
-        let o = half - offset.abs();
-        let r = if offset > 0.0 {
-            let q = 0.0 + o;
+        // The spec's `o`: how far inside the band between the levels y is (negative outside).
+        let inside = half - offset.abs();
+        // The spec's `r`, through `q`.
+        let base = if offset > 0.0 {
+            let q = 0.0 + inside;
             if q > 0.0 { q / 1.5 } else { q / 2.5 }
         } else {
-            let q = 3.0 + o;
+            let q = 3.0 + inside;
             if q > 0.0 { q / 3.0 } else { q / 10.0 }
         };
-        let s = if r < -2.0 || r > 2.0 {
+        // The spec's `s`.
+        let noise = if base < -2.0 || base > 2.0 {
             0.0
         } else {
             if barrier.is_nan() {
@@ -578,18 +614,23 @@ impl<'s> Aquifer<'s> {
             }
             *barrier
         };
-        2.0 * (s + r)
+        2.0 * (noise + base)
     }
 
     /// `computeFluid`: a centre's fluid status, from the surface levels around it.
+    ///
+    /// A centre well above its own surface is open to the sky: it takes the fluid picker's
+    /// status, the sea or air. One within reach of a surface that's under the sea, its own or
+    /// a nearby chunk's, is part of the sea. Otherwise it's underground, and the floodedness
+    /// noise decides its level from the lowest surface around.
     fn compute_fluid(&mut self, x: i32, y: i32, z: i32) -> FluidStatus {
         let global = self.picker.status(y);
         let mut lowest_surface = i32::MAX;
         let (top, bottom) = (y + 12, y - 12);
         let mut flooded = false;
         for (ox, oz) in SURFACE_OFFSETS {
-            let (sx, sz) = (x + (ox << 4), z + (oz << 4));
-            let raw = self.surface_level(sx, sz);
+            let (sample_x, sample_z) = (x + (ox << 4), z + (oz << 4));
+            let raw = self.surface_level(sample_x, sample_z);
             let adjusted = raw + 8;
             let centre = ox == 0 && oz == 0;
             if centre && bottom > adjusted {
@@ -616,7 +657,10 @@ impl<'s> Aquifer<'s> {
         }
     }
 
-    /// `computeSurfaceLevel`.
+    /// `computeSurfaceLevel`: a full cell is filled to the fluid picker's level, a partly full
+    /// one to a level of its own, and an empty one to far below the world. Under a flooded
+    /// surface the thresholds are lower, the nearer the surface the lower, so cells there fill
+    /// more easily.
     fn compute_surface_level(
         &self,
         x: i32,
@@ -630,7 +674,8 @@ impl<'s> Aquifer<'s> {
             (-1.0, -1.0)
         } else {
             let distance = (lowest_surface + 8) - y;
-            let f = if flooded {
+            // The spec's `f`: 1 at a flooded surface, falling to 0 at 64 below it.
+            let near_flooded_surface = if flooded {
                 clamped_map(f64::from(distance), 0.0, 64.0, 1.0, 0.0)
             } else {
                 0.0
@@ -639,10 +684,14 @@ impl<'s> Aquifer<'s> {
                 Inputs::Functions(s) => f64::from(s.fluid_level_floodedness.sample(x, y, z)),
                 Inputs::Chunk(c) => c.compute(RouterEntry::FluidLevelFloodedness, x, y, z),
             };
-            let n = clamp(floodedness, -1.0, 1.0);
-            let full_threshold = map(f, 1.0, 0.0, -0.3, 0.8);
-            let partial_threshold = map(f, 1.0, 0.0, -0.8, 0.4);
-            (n - partial_threshold, n - full_threshold)
+            // The spec's `n`.
+            let floodedness = clamp(floodedness, -1.0, 1.0);
+            let full_threshold = map(near_flooded_surface, 1.0, 0.0, -0.3, 0.8);
+            let partial_threshold = map(near_flooded_surface, 1.0, 0.0, -0.8, 0.4);
+            (
+                floodedness - partial_threshold,
+                floodedness - full_threshold,
+            )
         };
         if full > 0.0 {
             global.level
@@ -888,8 +937,8 @@ mod tests {
             aquifer.pressure(0, 5, 0, &mut barrier, water(20), water(20)),
             0.0
         );
-        // Far above both levels: r = (5 − 25.5) / 2.5 is outside ±2, so no barrier term, and
-        // the barrier noise isn't sampled.
+        // Far above both levels: r (the pressure's base) = (5 − 25.5) / 2.5 is outside ±2, so
+        // no barrier term, and the barrier noise isn't sampled.
         let r = (5.0 - 25.5) / 2.5;
         assert_eq!(
             aquifer.pressure(0, 40, 0, &mut barrier, water(10), water(20)),

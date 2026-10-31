@@ -825,8 +825,8 @@ impl Cave {
     /// Each cave starts at a random block of chunk `start`. A quarter of them first carve a
     /// room there, one ellipsoid, and then up to three more tunnels than the one every cave
     /// has. All of them carve only what falls in `chunk`: the game runs this for every start
-    /// chunk within reach of the chunk it's generating, seeded by the start chunk rather than that one, so
-    /// each chunk cuts its own part of the same caves.
+    /// chunk within reach of the chunk it's generating, seeded by the start chunk rather than
+    /// that one, so each chunk cuts its own part of the same caves.
     fn carve(
         &self,
         anchors: AnchorHeights,

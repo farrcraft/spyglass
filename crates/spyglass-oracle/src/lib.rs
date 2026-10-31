@@ -19,6 +19,7 @@ pub mod features;
 pub mod fixtures;
 pub mod probe;
 
+/// What a golden biome file starts with.
 const MAGIC: &[u8; 8] = b"SPYBIOME";
 /// The golden biome format version this reader understands.
 pub const FORMAT: u32 = 1;
@@ -116,16 +117,20 @@ impl BiomeGrid {
     }
 
     /// Parses and validates a golden file's bytes.
+    ///
+    /// The layout: the magic, the header's length and its JSON, a `u16` palette index per cell,
+    /// then each tied cell's index and tie set; little-endian throughout.
     pub fn parse(bytes: &[u8]) -> Result<Self, GoldenError> {
-        let mut r = Reader(bytes);
-        if r.take(8)? != MAGIC {
+        let mut reader = Reader(bytes);
+        if reader.take(8)? != MAGIC {
             return Err(GoldenError::BadMagic);
         }
-        let header_len = r.u32()? as usize;
-        let header_bytes = r.take(header_len)?;
+        let header_len = reader.u32()? as usize;
+        let header_bytes = reader.take(header_len)?;
         // Check the format before the rest of the header, so a newer file gets a clear error.
         #[derive(Deserialize)]
         struct Format {
+            /// The format version.
             format: u32,
         }
         let Format { format } = serde_json::from_slice(header_bytes)?;
@@ -144,11 +149,13 @@ impl BiomeGrid {
         let count = header
             .size
             .iter()
-            .try_fold(1usize, |n, &s| n.checked_mul(s as usize))
+            .try_fold(1usize, |cells, &side| cells.checked_mul(side as usize))
             .ok_or(GoldenError::Malformed("grid too large"))?;
         let in_palette = |i: u16| usize::from(i) < palette_len;
 
-        let cells = (0..count).map(|_| r.u16()).collect::<Result<Vec<_>, _>>()?;
+        let cells = (0..count)
+            .map(|_| reader.u16())
+            .collect::<Result<Vec<_>, _>>()?;
         if !cells.iter().all(|&c| in_palette(c)) {
             return Err(GoldenError::Malformed("cell outside the palette"));
         }
@@ -156,15 +163,17 @@ impl BiomeGrid {
         let mut ties = BTreeMap::new();
         let mut last = None;
         for _ in 0..header.ties {
-            let index = r.u32()?;
+            let index = reader.u32()?;
             if usize::try_from(index).map_or(true, |i| i >= count) || last >= Some(index) {
                 return Err(GoldenError::Malformed(
                     "tie index out of range or out of order",
                 ));
             }
             last = Some(index);
-            let n = r.u16()?;
-            let set = (0..n).map(|_| r.u16()).collect::<Result<Vec<_>, _>>()?;
+            let set_len = reader.u16()?;
+            let set = (0..set_len)
+                .map(|_| reader.u16())
+                .collect::<Result<Vec<_>, _>>()?;
             if set.len() < 2
                 || !set.is_sorted_by(|a, b| a < b)
                 || !set.iter().all(|&i| in_palette(i))
@@ -178,7 +187,7 @@ impl BiomeGrid {
             }
             ties.insert(index, set);
         }
-        if !r.0.is_empty() {
+        if !reader.0.is_empty() {
             return Err(GoldenError::Malformed("trailing bytes"));
         }
         Ok(BiomeGrid {
@@ -223,6 +232,7 @@ impl BiomeGrid {
         Some(((y * sz + z) * sx + x) as usize)
     }
 
+    /// The cell at a cell index.
     fn cell_at(&self, index: usize) -> Cell<'_> {
         let name = |i: &u16| self.header.palette[usize::from(*i)].as_str();
         match self.ties.get(&(index as u32)) {
@@ -255,22 +265,26 @@ impl BiomeGrid {
     }
 }
 
+/// The bytes not read yet.
 struct Reader<'a>(&'a [u8]);
 
 impl<'a> Reader<'a> {
-    fn take(&mut self, n: usize) -> Result<&'a [u8], GoldenError> {
-        if self.0.len() < n {
+    /// The next `len` bytes.
+    fn take(&mut self, len: usize) -> Result<&'a [u8], GoldenError> {
+        if self.0.len() < len {
             return Err(GoldenError::Malformed("truncated"));
         }
-        let (head, rest) = self.0.split_at(n);
+        let (head, rest) = self.0.split_at(len);
         self.0 = rest;
         Ok(head)
     }
 
+    /// The next little-endian `u16`.
     fn u16(&mut self) -> Result<u16, GoldenError> {
         Ok(u16::from_le_bytes(self.take(2)?.try_into().unwrap()))
     }
 
+    /// The next little-endian `u32`.
     fn u32(&mut self) -> Result<u32, GoldenError> {
         Ok(u32::from_le_bytes(self.take(4)?.try_into().unwrap()))
     }

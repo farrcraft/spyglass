@@ -29,8 +29,11 @@ pub struct BlockFile {
 pub struct GoldenChunk {
     /// Chunk x and z.
     pub chunk: [i32; 2],
+    /// The level's lowest y.
     min_y: i32,
+    /// The level's height in blocks, so each column's length.
     height: u32,
+    /// The chunk's states, in the order first met.
     palette: Vec<String>,
     /// By column (x fastest within z), then y from the bottom.
     blocks: Vec<u16>,
@@ -59,16 +62,16 @@ impl GoldenChunk {
 
     /// The chunk's blocks, each with its position, column by column from the bottom up.
     pub fn blocks(&self) -> impl Iterator<Item = ([i32; 3], &str)> + '_ {
-        let [cx, cz] = self.chunk.map(|c| c * 16);
-        let h = self.height as usize;
-        self.blocks.iter().enumerate().map(move |(i, &b)| {
-            let (column, dy) = (i / h, i % h);
+        let [west, north] = self.chunk.map(|c| c * 16);
+        let height = self.height as usize;
+        self.blocks.iter().enumerate().map(move |(i, &state)| {
+            let (column, dy) = (i / height, i % height);
             let pos = [
-                cx + (column % 16) as i32,
+                west + (column % 16) as i32,
                 self.min_y + dy as i32,
-                cz + (column / 16) as i32,
+                north + (column / 16) as i32,
             ];
-            (pos, self.palette[usize::from(b)].as_str())
+            (pos, self.palette[usize::from(state)].as_str())
         })
     }
 
@@ -133,6 +136,8 @@ impl BlockFile {
         let int = |v: &Value, what: &str| v.as_i64().ok_or(format!("{what} isn't an integer"));
         let min_y = int(&file["min_y"], "min_y")? as i32;
         let height = int(&file["height"], "height")? as u32;
+        // Each column is a list of runs, `[state, count]` from the bottom up; they're expanded
+        // here into one palette index per block.
         let mut chunks = Vec::new();
         for chunk in file["chunks"].as_array().ok_or("no chunks")? {
             let pos = [

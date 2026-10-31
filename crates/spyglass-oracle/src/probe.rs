@@ -79,7 +79,7 @@ pub struct Case {
 impl Case {
     /// A short description for assertion messages.
     pub fn label(&self) -> String {
-        let mut s = self.test.clone();
+        let mut label = self.test.clone();
         for (key, value) in [
             ("method", self.method.clone()),
             ("kind", self.kind.clone()),
@@ -89,15 +89,16 @@ impl Case {
             ("name", self.name.clone()),
         ] {
             if let Some(value) = value {
-                s.push_str(&format!(" {key}={value}"));
+                label.push_str(&format!(" {key}={value}"));
             }
         }
         if !self.point.is_empty() {
-            s.push_str(&format!(" point={:?}", self.point_f64()));
+            label.push_str(&format!(" point={:?}", self.point_f64()));
         }
-        s
+        label
     }
 
+    /// Panics unless the values are of `wanted` type.
     fn expect_type(&self, wanted: &str) {
         assert_eq!(
             self.kind_of_values,

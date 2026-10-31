@@ -17,6 +17,7 @@ use tempfile::TempDir;
 /// A bundle in its own temporary bundles folder, deleted when dropped: the bundle is
 /// `<folder>/test`, and nothing else is in the folder.
 pub struct TestBundle {
+    /// The bundles folder, deleted on drop.
     root: TempDir,
 }
 

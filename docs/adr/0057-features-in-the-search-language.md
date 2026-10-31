@@ -1,6 +1,6 @@
 # 0057. Features in the search language
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-31
 
 ## Context

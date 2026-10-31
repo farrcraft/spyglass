@@ -473,8 +473,9 @@ pub enum Locate {
         /// structures stay candidates.
         #[arg(long)]
         unconfirmed: bool,
-        /// Show each certain jigsaw structure's bounds and piece count (villages, outposts,
-        /// ancient cities, trial chambers and others). The first use loads the template pools.
+        /// Show each certain jigsaw structure's or mineshaft's bounds and piece count
+        /// (villages, outposts, ancient cities, trial chambers, mineshafts and others). The first
+        /// use for a jigsaw loads the template pools.
         #[arg(long)]
         bounds: bool,
         /// Answer with the nearest start, not `/locate`'s: the game's `/locate` takes the first

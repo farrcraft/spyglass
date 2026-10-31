@@ -11,6 +11,7 @@ use crate::assembly::{Assembly, JigsawPools};
 use crate::biomes::BiomeSet;
 use crate::jigsaw::{Jigsaw, JigsawCheck};
 use crate::load::{Structure, StructureType};
+use crate::mineshaft::{self, Heights};
 use crate::placement::Placements;
 
 /// What spyglass can say about one structure's biome check in one chunk.
@@ -114,17 +115,27 @@ impl<'a> Starts<'a> {
         }
     }
 
-    /// A jigsaw structure's pieces and bounds if it starts in `chunk`
-    /// (`JigsawPlacement.addPieces`), whether or not its biome check passes. Pieces that
-    /// follow the terrain need it: without, the answer is [`Assembly::NeedsTerrain`]. `None` if
-    /// the structure isn't a jigsaw or there are no pools.
+    /// A jigsaw structure's or a mineshaft's pieces and bounds if it starts in `chunk`
+    /// (`JigsawPlacement.addPieces`, `MineshaftStructure.generatePiecesAndAdjust`), whether or
+    /// not its biome check passes. Pieces that follow the terrain, and mesa mineshafts, need it:
+    /// without, the answer is [`Assembly::NeedsTerrain`]. `None` for other types, and for
+    /// jigsaws without pools.
     pub fn assemble(&self, structure: usize, chunk: [i32; 2]) -> Option<Assembly> {
         let sets = self.placements.sets();
-        let jigsaw = sets.structures()[structure].jigsaw.as_ref()?;
+        let s = &sets.structures()[structure];
         let terrain = self.terrain;
         let mut first_free = |x: i32, z: i32, heightmap: Heightmap| {
             terrain.map(|t| t.first_free_height(x, z, heightmap))
         };
+        if let Some(m) = &s.mineshaft {
+            return Some(m.assemble(
+                self.placements.seed(),
+                chunk,
+                &self.mineshaft_heights(),
+                &mut first_free,
+            ));
+        }
+        let jigsaw = s.jigsaw.as_ref()?;
         Some(jigsaw.assemble(
             self.placements.seed(),
             chunk,
@@ -132,6 +143,15 @@ impl<'a> Starts<'a> {
             self.pools?,
             &mut first_free,
         ))
+    }
+
+    /// What a mineshaft's layout needs from the dimension.
+    fn mineshaft_heights(&self) -> Heights {
+        let sets = self.placements.sets();
+        Heights {
+            sea_level: sets.sea_level(),
+            generator_min_y: sets.generator_min_y(),
+        }
     }
 
     /// The placements.
@@ -340,10 +360,21 @@ impl<'a> Starts<'a> {
                     at: Some([x, y, z]),
                 }
             }
-            // The check is at (midX, 50 + dy, minZ), with dy from the piece layout, which isn't
-            // ported. y is in the level, so the level's column there decides it when its quarts
-            // are all in the set (it passes wherever the layout puts it) or none is.
+            // The check is at (midX, 50 + dy, minZ), with dy from the piece layout. A mesa's
+            // needs terrain; without, y is in the level, so the level's column there decides it
+            // when its quarts are all in the set (it passes wherever the layout puts it) or none
+            // is.
             StructureType::Mineshaft => {
+                let m = s.mineshaft.as_ref().expect("mineshafts load their type");
+                let mut first_free = |x: i32, z: i32, heightmap: Heightmap| {
+                    terrain.map(|t| t.first_free_height(x, z, heightmap))
+                };
+                let seed = self.placements.seed();
+                if let Some((_, dy)) =
+                    m.layout(seed, chunk, &self.mineshaft_heights(), &mut first_free)
+                {
+                    return fixed([mid_x, mineshaft::START_Y.wrapping_add(dy), min_z]);
+                }
                 let some = self.column(&s.biomes, mid_x, min_z, level_min_y, level_max_y);
                 if some != Check::Rejected
                     && self.whole_column(&s.biomes, mid_x, min_z, level_min_y, level_max_y)

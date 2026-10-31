@@ -123,9 +123,8 @@ pub fn run(
                 )
             } else if hits.iter().any(|h| !h.certain) {
                 Some(if confirm {
-                    "Candidates are behind a tied biome, a platform-dependent ring position or a \
-                     mineshaft spyglass can't place. The game's answer is the first of these it \
-                     generates."
+                    "Candidates are behind a tied biome or a platform-dependent ring position. \
+                     The game's answer is the first of these it generates."
                         .to_string()
                 } else {
                     "Candidates depend on terrain (confirm with terrain to decide them) or a tied \
@@ -213,7 +212,7 @@ mod tests {
                 resource(
                     "worldgen/structure",
                     "tower",
-                    json!({"type": "minecraft:stronghold", "biomes": "minecraft:plains"}),
+                    json!({"type": "minecraft:stronghold", "biomes": "minecraft:plains", "step": "surface_structures"}),
                 ),
             ],
             false,

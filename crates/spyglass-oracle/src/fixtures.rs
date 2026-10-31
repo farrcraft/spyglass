@@ -274,7 +274,7 @@ pub fn structure(name: &str, kind: &str, biomes: &str) -> (String, Value) {
     resource(
         "worldgen/structure",
         name,
-        json!({"type": kind, "biomes": biomes}),
+        json!({"type": kind, "biomes": biomes, "step": "surface_structures"}),
     )
 }
 

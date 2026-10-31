@@ -129,7 +129,7 @@ pub enum Output {
     Biomes(TileData),
     /// The structure starts whose marker centre is on the tile, in drawing order.
     Markers(Vec<StructureStart>),
-    /// `None` if the structure isn't a jigsaw.
+    /// `None` if the structure is neither a jigsaw nor a mineshaft.
     Layout(Option<StructureLayout>),
 }
 
@@ -479,7 +479,7 @@ mod tests {
                 resource(
                     "worldgen/structure",
                     "tower",
-                    json!({"type": "minecraft:stronghold", "biomes": "minecraft:plains"}),
+                    json!({"type": "minecraft:stronghold", "biomes": "minecraft:plains", "step": "surface_structures"}),
                 ),
             ],
             true,

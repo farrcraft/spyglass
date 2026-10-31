@@ -29,6 +29,7 @@ Changes go under **Unreleased** as they're made. `cargo xtask release` turns tha
 
 ### Changed
 
+- **Mineshafts are decided exactly:** spyglass lays out a mineshaft's pieces as the game does, so its biome check is at the game's position and `locate`, searches and the map no longer leave mineshafts as candidates (without terrain, badlands mineshafts still can be). `--bounds`, `Session::structure_layout` and the viewer give mineshafts' bounds and pieces too ([structure-placement.md](docs/specs/structure-placement.md#mineshafts)).
 - Bundles now include the data generator's block report, `reports/blocks.json`. Extract bundles again to ask about blocks with them ([bundle-format.md](docs/specs/bundle-format.md#layout)).
 
 ### Fixed

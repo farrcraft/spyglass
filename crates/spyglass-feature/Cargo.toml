@@ -18,6 +18,7 @@ spyglass-data.workspace = true
 spyglass-density.workspace = true
 spyglass-noise.workspace = true
 spyglass-rng.workspace = true
+spyglass-structure.workspace = true
 spyglass-terrain.workspace = true
 
 [dev-dependencies]

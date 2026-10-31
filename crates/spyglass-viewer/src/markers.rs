@@ -1,5 +1,5 @@
 //! What's drawn over the map: structure icons, the spawn, locate pins and search rings, the
-//! user's markers, and jigsaw bounds. Markers sit where the library's `Image::draw_features` puts its own
+//! user's markers, and jigsaw and mineshaft bounds. Markers sit where the library's `Image::draw_features` puts its own
 //! (`docs/specs/render.md#layers`): one tile pixel is one point, and a marker's centre is the
 //! pixel `floor(block / scale)` on the world-aligned grid. Their shapes are the viewer's own
 //! (ADR 0044), in the library's set colours.

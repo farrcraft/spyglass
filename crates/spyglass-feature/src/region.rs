@@ -20,6 +20,9 @@ pub enum Doubt {
     Tie,
     /// It read outside the region, which vanilla features don't.
     OutsideRegion,
+    /// A structure's pieces, placed earlier in the step or in an earlier one, could have
+    /// written what it read: this structure, by index in its `StructureSets`.
+    Structure(usize),
     /// A neighbour decorated first could have written what it read: this placed feature of a
     /// neighbour's (ADR 0055).
     Neighbours(crate::order::PlacedRef),

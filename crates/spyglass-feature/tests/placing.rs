@@ -13,10 +13,13 @@ use rayon::prelude::*;
 use spyglass_biome::BiomeSource;
 use spyglass_blocks::BlockSettings;
 use spyglass_data::bundle::Bundle;
+use spyglass_feature::structures;
 use spyglass_feature::{
     Blocks, Decorator, Doubt, FeatureSettings, NeighbourBounds, Outcome, Placer, Reading, Region,
 };
 use spyglass_oracle::features::{FeatureFile, GoldenTry};
+use spyglass_structure::{JigsawPools, Starts, StructureSets};
+use spyglass_terrain::Terrain;
 
 /// One file's comparison.
 #[derive(Default)]
@@ -104,6 +107,13 @@ fn check(path: &Path) -> Report {
     )
     .unwrap();
     let bounds = NeighbourBounds::load(&bundle, &features).unwrap();
+    // Structures, laid out where they're jigsaws.
+    let sets = StructureSets::load(&bundle, "minecraft:normal", &file.dimension, &biomes).unwrap();
+    let pools = JigsawPools::load(&bundle, &sets).unwrap();
+    let seeded = biomes.with_seed(file.seed).unwrap();
+    let placements = sets.with_seed(file.seed, &seeded);
+    let terrain_of_seed = Terrain::new(terrain, file.seed).unwrap();
+    let starts = Starts::with_terrain(&placements, &seeded, &terrain_of_seed).with_pools(&pools);
     // Neighbouring golden chunks share their carved chunks.
     let mut carved = HashMap::new();
     let mut stored = HashMap::new();
@@ -129,9 +139,17 @@ fn check(path: &Path) -> Report {
                 .clone()
         };
         let foreign = bounds.writes(&everything, &features, &region, &mut biomes);
+        let pieces = structures::pieces(
+            &starts,
+            &sets,
+            chunk.chunk,
+            last_step,
+            region.min_y(),
+            region.max_y(),
+        );
         let own = bounds.own_writes(&everything, &features, &region, &mut biomes);
         let ours: Vec<_> = placer
-            .decorate(&decorator, &mut region, file.seed, &foreign, &own)
+            .decorate(&decorator, &mut region, file.seed, &foreign, &own, &pieces)
             .into_iter()
             .filter(|p| targets.contains(&p.at.placed))
             .collect();
@@ -173,6 +191,7 @@ fn check(path: &Path) -> Report {
                         let why = match why {
                             Doubt::OtherFeature(r) => format!("after {}", id(r)),
                             Doubt::Neighbours(r) => format!("a neighbour's {}", id(r)),
+                            Doubt::Structure(i) => format!("{}'s pieces", sets.structures()[i].id),
                             why => format!("{why:?}"),
                         };
                         reason = Some(format!("{why} at {feature}"));

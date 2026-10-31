@@ -176,6 +176,14 @@ What a neighbour decorated first could write, for "whatever the neighbours do", 
 
 Measured on 26.3's golden area, nothing holds whatever the neighbours do: a neighbour's many-try features (dungeons, lichen, pointed dripstone, cave vegetation) can be anywhere in its chunk after their first try, and reach across the border.
 
+### Structures
+
+Each decoration step places its structures' pieces in the chunk being decorated before its features (`StructureStart.placeInChunk`, clipped to the chunk), the structures in the registry's order. The targets' steps have `underground_structures` (mineshafts, buried treasure, trail ruins, trial chambers) and `surface_structures` (the surface structures, and the stronghold). The oracle's golden files have none, so these only make candidates:
+
+- A try in a step is a candidate on its own where the pieces of a structure placing in that step or an earlier one meet what it reads inside its chunk (`Doubt::Structure`); for "whatever the neighbours do", anywhere in the region, since a neighbour decorated first places its pieces in its own chunk.
+- The structures are those that could start within 8 chunks (the chunks that reference a start), by `Starts`: placement, then the biome and terrain checks, a start that only might be there counting.
+- Their pieces: a jigsaw or mineshaft start's own boxes (`Starts::assemble`, [structure-placement.md](structure-placement.md#mineshafts)), a mineshaft's as whole columns, since its corridors drop supports to solid ground below and hang chains above; a single-piece structure's whole columns over its footprint from the start chunk's corner, either way turned (buried treasure `8..10`, desert pyramid `0..20`, jungle temple `0..14`, swamp hut `0..8`, igloo `−3..12`); any other everything within 8 chunks of its start.
+
 ### Block blob
 
 `BlockBlobFeature` (`forest_rock`), the same in every version. From the origin, down while above `min y + 3` and the block below fails `can_place_on`; at `min y + 3` or below, it declines. Then three times: `a`, `b`, `c` each `nextInt(2)`, `f = (a + b + c)·0.333 + 0.5` in `float`, and `state` on every position within `(a, b, c)` of the centre whose squared distance is at most `(double)(f·f)`; then the centre moves by `(nextInt(2) − 1, −nextInt(2), nextInt(2) − 1)`.

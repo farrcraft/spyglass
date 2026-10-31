@@ -15,6 +15,7 @@ use spyglass_noise::NormalNoiseParameters;
 use crate::biomes::{BiomeSet, Tags};
 use crate::corner::CornerSamplers;
 use crate::jigsaw::{GenerationHeights, HeightProvider, Jigsaw, JigsawLoader};
+use crate::mineshaft::Mineshaft;
 use crate::placement::{
     ConcentricRings, ExclusionZone, FrequencyReduction, Placement, PlacementKind, RandomSpread,
     SpreadType,
@@ -104,7 +105,27 @@ pub struct Structure {
     pub ruined_portal: Option<RuinedPortal>,
     /// For [`StructureType::NetherFossil`], `height`: where its scan starts.
     pub height: Option<HeightProvider>,
+    /// For [`StructureType::Mineshaft`], its type and terrain adaptation.
+    pub mineshaft: Option<Mineshaft>,
+    /// `step`: the decoration step it places its pieces in, before that step's features, as
+    /// an index into [`STEPS`].
+    pub step: usize,
 }
+
+/// `GenerationStep.Decoration`, in order.
+pub const STEPS: [&str; 11] = [
+    "raw_generation",
+    "lakes",
+    "local_modifications",
+    "underground_structures",
+    "surface_structures",
+    "strongholds",
+    "underground_ores",
+    "underground_decoration",
+    "fluid_springs",
+    "vegetal_decoration",
+    "top_layer_modification",
+];
 
 /// One weighted entry of a structure set (`StructureSet.StructureSelectionEntry`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -137,6 +158,8 @@ pub struct StructureSets {
     structures: Vec<Structure>,
     heights: GenerationHeights,
     sea_level: i32,
+    /// The noise settings' `noise.min_y` (`ChunkGenerator.getMinY`).
+    generator_min_y: i32,
     /// The noise settings' `legacy_random_source`.
     legacy_random_source: bool,
     /// The noises the start pools' corner constraints use.
@@ -174,6 +197,7 @@ impl StructureSets {
         let DimensionSettings {
             heights,
             sea_level,
+            generator_min_y,
             legacy_random_source,
             noise_settings,
         } = dimension_heights(bundle, preset, dimension)?;
@@ -226,6 +250,7 @@ impl StructureSets {
             structures: loader.structures,
             heights,
             sea_level,
+            generator_min_y,
             legacy_random_source,
             monument_surroundings,
         };
@@ -287,6 +312,11 @@ impl StructureSets {
     /// The noise settings' `sea_level`.
     pub fn sea_level(&self) -> i32 {
         self.sea_level
+    }
+
+    /// The noise settings' `noise.min_y`: the generator's minimum y (`ChunkGenerator.getMinY`).
+    pub fn generator_min_y(&self) -> i32 {
+        self.generator_min_y
     }
 
     /// The noise settings' `legacy_random_source`: how the dimension's `RandomState` makes
@@ -385,6 +415,7 @@ fn dimension_heights(
             level_height,
         },
         sea_level,
+        generator_min_y: gen_min_y,
         legacy_random_source,
         noise_settings: settings_id,
     })
@@ -394,6 +425,7 @@ fn dimension_heights(
 struct DimensionSettings {
     heights: GenerationHeights,
     sea_level: i32,
+    generator_min_y: i32,
     legacy_random_source: bool,
     /// The noise settings' id.
     noise_settings: String,
@@ -482,6 +514,17 @@ impl SetLoader<'_> {
             )?),
             _ => None,
         };
+        let mineshaft = match kind {
+            StructureType::Mineshaft => Some(Self::mineshaft(obj, &root)?),
+            _ => None,
+        };
+        let step_name = field(obj, "step", &root)?.as_str().unwrap_or_default();
+        let step = STEPS.iter().position(|s| *s == step_name).ok_or_else(|| {
+            root.child("step").error(LoadErrorKind::Unsupported {
+                what: "decoration step",
+                name: step_name.to_string(),
+            })
+        })?;
         self.structures.push(Structure {
             id: id.clone(),
             kind,
@@ -490,10 +533,37 @@ impl SetLoader<'_> {
             beached,
             ruined_portal,
             height,
+            mineshaft,
+            step,
         });
         let i = self.structures.len() - 1;
         self.structure_index.insert(id, i);
         Ok(i)
+    }
+
+    /// `MineshaftStructure.CODEC`'s own fields: `mineshaft_type` (`normal` or `mesa`), and the
+    /// settings' `terrain_adaptation`, which defaults to `none`.
+    fn mineshaft(obj: &Map<String, Value>, root: &At<'_>) -> LoadResult<Mineshaft> {
+        let at = root.child("mineshaft_type");
+        let mesa = match field(obj, "mineshaft_type", root)?.as_str() {
+            Some("normal") => false,
+            Some("mesa") => true,
+            Some(other) => {
+                return Err(at.error(LoadErrorKind::Unsupported {
+                    what: "mineshaft type",
+                    name: other.to_string(),
+                }));
+            }
+            None => return Err(at.error(LoadErrorKind::Shape("a string"))),
+        };
+        let adapts_terrain = obj
+            .get("terrain_adaptation")
+            .and_then(Value::as_str)
+            .is_some_and(|t| t != "none");
+        Ok(Mineshaft {
+            mesa,
+            adapts_terrain,
+        })
     }
 
     /// `StructurePlacement.CODEC`, dispatched on `type`.
@@ -709,7 +779,7 @@ mod tests {
     fn structure(id: &str, kind: &str, biomes: Value) -> (String, Value) {
         (
             format!("data/minecraft/worldgen/structure/{id}.json"),
-            json!({"type": kind, "biomes": biomes}),
+            json!({"type": kind, "biomes": biomes, "step": "surface_structures"}),
         )
     }
 

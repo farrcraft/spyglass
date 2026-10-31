@@ -211,7 +211,7 @@ Every division below rounds down.
 
 ### Confirmed mode
 
-`confirm` (in `SearchOptions`, and an argument of `Session::evaluate`) decides structure starts with each seed's terrain, as [locate](locate.md#confirmed-mode) does. The query language doesn't change. Confirmed, a start is a candidate only behind a tied biome cell, a platform-dependent ring position, or a mineshaft whose check spyglass can't place in a column that's partly in its biomes; ties, a platform-dependent spawn and those starts are what keeps a constraint possibly met.
+`confirm` (in `SearchOptions`, and an argument of `Session::evaluate`) decides structure starts with each seed's terrain, as [locate](locate.md#confirmed-mode) does. The query language doesn't change. Confirmed, a start is a candidate only behind a tied biome cell or a platform-dependent ring position; those and a platform-dependent spawn are what keeps a constraint possibly met.
 
 Terrain only removes candidates or makes them certain, so it only narrows each constraint: its confirmed best case is no better than its unconfirmed one, and its confirmed worst case no worse, in what holds and in satisfaction (cluster sizes included, since the largest group of a subset is no larger). The fast path relies on this. Confirmed, it first checks the required constraints unconfirmed, in their best case; a seed that fails there fails confirmed, and its terrain is never bound. The rest runs confirmed, and gives the same answer as the plain confirmed evaluation.
 

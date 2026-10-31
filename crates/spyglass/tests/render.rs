@@ -24,7 +24,7 @@ fn bundle() -> TestBundle {
         resource(
             "worldgen/structure",
             name,
-            json!({"type": kind, "biomes": "minecraft:plains"}),
+            json!({"type": kind, "biomes": "minecraft:plains", "step": "surface_structures"}),
         )
     };
     fixtures::overworld(

@@ -260,7 +260,7 @@ fn layouts_agree_with_the_game() {
                 let id = t["structure"].as_str().unwrap();
                 let Some(layout) = session.structure_layout(id, [chunk[0], chunk[1]]).unwrap()
                 else {
-                    continue; // not a jigsaw
+                    continue; // neither a jigsaw nor a mineshaft
                 };
                 let pieces: Vec<_> = t["pieces"].as_array().unwrap().iter().map(box_of).collect();
                 assert_eq!(layout.bounds, box_of(bounds), "{id} at {chunk:?}");
@@ -269,7 +269,7 @@ fn layouts_agree_with_the_game() {
             }
         }
     }
-    assert!(layouts > 10, "only {layouts} jigsaw layouts");
+    assert!(layouts > 10, "only {layouts} layouts");
     assert!(
         session
             .structure_layout("minecraft:swamp_hut", [0, 0])

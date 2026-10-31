@@ -3731,6 +3731,7 @@ dependencies = [
  "spyglass-noise",
  "spyglass-oracle",
  "spyglass-rng",
+ "spyglass-structure",
  "spyglass-terrain",
 ]
 

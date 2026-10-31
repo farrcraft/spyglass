@@ -22,6 +22,7 @@ use crate::order::PlacedRef;
 use crate::reach::Changes;
 use crate::region::{Doubt, Region};
 use crate::settings::FeatureSettings;
+use crate::structures::Piece;
 
 pub use block_blob::BlockBlob;
 pub use dripstone::LargeDripstone;
@@ -244,7 +245,10 @@ impl Placer {
         seed: i64,
         foreign: &[Foreign],
         own: &[Foreign],
+        structures: &[Piece],
     ) -> Vec<Placement> {
+        let [cx, cz] = region.center();
+        let chunk = ([cx * 16, cz * 16], [cx * 16 + 15, cz * 16 + 15]);
         let mut out = Vec::new();
         // The placed features whose writes aren't known, with why: on the chunk's own, and
         // whatever the neighbours do.
@@ -289,12 +293,40 @@ impl Placer {
                         .find_map(|f| find(f.placed))
                 })
             };
+            // A structure placed before it, in this chunk; or in the region, if neighbours went
+            // first.
+            let piece = |in_chunk: bool| {
+                structures
+                    .iter()
+                    .filter(|p| p.step <= t.step)
+                    .find(|p| {
+                        let mut min = p.min;
+                        let mut max = p.max;
+                        if in_chunk {
+                            min[0] = min[0].max(chunk.0[0]);
+                            min[2] = min[2].max(chunk.0[1]);
+                            max[0] = max[0].min(chunk.1[0]);
+                            max[2] = max[2].min(chunk.1[1]);
+                        }
+                        min[0] <= max[0]
+                            && min[2] <= max[2]
+                            && reads(&Foreign {
+                                min,
+                                max,
+                                changes: Changes::Any,
+                                placed: t.placed,
+                                order: (0, 0),
+                            })
+                    })
+                    .map(|p| Doubt::Structure(p.structure))
+            };
             let tie = (!t.certain).then_some(Doubt::Tie);
-            let why = tie.or_else(|| doubt(&unsure));
+            let why = tie.or_else(|| piece(true)).or_else(|| doubt(&unsure));
             let anyway = foreign
                 .iter()
                 .find(|f| reads(f))
                 .map(|f| Doubt::Neighbours(f.placed))
+                .or_else(|| piece(false))
                 .or_else(|| doubt(&unsure_anyway));
             if let Some(why) = why {
                 region.doubt(why);

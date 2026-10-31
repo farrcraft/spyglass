@@ -11,6 +11,7 @@ pub mod predicate;
 pub mod reach;
 pub mod region;
 mod settings;
+pub mod structures;
 
 pub use blocks::{Blocks, Heightmap};
 pub use decorate::{Decorator, Drawn, Ground, Try, TryBox};

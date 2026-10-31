@@ -921,7 +921,7 @@ impl From<spyglass_structure::BoundingBox> for BlockBox {
     }
 }
 
-/// A jigsaw structure's pieces, from [`Session::structure_layout`].
+/// A jigsaw structure's or a mineshaft's pieces, from [`Session::structure_layout`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructureLayout {
     /// Each piece's box, the start piece first, before placement moves any.
@@ -1227,12 +1227,12 @@ impl<'w> Session<'w> {
         out
     }
 
-    /// The pieces of jigsaw structure `structure` (an id, e.g. `minecraft:village_plains`) if
-    /// it starts in `chunk`, as the game assembles them, with its bounds. Whether it starts
-    /// there is [`structures_in`](Self::structures_in)'s question; this one assumes it does.
-    /// `None` if the structure isn't a jigsaw, or has no start piece there. Binds the seed's
-    /// terrain, and the first call in a world loads its template pools, which takes a while
-    /// (about a second for 26.3).
+    /// The pieces of jigsaw structure or mineshaft `structure` (an id, e.g.
+    /// `minecraft:village_plains`) if it starts in `chunk`, as the game lays them out, with its
+    /// bounds. Whether it starts there is [`structures_in`](Self::structures_in)'s question;
+    /// this one assumes it does. `None` if the structure is neither, or a jigsaw with no start
+    /// piece there. Binds the seed's terrain, and the first call for a jigsaw in a world loads
+    /// its template pools, which takes a while (about a second for 26.3).
     pub fn structure_layout(
         &self,
         structure: &str,
@@ -1245,11 +1245,14 @@ impl<'w> Session<'w> {
                 what: "structure",
                 id: structure.to_string(),
             })?;
-        if sets.structures()[index].jigsaw.is_none() {
+        let s = &sets.structures()[index];
+        let starts = if s.mineshaft.is_some() {
+            self.starts(true)
+        } else if s.jigsaw.is_some() {
+            self.starts(true).with_pools(self.world.pools()?)
+        } else {
             return Ok(None);
-        }
-        let pools = self.world.pools()?;
-        let starts = self.starts(true).with_pools(pools);
+        };
         Ok(match starts.assemble(index, chunk) {
             Some(Assembly::Built(layout)) => Some(StructureLayout {
                 pieces: layout.pieces.into_iter().map(BlockBox::from).collect(),

@@ -50,7 +50,7 @@ Unconfirmed, most surface structures' hits are all candidates, so lists run to t
 
 ### Confirmed mode
 
-`LocateOptions::confirm`, on by default, decides each chunk with the seed's terrain ([structure-placement.md](structure-placement.md#with-terrain)): the check runs at its real position, and terrain's own rejections apply. Hits are then candidates only behind a tied biome cell, a platform-dependent ring position, or a mineshaft whose check spyglass can't place (its piece layout isn't ported) in a column that's partly in its biomes. A list whose hits are all certain is the game's answer, at `certain_answer`. The first confirmed locate in a session binds the seed's terrain, and each candidate chunk costs a few height queries.
+`LocateOptions::confirm`, on by default, decides each chunk with the seed's terrain ([structure-placement.md](structure-placement.md#with-terrain)): the check runs at its real position, and terrain's own rejections apply. Hits are then candidates only behind a tied biome cell or a platform-dependent ring position. A list whose hits are all certain is the game's answer, at `certain_answer`. The first confirmed locate in a session binds the seed's terrain, and each candidate chunk costs a few height queries.
 
 **Distance shown.** `/locate` prints `Mth.floor(Mth.sqrt((float) (dx·dx + dz·dz)))` for structures, horizontal and in `int` arithmetic. spyglass reports the same as `blocks_away`.
 

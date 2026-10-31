@@ -407,8 +407,8 @@ impl App {
         style::hint(
             ui,
             "Decides structure starts and locates with the seed's terrain, as the game does. Off, \
-             most surface structures are candidates. Jigsaw bounds are drawn when confirmed, at \
-             1:4 or closer.",
+             most surface structures are candidates. Jigsaw and mineshaft bounds are drawn when \
+             confirmed, at 1:4 or closer.",
         );
     }
 

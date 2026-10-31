@@ -22,7 +22,7 @@ fn bundle() -> TestBundle {
             resource(
                 "worldgen/structure",
                 "tower",
-                json!({"type": "minecraft:stronghold", "biomes": "minecraft:plains"}),
+                json!({"type": "minecraft:stronghold", "biomes": "minecraft:plains", "step": "surface_structures"}),
             ),
         ],
         true,

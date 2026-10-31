@@ -131,11 +131,12 @@ pub struct StructureHit<'a> {
     pub structures: &'a [String],
     pub certain: bool,
     pub blocks_away: i32,
-    /// With `--bounds`, where the structure that starts is known and is a jigsaw.
+    /// With `--bounds`, where the structure that starts is known and is a jigsaw or a
+    /// mineshaft.
     pub bounds: Option<Bounds>,
 }
 
-/// A jigsaw structure's bounds.
+/// A jigsaw structure's or a mineshaft's bounds.
 #[derive(Serialize)]
 pub struct Bounds {
     pub min: [i32; 3],

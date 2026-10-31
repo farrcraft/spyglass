@@ -60,7 +60,7 @@ const EMPTY: Color32 = Color32::from_rgb(0x20, 0x20, 0x20);
 const CACHE_MARKERS: usize = 512;
 /// The most structure markers drawn at once; more is a zoom level too far out to read.
 const MAX_MARKERS: usize = 2_000;
-/// The largest scale jigsaw structures' bounds are drawn at: a village is then 30 pixels or
+/// The largest scale jigsaw structures' and mineshafts' bounds are drawn at: a village is then 30 pixels or
 /// more across, and few enough are in view to lay them all out.
 const MAX_BOUNDS_SCALE: u32 = 4;
 /// Structure layouts kept.

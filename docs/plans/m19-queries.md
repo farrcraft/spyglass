@@ -25,7 +25,7 @@ Features as answers everywhere structures are: in an area, nearest, in `--json`,
 
 - [x] **API:** `features_in` and `nearest_feature`, naming, and the answers' certainty.
 - [x] **CLI:** `locate feature`, `features`, cli-json.md.
-- [ ] **Viewer:** icons, layers, Locate tab, view text names ([user-data.md](../specs/user-data.md)). Done: a Features section in the Layers tab (dungeons, geodes, wells, fossils, lava lakes), one job per tile at 1:1 and 1:2, diamonds with tooltips, and image export. Then **Nearest feature** in the map's menu (each kind's placed features within 8 chunks, the nearest certain one and any likely ones nearer), and marking features done as plain places (user-data.md). Left: share-text names.
+- [x] **Viewer:** icons, layers, Locate tab, view text names ([user-data.md](../specs/user-data.md)). Done: a Features section in the Layers tab (dungeons, geodes, wells, fossils, lava lakes), one job per tile at 1:1 and 1:2, diamonds with tooltips, and image export. Then **Nearest feature** in the map's menu (each kind's placed features within 8 chunks, the nearest certain one and any likely ones nearer), and marking features done as plain places (user-data.md). And `ft` in the view text, within format 1.
 - [x] **Render:** feature markers in render.md, with tiling tests. `Layers::features` at scales up to 2, `Session::render_with` so a front end finds them once, `render --features`.
 - [ ] **Search:** feature targets and conditions in both searches, pairs within a distance, and filtering on tries.
 - [ ] **Oracle:** an ignored test that a seed search's two-dungeon seeds have both dungeons in the game's decoration.

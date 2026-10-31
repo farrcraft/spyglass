@@ -78,6 +78,8 @@ pub struct SharedView {
     pub structures: Vec<String>,
     /// Biome ids, with their namespaces.
     pub highlight: Vec<String>,
+    /// Placed feature ids, with their namespaces.
+    pub features: Vec<String>,
     pub flags: Flags,
 }
 
@@ -111,6 +113,9 @@ impl SharedView {
         }
         if !self.highlight.is_empty() {
             fields.push(format!("hl={}", short(&self.highlight)));
+        }
+        if !self.features.is_empty() {
+            fields.push(format!("ft={}", short(&self.features)));
         }
         fields.push(format!("l={}", self.flags.names().join(",")));
         format!("{PREFIX}{FORMAT};{}", fields.join(";"))
@@ -152,6 +157,7 @@ impl SharedView {
             y: DEFAULT_MAP_Y,
             structures: Vec::new(),
             highlight: Vec::new(),
+            features: Vec::new(),
             flags: Flags::default(),
         };
         let mut seed = None;
@@ -199,6 +205,11 @@ impl SharedView {
                 "y" => view.y = value.parse().map_err(|_| bad())?,
                 "st" => view.structures = ids(value).ok_or_else(bad)?,
                 "hl" => view.highlight = ids(value).ok_or_else(bad)?,
+                "ft" => {
+                    view.features = ids(value)
+                        .filter(|ids| ids.iter().all(|id| !id.starts_with('#')))
+                        .ok_or_else(bad)?;
+                }
                 "l" => {
                     let mut flags = Flags {
                         ties: false,
@@ -280,6 +291,7 @@ mod tests {
                 "pack:ruin".into(),
             ],
             highlight: vec!["minecraft:river".into()],
+            features: Vec::new(),
             flags: Flags {
                 ties: true,
                 ..Flags::default()
@@ -302,6 +314,7 @@ mod tests {
             version: None,
             structures: Vec::new(),
             highlight: Vec::new(),
+            features: Vec::new(),
             flags: Flags {
                 spawn: false,
                 confirm: false,
@@ -323,6 +336,20 @@ mod tests {
         let text = deep.encode();
         assert!(text.ends_with(";y=-40;st=village_plains,#village,pack:ruin;hl=river;l=spawn,confirm,veins,caves,carvers"), "{text}");
         assert_eq!(SharedView::decode(&text), Ok(deep));
+        let featured = SharedView {
+            features: vec![
+                "minecraft:monster_room".into(),
+                "minecraft:monster_room_deep".into(),
+            ],
+            ..sample()
+        };
+        let text = featured.encode();
+        assert!(
+            text.contains(";hl=river;ft=monster_room,monster_room_deep;l="),
+            "{text}"
+        );
+        assert_eq!(SharedView::decode(&text), Ok(featured));
+        assert!(SharedView::decode("spyglass:1;s=1;ft=#minecraft:dungeons").is_err());
     }
 
     /// Texts each format has written. Never change these: they must open as they did.
@@ -345,6 +372,7 @@ mod tests {
                     y: 64,
                     structures: Vec::new(),
                     highlight: Vec::new(),
+                    features: Vec::new(),
                     flags: Flags::default(),
                 },
             ),
@@ -359,6 +387,7 @@ mod tests {
                     y: -64,
                     structures: Vec::new(),
                     highlight: Vec::new(),
+                    features: Vec::new(),
                     flags: Flags {
                         spawn: false,
                         confirm: false,
@@ -378,6 +407,7 @@ mod tests {
                 y: 0,
                 structures: Vec::new(),
                 highlight: Vec::new(),
+                features: Vec::new(),
                 flags: Flags {
                     spawn: false,
                     confirm: false,

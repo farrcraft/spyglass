@@ -185,10 +185,11 @@ field  = key "=" value
 | `y`  | The height biomes and the underground layers are drawn at, an integer.                                                                                                                             | 64.                |
 | `st` | Structures shown: ids and `#`tags, separated by commas.                                                                                                                                            | None.              |
 | `hl` | Highlighted biomes: ids, separated by commas.                                                                                                                                                      | None.              |
+| `ft` | Features shown (at 1:2 and closer): placed feature ids, separated by commas. No tags.                                                                                                              | None.              |
 | `l`  | The layers on, separated by commas, from `ties`, `slime`, `spawn`, `confirm`, `relief`, `surface`, `veins`, `caves` (noise caves) and `carvers`. Any not listed is off. Unknown names are ignored. | `spawn,confirm`.   |
 
-- **Namespaces:** an id in `st` or `hl` without a namespace is `minecraft:`'s, and the viewer writes `minecraft:` ids without it. Tags keep their `#`.
-- **What the viewer writes:** the fields in the order `s`, `v`, `d`, `c`, `sc`, `y`, `st`, `hl`, `l`, leaving out `st` and `hl` when they're empty.
+- **Namespaces:** an id in `st`, `hl` or `ft` without a namespace is `minecraft:`'s, and the viewer writes `minecraft:` ids without it. Tags keep their `#`.
+- **What the viewer writes:** the fields in the order `s`, `v`, `d`, `c`, `sc`, `y`, `st`, `hl`, `ft`, `l`, leaving out `st`, `hl` and `ft` when they're empty. `ft` was added within format 1: an older viewer ignores it.
 - **The centre** is written as the block at the view's centre, rounded down, and opened as that block's centre.
 - **A save's view** is shared as its seed and version, since its path means nothing on another machine.
 - **A missing bundle:** if the text's version has no bundle, the viewer opens the view in the version shown, and says so.

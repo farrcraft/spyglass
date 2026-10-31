@@ -169,6 +169,7 @@ impl App {
             y: s.view.y,
             structures: s.structures.clone(),
             highlight: s.highlight.clone(),
+            features: s.features.clone(),
             flags: Flags {
                 ties: s.ties,
                 slime: s.slime_chunks,
@@ -201,6 +202,7 @@ impl App {
                 let s = &mut self.settings;
                 s.structures = view.structures.clone();
                 s.highlight = view.highlight.clone();
+                s.features = view.features.clone();
                 s.ties = view.flags.ties;
                 s.slime_chunks = view.flags.slime;
                 s.spawn = view.flags.spawn;

@@ -14,7 +14,7 @@ mod settings;
 pub mod structures;
 
 pub use blocks::{Blocks, Heightmap};
-pub use decorate::{Decorator, Drawn, Ground, Try, TryBox};
+pub use decorate::{Decorator, Drawn, Ground, Try, TryBox, Wanted};
 pub use modifier::{Modifier, Read, Reading};
 pub use neighbours::{Foreign, NeighbourBounds};
 pub use place::{Outcome, Placement, Placer};

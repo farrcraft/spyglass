@@ -22,6 +22,7 @@ required-features = ["timing"]
 spyglass-biome.workspace = true
 spyglass-blocks.workspace = true
 spyglass-data.workspace = true
+spyglass-feature.workspace = true
 spyglass-search.workspace = true
 spyglass-structure.workspace = true
 spyglass-terrain.workspace = true

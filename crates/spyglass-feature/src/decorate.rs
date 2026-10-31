@@ -55,7 +55,47 @@ pub struct Decorator<'a> {
     /// The level's lowest section's lowest y: decoration's origin.
     origin_y: i32,
     /// The placed features asked for, with their modifiers.
-    wanted: Vec<(PlacedRef, Vec<Modifier>)>,
+    wanted: std::borrow::Cow<'a, [(PlacedRef, Vec<Modifier>)]>,
+}
+
+/// Placed features with their modifiers loaded, seed-independent: what a [`Decorator`] runs.
+#[derive(Debug, Clone)]
+pub struct Wanted(Vec<(PlacedRef, Vec<Modifier>)>);
+
+impl Wanted {
+    /// The modifiers of each of `wanted`. With `reading`, the modifiers that read blocks are
+    /// loaded in full, for [`Decorator::decorate`]; without, only their shape.
+    pub fn load(
+        settings: &FeatureSettings,
+        wanted: &[PlacedRef],
+        mut reading: Option<&mut Reading<'_>>,
+    ) -> Result<Wanted, LoadError> {
+        wanted
+            .iter()
+            .map(|&r| {
+                let placed = settings.placed(r);
+                let name = placed
+                    .id
+                    .clone()
+                    .unwrap_or_else(|| "an inline placed feature".into());
+                let at = At::root(&name);
+                let o = object(&placed.json, &at)?;
+                let modifiers = match o.get("placement") {
+                    None => Vec::new(),
+                    Some(json) => {
+                        Modifier::parse_list(json, &at.child("placement"), reading.as_deref_mut())?
+                    }
+                };
+                Ok((r, modifiers))
+            })
+            .collect::<Result<_, LoadError>>()
+            .map(Wanted)
+    }
+
+    /// The placed features, in the order asked for.
+    pub fn placed(&self) -> impl Iterator<Item = PlacedRef> + '_ {
+        self.0.iter().map(|(r, _)| *r)
+    }
 }
 
 impl<'a> Decorator<'a> {
@@ -89,35 +129,36 @@ impl<'a> Decorator<'a> {
         anchors: AnchorHeights,
         level_min_y: i32,
         wanted: &[PlacedRef],
-        mut reading: Option<&mut Reading<'_>>,
+        reading: Option<&mut Reading<'_>>,
     ) -> Result<Self, LoadError> {
-        let wanted = wanted
-            .iter()
-            .map(|&r| {
-                let placed = settings.placed(r);
-                let name = placed
-                    .id
-                    .clone()
-                    .unwrap_or_else(|| "an inline placed feature".into());
-                let at = At::root(&name);
-                let o = object(&placed.json, &at)?;
-                let modifiers = match o.get("placement") {
-                    None => Vec::new(),
-                    Some(json) => {
-                        Modifier::parse_list(json, &at.child("placement"), reading.as_deref_mut())?
-                    }
-                };
-                Ok((r, modifiers))
-            })
-            .collect::<Result<_, LoadError>>()?;
+        let wanted = Wanted::load(settings, wanted, reading)?;
         Ok(Decorator {
             settings,
             generator,
             seed,
             anchors,
             origin_y: level_min_y.div_euclid(16) * 16,
-            wanted,
+            wanted: std::borrow::Cow::Owned(wanted.0),
         })
+    }
+
+    /// For `seed`'s `generator`, placed features loaded once ([`Wanted::load`]).
+    pub fn of(
+        settings: &'a FeatureSettings,
+        generator: &'a ChunkGenerator<'a>,
+        seed: i64,
+        anchors: AnchorHeights,
+        level_min_y: i32,
+        wanted: &'a Wanted,
+    ) -> Self {
+        Decorator {
+            settings,
+            generator,
+            seed,
+            anchors,
+            origin_y: level_min_y.div_euclid(16) * 16,
+            wanted: std::borrow::Cow::Borrowed(&wanted.0),
+        }
     }
 
     /// The tries in chunk `(cx, cz)`, in decoration order, without the blocks. `feature` is

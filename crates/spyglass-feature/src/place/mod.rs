@@ -94,6 +94,8 @@ pub enum Configured {
 #[derive(Debug, Clone)]
 pub struct Placer {
     features: Vec<(PlacedRef, Configured)>,
+    /// Each one's configured feature's id, if it names one.
+    configured: Vec<(PlacedRef, Option<String>)>,
 }
 
 impl Placer {
@@ -106,6 +108,7 @@ impl Placer {
         placed: &[PlacedRef],
     ) -> Result<Placer, LoadError> {
         let mut features = Vec::new();
+        let mut configured_ids = Vec::new();
         for &r in placed {
             let p = settings.placed(r);
             let name =
@@ -113,6 +116,7 @@ impl Placer {
                     .unwrap_or_else(|| "an inline placed feature".into());
             let at = At::root(&name);
             let feature = field(object(&p.json, &at)?, "feature", &at)?;
+            let named = feature.as_str().map(full_id);
             let (json, id) = match feature {
                 Value::String(id) => {
                     let id = full_id(id);
@@ -168,8 +172,12 @@ impl Placer {
                 _ => continue,
             };
             features.push((r, configured));
+            configured_ids.push((r, named));
         }
-        Ok(Placer { features })
+        Ok(Placer {
+            features,
+            configured: configured_ids,
+        })
     }
 
     /// The boxes a placed feature's try can read, around its position, and whether a block
@@ -197,6 +205,22 @@ impl Placer {
             Configured::BlockBlob(_) => (&[ReadBox([-5, 0, -5], [5, 0, 5], true)], true),
             Configured::LargeDripstone(_) => (&[ReadBox([-32, 0, -32], [32, 0, 32], true)], true),
         })
+    }
+
+    /// Whether `placed` is one a query can ask for: a target feature (`docs/specs/features.md`),
+    /// not one placed only so the targets after it are exact (the forest rock, large dripstone).
+    pub fn is_target(&self, placed: PlacedRef) -> bool {
+        self.features.iter().any(|(r, f)| {
+            *r == placed && !matches!(f, Configured::BlockBlob(_) | Configured::LargeDripstone(_))
+        })
+    }
+
+    /// The id of `placed`'s configured feature, if it names one rather than writing it inline.
+    pub fn configured_id(&self, placed: PlacedRef) -> Option<&str> {
+        self.configured
+            .iter()
+            .find(|(r, _)| *r == placed)
+            .and_then(|(_, id)| id.as_deref())
     }
 
     /// Whether `placed`'s feature is one spyglass places.

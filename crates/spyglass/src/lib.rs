@@ -27,6 +27,7 @@
 //! the game runs on; each result type says which applies. See `docs/specs/locate.md`.
 
 mod blocks;
+mod features;
 mod game;
 mod render;
 mod save;
@@ -48,6 +49,7 @@ use spyglass_structure::{
 use spyglass_terrain::{Terrain, TerrainSettings};
 
 pub use blocks::{BlockAt, BlockColumn, Carvers, ChunkBlocks};
+pub use features::{FeatureLocate, FeatureQuery, FoundFeature};
 pub use game::{Game, GameSession};
 pub use render::{
     BiomeMap, CarverKind, CarvingMap, DEFAULT_MAP_Y, HeightMap, Image, Layers, MARKER_REACH,
@@ -121,10 +123,15 @@ pub enum Error {
         /// The underlying error.
         source: std::io::Error,
     },
-    /// A structure, structure tag, biome or world save that doesn't exist.
+    /// A feature that exists, but that spyglass doesn't place yet.
+    #[error(
+        "spyglass doesn't place {0:?} yet: it places dungeons, geodes, desert wells, fossils and lava lakes"
+    )]
+    NotPlaced(String),
+    /// A structure, structure tag, biome, feature or world save that doesn't exist.
     #[error("unknown {what} {id:?}")]
     Unknown {
-        /// What was looked up: `structure`, `structure tag`, `biome` or `world save`.
+        /// What was looked up: `structure`, `structure tag`, `biome`, `feature` or `world save`.
         what: &'static str,
         /// The id or name as given.
         id: String,
@@ -441,6 +448,8 @@ pub struct World {
     pools: OnceLock<JigsawPools>,
     /// Loaded on first block query.
     blocks: OnceLock<BlockSettings>,
+    /// Loaded on first feature query.
+    features: OnceLock<features::FeatureWorld>,
     /// Each biome's map colour, by [`BiomeId`].
     palette: Vec<[u8; 3]>,
 }
@@ -490,6 +499,7 @@ impl World {
             terrain,
             pools: OnceLock::new(),
             blocks: OnceLock::new(),
+            features: OnceLock::new(),
             palette,
         })
     }

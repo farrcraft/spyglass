@@ -3624,6 +3624,7 @@ dependencies = [
  "spyglass-biome",
  "spyglass-blocks",
  "spyglass-data",
+ "spyglass-feature",
  "spyglass-oracle",
  "spyglass-search",
  "spyglass-structure",

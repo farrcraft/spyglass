@@ -1,9 +1,14 @@
-//! Locating from the map: the nearest structure or biome from a clicked point, through the
-//! library's `/locate` ports (`docs/specs/locate.md`), listed and marked on the map.
+//! Locating from the map: the nearest structure, biome or feature from a clicked point, through
+//! the library's `/locate` ports and feature queries (`docs/specs/locate.md`), listed and
+//! marked on the map.
 
-use spyglass::{LOCATE_BIOME_RADIUS, LOCATE_RADIUS, Session};
+use spyglass::{FeatureOptions, LOCATE_BIOME_RADIUS, LOCATE_RADIUS, Session};
 
+use crate::icons;
 use crate::userdata::{Kind, Place};
+
+/// How far a feature locate looks, in chunks: placing takes about 30 ms a chunk.
+pub const FEATURE_RADIUS: i32 = 8;
 
 /// What to look for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -12,13 +17,25 @@ pub enum Target {
     Structure(String),
     /// A biome id.
     Biome(String),
+    /// Features: a name and the placed features it covers.
+    Feature { name: String, placed: Vec<String> },
 }
 
 impl Target {
     pub fn name(&self) -> &str {
         match self {
             Target::Structure(id) | Target::Biome(id) => id,
+            Target::Feature { name, .. } => name,
         }
+    }
+}
+
+/// The place marking a feature done marks: the block at its x and z.
+pub fn feature_place(f: &spyglass::FoundFeature) -> Place {
+    Place {
+        kind: Kind::Place,
+        id: String::new(),
+        at: [f.position[0], f.position[2]],
     }
 }
 
@@ -174,6 +191,61 @@ pub fn run(
             } else if hits.iter().any(|h| !h.certain) {
                 Some(
                     "Tied cells come first: the game's biome there depends on lookup history."
+                        .to_string(),
+                )
+            } else {
+                None
+            };
+            (hits, Vec::new(), note)
+        }
+        Target::Feature { placed, .. } => {
+            let mut found: Vec<spyglass::FoundFeature> = Vec::new();
+            for id in placed {
+                // A placed feature this version doesn't place is left out.
+                let Ok(query) = world.feature_query(id) else {
+                    continue;
+                };
+                let near = session
+                    .nearest_feature(&query, from, FEATURE_RADIUS, FeatureOptions::default())
+                    .map_err(|e| e.to_string())?;
+                found.extend(near.hits);
+            }
+            let away = |f: &spyglass::FoundFeature| {
+                let (dx, dz) = (
+                    f64::from(f.position[0] - from[0]),
+                    f64::from(f.position[2] - from[2]),
+                );
+                (dx * dx + dz * dz).sqrt() as i32
+            };
+            found.sort_by_key(|f| (away(f), !f.certain));
+            // Every candidate nearer than the nearest certain one, then that one.
+            if let Some(end) = found.iter().position(|f| f.certain) {
+                found.truncate(end + 1);
+            }
+            let hits: Vec<Hit> = found
+                .iter()
+                .map(|f| Hit {
+                    x: f.position[0],
+                    y: Some(f.position[1]),
+                    z: f.position[2],
+                    what: icons::feature_name(&f.feature),
+                    certain: f.certain,
+                    blocks_away: away(f),
+                    answer: f.certain.then_some("Nearest"),
+                    place: feature_place(f),
+                })
+                .collect();
+            let note = if hits.is_empty() {
+                Some(format!(
+                    "None within {FEATURE_RADIUS} chunks. Each chunk is placed, so the search stops there."
+                ))
+            } else if !hits.iter().any(|h| h.certain) {
+                Some(format!(
+                    "No certain one within {FEATURE_RADIUS} chunks; these placed on spyglass's blocks, but something it can't know could change that."
+                ))
+            } else if hits.len() > 1 {
+                Some(
+                    "Likely ones nearer than the nearest certain one come first: something spyglass can't know could change them."
                         .to_string(),
                 )
             } else {

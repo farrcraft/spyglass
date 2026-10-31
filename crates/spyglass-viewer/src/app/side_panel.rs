@@ -250,7 +250,7 @@ impl App {
                 ui.colored_label(style::ERROR, e);
             }
             None => {
-                ui.label("Right-click the map to find the nearest structure or biome from there.");
+                ui.label("Right-click the map to find the nearest structure, feature or biome from there.");
             }
         }
         if let Some([x, z]) = go {

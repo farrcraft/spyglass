@@ -601,6 +601,17 @@ impl App {
                         }
                     });
             });
+            ui.menu_button("Nearest feature", |ui| {
+                for (name, placed) in icons::FEATURE_KINDS {
+                    if ui.button(*name).clicked() {
+                        action = Some(Action::Locate(Target::Feature {
+                            name: name.to_string(),
+                            placed: placed.iter().map(|p| p.to_string()).collect(),
+                        }));
+                        ui.close();
+                    }
+                }
+            });
             ui.menu_button("Nearest biome", |ui| {
                 egui::ScrollArea::vertical()
                     .max_height(320.0)

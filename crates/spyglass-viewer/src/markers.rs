@@ -297,7 +297,8 @@ impl Picked<'_> {
             }),
             Picked::Hit(hit) => Some(hit.place.clone()),
             Picked::Match(m) => m.place.clone(),
-            Picked::Feature(_) | Picked::Spawn(_) | Picked::Marker(_) => None,
+            Picked::Feature(f) => Some(crate::locate::feature_place(f)),
+            Picked::Spawn(_) | Picked::Marker(_) => None,
         }
     }
 }

@@ -65,16 +65,20 @@ struct Fixed {
 /// A dimension's material rule and what `MaterialSystem` needs besides, seed-independent.
 #[derive(Debug, Clone)]
 pub struct MaterialSettings {
+    /// The dimension's rule (26.2's surface rule).
     rule: Rule,
     /// `default_block`; 26.4's noise settings have none, and leave solid positions to the rule.
     default_block: Option<State>,
+    /// The sea level, which icebergs build to.
     sea_level: i32,
     /// The router's `chunk_surface_level`, the material system's preliminary surface; `None` for
     /// 26.2's surface rules, whose preliminary surface is the terrain's.
     chunk_surface_level: Option<Df>,
+    /// Every noise the rule and the material system sample, by id.
     noises: HashMap<String, NormalNoiseParameters>,
     /// `legacy_random_source`.
     legacy: bool,
+    /// The dimension's heights, which vertical anchors resolve against.
     anchors: AnchorHeights,
     fixed: Fixed,
 }
@@ -273,17 +277,27 @@ struct SystemNoises<N> {
 impl<N> SystemNoises<N> {
     /// Each of [`SYSTEM_NOISES`] from `noise`, in order (`RandomState.getOrCreateNoise`).
     fn bind(mut noise: impl FnMut(&str) -> Result<N, LoadError>) -> Result<Self, LoadError> {
-        let [clay, surface, secondary, bp, bpr, bs, ip, ipr, is] = SYSTEM_NOISES.map(&mut noise);
+        let [
+            clay_bands_offset,
+            surface,
+            surface_secondary,
+            badlands_pillar,
+            badlands_pillar_roof,
+            badlands_surface,
+            iceberg_pillar,
+            iceberg_pillar_roof,
+            iceberg_surface,
+        ] = SYSTEM_NOISES.map(&mut noise);
         Ok(SystemNoises {
-            clay_bands_offset: clay?,
+            clay_bands_offset: clay_bands_offset?,
             surface: surface?,
-            surface_secondary: secondary?,
-            badlands_pillar: bp?,
-            badlands_pillar_roof: bpr?,
-            badlands_surface: bs?,
-            iceberg_pillar: ip?,
-            iceberg_pillar_roof: ipr?,
-            iceberg_surface: is?,
+            surface_secondary: surface_secondary?,
+            badlands_pillar: badlands_pillar?,
+            badlands_pillar_roof: badlands_pillar_roof?,
+            badlands_surface: badlands_surface?,
+            iceberg_pillar: iceberg_pillar?,
+            iceberg_pillar_roof: iceberg_pillar_roof?,
+            iceberg_surface: iceberg_surface?,
         })
     }
 }
@@ -364,52 +378,57 @@ impl Family {
         z: i32,
         keep: impl FnOnce(f64) -> bool,
     ) -> Option<(f64, f64)> {
+        // The pillar and roof noises' horizontal scales.
         let (f, r) = if iceberg { (1.28, 1.17) } else { (0.2, 0.75) };
         let (x, z) = (f64::from(x), f64::from(z));
         let (pillar, roof) = match self {
             Family::Material { noises, .. } => {
-                let n = noises;
-                let (s, p, roof) = if iceberg {
+                let (surface_noise, pillar_noise, roof_noise) = if iceberg {
                     (
-                        &n.iceberg_surface,
-                        &n.iceberg_pillar,
-                        &n.iceberg_pillar_roof,
+                        &noises.iceberg_surface,
+                        &noises.iceberg_pillar,
+                        &noises.iceberg_pillar_roof,
                     )
                 } else {
                     (
-                        &n.badlands_surface,
-                        &n.badlands_pillar,
-                        &n.badlands_pillar_roof,
+                        &noises.badlands_surface,
+                        &noises.badlands_pillar,
+                        &noises.badlands_pillar_roof,
                     )
                 };
-                let surface = (f64::from(s.get(x, 0.0, z)) * 8.25).abs();
-                let pillar = surface.min(f64::from(p.get(x * f, 0.0, z * f) * 15.0));
+                let surface = (f64::from(surface_noise.get(x, 0.0, z)) * 8.25).abs();
+                let pillar = surface.min(f64::from(pillar_noise.get(x * f, 0.0, z * f) * 15.0));
                 if !keep(pillar) {
                     return None;
                 }
-                (pillar, (f64::from(roof.get(x * r, 0.0, z * r)) * 1.5).abs())
+                (
+                    pillar,
+                    (f64::from(roof_noise.get(x * r, 0.0, z * r)) * 1.5).abs(),
+                )
             }
             Family::V1_21 { noises, .. } => {
-                let n = noises;
-                let (s, p, roof) = if iceberg {
+                let (surface_noise, pillar_noise, roof_noise) = if iceberg {
                     (
-                        &n.iceberg_surface,
-                        &n.iceberg_pillar,
-                        &n.iceberg_pillar_roof,
+                        &noises.iceberg_surface,
+                        &noises.iceberg_pillar,
+                        &noises.iceberg_pillar_roof,
                     )
                 } else {
                     (
-                        &n.badlands_surface,
-                        &n.badlands_pillar,
-                        &n.badlands_pillar_roof,
+                        &noises.badlands_surface,
+                        &noises.badlands_pillar,
+                        &noises.badlands_pillar_roof,
                     )
                 };
-                let surface = (s.get_value(x, 0.0, z) * 8.25).abs();
-                let pillar = surface.min(p.get_value(x * f, 0.0, z * f) * 15.0);
+                let surface = (surface_noise.get_value(x, 0.0, z) * 8.25).abs();
+                let pillar = surface.min(pillar_noise.get_value(x * f, 0.0, z * f) * 15.0);
                 if !keep(pillar) {
                     return None;
                 }
-                (pillar, (roof.get_value(x * r, 0.0, z * r) * 1.5).abs())
+                (
+                    pillar,
+                    (roof_noise.get_value(x * r, 0.0, z * r) * 1.5).abs(),
+                )
             }
         };
         Some((pillar, roof))
@@ -490,6 +509,10 @@ impl Source {
 }
 
 /// `MaterialSystem.generateBands`: the 192 clay bands of badlands, from `fromHashOf("clay_bands")`.
+///
+/// Plain terracotta with single orange bands, 1 to 5 apart; then runs of yellow, brown and
+/// red laid over it at random; then 9 to 15 white bands, 4 to 19 apart, each with a light
+/// grey band either side at even odds.
 fn bands(random: &mut Source, fixed: &Fixed) -> Vec<State> {
     const LEN: usize = 192;
     let mut bands = vec![fixed.terracotta; LEN];
@@ -525,9 +548,9 @@ fn bands(random: &mut Source, fixed: &Fixed) -> Vec<State> {
 fn make_bands(random: &mut Source, bands: &mut [State], base: i32, state: State) {
     let runs = random.next_int_between_inclusive(6, 15);
     for _ in 0..runs {
-        let len = (base + random.next_int(3)) as usize;
+        let length = (base + random.next_int(3)) as usize;
         let start = random.next_int(bands.len() as i32) as usize;
-        for j in 0..len {
+        for j in 0..length {
             if start + j >= bands.len() {
                 break;
             }
@@ -673,9 +696,10 @@ impl Compiler<'_, '_> {
                     .map(|r| self.rule(r))
                     .collect::<Result<_, _>>()?,
             ),
-            Rule::Condition(c, r) => {
-                Bound::Condition(Box::new(self.condition(c)?), Box::new(self.rule(r)?))
-            }
+            Rule::Condition(condition, then) => Bound::Condition(
+                Box::new(self.condition(condition)?),
+                Box::new(self.rule(then)?),
+            ),
             Rule::Bandlands => Bound::Bandlands,
             Rule::OreVein(v) => {
                 // 26.2's surface rules have no ore veins: they're rejected when loaded.
@@ -752,7 +776,7 @@ impl Compiler<'_, '_> {
             Condition::Steep => BoundCondition::Steep,
             Condition::Hole => BoundCondition::Hole,
             Condition::AbovePreliminarySurface => BoundCondition::AbovePreliminarySurface,
-            Condition::Not(c) => BoundCondition::Not(Box::new(self.condition(c)?)),
+            Condition::Not(inner) => BoundCondition::Not(Box::new(self.condition(inner)?)),
             Condition::StoneDepth {
                 offset,
                 add_surface_depth,
@@ -850,19 +874,31 @@ struct Context<'a> {
     /// 26.2's `preliminarySurfaceCache`: the preliminary surface at the corners of the chunk's
     /// surface cell, once read.
     cell: &'a Cell<Option<[i32; 4]>>,
+    /// The column.
     x: i32,
     z: i32,
     /// The surface gradients in x and z, as steep reads them.
     gradient: Cell<[i32; 2]>,
     /// Whether [`gradient`](Self::gradient) is fixed for the column.
     gradient_read: Cell<bool>,
+    /// `getSurfaceDepth`: how deep the column's surface layer is, from noise and a little
+    /// randomness.
     surface_depth: i32,
+    /// `getSurfaceSecondary`, once read.
     surface_secondary: Cell<Option<f64>>,
+    /// `getMinSurfaceLevel`, once read.
     min_surface_level: Cell<Option<i32>>,
+    /// The block's y.
     y: i32,
+    /// How many solid blocks down from the last air above the block is, counting itself.
     stone_depth_above: i32,
+    /// How many solid blocks up from the next non-solid block below the block is, counting
+    /// itself.
     stone_depth_below: i32,
+    /// One above the top of the fluid over the block, or `i32::MIN` if there's none below the
+    /// last air.
     water_height: i32,
+    /// The block's biome, once looked up.
     biome: Cell<Option<BiomeId>>,
     /// Whether the block's biome was looked up and is tied.
     tied: Cell<bool>,
@@ -1053,19 +1089,20 @@ impl BoundMaterial {
         self.bands[y.wrapping_add(offset).wrapping_add(len).rem_euclid(len) as usize]
     }
 
-    fn test(&self, condition: &BoundCondition, c: &Context<'_>) -> bool {
+    fn test(&self, condition: &BoundCondition, context: &Context<'_>) -> bool {
         match condition {
-            BoundCondition::Biome(set) => {
-                set.get(usize::from(c.biome().0)).copied().unwrap_or(false)
-            }
+            BoundCondition::Biome(set) => set
+                .get(usize::from(context.biome().0))
+                .copied()
+                .unwrap_or(false),
             BoundCondition::Noise {
                 noise,
                 min,
                 max,
                 is_3d,
             } => {
-                let y = if *is_3d { f64::from(c.y) } else { 0.0 };
-                let v = noise.get(f64::from(c.x), y, f64::from(c.z));
+                let y = if *is_3d { f64::from(context.y) } else { 0.0 };
+                let v = noise.get(f64::from(context.x), y, f64::from(context.z));
                 v >= *min && v <= *max
             }
             BoundCondition::VerticalGradient {
@@ -1076,7 +1113,7 @@ impl BoundMaterial {
                 random,
                 *true_at_and_below,
                 *false_at_and_above,
-                [c.x, c.y, c.z],
+                [context.x, context.y, context.z],
             ),
             BoundCondition::YAbove {
                 y,
@@ -1084,44 +1121,53 @@ impl BoundMaterial {
                 add_stone_depth,
             } => {
                 let above = if *add_stone_depth {
-                    c.stone_depth_above
+                    context.stone_depth_above
                 } else {
                     0
                 };
-                c.y.wrapping_add(above)
-                    >= y.wrapping_add(c.surface_depth.wrapping_mul(*surface_depth_multiplier))
+                context.y.wrapping_add(above)
+                    >= y.wrapping_add(
+                        context
+                            .surface_depth
+                            .wrapping_mul(*surface_depth_multiplier),
+                    )
             }
             BoundCondition::Water {
                 offset,
                 surface_depth_multiplier,
                 add_stone_depth,
             } => {
-                if c.water_height == i32::MIN {
+                if context.water_height == i32::MIN {
                     return true;
                 }
                 let above = if *add_stone_depth {
-                    c.stone_depth_above
+                    context.stone_depth_above
                 } else {
                     0
                 };
-                c.y.wrapping_add(above)
-                    >= c.water_height
-                        .wrapping_add(*offset)
-                        .wrapping_add(c.surface_depth.wrapping_mul(*surface_depth_multiplier))
+                context.y.wrapping_add(above)
+                    >= context.water_height.wrapping_add(*offset).wrapping_add(
+                        context
+                            .surface_depth
+                            .wrapping_mul(*surface_depth_multiplier),
+                    )
             }
             BoundCondition::Temperature => {
-                let climate = self.climates[usize::from(c.biome().0)];
-                self.temperature
-                    .cold_enough_to_snow(climate, [c.x, c.y, c.z], self.sea_level)
+                let climate = self.climates[usize::from(context.biome().0)];
+                self.temperature.cold_enough_to_snow(
+                    climate,
+                    [context.x, context.y, context.z],
+                    self.sea_level,
+                )
             }
             BoundCondition::Steep => {
-                c.gradient_read.set(true);
-                let [gx, gz] = c.gradient.get();
+                context.gradient_read.set(true);
+                let [gx, gz] = context.gradient.get();
                 gx <= -4 || gz >= 4
             }
-            BoundCondition::Hole => c.surface_depth <= 0,
-            BoundCondition::AbovePreliminarySurface => c.y >= c.min_surface_level(),
-            BoundCondition::Not(inner) => !self.test(inner, c),
+            BoundCondition::Hole => context.surface_depth <= 0,
+            BoundCondition::AbovePreliminarySurface => context.y >= context.min_surface_level(),
+            BoundCondition::Not(inner) => !self.test(inner, context),
             BoundCondition::StoneDepth {
                 offset,
                 add_surface_depth,
@@ -1129,12 +1175,12 @@ impl BoundMaterial {
                 ceiling,
             } => {
                 let depth = if *ceiling {
-                    c.stone_depth_below
+                    context.stone_depth_below
                 } else {
-                    c.stone_depth_above
+                    context.stone_depth_above
                 };
                 let surface = if *add_surface_depth {
-                    c.surface_depth
+                    context.surface_depth
                 } else {
                     0
                 };
@@ -1142,7 +1188,7 @@ impl BoundMaterial {
                     0
                 } else {
                     map(
-                        c.surface_secondary(),
+                        context.surface_secondary(),
                         -1.0,
                         1.0,
                         0.0,
@@ -1249,19 +1295,21 @@ impl BoundMaterial {
         Some((v.filler, VeinPart::Filler))
     }
 
-    fn apply(&self, rule: &Bound, c: &Context<'_>) -> Option<State> {
+    fn apply(&self, rule: &Bound, context: &Context<'_>) -> Option<State> {
         match rule {
             Bound::Block(s) => Some(*s),
-            Bound::Sequence(rules) => rules.iter().find_map(|r| self.apply(r, c)),
+            Bound::Sequence(rules) => rules.iter().find_map(|r| self.apply(r, context)),
             Bound::Condition(condition, then) => {
-                if self.test(condition, c) {
-                    self.apply(then, c)
+                if self.test(condition, context) {
+                    self.apply(then, context)
                 } else {
                     None
                 }
             }
-            Bound::Bandlands => Some(self.band(c.x, c.y, c.z)),
-            Bound::OreVein(v) => self.vein(v, c.x, c.y, c.z).map(|(state, _)| state),
+            Bound::Bandlands => Some(self.band(context.x, context.y, context.z)),
+            Bound::OreVein(v) => self
+                .vein(v, context.x, context.y, context.z)
+                .map(|(state, _)| state),
         }
     }
 
@@ -1283,7 +1331,7 @@ impl BoundMaterial {
             chunk.height_at(dx, (dz + 1).min(15)) - chunk.height_at(dx, (dz - 1).max(0)),
         ];
         let cell = Cell::new(None);
-        let c = Context {
+        let context = Context {
             system: self,
             biomes,
             terrain,
@@ -1302,7 +1350,7 @@ impl BoundMaterial {
             biome: Cell::new(None),
             tied: Cell::new(false),
         };
-        (self.apply(&self.rule, &c), c.tied.get())
+        (self.apply(&self.rule, &context), context.tied.get())
     }
 
     /// `MaterialSystem.buildSurface` (26.2's `SurfaceSystem.buildSurface`) on `chunk`, filled
@@ -1357,7 +1405,7 @@ impl BoundMaterial {
                             - chunk.height_at(dx, (dz - 1).max(0)),
                     ]
                 };
-                let mut c = Context {
+                let mut context = Context {
                     system: self,
                     biomes,
                     terrain: Some(terrain),
@@ -1404,12 +1452,12 @@ impl BoundMaterial {
                             }
                         }
                         stone_depth_above += 1;
-                        c.y = y;
-                        c.stone_depth_above = stone_depth_above;
-                        c.stone_depth_below = y - next_ceiling_stone_y + 1;
-                        c.water_height = water_height;
-                        c.biome.set(None);
-                        c.tied.set(false);
+                        context.y = y;
+                        context.stone_depth_above = stone_depth_above;
+                        context.stone_depth_below = y - next_ceiling_stone_y + 1;
+                        context.water_height = water_height;
+                        context.biome.set(None);
+                        context.tied.set(false);
                         // 26.2 tries the rule only on the default block itself, so the noise
                         // fill's ore veins stay; from 26.3, on every stone within the level.
                         let tried = if v1_21 {
@@ -1418,13 +1466,13 @@ impl BoundMaterial {
                             (min_y..=max_y).contains(&y)
                         };
                         if tried {
-                            if !c.gradient_read.get() {
-                                c.gradient.set(gradient(chunk));
+                            if !context.gradient_read.get() {
+                                context.gradient.set(gradient(chunk));
                             }
-                            if let Some(s) = self.apply(&self.rule, &c) {
+                            if let Some(s) = self.apply(&self.rule, &context) {
                                 chunk.set(palette, [x, y, z], s);
                             }
-                            if c.tied.get() {
+                            if context.tied.get() {
                                 chunk.mark_uncertain([x, y, z]);
                             }
                         }
@@ -1432,7 +1480,7 @@ impl BoundMaterial {
                     y -= 1;
                 }
                 if self.frozen_oceans.contains(&Some(biome)) {
-                    let min_surface = c.min_surface_level();
+                    let min_surface = context.min_surface_level();
                     let column = [x, z, start];
                     self.frozen_ocean_extension(chunk, palette, min_surface, biome, column, None);
                 }
@@ -1690,7 +1738,7 @@ impl BoundMaterial {
     ) -> Option<i32> {
         let (min_y, max_y) = (chunk.min_y, chunk.min_y + chunk.height - 1);
         let cell = Cell::new(None);
-        let mut c = Context {
+        let mut context = Context {
             system: self,
             biomes,
             terrain: None,
@@ -1712,7 +1760,9 @@ impl BoundMaterial {
         let mut stone_depth_above = 0;
         let mut water_height = i32::MIN;
         let mut next_ceiling = i32::MAX;
-        let mut dirt = false;
+        // Whether a carved top block is above, with only carved positions between: dirt is
+        // then the surface, and tried again as it.
+        let mut under_carved_top = false;
         for i in (0..=column.top).rev() {
             let y = column.min_y + i;
             let pos = [x, y, z];
@@ -1722,7 +1772,7 @@ impl BoundMaterial {
                 Slot::Air => {
                     stone_depth_above = 0;
                     water_height = i32::MIN;
-                    dirt &= carved;
+                    under_carved_top &= carved;
                     continue;
                 }
                 Slot::Fluid(fluid) => {
@@ -1732,7 +1782,7 @@ impl BoundMaterial {
                     if in_level {
                         chunk.put(pos, fluid);
                     }
-                    dirt &= carved;
+                    under_carved_top &= carved;
                     continue;
                 }
                 Slot::Solid => {}
@@ -1746,20 +1796,20 @@ impl BoundMaterial {
             }
             // Indices, not ys: with no ceiling, `WAY_BELOW_MIN_Y` is taken as an index.
             let stone_depth_below = i.wrapping_sub(next_ceiling).wrapping_add(1);
-            c.y = y;
-            c.stone_depth_above = stone_depth_above;
-            c.stone_depth_below = stone_depth_below;
-            c.water_height = water_height;
-            c.biome.set(None);
-            c.tied.set(false);
-            let mut result = self.apply(&self.rule, &c);
-            let mut tied = c.tied.get();
+            context.y = y;
+            context.stone_depth_above = stone_depth_above;
+            context.stone_depth_below = stone_depth_below;
+            context.water_height = water_height;
+            context.biome.set(None);
+            context.tied.set(false);
+            let mut result = self.apply(&self.rule, &context);
+            let mut tied = context.tied.get();
             // A carved position the aquifer finds solid gets the rule's block after all.
             if carved
                 && result.is_none_or(|s| !uncarvable[usize::from(s)])
                 && let Some(s) = substance(pos)
             {
-                dirt |= stone_depth_above == 1;
+                under_carved_top |= stone_depth_above == 1;
                 if s != state::AIR {
                     chunk.put(pos, s);
                 }
@@ -1768,15 +1818,15 @@ impl BoundMaterial {
                 }
                 continue;
             }
-            if dirt {
+            if under_carved_top {
                 if result == Some(self.fixed.dirt) {
-                    c.stone_depth_above = 1;
-                    c.biome.set(None);
-                    c.tied.set(false);
-                    result = self.apply(&self.rule, &c);
-                    tied |= c.tied.get();
+                    context.stone_depth_above = 1;
+                    context.biome.set(None);
+                    context.tied.set(false);
+                    result = self.apply(&self.rule, &context);
+                    tied |= context.tied.get();
                 }
-                dirt = false;
+                under_carved_top = false;
             }
             if let Some(s) = result {
                 chunk.put(pos, s);
@@ -1785,7 +1835,7 @@ impl BoundMaterial {
                 chunk.mark_uncertain(pos);
             }
         }
-        frozen.then(|| c.min_surface_level())
+        frozen.then(|| context.min_surface_level())
     }
 
     /// 26.4's `SurfaceExtensions.extendErodedBadlands`: the pillar, as solid positions of the
@@ -1917,7 +1967,7 @@ mod tests {
         };
         let cell = Cell::new(None);
         let [x, y, z] = place.pos;
-        let c = Context {
+        let context = Context {
             system: &material,
             biomes: &biomes,
             terrain: None,
@@ -1937,7 +1987,7 @@ mod tests {
             tied: Cell::new(false),
         };
         material
-            .apply(&material.rule, &c)
+            .apply(&material.rule, &context)
             .map(|s| palette.name(s).to_string())
     }
 

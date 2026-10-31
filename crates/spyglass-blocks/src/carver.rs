@@ -32,32 +32,56 @@ pub enum Carver {
 /// `CaveWorldCarver`'s fields.
 #[derive(Debug, Clone)]
 pub struct Cave {
+    /// How likely a chunk is to start caves.
     probability: f32,
+    /// The caves' starting height.
     y: HeightProvider,
+    /// How many caves start in the chunk.
     count: IntProvider,
+    /// A tunnel's thickness: its radius at the middle, less 1.5, before the multipliers.
     thickness: FloatProvider,
+    /// Whether one tunnel in ten may be up to four times as thick.
     weird_thickness_bias: bool,
+    /// A room's height, as a multiple of its width.
     room_vertical_radius_multiplier: FloatProvider,
+    /// Scales the tunnels' width.
     horizontal_radius_multiplier: FloatProvider,
+    /// Scales the tunnels' height.
     vertical_radius_multiplier: FloatProvider,
+    /// Scales the first tunnels' height again; their branches take 1.
     start_vertical_radius_multiplier: FloatProvider,
+    /// Where an ellipsoid's floor is, from −1 (its bottom) to 1 (its top): nothing at or
+    /// below it is carved, so caves have flat floors.
     floor_level: FloatProvider,
+    /// The version's `Mth.sin` and `Mth.cos`.
     trig: Trig,
 }
 
 /// `CanyonWorldCarver`'s fields.
 #[derive(Debug, Clone)]
 pub struct Canyon {
+    /// How likely a chunk is to start a canyon.
     probability: f32,
+    /// The canyon's starting height.
     y: HeightProvider,
+    /// The canyon's starting pitch.
     vertical_rotation: FloatProvider,
+    /// The canyon's length, as a fraction of the carvers' reach.
     distance_factor: FloatProvider,
+    /// The canyon's thickness: its radius at the middle, less 1.5, before the factors.
     thickness: FloatProvider,
+    /// How rarely the width changes from one y to the next: on average, every this many
+    /// blocks.
     width_smoothness: i32,
+    /// Scales the canyon's width at each step.
     horizontal_radius_factor: FloatProvider,
+    /// The height factor at the canyon's ends.
     vertical_radius_default_factor: f32,
+    /// What the height factor gains towards the canyon's middle.
     vertical_radius_center_factor: f32,
+    /// The canyon's height, as a multiple of its width.
     y_scale: FloatProvider,
+    /// The version's `Mth.sin` and `Mth.cos`.
     trig: Trig,
 }
 
@@ -76,6 +100,7 @@ pub struct Legacy {
 /// Each biome's carvers, seed-independent.
 #[derive(Debug, Clone, Default)]
 pub struct CarverSettings {
+    /// Every carver any biome names, once each, with 26.2's configuration.
     carvers: Vec<(Carver, Option<Legacy>)>,
     /// By biome id: indexes into `carvers`, in the biome's order.
     by_biome: Vec<Vec<usize>>,
@@ -104,6 +129,7 @@ impl CarverSettings {
             }
         };
         let mut settings = CarverSettings::default();
+        // Each named carver's index in `settings.carvers`, so biomes that share one share it.
         let mut by_id: HashMap<String, usize> = HashMap::new();
         for name in biomes.names() {
             let id = full_id(name);
@@ -113,7 +139,7 @@ impl CarverSettings {
                 .map_err(|e| root.error(e.into()))?;
             let biome = object(&json, &root)?;
             let at = root.child("carvers");
-            let mut list = Vec::new();
+            let mut indexes = Vec::new();
             let entries: Vec<(Value, At<'_>)> = match biome.get("carvers") {
                 None => Vec::new(),
                 Some(Value::Array(items)) => items
@@ -151,9 +177,9 @@ impl CarverSettings {
                         settings.carvers.len() - 1
                     }
                 };
-                list.push(index);
+                indexes.push(index);
             }
-            settings.by_biome.push(list);
+            settings.by_biome.push(indexes);
         }
         Ok(settings)
     }
@@ -329,38 +355,38 @@ impl Carver {
             .map(full_id)
             .ok_or_else(|| at.child("type").error(LoadErrorKind::Shape("a type id")))?;
         let at = at.child("config");
-        let c = object(field(o, "config", &at)?, &at)?;
+        let config = object(field(o, "config", &at)?, &at)?;
         let floats =
-            |name: &'static str| FloatProvider::parse(field(c, name, &at)?, &at.child(name));
-        let y = HeightProvider::parse(field(c, "y", &at)?, &at.child("y"))?;
+            |name: &'static str| FloatProvider::parse(field(config, name, &at)?, &at.child(name));
+        let y = HeightProvider::parse(field(config, "y", &at)?, &at.child("y"))?;
         let lava_level =
-            VerticalAnchor::parse(field(c, "lava_level", &at)?, &at.child("lava_level"))?;
+            VerticalAnchor::parse(field(config, "lava_level", &at)?, &at.child("lava_level"))?;
         let replaceable = block_set(
             resources,
-            field(c, "replaceable", &at)?,
+            field(config, "replaceable", &at)?,
             &at.child("replaceable"),
         )?;
         let y_scale = floats("yScale")?;
         let nether = kind == "minecraft:nether_cave";
         let carver = match kind.as_str() {
             "minecraft:cave" | "minecraft:nether_cave" => {
-                let (bound, max, plateau, start) = if nether {
+                let (count_bound, max_thickness, plateau, start_multiplier) = if nether {
                     (10, 6.0, 2.0, 5.0)
                 } else {
                     (15, 3.0, 1.0, 1.0)
                 };
                 Carver::Cave(Box::new(Cave {
-                    probability: probability(c, &at)?,
+                    probability: probability(config, &at)?,
                     y,
-                    count: IntProvider::VeryBiasedToBottom(0, bound - 1),
-                    thickness: FloatProvider::Trapezoid(0.0, max, plateau),
+                    count: IntProvider::VeryBiasedToBottom(0, count_bound - 1),
+                    thickness: FloatProvider::Trapezoid(0.0, max_thickness, plateau),
                     weird_thickness_bias: !nether,
                     room_vertical_radius_multiplier: y_scale,
                     horizontal_radius_multiplier: floats("horizontal_radius_multiplier")?,
                     vertical_radius_multiplier: floats("vertical_radius_multiplier")?,
-                    start_vertical_radius_multiplier: FloatProvider::Constant(start),
+                    start_vertical_radius_multiplier: FloatProvider::Constant(start_multiplier),
                     floor_level: FloatProvider::parse_in(
-                        field(c, "floor_level", &at)?,
+                        field(config, "floor_level", &at)?,
                         -1.0,
                         Some(1.0),
                         &at.child("floor_level"),
@@ -369,14 +395,14 @@ impl Carver {
                 }))
             }
             "minecraft:canyon" => {
-                let mut shape_json = field(c, "shape", &at)?.clone();
+                let mut shape_json = field(config, "shape", &at)?.clone();
                 if let Value::Object(shape) = &mut shape_json {
-                    shape.insert("y_scale".to_string(), c["yScale"].clone());
+                    shape.insert("y_scale".to_string(), config["yScale"].clone());
                 }
                 let mut canyon = serde_json::Map::new();
                 canyon.insert("type".to_string(), Value::String(kind.clone()));
                 for name in ["probability", "y", "vertical_rotation"] {
-                    canyon.insert(name.to_string(), field(c, name, &at)?.clone());
+                    canyon.insert(name.to_string(), field(config, name, &at)?.clone());
                 }
                 canyon.insert("shape".to_string(), shape_json);
                 Carver::parse(&Value::Object(canyon), &at)?
@@ -417,12 +443,12 @@ impl Carver {
 
     /// `isStartChunk`: `nextFloat() ≤ probability`.
     pub fn is_start_chunk(&self, random: &mut LegacyRandomSource) -> bool {
-        let p = match self {
+        let chance = match self {
             Carver::Cave(c) => c.probability,
             Carver::Canyon(c) => c.probability,
         };
         // fcmpg/ifgt: NaN never starts.
-        random.next_float() <= p
+        random.next_float() <= chance
     }
 
     /// `carve(context, random, chunk, start, mask)`: the carver started in chunk `start`, carving
@@ -544,6 +570,7 @@ impl Sink for KindSink<'_> {
 pub struct CarvingMask {
     min_y: i32,
     max_y: i32,
+    /// How many y each column holds.
     height: i32,
     /// By column (`(x << 4) + z`), then y from `min_y`.
     bits: Vec<u64>,
@@ -661,7 +688,7 @@ fn sin_table(exact: bool) -> &'static [f32] {
     static TABLES: [OnceLock<Vec<f32>>; 2] = [OnceLock::new(), OnceLock::new()];
     TABLES[usize::from(exact)].get_or_init(|| {
         let mut table: Vec<f32> = (0..65_536)
-            .map(|i| (f64::from(i) / 10_430.378_350_470_453).sin() as f32)
+            .map(|i| (f64::from(i) / ENTRIES_PER_RADIAN).sin() as f32)
             .collect();
         if exact {
             for (i, v) in [(0, 0.0), (16_384, 1.0), (32_768, 0.0), (49_152, -1.0)] {
@@ -672,6 +699,10 @@ fn sin_table(exact: bool) -> &'static [f32] {
     })
 }
 
+/// The sine table's entries per radian: 65,536 / 2π. A quarter turn, 16,384 entries, makes a
+/// sine a cosine.
+const ENTRIES_PER_RADIAN: f64 = 10_430.378_350_470_453;
+
 impl Trig {
     /// The table entry at `(long) index & 65535`.
     fn entry(self, index: f64) -> f32 {
@@ -680,22 +711,20 @@ impl Trig {
 
     /// `Mth.sin(double)`.
     pub fn sin(self, x: f64) -> f32 {
-        const K: f64 = 10_430.378_350_470_453;
         match self {
-            Trig::Truncated => self.entry(x * K),
+            Trig::Truncated => self.entry(x * ENTRIES_PER_RADIAN),
             // dcmpl/iflt: NaN takes the negative branch.
-            Trig::Rounded if x >= 0.0 => self.entry(x * K + 0.5),
-            Trig::Rounded => -self.entry(-x * K + 0.5),
+            Trig::Rounded if x >= 0.0 => self.entry(x * ENTRIES_PER_RADIAN + 0.5),
+            Trig::Rounded => -self.entry(-x * ENTRIES_PER_RADIAN + 0.5),
         }
     }
 
     /// `Mth.cos(double)`.
     pub fn cos(self, x: f64) -> f32 {
-        const K: f64 = 10_430.378_350_470_453;
         match self {
-            Trig::Truncated => self.entry(x * K + 16_384.0),
-            Trig::Rounded if x >= 0.0 => self.entry(x * K + 16_384.0 + 0.5),
-            Trig::Rounded => self.entry(-x * K + 16_384.0 + 0.5),
+            Trig::Truncated => self.entry(x * ENTRIES_PER_RADIAN + 16_384.0),
+            Trig::Rounded if x >= 0.0 => self.entry(x * ENTRIES_PER_RADIAN + 16_384.0 + 0.5),
+            Trig::Rounded => self.entry(-x * ENTRIES_PER_RADIAN + 16_384.0 + 0.5),
         }
     }
 }
@@ -719,16 +748,23 @@ fn min_block([x, z]: [i32; 2]) -> [i32; 2] {
 /// `WorldCarver.canReach`: whether a tunnel at `(x, z)` with `count − step` steps left could
 /// still reach chunk `chunk`.
 fn can_reach(chunk: [i32; 2], x: f64, z: f64, step: i32, count: i32, thickness: f32) -> bool {
-    let [mx, mz] = min_block(chunk).map(|v| f64::from(v.wrapping_add(8)));
-    let (dx, dz) = (x - mx, z - mz);
-    let left = f64::from(count.wrapping_sub(step));
+    // A tunnel moves about a block a step, so with this many steps left it can still come
+    // this far: if the chunk's middle is further, it never will.
+    let [middle_x, middle_z] = min_block(chunk).map(|v| f64::from(v.wrapping_add(8)));
+    let (dx, dz) = (x - middle_x, z - middle_z);
+    let steps_left = f64::from(count.wrapping_sub(step));
     let reach = f64::from(thickness + 2.0 + 16.0);
-    dx * dx + dz * dz - left * left <= reach * reach
+    dx * dx + dz * dz - steps_left * steps_left <= reach * reach
 }
 
 /// `WorldCarver.carveEllipsoid`: every position of the ellipsoid at `(x, y, z)` with radii
 /// `horizontal` and `vertical` that's within the chunk and the mask, and that `skip` doesn't
 /// skip.
+///
+/// `skip` sees each block's offset from the centre in radii (`fx`, `fy`, `fz`, so the
+/// ellipsoid is where their squares sum below 1) and its y; it's what gives caves their flat
+/// floors and canyons their uneven walls. Columns outside the ellipse are left out before it's
+/// asked.
 #[allow(clippy::too_many_arguments)]
 fn carve_ellipsoid(
     chunk: [i32; 2],
@@ -741,34 +777,37 @@ fn carve_ellipsoid(
     skip: impl Fn(f64, f64, f64, i32) -> bool,
 ) {
     let [min_x, min_z] = min_block(chunk);
-    let (mx, mz) = (f64::from(min_x + 8), f64::from(min_z + 8));
+    let (middle_x, middle_z) = (f64::from(min_x + 8), f64::from(min_z + 8));
     let reach = 16.0 + horizontal * 2.0;
     // dcmpl/ifgt, dcmpl/ifle: NaN goes on.
-    if (x - mx).abs() > reach || (z - mz).abs() > reach {
+    if (x - middle_x).abs() > reach || (z - middle_z).abs() > reach {
         return;
     }
-    let x0 = (floor(x - horizontal) - min_x - 1).max(0);
-    let x1 = (floor(x + horizontal) - min_x).min(15);
-    let y0 = (floor(y - vertical) - 1).max(sink.min_y());
-    let y1 = (floor(y + vertical) + 1).min(sink.max_y());
-    let z0 = (floor(z - horizontal) - min_z - 1).max(0);
-    let z1 = (floor(z + horizontal) - min_z).min(15);
-    for lx in x0..=x1 {
-        let fx = (f64::from(min_x + lx) + 0.5 - x) / horizontal;
-        for lz in z0..=z1 {
-            let fz = (f64::from(min_z + lz) + 0.5 - z) / horizontal;
+    // The ellipsoid's bounds, clipped to the chunk (x and z local) and the mask (y). The y
+    // loop below stops above `bottom`.
+    let first_x = (floor(x - horizontal) - min_x - 1).max(0);
+    let last_x = (floor(x + horizontal) - min_x).min(15);
+    let bottom = (floor(y - vertical) - 1).max(sink.min_y());
+    let top = (floor(y + vertical) + 1).min(sink.max_y());
+    let first_z = (floor(z - horizontal) - min_z - 1).max(0);
+    let last_z = (floor(z + horizontal) - min_z).min(15);
+    for local_x in first_x..=last_x {
+        let fx = (f64::from(min_x + local_x) + 0.5 - x) / horizontal;
+        for local_z in first_z..=last_z {
+            let fz = (f64::from(min_z + local_z) + 0.5 - z) / horizontal;
             // dcmpl/iflt: NaN carves.
             if fx * fx + fz * fz >= 1.0 {
                 continue;
             }
             sink.column();
-            let mut by = y1;
-            while by > y0 {
-                let fy = (f64::from(by) - 0.5 - y) / vertical;
-                if !skip(fx, fy, fz, by) {
-                    sink.carve(lx, by, lz);
+            // Top down, as the game goes: 26.2's sink replaces dirt below carved grass.
+            let mut block_y = top;
+            while block_y > bottom {
+                let fy = (f64::from(block_y) - 0.5 - y) / vertical;
+                if !skip(fx, fy, fz, block_y) {
+                    sink.carve(local_x, block_y, local_z);
                 }
-                by -= 1;
+                block_y -= 1;
             }
         }
     }
@@ -782,6 +821,12 @@ fn cave_skip(fx: f64, fy: f64, fz: f64, floor_level: f64) -> bool {
 
 impl Cave {
     /// `CaveWorldCarver.carve`: `count` caves, each a room or not and some tunnels.
+    ///
+    /// Each cave starts at a random block of chunk `start`. A quarter of them first carve a
+    /// room there, one ellipsoid, and then up to three more tunnels than the one every cave
+    /// has. All of them carve only what falls in `chunk`: the game runs this for every start
+    /// chunk within reach of the chunk it's generating, seeded by the start chunk rather than that one, so
+    /// each chunk cuts its own part of the same caves.
     fn carve(
         &self,
         anchors: AnchorHeights,
@@ -790,13 +835,14 @@ impl Cave {
         start: [i32; 2],
         mask: &mut impl Sink,
     ) {
-        let range = (RANGE * 2 - 1) << 4;
-        let [sx, sz] = min_block(start);
+        // A tunnel's most steps (the game's range): 112, the blocks across seven chunks.
+        let max_steps = (RANGE * 2 - 1) << 4;
+        let [start_x, start_z] = min_block(start);
         let count = self.count.sample(random);
         for _ in 0..count {
-            let x = f64::from(sx.wrapping_add(random.next_int_bounded(16)));
+            let x = f64::from(start_x.wrapping_add(random.next_int_bounded(16)));
             let y = f64::from(self.y.sample(random, anchors));
-            let z = f64::from(sz.wrapping_add(random.next_int_bounded(16)));
+            let z = f64::from(start_z.wrapping_add(random.next_int_bounded(16)));
             let horizontal = f64::from(self.horizontal_radius_multiplier.sample(random));
             let vertical = f64::from(self.vertical_radius_multiplier.sample(random));
             let start_vertical = f64::from(self.start_vertical_radius_multiplier.sample(random));
@@ -806,16 +852,26 @@ impl Cave {
             if random.next_int_bounded(4) == 0 {
                 let room_vertical = f64::from(self.room_vertical_radius_multiplier.sample(random));
                 let thickness = 1.0 + random.next_float() * 6.0;
-                // createRoom.
-                let h = 1.5 + f64::from(self.trig.sin(1.570_796_370_506_286_6) * thickness);
-                carve_ellipsoid(chunk, x + 1.0, y, z, h, h * room_vertical, mask, skip);
+                // createRoom: the table's sine of a quarter turn, which is about 1.
+                let room_radius =
+                    1.5 + f64::from(self.trig.sin(1.570_796_370_506_286_6) * thickness);
+                carve_ellipsoid(
+                    chunk,
+                    x + 1.0,
+                    y,
+                    z,
+                    room_radius,
+                    room_radius * room_vertical,
+                    mask,
+                    skip,
+                );
                 tunnels += random.next_int_bounded(4);
             }
             for _ in 0..tunnels {
                 let yaw = random.next_float() * 6.283_185_5;
                 let pitch = (random.next_float() - 0.5) / 4.0;
                 let thickness = self.thickness(random);
-                let steps = range - random.next_int_bounded(range / 4);
+                let steps = max_steps - random.next_int_bounded(max_steps / 4);
                 let tunnel = Tunnel {
                     chunk,
                     trig: self.trig,
@@ -840,27 +896,38 @@ impl Cave {
 
     /// `getThickness`: the thickness, sometimes much thicker with `weird_thickness_bias`.
     fn thickness(&self, random: &mut LegacyRandomSource) -> f32 {
-        let mut t = self.thickness.sample(random);
+        let mut thickness = self.thickness.sample(random);
         if self.weird_thickness_bias && random.next_int_bounded(10) == 0 {
-            let a = random.next_float();
-            t *= a * random.next_float() * 3.0 + 1.0;
+            let first = random.next_float();
+            thickness *= first * random.next_float() * 3.0 + 1.0;
         }
-        t
+        thickness
     }
 }
 
 /// What a cave's tunnels share.
 struct Tunnel {
+    /// The chunk being carved.
     chunk: [i32; 2],
     trig: Trig,
+    /// The cave's horizontal radius multiplier.
     horizontal: f64,
+    /// The cave's vertical radius multiplier.
     vertical: f64,
+    /// The cave's floor level (see [`cave_skip`]).
     floor_level: f64,
 }
 
 impl Tunnel {
     /// `CaveWorldCarver.createTunnel`: a tunnel from `step` to `count` steps, which may split in
     /// two.
+    ///
+    /// A tunnel is a walk of about a block a step, carving an ellipsoid at three steps in four.
+    /// Its yaw and pitch drift by a random change that itself drifts, so it winds; pitch also
+    /// decays towards level, slower in a steep tunnel. The radius follows `sin(π · step /
+    /// count)`, thin at the ends and widest midway. A thick tunnel splits once, at a random
+    /// step in its middle half, into two thinner ones turned a quarter left and right, and
+    /// ends there.
     #[allow(clippy::too_many_arguments)]
     fn create(
         &self,
@@ -875,18 +942,18 @@ impl Tunnel {
         mask: &mut impl Sink,
     ) {
         let mut random = LegacyRandomSource::new(seed);
-        let split = random.next_int_bounded(count / 2) + count / 4;
+        let split_step = random.next_int_bounded(count / 2) + count / 4;
         let steep = random.next_int_bounded(6) == 0;
         let mut yaw_change = 0.0_f32;
         let mut pitch_change = 0.0_f32;
         for i in step..count {
-            let h = 1.5
+            let horizontal_radius = 1.5
                 + f64::from(
                     self.trig
                         .sin(f64::from(std::f32::consts::PI * i as f32 / count as f32))
                         * thickness,
                 );
-            let v = h * vertical_scale;
+            let vertical_radius = horizontal_radius * vertical_scale;
             let cos_pitch = self.trig.cos(f64::from(pitch));
             x += f64::from(self.trig.cos(f64::from(yaw)) * cos_pitch);
             y += f64::from(self.trig.sin(f64::from(pitch)));
@@ -896,18 +963,19 @@ impl Tunnel {
             yaw += yaw_change * 0.1;
             pitch_change *= 0.9;
             yaw_change *= 0.75;
-            let (a, b) = (random.next_float(), random.next_float());
-            pitch_change += (a - b) * random.next_float() * 2.0;
-            let (a, b) = (random.next_float(), random.next_float());
-            yaw_change += (a - b) * random.next_float() * 4.0;
-            if i == split && thickness > 1.0 {
+            // Each change is `(nextFloat() − nextFloat()) · nextFloat()`, in that draw order.
+            let (first, second) = (random.next_float(), random.next_float());
+            pitch_change += (first - second) * random.next_float() * 2.0;
+            let (first, second) = (random.next_float(), random.next_float());
+            yaw_change += (first - second) * random.next_float() * 4.0;
+            if i == split_step && thickness > 1.0 {
                 for turn in [-1.570_796_4_f32, 1.570_796_4] {
                     let seed = random.next_long();
-                    let branch = random.next_float() * 0.5 + 0.5;
+                    let branch_thickness = random.next_float() * 0.5 + 0.5;
                     self.create(
                         seed,
                         [x, y, z],
-                        branch,
+                        branch_thickness,
                         yaw + turn,
                         pitch / 3.0,
                         i,
@@ -928,8 +996,8 @@ impl Tunnel {
                     x,
                     y,
                     z,
-                    h * self.horizontal,
-                    v * self.vertical,
+                    horizontal_radius * self.horizontal,
+                    vertical_radius * self.vertical,
                     mask,
                     |fx, fy, fz, _y| cave_skip(fx, fy, fz, floor_level),
                 );
@@ -940,6 +1008,10 @@ impl Tunnel {
 
 impl Canyon {
     /// `CanyonWorldCarver.carve`: one canyon.
+    ///
+    /// A canyon walks as a cave's tunnel does, but never splits, turns more gently and is
+    /// much taller than wide. Its walls are uneven: each y has its own width factor, so the
+    /// sides step in and out down the canyon's height.
     fn carve(
         &self,
         anchors: AnchorHeights,
@@ -948,11 +1020,13 @@ impl Canyon {
         start: [i32; 2],
         mask: &mut impl Sink,
     ) {
+        // A canyon's steps at a distance factor of 1 (the game's range): 112, the blocks
+        // across seven chunks.
         let range = (RANGE * 2 - 1) * 16;
-        let [sx, sz] = min_block(start);
-        let x = f64::from(sx.wrapping_add(random.next_int_bounded(16)));
+        let [start_x, start_z] = min_block(start);
+        let x = f64::from(start_x.wrapping_add(random.next_int_bounded(16)));
         let y = self.y.sample(random, anchors);
-        let z = f64::from(sz.wrapping_add(random.next_int_bounded(16)));
+        let z = f64::from(start_z.wrapping_add(random.next_int_bounded(16)));
         let yaw = random.next_float() * 6.283_185_5;
         let pitch = self.vertical_rotation.sample(random);
         let y_scale = f64::from(self.y_scale.sample(random));
@@ -993,15 +1067,17 @@ impl Canyon {
         let mut yaw_change = 0.0_f32;
         let mut pitch_change = 0.0_f32;
         for i in 0..count {
-            let h = 1.5
+            let radius = 1.5
                 + f64::from(
                     self.trig
                         .sin(f64::from(std::f32::consts::PI * i as f32 / count as f32))
                         * thickness,
                 );
-            let v = h * y_scale;
-            let h = h * f64::from(self.horizontal_radius_factor.sample(&mut random));
-            let v = self.vertical_radius(&mut random, v, count as f32, i as f32);
+            let vertical_radius = radius * y_scale;
+            let horizontal_radius =
+                radius * f64::from(self.horizontal_radius_factor.sample(&mut random));
+            let vertical_radius =
+                self.vertical_radius(&mut random, vertical_radius, count as f32, i as f32);
             let (cos_pitch, sin_pitch) = (
                 self.trig.cos(f64::from(pitch)),
                 self.trig.sin(f64::from(pitch)),
@@ -1014,42 +1090,61 @@ impl Canyon {
             yaw += yaw_change * 0.05;
             pitch_change *= 0.8;
             yaw_change *= 0.5;
-            let (a, b) = (random.next_float(), random.next_float());
-            pitch_change += (a - b) * random.next_float() * 2.0;
-            let (a, b) = (random.next_float(), random.next_float());
-            yaw_change += (a - b) * random.next_float() * 4.0;
+            let (first, second) = (random.next_float(), random.next_float());
+            pitch_change += (first - second) * random.next_float() * 2.0;
+            let (first, second) = (random.next_float(), random.next_float());
+            yaw_change += (first - second) * random.next_float() * 4.0;
             if random.next_int_bounded(4) != 0 {
                 if !can_reach(chunk, x, z, i, count, thickness) {
                     return;
                 }
                 let min_y = anchors.min_y;
-                carve_ellipsoid(chunk, x, y, z, h, v, mask, |fx, fy, fz, by| {
-                    // dcmpl/iflt: NaN is inside.
-                    let width = f64::from(widths[(by - min_y - 1) as usize]);
-                    (fx * fx + fz * fz) * width + fy * fy / 6.0 >= 1.0
-                });
+                carve_ellipsoid(
+                    chunk,
+                    x,
+                    y,
+                    z,
+                    horizontal_radius,
+                    vertical_radius,
+                    mask,
+                    |fx, fy, fz, block_y| {
+                        // A larger width factor narrows this y. Dividing fy² by 6 keeps the
+                        // walls almost upright, to the top and bottom of the ellipsoid's box.
+                        // dcmpl/iflt: NaN is inside.
+                        let width = f64::from(widths[(block_y - min_y - 1) as usize]);
+                        (fx * fx + fz * fz) * width + fy * fy / 6.0 >= 1.0
+                    },
+                );
             }
         }
     }
 
     /// `initWidthFactors`: a factor per y of the generation depth, changed at random.
     fn width_factors(&self, anchors: AnchorHeights, random: &mut LegacyRandomSource) -> Vec<f32> {
-        let mut f = 1.0_f32;
+        let mut factor = 1.0_f32;
         (0..anchors.height.max(0))
             .map(|i| {
                 if i == 0 || random.next_int_bounded(self.width_smoothness) == 0 {
-                    let a = random.next_float();
-                    f = 1.0 + a * random.next_float();
+                    let first = random.next_float();
+                    factor = 1.0 + first * random.next_float();
                 }
-                f * f
+                factor * factor
             })
             .collect()
     }
 
     /// `updateVerticalRadius`: wider at the canyon's middle, times a random 0.75 to 1.
-    fn vertical_radius(&self, random: &mut LegacyRandomSource, v: f64, count: f32, i: f32) -> f64 {
-        let k = 1.0 - (0.5 - i / count).abs() * 2.0;
-        let factor = self.vertical_radius_default_factor + self.vertical_radius_center_factor * k;
-        f64::from(factor) * v * f64::from(random_between(random, 0.75, 1.0))
+    fn vertical_radius(
+        &self,
+        random: &mut LegacyRandomSource,
+        radius: f64,
+        count: f32,
+        step: f32,
+    ) -> f64 {
+        // 0 at the canyon's ends, rising to 1 at its middle.
+        let centredness = 1.0 - (0.5 - step / count).abs() * 2.0;
+        let factor =
+            self.vertical_radius_default_factor + self.vertical_radius_center_factor * centredness;
+        f64::from(factor) * radius * f64::from(random_between(random, 0.75, 1.0))
     }
 }

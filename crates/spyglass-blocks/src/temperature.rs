@@ -156,24 +156,25 @@ impl Temperature {
     /// `sea_level + 17`, cooler by `(v + y − snow line) · 0.05 / 40`, with `v` the temperature
     /// noise times 8 (in `f32` from 26.3, narrowed from `f64` in 26.2).
     pub fn at(&self, climate: Climate, [x, y, z]: [i32; 3], sea_level: i32) -> f32 {
-        let t = self.modified(climate, x, z);
+        let base = self.modified(climate, x, z);
         let snow_line = sea_level.wrapping_add(17);
         if y <= snow_line {
-            return t;
+            return base;
         }
-        let (nx, nz) = (f64::from(x as f32 / 8.0), f64::from(z as f32 / 8.0));
-        let v = match &self.0 {
-            Noises::Simplex { noise, .. } => noise.get(nx, nz) * 8.0,
-            Noises::V1_21 { noise, .. } => (noise.get_value(nx, nz) * 8.0) as f32,
+        let (noise_x, noise_z) = (f64::from(x as f32 / 8.0), f64::from(z as f32 / 8.0));
+        // `v`: the noise counts as extra height, so the cooling varies from place to place.
+        let noise_height = match &self.0 {
+            Noises::Simplex { noise, .. } => noise.get(noise_x, noise_z) * 8.0,
+            Noises::V1_21 { noise, .. } => (noise.get_value(noise_x, noise_z) * 8.0) as f32,
         };
-        t - (v + y as f32 - snow_line as f32) * 0.05 / 40.0
+        base - (noise_height + y as f32 - snow_line as f32) * 0.05 / 40.0
     }
 
     /// `coldEnoughToSnow`: not `warmEnoughToRain` (at least 0.15). NaN is cold.
     pub fn cold_enough_to_snow(&self, climate: Climate, pos: [i32; 3], sea_level: i32) -> bool {
         // fcmpl/iflt: NaN isn't warm enough to rain.
-        let t = self.at(climate, pos, sea_level);
-        t.is_nan() || t < 0.15
+        let temperature = self.at(climate, pos, sea_level);
+        temperature.is_nan() || temperature < 0.15
     }
 
     /// `shouldMeltFrozenOceanIcebergSlightly`: warmer than 0.1.

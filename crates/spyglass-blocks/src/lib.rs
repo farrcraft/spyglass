@@ -177,10 +177,10 @@ impl ChunkGenerator<'_> {
     /// biome of a nearby quart, picked by the zoom, with the quart's y within the level. With
     /// the tied biomes, when the quart is tied.
     pub fn block_biome(&self, pos: [i32; 3]) -> spyglass_biome::Lookup {
-        let t = &self.settings.terrain;
+        let terrain = &self.settings.terrain;
         let [qx, qy, qz] = self.material.biome_quart(pos);
-        let min_qy = t.level_min_y >> 2;
-        let qy = qy.clamp(min_qy, min_qy + (t.level_height >> 2) - 1);
+        let min_qy = terrain.level_min_y >> 2;
+        let qy = qy.clamp(min_qy, min_qy + (terrain.level_height >> 2) - 1);
         self.biomes.biome_at(qx, qy, qz)
     }
 
@@ -188,12 +188,12 @@ impl ChunkGenerator<'_> {
     /// level's height, and a quart's border around, since 26.4's upscaled biomes can take a
     /// neighbouring quart's. Decoration runs a placed feature only where one of these lists it.
     pub fn chunk_biomes(&self, cx: i32, cz: i32) -> Vec<spyglass_biome::BiomeId> {
-        let t = &self.settings.terrain;
-        let min_qy = t.level_min_y >> 2;
+        let terrain = &self.settings.terrain;
+        let min_qy = terrain.level_min_y >> 2;
         let mut out = Vec::new();
         for qz in -1..5 {
             for qx in -1..5 {
-                for qy in min_qy..min_qy + (t.level_height >> 2) {
+                for qy in min_qy..min_qy + (terrain.level_height >> 2) {
                     let lookup = self.biomes.biome_at(
                         cx.wrapping_mul(4).wrapping_add(qx),
                         qy,
@@ -229,10 +229,11 @@ impl ChunkGenerator<'_> {
     pub fn vein_at(&self, pos: [i32; 3], block: Block) -> Option<VeinAt> {
         match block {
             Block::Vein(v) => {
-                let i = vein_index(v);
-                let part = [VeinPart::Ore, VeinPart::RawOre, VeinPart::Filler][i % 3];
+                // `VEINS` holds each vein's ore, raw ore and filler, in that order.
+                let index = vein_index(v);
+                let part = [VeinPart::Ore, VeinPart::RawOre, VeinPart::Filler][index % 3];
                 Some(VeinAt {
-                    ore: self.settings.veins[i - i % 3],
+                    ore: self.settings.veins[index - index % 3],
                     part,
                 })
             }
@@ -272,8 +273,11 @@ impl ChunkGenerator<'_> {
 
     /// The level's lowest y and the y above its top.
     pub fn level(&self) -> (i32, i32) {
-        let t = &self.settings.terrain;
-        (t.level_min_y, t.level_min_y + t.level_height)
+        let terrain = &self.settings.terrain;
+        (
+            terrain.level_min_y,
+            terrain.level_min_y + terrain.level_height,
+        )
     }
 
     /// The final density of the noise fill over a box, the columns' values
@@ -412,8 +416,8 @@ impl ChunkGenerator<'_> {
     /// Marks every position `doubt` carves, and the one below it, as uncertain.
     fn mark_doubt(chunk: &mut Chunk, doubt: &CarvingMask) {
         let [x0, z0] = chunk.pos.map(|c| c.wrapping_shl(4));
-        for (x, z, y0, y1) in doubt.runs() {
-            for y in y0 - 1..=y1 {
+        for (x, z, bottom, top) in doubt.runs() {
+            for y in bottom - 1..=top {
                 chunk.mark_uncertain([x0 + x, y, z0 + z]);
             }
         }
@@ -515,10 +519,11 @@ impl ChunkGenerator<'_> {
     ) {
         let palette = &self.settings.palette;
         let [cx, cz] = chunk.pos;
-        for (lx, lz, y0, y1) in mask.runs() {
+        for (lx, lz, bottom, top) in mask.runs() {
             let (x, z) = (cx.wrapping_shl(4) + lx, cz.wrapping_shl(4) + lz);
+            // Whether this run has carved grass or mycelium above.
             let mut grass = false;
-            for y in (y0..=y1).rev() {
+            for y in (bottom..=top).rev() {
                 let state = chunk.get([x, y, z]);
                 if carving.uncarvable[usize::from(state)] {
                     continue;

@@ -96,6 +96,7 @@ impl Chunk {
         self.blocks[i] = state;
         let column = ((z & 15) * 16 + (x & 15)) as usize;
         let first = self.first_available[column];
+        // Below the top block, no change moves the heightmap.
         if y <= first - 2 {
             return;
         }
@@ -104,10 +105,11 @@ impl Chunk {
                 self.first_available[column] = y + 1;
             }
         } else if first - 1 == y {
+            // The top block went: the next one down that isn't air is the top.
             self.first_available[column] = (self.min_y..y)
                 .rev()
-                .find(|&yy| !palette.is_air(self.get([x, yy, z])))
-                .map_or(self.min_y, |yy| yy + 1);
+                .find(|&below| !palette.is_air(self.get([x, below, z])))
+                .map_or(self.min_y, |below| below + 1);
         }
     }
 }

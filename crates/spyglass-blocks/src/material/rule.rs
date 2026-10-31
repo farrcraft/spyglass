@@ -88,41 +88,47 @@ pub enum Condition {
         /// `false_at_and_above`.
         false_at_and_above: VerticalAnchor,
     },
-    /// `y_above`.
+    /// `y_above`: the position is at or above a height.
     YAbove {
-        /// `anchor`.
+        /// `anchor`: the height.
         anchor: VerticalAnchor,
-        /// `surface_depth_multiplier`, in −20 to 20.
+        /// `surface_depth_multiplier`, in −20 to 20: the column's surface depth, times this,
+        /// is added to the height.
         surface_depth_multiplier: i32,
-        /// `add_stone_depth`.
+        /// `add_stone_depth`: whether the stone above is added to the position's y.
         add_stone_depth: bool,
     },
-    /// `water`.
+    /// `water`: no water above, or the position is at or above a height from the water's top.
     Water {
-        /// `offset`.
+        /// `offset`: the height, from the water's top.
         offset: i32,
-        /// `surface_depth_multiplier`, in −20 to 20.
+        /// `surface_depth_multiplier`, in −20 to 20: the column's surface depth, times this,
+        /// is added to the height.
         surface_depth_multiplier: i32,
-        /// `add_stone_depth`.
+        /// `add_stone_depth`: whether the stone above is added to the position's y.
         add_stone_depth: bool,
     },
     /// `temperature`: cold enough to snow.
     Temperature,
-    /// `steep`.
+    /// `steep`: the surface falls 4 or more blocks across the columns either side, towards
+    /// the east or the north.
     Steep,
     /// `hole`: the column's surface depth is 0 or less.
     Hole,
-    /// `above_preliminary_surface`.
+    /// `above_preliminary_surface`: the position is at or above the preliminary surface, less 8
+    /// and plus the column's surface depth.
     AbovePreliminarySurface,
     /// `not`.
     Not(Box<Condition>),
-    /// `stone_depth`.
+    /// `stone_depth`: the position is at most a depth into the solid blocks, from above (or,
+    /// for a ceiling, from below).
     StoneDepth {
-        /// `offset`.
+        /// `offset`: the depth, less 1.
         offset: i32,
-        /// `add_surface_depth`.
+        /// `add_surface_depth`: whether the column's surface depth is added to the depth.
         add_surface_depth: bool,
-        /// `secondary_depth_range`.
+        /// `secondary_depth_range`: the most the secondary surface noise adds to the depth, 0
+        /// for none.
         secondary_depth_range: i32,
         /// `surface_type` is `ceiling` (otherwise `floor`).
         ceiling: bool,

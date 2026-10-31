@@ -74,7 +74,9 @@ pub struct Vein<'m> {
 /// while the height changes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CarvingMap {
+    /// The world it was carved in.
     world: u64,
+    /// The area it was made for, at any height.
     area: MapArea,
     /// Each pixel's first run in `runs`, and one past the last pixel's last.
     offsets: Vec<u32>,
@@ -93,8 +95,8 @@ impl CarvingMap {
     pub fn carver(&self, [i, j]: [u32; 2], y: i32) -> Option<CarverKind> {
         let [w, h] = self.area.size;
         assert!(i < w && j < h, "pixel ({i}, {j}) outside the area");
-        let p = j as usize * w as usize + i as usize;
-        let runs = &self.runs[self.offsets[p] as usize..self.offsets[p + 1] as usize];
+        let pixel = j as usize * w as usize + i as usize;
+        let runs = &self.runs[self.offsets[pixel] as usize..self.offsets[pixel + 1] as usize];
         runs.iter()
             .find(|(min, max, _)| (*min..=*max).contains(&y))
             .map(|r| r.2)
@@ -112,7 +114,9 @@ impl CarvingMap {
 struct Cell {
     /// An index into [`UndergroundMap::ores`] and the part, if an ore vein's block is there.
     vein: Option<(u16, VeinPart)>,
+    /// Whether it's a noise cave.
     noise_cave: bool,
+    /// The kind of carver that carved it first, if one did.
     carver: Option<CarverKind>,
 }
 
@@ -120,8 +124,11 @@ struct Cell {
 /// what the layers asked for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UndergroundMap {
+    /// The world it was drawn in.
     world: u64,
+    /// The area it covers.
     area: MapArea,
+    /// Each pixel's cell, x fastest.
     cells: Vec<Cell>,
     /// The ore blocks naming the veins found, in order of first appearance.
     ores: Vec<String>,
@@ -251,14 +258,14 @@ impl Session<'_> {
             let xs: Vec<i32> = (0..w).map(|i| area.block([i, 0])[0]).collect();
             let zs: Vec<i32> = (0..h).map(|j| area.block([0, j])[1]).collect();
             let probes = generator.probes_on(&xs, &zs, area.y);
-            for (p, probe) in probes.iter().enumerate() {
-                let cell = &mut cells[p];
+            for (pixel, probe) in probes.iter().enumerate() {
+                let cell = &mut cells[pixel];
                 if layers.noise_caves {
                     let open = matches!(probe.block, Block::Air | Block::Water | Block::Lava);
                     cell.noise_cave = open && probe.covered;
                 }
                 if layers.veins {
-                    let pos = [xs[p % w as usize], area.y, zs[p / w as usize]];
+                    let pos = [xs[pixel % w as usize], area.y, zs[pixel / w as usize]];
                     if let Some(vein) = generator.vein_at(pos, probe.block) {
                         let ore = palette.name(vein.ore);
                         let index = match ores.iter().position(|o| o == ore) {
@@ -281,14 +288,14 @@ impl Session<'_> {
         if layers.carvers {
             let made;
             let carvings = match carvings {
-                Some(c) => {
-                    if c.world != self.world.id {
+                Some(given) => {
+                    if given.world != self.world.id {
                         return Err(Error::OtherWorld("a carving map".to_string()));
                     }
-                    if !c.covers(area) {
+                    if !given.covers(area) {
                         return Err(invalid("the carving map is for another area"));
                     }
-                    c
+                    given
                 }
                 None => {
                     made = self.carving_map(area)?;

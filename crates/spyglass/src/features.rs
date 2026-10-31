@@ -18,9 +18,13 @@ use crate::{Error, Result, Session, World};
 
 /// A world's features, seed-independent, loaded on first use.
 pub(crate) struct FeatureWorld {
+    /// The placed and configured features, and each decoration step's order of them.
     settings: FeatureSettings,
+    /// The blocks' behaviour, for placing on them.
     blocks: Blocks,
+    /// What places the features spyglass places.
     placer: Placer,
+    /// How far features' writes reach, for what earlier features and neighbours could write.
     bounds: NeighbourBounds,
     /// The placed features a query can name.
     targets: Vec<PlacedRef>,
@@ -80,8 +84,8 @@ impl FeatureWorld {
         let early_placed = Wanted::load(&settings, &placed_early, None)?;
         let early = Wanted::load(&settings, &early, None)?;
         let mut alone = HashMap::new();
-        for &t in &targets {
-            alone.insert(t, Wanted::load(&settings, &[t], None)?);
+        for &target in &targets {
+            alone.insert(target, Wanted::load(&settings, &[target], None)?);
         }
         let bounds = NeighbourBounds::load(bundle, &settings)?;
         Ok(FeatureWorld {
@@ -103,20 +107,21 @@ impl FeatureWorld {
 impl World {
     /// The world's features, loaded the first time they're asked for.
     pub(crate) fn feature_world(&self) -> Result<&FeatureWorld> {
-        if let Some(f) = self.features.get() {
-            return Ok(f);
+        if let Some(features) = self.features.get() {
+            return Ok(features);
         }
-        let f = FeatureWorld::load(self)?;
-        Ok(self.features.get_or_init(|| f))
+        let features = FeatureWorld::load(self)?;
+        Ok(self.features.get_or_init(|| features))
     }
 
     /// Every feature spyglass places, by placed feature id: the ones a [`FeatureQuery`] can
     /// name.
     pub fn features(&self) -> Result<Vec<&str>> {
-        let f = self.feature_world()?;
-        Ok(f.targets
+        let features = self.feature_world()?;
+        Ok(features
+            .targets
             .iter()
-            .filter_map(|&r| f.settings.placed(r).id.as_deref())
+            .filter_map(|&r| features.settings.placed(r).id.as_deref())
             .collect())
     }
 
@@ -124,15 +129,15 @@ impl World {
     /// names every placed feature of it (`minecraft:monster_room` is both dungeons). One
     /// spyglass doesn't place is an error (`docs/specs/locate.md#features`).
     pub fn feature_query(&self, argument: &str) -> Result<FeatureQuery> {
-        let f = self.feature_world()?;
+        let features = self.feature_world()?;
         let id = spyglass_data::codec::full_id(argument);
-        let targets: Vec<PlacedRef> = f
+        let targets: Vec<PlacedRef> = features
             .targets
             .iter()
             .copied()
             .filter(|&r| {
-                f.settings.placed(r).id.as_deref() == Some(id.as_str())
-                    || f.placer.configured_id(r) == Some(id.as_str())
+                features.settings.placed(r).id.as_deref() == Some(id.as_str())
+                    || features.placer.configured_id(r) == Some(id.as_str())
             })
             .collect();
         if targets.is_empty() {
@@ -159,8 +164,11 @@ impl World {
 /// A feature argument resolved by [`World::feature_query`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FeatureQuery {
+    /// The world it was resolved in, so it isn't asked of another.
     world: u64,
+    /// The argument as given.
     argument: String,
+    /// The placed features it names.
     targets: Vec<PlacedRef>,
 }
 
@@ -233,8 +241,12 @@ pub(crate) struct Placings(HashMap<(Vec<PlacedRef>, FeatureOptions, [i32; 2]), V
 /// What a query keeps between chunks: carved chunks, stored biomes and the terrain in
 /// outline.
 struct Cache<'g> {
+    /// Carved chunks, by chunk coordinates: each is a neighbour of up to 9 placed chunks.
     carved: HashMap<[i32; 2], Chunk>,
+    /// Each chunk's stored biomes, for what earlier features and neighbours could write.
     biomes: HashMap<[i32; 2], Vec<BiomeId>>,
+    /// The terrain in outline, for ruling chunks out: none when the unlikely candidates are
+    /// asked for (then no chunk is ruled out), or where the outline can't be drawn.
     outline: Option<Outline<'g>>,
 }
 
@@ -340,41 +352,50 @@ impl<'w> Session<'w> {
         self.check_world(query.world, &query.argument)?;
         let mut cache = Cache::new(self.chunks()?, options);
         let centre = [from[0] >> 4, from[2] >> 4];
-        let dist = |p: [i32; 3]| {
+        let distance_sqr = |p: [i32; 3]| {
             let (dx, dz) = (i64::from(p[0] - from[0]), i64::from(p[2] - from[2]));
             dx * dx + dz * dz
         };
+        // Square rings of chunks around `from`'s, outwards. Every feature found is kept, and
+        // the nearest certain one's squared distance bounds the search: once a whole ring is
+        // further than it, no ring after can hold anything nearer, so the search stops.
         let mut found: Vec<FoundFeature> = Vec::new();
-        let mut best: Option<i64> = None;
-        for r in 0..=radius {
-            // The ring's nearest block is (r - 1) chunks' worth of blocks away.
-            if let Some(b) = best {
-                let near = i64::from((r - 1).max(0) * 16);
-                if near * near > b {
+        let mut nearest_certain: Option<i64> = None;
+        for ring in 0..=radius {
+            // The ring's nearest block is (ring - 1) chunks' worth of blocks away.
+            if let Some(nearest) = nearest_certain {
+                let ring_near = i64::from((ring - 1).max(0) * 16);
+                if ring_near * ring_near > nearest {
                     break;
                 }
             }
-            for dz in -r..=r {
-                for dx in -r..=r {
-                    if dx.abs().max(dz.abs()) != r {
+            for dz in -ring..=ring {
+                for dx in -ring..=ring {
+                    if dx.abs().max(dz.abs()) != ring {
                         continue;
                     }
                     let chunk = [centre[0] + dx, centre[1] + dz];
-                    for f in self.chunk_features(query, chunk, options, &mut cache)? {
-                        if f.certain {
-                            best = Some(best.map_or(dist(f.position), |b| b.min(dist(f.position))));
+                    for feature in self.chunk_features(query, chunk, options, &mut cache)? {
+                        if feature.certain {
+                            nearest_certain = Some(
+                                nearest_certain.map_or(distance_sqr(feature.position), |nearest| {
+                                    nearest.min(distance_sqr(feature.position))
+                                }),
+                            );
                         }
-                        found.push(f);
+                        found.push(feature);
                     }
                 }
             }
         }
-        found.sort_by_key(|f| dist(f.position));
-        let complete = best.is_some();
-        if let Some(b) = best {
+        // Nearest first, ending at the nearest certain one: the candidates before it may be
+        // the nearest, and nothing after it can be.
+        found.sort_by_key(|f| distance_sqr(f.position));
+        let complete = nearest_certain.is_some();
+        if let Some(nearest) = nearest_certain {
             let end = found
                 .iter()
-                .position(|f| f.certain && dist(f.position) == b)
+                .position(|f| f.certain && distance_sqr(f.position) == nearest)
                 .map_or(found.len(), |i| i + 1);
             found.truncate(end);
         }
@@ -385,6 +406,14 @@ impl<'w> Session<'w> {
     }
 
     /// One chunk's features that `query` names.
+    ///
+    /// Placing a chunk is costly (its 8 neighbours carved, then every feature up to the last
+    /// target's step decorated), so cheaper tests rule it out first. A chunk none of the named
+    /// features has a try in has none. Unless the unlikely candidates are asked for, a chunk
+    /// where the terrain in outline shows every try of every named feature declines has none
+    /// either (`docs/specs/features.md#ruling-out`). Otherwise the chunk is decorated on its
+    /// blocks and its neighbours', with what earlier features, the neighbours and structure
+    /// pieces could write putting tries in doubt, and the named features' tries are answered.
     fn chunk_features(
         &self,
         query: &FeatureQuery,
@@ -393,15 +422,23 @@ impl<'w> Session<'w> {
         cache: &mut Cache<'_>,
     ) -> Result<Vec<FoundFeature>> {
         let world = self.world;
-        let f = world.feature_world()?;
+        let features = world.feature_world()?;
         let generator = self.chunks()?;
         let terrain = &world.terrain;
         let (anchors, min_y) = (terrain.anchors(), terrain.level_min_y);
         // Only a chunk where a named feature's tries reach it can have one.
-        let reaches = query.targets.iter().any(|t| {
-            f.alone.get(t).is_some_and(|w| {
-                let d = Decorator::of(&f.settings, generator, self.seed, anchors, min_y, w);
-                !d.tries(chunk, &mut |_, _| spyglass_feature::Drawn::Unknown)
+        let reaches = query.targets.iter().any(|target| {
+            features.alone.get(target).is_some_and(|alone| {
+                let decorator = Decorator::of(
+                    &features.settings,
+                    generator,
+                    self.seed,
+                    anchors,
+                    min_y,
+                    alone,
+                );
+                !decorator
+                    .tries(chunk, &mut |_, _| spyglass_feature::Drawn::Unknown)
                     .is_empty()
             })
         });
@@ -413,98 +450,124 @@ impl<'w> Session<'w> {
             biomes: stored,
             outline,
         } = cache;
-        let mut biomes = |c: [i32; 2]| {
+        let mut biomes = |chunk: [i32; 2]| {
             stored
-                .entry(c)
-                .or_insert_with(|| generator.chunk_biomes(c[0], c[1]))
+                .entry(chunk)
+                .or_insert_with(|| generator.chunk_biomes(chunk[0], chunk[1]))
                 .clone()
         };
         // Nothing could place on its own, from the terrain in outline: no likely answer.
         if let Some(outline) = outline {
             let (level_min, level_top) = generator.level();
             let placed = Decorator::of(
-                &f.settings,
+                &features.settings,
                 generator,
                 self.seed,
                 anchors,
                 min_y,
-                &f.early_placed,
+                &features.early_placed,
             );
             // A target's own writes count only where one of its tries isn't ruled out.
-            let writes: Vec<_> = f
+            let writes: Vec<_> = features
                 .bounds
                 .outline_writes(
                     &placed,
-                    &f.settings,
+                    &features.settings,
                     chunk,
                     [level_min, level_top - 1],
                     &mut biomes,
                 )
                 .into_iter()
-                .filter(|w| !query.targets.contains(&w.placed))
+                .filter(|write| !query.targets.contains(&write.placed))
                 .collect();
-            let ruled_out = query.targets.iter().all(|t| {
-                f.alone.get(t).is_some_and(|w| {
-                    let d = Decorator::of(&f.settings, generator, self.seed, anchors, min_y, w);
-                    f.placer.none_place(&d, &f.blocks, outline, chunk, &writes)
+            let ruled_out = query.targets.iter().all(|target| {
+                features.alone.get(target).is_some_and(|alone| {
+                    let decorator = Decorator::of(
+                        &features.settings,
+                        generator,
+                        self.seed,
+                        anchors,
+                        min_y,
+                        alone,
+                    );
+                    features.placer.none_place(
+                        &decorator,
+                        &features.blocks,
+                        outline,
+                        chunk,
+                        &writes,
+                    )
                 })
             });
             if ruled_out {
                 return Ok(Vec::new());
             }
         }
+        // The chunk and its 8 neighbours, x fastest, as the region takes them.
         let mut chunks = Vec::with_capacity(9);
         for dz in -1..=1 {
             for dx in -1..=1 {
                 let key = [chunk[0] + dx, chunk[1] + dz];
-                let c = carved
+                let neighbour = carved
                     .entry(key)
                     .or_insert_with(|| generator.carved_chunk(key[0], key[1]));
-                chunks.push(c.clone());
+                chunks.push(neighbour.clone());
             }
         }
-        let mut region = Region::new(&f.blocks, chunk, chunks);
+        let mut region = Region::new(&features.blocks, chunk, chunks);
         let everything = Decorator::of(
-            &f.settings,
+            &features.settings,
             generator,
             self.seed,
             anchors,
             min_y,
-            &f.everything,
+            &features.everything,
         );
+        // What the neighbours, decorated first, could write into this chunk.
         let foreign = if options.neighbours {
-            f.bounds
-                .writes(&everything, &f.settings, &region, &mut biomes)
+            features
+                .bounds
+                .writes(&everything, &features.settings, &region, &mut biomes)
         } else {
             Vec::new()
         };
-        let early = Decorator::of(&f.settings, generator, self.seed, anchors, min_y, &f.early);
-        let own = f
+        // What this chunk's own earlier features could write: those spyglass doesn't place,
+        // and those it places once it isn't sure of them.
+        let early = Decorator::of(
+            &features.settings,
+            generator,
+            self.seed,
+            anchors,
+            min_y,
+            &features.early,
+        );
+        let own = features
             .bounds
-            .own_writes(&early, &f.settings, &region, &mut biomes);
+            .own_writes(&early, &features.settings, &region, &mut biomes);
         let pools = world.pools()?;
         let starts = self.starts(true).with_pools(pools);
         let pieces = structures::pieces(
             &starts,
             &world.sets,
             chunk,
-            f.last_step,
+            features.last_step,
             region.min_y(),
             region.max_y(),
         );
         let decorator = Decorator::of(
-            &f.settings,
+            &features.settings,
             generator,
             self.seed,
             anchors,
             min_y,
-            &f.placing,
+            &features.placing,
         );
         let placements =
-            f.placer
+            features
+                .placer
                 .decorate(&decorator, &mut region, self.seed, &foreign, &own, &pieces);
-        let name = |r: PlacedRef| f.settings.placed(r).id.clone().unwrap_or_default();
-        let reason = |d: Doubt| match d {
+        let name = |r: PlacedRef| features.settings.placed(r).id.clone().unwrap_or_default();
+        let reason = |doubt: Doubt| match doubt {
             Doubt::Tie => "a block it reads depends on a tied biome".to_string(),
             Doubt::OutsideRegion => "it reads past its chunk's neighbours".to_string(),
             Doubt::ShapeUpdate => "a block beside it could change shape".to_string(),

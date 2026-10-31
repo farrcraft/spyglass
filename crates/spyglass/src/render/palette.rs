@@ -120,6 +120,7 @@ const FEATURES: &[(&str, [u8; 3])] = &[
     ("lake_lava_surface", [0xff, 0xa0, 0x30]),
 ];
 
+/// `id`'s colour in `table`, if it's in the `minecraft` namespace and the table has it.
 fn find(table: &[(&str, [u8; 3])], id: &str) -> Option<[u8; 3]> {
     let name = id.strip_prefix("minecraft:")?;
     table.iter().find(|(n, _)| *n == name).map(|(_, c)| *c)

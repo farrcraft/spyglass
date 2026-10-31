@@ -283,17 +283,18 @@ fn duration(text: &str) -> Result<Duration, String> {
         .find(|c: char| !c.is_ascii_digit())
         .unwrap_or(text.len());
     let (number, unit) = text.split_at(split);
-    let n: u64 = number
+    let count: u64 = number
         .parse()
         .map_err(|_| format!("expected a duration like 90s, 10m or 2h, got {text:?}"))?;
-    let times = |unit: u64| {
-        n.checked_mul(unit)
+    let times = |unit_seconds: u64| {
+        count
+            .checked_mul(unit_seconds)
             .map(Duration::from_secs)
             .ok_or_else(|| format!("{text:?} is too long"))
     };
     Ok(match unit {
-        "ms" => Duration::from_millis(n),
-        "" | "s" => Duration::from_secs(n),
+        "ms" => Duration::from_millis(count),
+        "" | "s" => Duration::from_secs(count),
         "m" => times(60)?,
         "h" => times(3600)?,
         _ => {

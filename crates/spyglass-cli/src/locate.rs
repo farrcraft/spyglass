@@ -177,24 +177,24 @@ pub fn feature(
 }
 
 /// One feature, as text.
-pub fn feature_line(f: &spyglass::FoundFeature, from: Option<[i32; 3]>) {
-    let [x, y, z] = f.position;
-    let away = from.map_or(String::new(), |o| {
-        let (dx, dz) = (f64::from(x - o[0]), f64::from(z - o[2]));
+pub fn feature_line(feature: &spyglass::FoundFeature, from: Option<[i32; 3]>) {
+    let [x, y, z] = feature.position;
+    let away = from.map_or(String::new(), |origin| {
+        let (dx, dz) = (f64::from(x - origin[0]), f64::from(z - origin[2]));
         format!(" {:>7} blocks", (dx * dx + dz * dz).sqrt() as i32)
     });
-    let kind = match (f.certain, f.likely) {
+    let kind = match (feature.certain, feature.likely) {
         (true, _) => "certain",
         (false, true) => "candidate",
         (false, false) => "unlikely",
     };
-    let why = f
+    let why = feature
         .reason
         .as_deref()
         .map_or(String::new(), |r| format!(" ({r})"));
     out!(
         "  {x:>9} {y:>4} {z:<9}{away}  {kind:<10} {}{why}",
-        f.feature
+        feature.feature
     );
 }
 

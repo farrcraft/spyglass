@@ -73,10 +73,10 @@ pub fn run(args: &Search) -> Result<()> {
         eprintln!("searching every seed; Ctrl-C stops and prints the best so far");
     }
     let mut last = Instant::now();
-    let outcome = game.search(&query, &options, |p| {
+    let outcome = game.search(&query, &options, |progress| {
         if terminal && last.elapsed() >= Duration::from_secs(1) {
             last = Instant::now();
-            eprint!("\r{}", status(p));
+            eprint!("\r{}", status(progress));
             let _ = std::io::stderr().flush();
         }
         ControlFlow::Continue(())
@@ -107,14 +107,14 @@ fn read_seeds(path: &std::path::Path) -> Result<Vec<i64>> {
 }
 
 /// The progress line.
-fn status(p: &SearchProgress) -> String {
-    let rate = p.evaluated as f64 / p.elapsed.as_secs_f64().max(0.001);
-    let best = p.top.first().map_or("none yet".to_string(), |h| {
+fn status(progress: &SearchProgress) -> String {
+    let rate = progress.evaluated as f64 / progress.elapsed.as_secs_f64().max(0.001);
+    let best = progress.top.first().map_or("none yet".to_string(), |h| {
         format!("score {} (seed {})", h.score, h.seed)
     });
     format!(
         "{} seeds ({:.0}/s), {} skipped by placement, {} reported; best {best}",
-        p.evaluated, rate, p.prefiltered, p.reported
+        progress.evaluated, rate, progress.prefiltered, progress.reported
     )
 }
 
@@ -127,18 +127,18 @@ pub(crate) fn outcome_word(o: Outcome) -> &'static str {
 }
 
 fn print_text(game: &Game, query: &SearchQuery, options: &SearchOptions, outcome: &SearchOutcome) {
-    let p = &outcome.progress;
+    let progress = &outcome.progress;
     out!(
         "{} of {} seeds reported, best {} shown (Minecraft {}, {:.1} s{}):",
-        p.reported,
-        p.evaluated,
+        progress.reported,
+        progress.evaluated,
         if outcome.partial {
             format!("{} of {}", outcome.hits.len(), outcome.progress.top.len())
         } else {
             outcome.hits.len().to_string()
         },
         game.version(),
-        p.elapsed.as_secs_f64(),
+        progress.elapsed.as_secs_f64(),
         match (options.certain, options.confirm) {
             (true, true) => ", confirmed, certain only",
             (true, false) => ", certain only",
@@ -159,18 +159,18 @@ fn print_text(game: &Game, query: &SearchQuery, options: &SearchOptions, outcome
             hit.score,
             outcome_word(hit.evaluation.verdict)
         );
-        for (line, c) in lines.iter().zip(&hit.evaluation.constraints) {
-            let found = match c.features.first() {
+        for (line, result) in lines.iter().zip(&hit.evaluation.constraints) {
+            let found = match result.features.first() {
                 None => String::new(),
                 Some(f) => {
                     let [x, z] = f.map_block();
-                    format!(" ({} found, first at {x} {z})", c.features.len())
+                    format!(" ({} found, first at {x} {z})", result.features.len())
                 }
             };
-            out!("       {:<8} {line}{found}", outcome_word(c.outcome));
+            out!("       {:<8} {line}{found}", outcome_word(result.outcome));
         }
     }
-    match p.next {
+    match progress.next {
         Some(next) => out!("\ncontinue with --from {next}"),
         None => out!("\nevery seed in the source was searched"),
     }
@@ -182,7 +182,7 @@ fn print_json(
     options: &SearchOptions,
     outcome: &SearchOutcome,
 ) -> Result<()> {
-    let p = &outcome.progress;
+    let progress = &outcome.progress;
     let canonical = query.to_string();
     let lines: Vec<&str> = canonical.lines().collect();
     let source = match &options.source {
@@ -228,12 +228,12 @@ fn print_json(
         certain: options.certain,
         confirm: options.confirm,
         top: options.top,
-        next: p.next,
-        evaluated: p.evaluated,
-        prefiltered: p.prefiltered,
-        checked: p.checked,
-        reported: p.reported,
-        elapsed_seconds: p.elapsed.as_secs_f64(),
+        next: progress.next,
+        evaluated: progress.evaluated,
+        prefiltered: progress.prefiltered,
+        checked: progress.checked,
+        reported: progress.reported,
+        elapsed_seconds: progress.elapsed.as_secs_f64(),
         hits,
         partial: outcome.partial,
         warnings: json::all_warnings(None, game.unchecked_version()),

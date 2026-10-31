@@ -102,12 +102,14 @@ fn columns<'c>(chunk: &'c ChunkBlocks<'_>) -> impl Iterator<Item = ([i32; 2], Bl
 /// A column's runs of one block, top down.
 fn print_runs(column: &BlockColumn) {
     let mut runs: Vec<(i32, i32, &str, bool)> = Vec::new();
-    for (y, b) in (column.min_y..).zip(&column.blocks) {
+    // Each run is `(bottom, top, block, certain)`: a block above the last run's top joins it if
+    // it's the same block, as certain.
+    for (y, here) in (column.min_y..).zip(&column.blocks) {
         match runs.last_mut() {
-            Some((_, top, block, certain)) if *block == b.block && *certain == b.certain => {
+            Some((_, top, block, certain)) if *block == here.block && *certain == here.certain => {
                 *top = y;
             }
-            _ => runs.push((y, y, &b.block, b.certain)),
+            _ => runs.push((y, y, &here.block, here.certain)),
         }
     }
     for (bottom, top, block, certain) in runs.into_iter().rev() {
@@ -122,6 +124,7 @@ fn print_runs(column: &BlockColumn) {
 
 /// How many of each block a chunk has, most first.
 fn print_counts(chunk: &ChunkBlocks<'_>) {
+    // Each block's count, and how many of them depend on a tied biome.
     let mut counts: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
     let [cx, cz] = chunk.chunk();
     for dz in 0..16 {
@@ -137,14 +140,14 @@ fn print_counts(chunk: &ChunkBlocks<'_>) {
         }
     }
     let mut counts: Vec<_> = counts.into_iter().collect();
-    counts.sort_by_key(|&(block, (n, _))| (std::cmp::Reverse(n), block));
-    for (block, (n, uncertain)) in counts {
+    counts.sort_by_key(|&(block, (total, _))| (std::cmp::Reverse(total), block));
+    for (block, (total, uncertain)) in counts {
         let note = if uncertain == 0 {
             String::new()
         } else {
             format!(" ({uncertain} depend on a tied biome)")
         };
-        out!("  {n:>7}  {block}{note}");
+        out!("  {total:>7}  {block}{note}");
     }
     out!("--column x,z shows a column; --json gives every block.");
 }

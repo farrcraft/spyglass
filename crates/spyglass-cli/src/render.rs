@@ -126,9 +126,12 @@ pub fn run(args: &Render) -> Result<()> {
         );
     }
     let [w, h] = area.size;
-    let s = i64::from(area.scale);
+    let blocks_per_pixel = i64::from(area.scale);
     let [x0, z0] = area.min.map(i64::from);
-    let (x1, z1) = (x0 + i64::from(w) * s - 1, z0 + i64::from(h) * s - 1);
+    let (x1, z1) = (
+        x0 + i64::from(w) * blocks_per_pixel - 1,
+        z0 + i64::from(h) * blocks_per_pixel - 1,
+    );
     let biomes = match (layers.biomes, layers.surface) {
         (false, _) => String::new(),
         (true, true) => ", biomes at the surface".to_string(),

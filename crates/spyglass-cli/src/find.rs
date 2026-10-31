@@ -79,10 +79,10 @@ pub fn run(args: &Find) -> Result<()> {
     }
     let terminal = std::io::stderr().is_terminal();
     let mut last = Instant::now();
-    let outcome = game.session(seed).find(&query, &options, |p| {
+    let outcome = game.session(seed).find(&query, &options, |progress| {
         if terminal && last.elapsed() >= Duration::from_secs(1) {
             last = Instant::now();
-            eprint!("\r{}", status(p));
+            eprint!("\r{}", status(progress));
             let _ = std::io::stderr().flush();
         }
         ControlFlow::Continue(())
@@ -110,10 +110,10 @@ pub fn run(args: &Find) -> Result<()> {
 }
 
 /// The progress line.
-fn status(p: &FindProgress) -> String {
+fn status(progress: &FindProgress) -> String {
     format!(
         "{} of {} targets judged, {} matches",
-        p.judged, p.targets, p.matches
+        progress.judged, progress.targets, progress.matches
     )
 }
 
@@ -134,14 +134,14 @@ fn print_text(
     options: &FindOptions,
     outcome: &FindOutcome,
 ) {
-    let p = &outcome.progress;
+    let progress = &outcome.progress;
     out!(
         "{} matches, {} of {} targets judged (seed {seed}, Minecraft {}, {:.1} s{}):",
         outcome.matches.len(),
-        p.judged,
-        p.targets,
+        progress.judged,
+        progress.targets,
         game.version(),
-        p.elapsed.as_secs_f64(),
+        progress.elapsed.as_secs_f64(),
         match (options.certain, options.confirm) {
             (true, true) => ", confirmed, certain only",
             (true, false) => ", certain only",
@@ -153,8 +153,8 @@ fn print_text(
         out!("  {line}");
     }
     let lines = constraint_lines(query);
-    for (n, m) in outcome.matches.iter().enumerate() {
-        let what = match &m.target {
+    for (rank, found_match) in outcome.matches.iter().enumerate() {
+        let what = match &found_match.target {
             Some(Feature::Structure(s)) => s.structures.join(" or "),
             Some(Feature::Placed(f)) => f.feature.clone(),
             Some(Feature::Biome { biome, .. }) => biome.biome.clone(),
@@ -163,22 +163,22 @@ fn print_text(
         out!();
         out!(
             "{:>3}. {:>9} ~ {:<9} {:>6} blocks  score {}  {}  {what}",
-            n + 1,
-            m.position[0],
-            m.position[1],
-            m.distance,
-            m.score,
-            outcome_word(m.evaluation.verdict),
+            rank + 1,
+            found_match.position[0],
+            found_match.position[1],
+            found_match.distance,
+            found_match.score,
+            outcome_word(found_match.evaluation.verdict),
         );
-        for (line, c) in lines.iter().zip(&m.evaluation.constraints) {
-            let found = match c.features.first() {
+        for (line, result) in lines.iter().zip(&found_match.evaluation.constraints) {
+            let found = match result.features.first() {
                 None => String::new(),
                 Some(f) => {
                     let [x, z] = f.map_block();
-                    format!(" ({} found, first at {x} {z})", c.features.len())
+                    format!(" ({} found, first at {x} {z})", result.features.len())
                 }
             };
-            out!("       {:<8} {line}{found}", outcome_word(c.outcome));
+            out!("       {:<8} {line}{found}", outcome_word(result.outcome));
         }
     }
     if !outcome.complete {
@@ -225,7 +225,7 @@ fn print_json(
                 .collect(),
         })
         .collect();
-    let p = &outcome.progress;
+    let progress = &outcome.progress;
     json::print(&json::FindAnswer {
         header: json::Header {
             format: json::FORMAT,
@@ -247,10 +247,10 @@ fn print_json(
         certain: options.certain,
         confirm: options.confirm,
         top: options.top,
-        targets: p.targets,
-        judged: p.judged,
+        targets: progress.targets,
+        judged: progress.judged,
         complete: outcome.complete,
-        elapsed_seconds: p.elapsed.as_secs_f64(),
+        elapsed_seconds: progress.elapsed.as_secs_f64(),
         matches,
     })
 }

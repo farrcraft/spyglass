@@ -43,6 +43,7 @@ pub enum DatagenError {
     },
 }
 
+/// An I/O error running or preparing `program`, for `map_err`.
 fn io_err(program: &Path) -> impl FnOnce(io::Error) -> DatagenError {
     let program = program.to_path_buf();
     move |source| DatagenError::Io { program, source }
@@ -109,6 +110,7 @@ pub fn run_block_report(
     run(&mut command, java, "the block report")
 }
 
+/// A command running `java`.
 fn java_command(java: &Path) -> Command {
     let mut command = Command::new(java);
     #[cfg(windows)]
@@ -121,6 +123,8 @@ fn java_command(java: &Path) -> Command {
     command
 }
 
+/// Runs `command`, `what` for errors; a failure keeps the end of its output, which is where
+/// Java puts the reason.
 fn run(command: &mut Command, java: &Path, what: &'static str) -> Result<(), DatagenError> {
     let output = command.output().map_err(io_err(java))?;
     if !output.status.success() {

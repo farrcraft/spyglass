@@ -60,6 +60,7 @@ pub enum WriteError {
     Exists(PathBuf),
 }
 
+/// An I/O error at `path`, for `map_err`.
 fn io_err(path: &Path) -> impl FnOnce(io::Error) -> WriteError + '_ {
     move |source| WriteError::Io {
         path: path.to_path_buf(),
@@ -99,6 +100,7 @@ pub fn game_version(game_jar: &Path) -> Result<GameVersion, WriteError> {
     read_game_version(&mut ZipArchive::new(file)?)
 }
 
+/// `version.json` from the open game jar.
 fn read_game_version(jar: &mut ZipArchive<File>) -> Result<GameVersion, WriteError> {
     let mut text = String::new();
     jar.by_name("version.json")?

@@ -44,16 +44,17 @@ enum Cmd {
     },
 }
 
+/// Extracts a bundle, or verifies one; Java's missing gets advice on where to find it.
 fn main() -> ExitCode {
     let args = Args::parse();
     let result = match &args.command {
         Some(Cmd::Verify { dir }) => bundle::verify(dir)
-            .map(|m| {
+            .map(|manifest| {
                 println!(
                     "{}: bundle for {} is valid ({} files)",
                     dir.display(),
-                    m.version,
-                    m.files.len()
+                    manifest.version,
+                    manifest.files.len()
                 );
             })
             .map_err(anyhow::Error::from),
@@ -71,6 +72,7 @@ fn main() -> ExitCode {
     }
 }
 
+/// Extracts the version asked for, printing each step.
 fn run_extract(args: &Args) -> anyhow::Result<()> {
     let cache = match &args.cache_dir {
         Some(dir) => JarCache::new(dir),

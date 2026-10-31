@@ -54,6 +54,7 @@ pub enum CacheError {
     },
 }
 
+/// An I/O error at `path`, for `map_err`.
 fn io_err(path: &Path) -> impl FnOnce(io::Error) -> CacheError + '_ {
     move |source| CacheError::Io {
         path: path.to_path_buf(),
@@ -71,6 +72,7 @@ pub fn default_dir() -> Result<PathBuf, CacheError> {
 /// A directory of verified server jars, keyed by SHA-1.
 #[derive(Debug)]
 pub struct JarCache {
+    /// Where the jars are kept.
     dir: PathBuf,
 }
 

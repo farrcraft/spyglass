@@ -70,6 +70,7 @@ impl Classpath {
 
 /// An open server jar, read as a bundler.
 pub struct Bundler<R> {
+    /// The server jar.
     archive: ZipArchive<R>,
 }
 
@@ -92,6 +93,8 @@ impl<R: Read + Seek> Bundler<R> {
         })
     }
 
+    /// The entries of `META-INF/<list>`: a line per jar, `sha256`, `id` and `path` split by
+    /// tabs. A path that could leave the folder it's unpacked into is an error.
     fn read_list(&mut self, list: &'static str) -> Result<Vec<Entry>, BundlerError> {
         let mut text = String::new();
         self.archive

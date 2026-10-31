@@ -9,6 +9,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// The Java launcher's file name in a home's `bin`.
 const JAVA_EXE: &str = if cfg!(windows) { "java.exe" } else { "java" };
 /// The Java compiler's file name in a JDK's `bin`.
 pub const JAVAC_EXE: &str = if cfg!(windows) { "javac.exe" } else { "javac" };
@@ -75,22 +76,23 @@ pub struct JavaNotFound {
 impl JavaNotFound {
     /// What to do about it, for a person: where a matching runtime comes from on this OS.
     pub fn advice(&self) -> String {
-        let n = self.required;
+        let major = self.required;
         let example = if cfg!(windows) {
-            format!("winget install EclipseAdoptium.Temurin.{n}.JRE")
+            format!("winget install EclipseAdoptium.Temurin.{major}.JRE")
         } else if cfg!(target_os = "macos") {
-            format!("brew install --cask temurin@{n}")
+            format!("brew install --cask temurin@{major}")
         } else {
-            format!("your distro's openjdk-{n}-jre package")
+            format!("your distro's openjdk-{major}-jre package")
         };
         format!(
             "If you play this version, starting it once in your launcher downloads a matching \
-             runtime. Otherwise install a Java {n} runtime ({example}, or Eclipse Temurin from \
+             runtime. Otherwise install a Java {major} runtime ({example}, or Eclipse Temurin from \
              https://adoptium.net)."
         )
     }
 }
 
+/// `paths`, comma-separated, for messages.
 fn display_paths(paths: &[PathBuf]) -> String {
     paths
         .iter()
@@ -102,7 +104,9 @@ fn display_paths(paths: &[PathBuf]) -> String {
 /// A location to search, before it's been looked at.
 #[derive(Debug, Clone)]
 struct Root {
+    /// The folder.
     path: PathBuf,
+    /// Where it came from, for the installs found in it.
     source: JavaSource,
     /// `true` if `path` is a Java home; `false` if it's a folder of homes to scan.
     is_home: bool,
@@ -288,6 +292,8 @@ fn scan_homes(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
     }
 }
 
+/// The installs in `roots`, in their order; a home reached twice (through a link, or listed
+/// twice) is kept the first time only.
 fn discover_in(roots: &[Root]) -> Vec<JavaInstall> {
     let mut seen = HashSet::new();
     let mut found = Vec::new();

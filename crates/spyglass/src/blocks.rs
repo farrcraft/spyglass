@@ -42,7 +42,9 @@ pub struct BlockColumn {
 /// A chunk's blocks, from [`Session::chunk_blocks`].
 #[derive(Debug, Clone)]
 pub struct ChunkBlocks<'w> {
+    /// The chunk's block states, as numbers in `palette`.
     chunk: Chunk,
+    /// The block states' names.
     palette: &'w Palette,
 }
 

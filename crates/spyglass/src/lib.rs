@@ -433,16 +433,23 @@ pub(crate) const PRESET: &str = "minecraft:normal";
 
 /// One dimension of a version bundle, loaded once: everything that doesn't depend on the seed.
 pub struct World {
+    /// Tells this world apart from others, for the queries resolved against it.
     id: u64,
+    /// The version bundle it was loaded from.
     bundle: Bundle,
+    /// Which dimension it is.
     dimension: Dimension,
     /// The dimension type's `coordinate_scale`.
     coordinate_scale: f64,
     /// The dimension type's `has_ceiling`.
     has_ceiling: bool,
+    /// The dimension's biome source, and its biomes' names.
     source: BiomeSource,
+    /// The structure sets that place in the dimension, and their structures.
     sets: StructureSets,
+    /// The climate targets the spawn search looks for.
     spawn: SpawnTargets,
+    /// The noise settings' terrain, and the level's height.
     terrain: TerrainSettings,
     /// Loaded on first use: they read most of the bundle's structure templates.
     pools: OnceLock<JigsawPools>,
@@ -787,8 +794,11 @@ impl DimensionType {
 /// A `/locate structure` argument resolved by [`World::structure_query`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructureQuery {
+    /// The world it was resolved in, so it isn't asked of another.
     world: u64,
+    /// The argument as given.
     argument: String,
+    /// The structures it names, by index in the world's structure sets.
     targets: Vec<usize>,
 }
 
@@ -802,7 +812,9 @@ impl StructureQuery {
 /// A biome resolved by [`World::biome_query`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BiomeQuery {
+    /// The world it was resolved in, so it isn't asked of another.
     world: u64,
+    /// The biome id or `#tag` as given.
     id: String,
     /// The biomes it names that the dimension can have: empty if none.
     biomes: Vec<BiomeId>,
@@ -841,10 +853,15 @@ const _: () = {
 /// A [`World`] bound to a seed. Cheap to create; per-seed data that takes a while (stronghold
 /// rings) is computed on first use and kept.
 pub struct Session<'w> {
+    /// The world it binds.
     world: &'w World,
+    /// The seed it's bound to.
     seed: i64,
+    /// The seed's biomes.
     biomes: Biomes<'w>,
+    /// Where the seed's structure sets may start structures.
     placements: Placements<'w>,
+    /// The seed's spawn search.
     spawn: SpawnSearch,
     /// Bound on first use: most queries never need terrain.
     terrain: OnceLock<Terrain>,
@@ -1255,10 +1272,10 @@ impl<'w> Session<'w> {
                 what: "structure",
                 id: structure.to_string(),
             })?;
-        let s = &sets.structures()[index];
-        let starts = if s.mineshaft.is_some() {
+        let definition = &sets.structures()[index];
+        let starts = if definition.mineshaft.is_some() {
             self.starts(true)
-        } else if s.jigsaw.is_some() {
+        } else if definition.jigsaw.is_some() {
             self.starts(true).with_pools(self.world.pools()?)
         } else {
             return Ok(None);
@@ -1305,8 +1322,9 @@ impl<'w> Session<'w> {
             .hits
             .iter()
             .map(|h| {
-                let d = |i: usize| f64::from(h.position[i]) - f64::from(from[i]);
-                let distance_sqr = d(0) * d(0) + d(1) * d(1) + d(2) * d(2);
+                let offset = |i: usize| f64::from(h.position[i]) - f64::from(from[i]);
+                let distance_sqr =
+                    offset(0) * offset(0) + offset(1) * offset(1) + offset(2) * offset(2);
                 LocatedBiome {
                     position: h.position,
                     biome: self.biome_names(&h.biome),

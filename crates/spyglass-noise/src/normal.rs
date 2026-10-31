@@ -357,8 +357,9 @@ pub(crate) fn legacy_levels<R: RandomSource, N: Clone>(
         if i < n && amplitudes[i as usize] != 0.0 {
             levels[i as usize] = Some(make(random));
         } else {
-            // About what making it draws in a legacy random (three offsets of two `next`
-            // calls each, then 256 for the shuffle), though the shuffle can draw more.
+            // The game's fixed `consumeCount(262)`: three offsets of two `next` calls each,
+            // then 256 for the shuffle. A real octave's shuffle can draw more (its bounded
+            // draws can reject), but the game always skips exactly 262, so this must too.
             random.consume_count(262);
         }
     }

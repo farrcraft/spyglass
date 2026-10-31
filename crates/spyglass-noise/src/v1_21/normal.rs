@@ -54,8 +54,8 @@ impl NoiseParameters {
 pub struct NormalNoise {
     /// The octave set sampled at the input.
     first: PerlinNoise,
-    /// The octave set sampled at the input times [`INPUT_FACTOR`], an uneven ratio, so that its
-    /// lattice doesn't line up with the first's.
+    /// The octave set sampled at the same point scaled by [`INPUT_FACTOR`]
+    /// (1.0181268882175227).
     second: PerlinNoise,
     /// What the sum is scaled by, from the amplitudes' span.
     value_factor: f64,

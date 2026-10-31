@@ -39,6 +39,8 @@ impl PerlinSimplexNoise {
         if top >= 0 && top < count && octaves.contains(&0) {
             levels[top as usize] = Some(zero.clone());
         }
+        // Index `m` holds octave `top − m`, so the indices above `top` are the lower octaves.
+        // A left-out octave skips the game's fixed 262 draws (see `legacy_levels`).
         for m in top + 1..count {
             if m >= 0 && octaves.contains(&(top - m)) {
                 levels[m as usize] = Some(SimplexNoise::new(random));
@@ -47,6 +49,8 @@ impl PerlinSimplexNoise {
             }
         }
         if last > 0 {
+            // The higher octaves come from a random seeded by octave 0's own value at its
+            // offsets, scaled to the whole `long` range.
             let [xo, yo, zo] = zero.offset();
             // d2l: saturating, NaN 0.
             let seed = (zero.get_value(xo, yo, zo) * 9.223_372_036_854_776E18) as i64;
@@ -71,15 +75,16 @@ impl PerlinSimplexNoise {
     /// added.
     pub fn get_value(&self, x: f64, z: f64) -> f64 {
         let mut sum = 0.0;
-        let mut e = self.input_factor;
-        let mut f = self.value_factor;
+        // The spec's `e` and `f`.
+        let mut frequency = self.input_factor;
+        let mut weight = self.value_factor;
         for level in &self.levels {
             if let Some(noise) = level {
                 // `x · e + 0.0`: the offset the game adds only with useNoiseOffsets.
-                sum += noise.get_value_2d(x * e + 0.0, z * e + 0.0) * f;
+                sum += noise.get_value_2d(x * frequency + 0.0, z * frequency + 0.0) * weight;
             }
-            e /= 2.0;
-            f *= 2.0;
+            frequency /= 2.0;
+            weight *= 2.0;
         }
         sum
     }

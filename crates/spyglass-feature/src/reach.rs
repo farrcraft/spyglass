@@ -88,8 +88,13 @@ impl Reach {
         json: &Value,
         at: &At<'_>,
     ) -> Result<Reach, LoadError> {
-        let o = object(json, at)?;
-        feature(resources, field(o, "feature", at)?, &at.child("feature"), 0)
+        let fields = object(json, at)?;
+        feature(
+            resources,
+            field(fields, "feature", at)?,
+            &at.child("feature"),
+            0,
+        )
     }
 }
 
@@ -115,48 +120,54 @@ fn feature(
         }
         other => other,
     };
-    let o = object(json, at)?;
-    let kind = o
+    let fields = object(json, at)?;
+    let kind = fields
         .get("type")
         .and_then(Value::as_str)
         .map(full_id)
         .unwrap_or_default();
     // 26.2 nests the configuration under `config`.
-    let c: &Map<String, Value> = match o.get("config") {
-        Some(Value::Object(c)) => c,
-        _ => o,
+    let config: &Map<String, Value> = match fields.get("config") {
+        Some(Value::Object(config)) => config,
+        _ => fields,
     };
+    // A provider's largest value, or `default` when it's missing or unreadable.
     let max = |key: &str, default: i32| -> i32 {
-        c.get(key)
+        config
+            .get(key)
             .and_then(|v| IntProvider::parse(v, &at.child(key)).ok())
             .map_or(default, |p| p.max())
     };
-    let b = WriteBox::new;
+    let between = WriteBox::new;
     let one = |w: WriteBox| Ok(Reach(vec![w]));
     let name = kind.strip_prefix("minecraft:").unwrap_or(&kind);
     match name {
         "no_op" => Ok(Reach::default()),
         // A blob around ceil(3s/16) across and ceil(s/16) up (OreFeature); scattered within 7.
         "ore" => {
-            let s = max("size", 64);
-            let xz = (3 * s + 15) / 16;
-            let y = (s + 15) / 16;
-            one(b([-xz, -y - 2, -xz], [xz, y, xz]).identity())
+            let size = max("size", 64);
+            let xz = (3 * size + 15) / 16;
+            let y = (size + 15) / 16;
+            one(between([-xz, -y - 2, -xz], [xz, y, xz]).identity())
         }
         "scattered_ore" => {
-            let r = (max("size", 64) - 1).clamp(0, 7);
+            let spread = (max("size", 64) - 1).clamp(0, 7);
             let y = (max("size", 64) + 15) / 16;
-            one(b([-r, -y - 2, -r], [r, y, r]).identity())
+            one(between([-spread, -y - 2, -spread], [spread, y, spread]).identity())
         }
         "disk" => {
-            let r = max("radius", 8);
-            let h = max("half_height", 4);
-            one(b([-r, -h, -r], [r, h, r]).identity())
+            let radius = max("radius", 8);
+            let half_height = max("half_height", 4);
+            one(between(
+                [-radius, -half_height, -radius],
+                [radius, half_height, radius],
+            )
+            .identity())
         }
-        "spring_feature" | "vines" => one(b([0; 3], [0; 3])),
-        "simple_block" => one(b([0, 0, 0], [0, 1, 0])),
+        "spring_feature" | "vines" => one(between([0; 3], [0; 3])),
+        "simple_block" => one(between([0, 0, 0], [0, 1, 0])),
         "block_column" => {
-            let layers = c.get("layers").and_then(Value::as_array);
+            let layers = config.get("layers").and_then(Value::as_array);
             let total: i32 = layers
                 .map(|ls| {
                     ls.iter()
@@ -168,11 +179,12 @@ fn feature(
                         .sum()
                 })
                 .unwrap_or(ANYWHERE);
-            let n = total.max(1) - 1;
-            match c.get("direction").and_then(Value::as_str) {
-                Some("up") => one(b([0, 0, 0], [0, n, 0])),
-                Some("down") => one(b([0, -n, 0], [0, 0, 0])),
-                _ => one(b([0, -n, 0], [0, n, 0])),
+            // How far past its first block the column reaches.
+            let extent = total.max(1) - 1;
+            match config.get("direction").and_then(Value::as_str) {
+                Some("up") => one(between([0, 0, 0], [0, extent, 0])),
+                Some("down") => one(between([0, -extent, 0], [0, 0, 0])),
+                _ => one(between([0, -extent, 0], [0, extent, 0])),
             }
         }
         // Its own chunk's top layer, from the chunk's corner.
@@ -182,25 +194,28 @@ fn feature(
             column: true,
             changes: Changes::Any,
         }),
-        "blue_ice" => one(b([-2, -5, -2], [2, 4, 2])),
+        "blue_ice" => one(between([-2, -5, -2], [2, 4, 2])),
         "underwater_magma" => {
-            let r = max("placement_radius_around_floor", 7);
+            let radius = max("placement_radius_around_floor", 7);
             let range = max("floor_search_range", 64);
-            one(b([-r, -(range - 1) - r, -r], [r, r - 1, r]))
+            one(between(
+                [-radius, -(range - 1) - radius, -radius],
+                [radius, radius - 1, radius],
+            ))
         }
-        "multiface_growth" => one(b([-2; 3], [2; 3])),
+        "multiface_growth" => one(between([-2; 3], [2; 3])),
         "bamboo" => {
-            let stalk = b([0, 0, 0], [0, 16, 0]);
+            let stalk = between([0, 0, 0], [0, 16, 0]);
             Ok(Reach(vec![stalk, WriteBox::columns(4)]))
         }
-        "sculk_patch" => one(b([-16, -65, -16], [16, 65, 16])),
+        "sculk_patch" => one(between([-16, -65, -16], [16, 65, 16])),
         // 26.2's ocean plants follow the ocean floor's heightmap.
         "kelp" => one(WriteBox::columns(0)),
         "seagrass" | "sea_pickle" => one(WriteBox::columns(7)),
-        "block_pile" => one(b([-3, 0, -3], [3, 1, 3])),
-        "geode" => one(b([-16; 3], [16; 3])),
-        "lake" => one(b([-8, -4, -8], [7, 3, 7])),
-        "monster_room" => one(b([-4, -1, -4], [4, 3, 4])),
+        "block_pile" => one(between([-3, 0, -3], [3, 1, 3])),
+        "geode" => one(between([-16; 3], [16; 3])),
+        "lake" => one(between([-8, -4, -8], [7, 3, 7])),
+        "monster_room" => one(between([-4, -1, -4], [4, 3, 4])),
         // Its y follows the ocean floor; its footprint is at most 13 across.
         "fossil" => one(WriteBox::columns(7)),
         "block_blob" => one(WriteBox::columns(5)),
@@ -209,34 +224,34 @@ fn feature(
         "iceberg" => one(WriteBox::columns(11)),
         "spike" => one(WriteBox::columns(3)),
         "speleothem_cluster" => {
-            let r = max("radius", 48);
-            let s = max("floor_to_ceiling_search_range", 512);
-            let t = max(
+            let radius = max("radius", 48);
+            let search = max("floor_to_ceiling_search_range", 512);
+            let thickness = max(
                 "speleothem_block_layer_thickness",
                 max("dripstone_block_layer_thickness", 128),
             );
-            let h = max("height", 128);
-            let lo = (1 - h).min(-s - t + 1);
-            let hi = (s + t - 2).max(h - 1);
-            one(b([-r, lo, -r], [r, hi, r]))
+            let height = max("height", 128);
+            let lo = (1 - height).min(-search - thickness + 1);
+            let hi = (search + thickness - 2).max(height - 1);
+            one(between([-radius, lo, -radius], [radius, hi, radius]))
         }
         "crevasse" => {
-            let w = max("max_width", 32);
-            let l = max("max_length", 64);
-            let xz = l / 2 + (w + 1) / 2 + 2;
+            let width = max("max_width", 32);
+            let length = max("max_length", 64);
+            let xz = length / 2 + (width + 1) / 2 + 2;
             one(WriteBox::columns(xz))
         }
         // The roots, trunk, leaves and decorators, and the edge they update: every vanilla
         // config fits; a trunk taller than vanilla's widens it; pale moss hangs down a column.
         "tree" => {
-            let trunk = c.get("trunk_placer").and_then(Value::as_object);
+            let trunk = config.get("trunk_placer").and_then(Value::as_object);
             let height = trunk.map_or(64, |t| {
                 ["base_height", "height_rand_a", "height_rand_b"]
                     .iter()
                     .map(|k| t.get(*k).and_then(|v| int(v, at).ok()).unwrap_or(0))
                     .sum()
             });
-            let moss = c
+            let moss = config
                 .get("decorators")
                 .and_then(Value::as_array)
                 .is_some_and(|ds| {
@@ -251,59 +266,68 @@ fn feature(
             if moss {
                 return one(WriteBox::columns(10));
             }
-            one(b([-10, -15, -10], [10, 32.max(height + 12), 10]))
+            one(between([-10, -15, -10], [10, 32.max(height + 12), 10]))
         }
         "vegetation_patch" | "waterlogged_vegetation_patch" => {
-            let r = max("xz_radius", 64) + 1;
-            let vr = c
+            let radius = max("xz_radius", 64) + 1;
+            let vertical_range = config
                 .get("vertical_range")
                 .and_then(|v| int(v, at).ok())
                 .unwrap_or(256);
-            let extra = c
+            let extra = config
                 .get("extra_bottom_block_chance")
                 .and_then(Value::as_f64)
                 .is_some_and(|x| x > 0.0);
-            let d = max("depth", 128) + i32::from(extra);
-            let mut boxes = vec![b([-r, -vr - d, -r], [r, vr + d, r])];
-            if let Some(v) = c.get("vegetation_feature") {
-                let inner = placed_inline(resources, v, &at.child("vegetation_feature"), depth)?;
-                boxes.extend(
-                    inner
-                        .0
-                        .into_iter()
-                        .map(|w| w.shifted([-r, -vr - 1, -r], [r, vr, r], false)),
-                );
+            let ground_depth = max("depth", 128) + i32::from(extra);
+            let mut boxes = vec![between(
+                [-radius, -vertical_range - ground_depth, -radius],
+                [radius, vertical_range + ground_depth, radius],
+            )];
+            if let Some(vegetation) = config.get("vegetation_feature") {
+                let inner = placed_inline(
+                    resources,
+                    vegetation,
+                    &at.child("vegetation_feature"),
+                    depth,
+                )?;
+                boxes.extend(inner.0.into_iter().map(|w| {
+                    w.shifted(
+                        [-radius, -vertical_range - 1, -radius],
+                        [radius, vertical_range, radius],
+                        false,
+                    )
+                }));
             }
             Ok(Reach(boxes))
         }
         "root_system" => {
-            let rr = max("root_radius", 64).max(max("hanging_root_radius", 64)) - 1;
-            let vs = c
+            let radius = max("root_radius", 64).max(max("hanging_root_radius", 64)) - 1;
+            let tree_space = config
                 .get("required_vertical_space_for_tree")
                 .and_then(|v| int(v, at).ok())
                 .unwrap_or(64);
-            let cmh = c
+            let column_height = config
                 .get("root_column_max_height")
                 .and_then(|v| int(v, at).ok())
                 .unwrap_or(64);
             let hang = max("hanging_roots_vertical_span", 16);
-            let mut boxes = vec![b(
-                [-rr, -(vs - 1) - hang, -rr],
-                [rr, (cmh - 2).max(vs - 1), rr],
+            let mut boxes = vec![between(
+                [-radius, -(tree_space - 1) - hang, -radius],
+                [radius, (column_height - 2).max(tree_space - 1), radius],
             )];
-            if let Some(f) = c.get("feature") {
-                let inner = placed_inline(resources, f, &at.child("feature"), depth)?;
+            if let Some(tree) = config.get("feature") {
+                let inner = placed_inline(resources, tree, &at.child("feature"), depth)?;
                 boxes.extend(
                     inner
                         .0
                         .into_iter()
-                        .map(|w| w.shifted([0, 1, 0], [0, cmh, 0], false)),
+                        .map(|w| w.shifted([0, 1, 0], [0, column_height, 0], false)),
                 );
             }
             Ok(Reach(boxes))
         }
         "template" => {
-            let templates = c.get("templates").and_then(Value::as_array);
+            let templates = config.get("templates").and_then(Value::as_array);
             let mut boxes = Vec::new();
             for t in templates.into_iter().flatten() {
                 let id = t
@@ -315,7 +339,7 @@ fn feature(
                 let [sx, sy, sz] = size.unwrap_or([ANYWHERE; 3]);
                 // Centred on the origin and turned: half the larger side, either way.
                 let xz = sx.max(sz);
-                boxes.push(b([-xz, 0, -xz], [xz, sy, xz]));
+                boxes.push(between([-xz, 0, -xz], [xz, sy, xz]));
             }
             Ok(Reach(boxes))
         }
@@ -328,7 +352,7 @@ fn feature(
             let mut boxes = Vec::new();
             let mut children: Vec<(&Value, At<'_>)> = Vec::new();
             for key in ["features", "default", "feature_true", "feature_false"] {
-                match c.get(key) {
+                match config.get(key) {
                     Some(Value::Array(items)) => {
                         for (i, item) in items.iter().enumerate() {
                             // random_selector's entries are `{feature, chance}`; weighted ones
@@ -383,14 +407,14 @@ fn placed_inline(
         }
         other => other,
     };
-    let o = object(json, at)?;
+    let fields = object(json, at)?;
     let inner = feature(
         resources,
-        field(o, "feature", at)?,
+        field(fields, "feature", at)?,
         &at.child("feature"),
         depth + 1,
     )?;
-    let (lo, hi, column) = displacement(o.get("placement"));
+    let (lo, hi, column) = displacement(fields.get("placement"));
     Ok(Reach(
         inner
             .0
@@ -407,8 +431,8 @@ fn displacement(modifiers: Option<&Value>) -> ([i32; 3], [i32; 3], bool) {
     let Some(Value::Array(list)) = modifiers else {
         return (lo, hi, column);
     };
-    for m in list {
-        let (l, h, c) = one_displacement(m);
+    for modifier in list {
+        let (l, h, c) = one_displacement(modifier);
         for i in 0..3 {
             lo[i] = lo[i].saturating_add(l[i]);
             hi[i] = hi[i].saturating_add(h[i]);
@@ -418,14 +442,17 @@ fn displacement(modifiers: Option<&Value>) -> ([i32; 3], [i32; 3], bool) {
     (lo, hi, column)
 }
 
-fn one_displacement(m: &Value) -> ([i32; 3], [i32; 3], bool) {
-    let kind = m
+/// One modifier's least and greatest offsets, and whether it can move a position anywhere in its
+/// column.
+fn one_displacement(modifier: &Value) -> ([i32; 3], [i32; 3], bool) {
+    let kind = modifier
         .get("type")
         .and_then(Value::as_str)
         .map(full_id)
         .unwrap_or_default();
     let range = |key: &str| {
-        m.get(key)
+        modifier
+            .get(key)
             .and_then(|v| IntProvider::parse(v, &At::root("placement")).ok())
             .map_or((-ANYWHERE, ANYWHERE), |p| (p.min(), p.max()))
     };
@@ -449,8 +476,11 @@ fn one_displacement(m: &Value) -> ([i32; 3], [i32; 3], bool) {
             ([xz.0, y.0, xz.0], [xz.1, y.1, xz.1], false)
         }
         "environment_scan" => {
-            let steps = m.get("max_steps").and_then(Value::as_i64).unwrap_or(32) as i32;
-            match m.get("direction_of_search").and_then(Value::as_str) {
+            let steps = modifier
+                .get("max_steps")
+                .and_then(Value::as_i64)
+                .unwrap_or(32) as i32;
+            match modifier.get("direction_of_search").and_then(Value::as_str) {
                 Some("up") => ([0; 3], [0, steps, 0], false),
                 _ => ([0, -steps, 0], [0; 3], false),
             }
@@ -458,7 +488,8 @@ fn one_displacement(m: &Value) -> ([i32; 3], [i32; 3], bool) {
         "randomly_selected" => {
             let (mut lo, mut hi) = ([i32::MAX; 3], [i32::MIN; 3]);
             let mut column = false;
-            for p in m
+            // Any one of the choices: the box around all of them.
+            for p in modifier
                 .get("placements")
                 .and_then(Value::as_array)
                 .into_iter()
@@ -471,6 +502,7 @@ fn one_displacement(m: &Value) -> ([i32; 3], [i32; 3], bool) {
                 }
                 column |= c;
             }
+            // No choices: it never moves the position.
             if lo[0] > hi[0] {
                 return ([0; 3], [0; 3], false);
             }
@@ -491,6 +523,6 @@ fn template_size(resources: &dyn Resources, id: &str) -> Option<[i32; 3]> {
     let bytes = resources.structure_template(id).ok()?;
     let (_, root) = spyglass_data::nbt::read_compressed(&bytes).ok()?;
     let list = root.get("size")?.as_list()?;
-    let v: Vec<i32> = list.iter().filter_map(|t| t.as_int()).collect();
-    (v.len() == 3).then(|| [v[0], v[1], v[2]])
+    let sides: Vec<i32> = list.iter().filter_map(|t| t.as_int()).collect();
+    (sides.len() == 3).then(|| [sides[0], sides[1], sides[2]])
 }

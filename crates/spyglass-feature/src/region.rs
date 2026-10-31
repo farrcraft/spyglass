@@ -84,23 +84,23 @@ impl<'b> Region<'b> {
                 for i in 0..256 {
                     let (x, z) = (i as i32 % 16, i as i32 / 16);
                     // Down the column once, each heightmap taking the first block it counts.
-                    let mut left = order.iter().fold(0u8, |a, b| a | b);
+                    let mut remaining = order.iter().fold(0u8, |a, b| a | b);
                     for y in (min_y..min_y + height).rev() {
-                        let bits = blocks.heightmap_bits(chunk.get([x, y, z])) & left;
+                        let bits = blocks.heightmap_bits(chunk.get([x, y, z])) & remaining;
                         if bits != 0 {
-                            for (m, bit) in order.iter().enumerate() {
+                            for (map, bit) in order.iter().enumerate() {
                                 if bits & bit != 0 {
-                                    maps[m][i] = y + 1;
+                                    maps[map][i] = y + 1;
                                 }
                             }
-                            left &= !bits;
-                            if left == 0 {
+                            remaining &= !bits;
+                            if remaining == 0 {
                                 break;
                             }
                         }
                     }
-                    for m in 0..4 {
-                        maps[6 + m][i] = maps[m][i];
+                    for map in 0..4 {
+                        maps[6 + map][i] = maps[map][i];
                     }
                 }
                 Column { chunk, maps }
@@ -177,21 +177,23 @@ impl<'b> Region<'b> {
         if doubt {
             column.chunk.mark_uncertain(pos);
         }
-        let c = ((z & 15) * 16 + (x & 15)) as usize;
-        for (m, &h) in LIVE.iter().enumerate() {
-            // Heightmap.update.
-            let first = column.maps[m][c];
+        let cell = ((z & 15) * 16 + (x & 15)) as usize;
+        for (map, &heightmap) in LIVE.iter().enumerate() {
+            // Heightmap.update: a block that counts, at or above the first free y, raises it; one
+            // that doesn't, replacing the top block, lowers it to the next block down that
+            // counts. Writes well below the top change nothing.
+            let first = column.maps[map][cell];
             if y <= first - 2 {
                 continue;
             }
-            if blocks.counts_for(state, h) {
+            if blocks.counts_for(state, heightmap) {
                 if y >= first {
-                    column.maps[m][c] = y + 1;
+                    column.maps[map][cell] = y + 1;
                 }
             } else if first - 1 == y {
-                column.maps[m][c] = (self.min_y..y)
+                column.maps[map][cell] = (self.min_y..y)
                     .rev()
-                    .find(|&k| blocks.counts_for(column.chunk.get([x, k, z]), h))
+                    .find(|&k| blocks.counts_for(column.chunk.get([x, k, z]), heightmap))
                     .map_or(self.min_y, |k| k + 1);
             }
         }
@@ -200,12 +202,12 @@ impl<'b> Region<'b> {
 
     /// `getHeight(type, x, z)`: the first free y, one above the top block the heightmap counts,
     /// from the chunk holding the column.
-    pub fn height(&mut self, h: Heightmap, x: i32, z: i32) -> i32 {
+    pub fn height(&mut self, heightmap: Heightmap, x: i32, z: i32) -> i32 {
         let Some(i) = self.column(x, z) else {
             self.doubt(Doubt::OutsideRegion);
             return self.min_y;
         };
-        let m = match h {
+        let map = match heightmap {
             Heightmap::WorldSurface => 0,
             Heightmap::OceanFloor => 1,
             Heightmap::MotionBlocking => 2,
@@ -213,15 +215,15 @@ impl<'b> Region<'b> {
             Heightmap::WorldSurfaceWg => 4,
             Heightmap::OceanFloorWg => 5,
         };
-        self.columns[i].maps[m][((z & 15) * 16 + (x & 15)) as usize]
+        self.columns[i].maps[map][((z & 15) * 16 + (x & 15)) as usize]
     }
 
     /// The heightmap's first free y at `(x, z)` as terrain left it, before any feature (the
     /// `_WG` ones never change): `None` outside the region. Without doubt.
-    pub fn terrain_height(&self, h: Heightmap, x: i32, z: i32) -> Option<i32> {
+    pub fn terrain_height(&self, heightmap: Heightmap, x: i32, z: i32) -> Option<i32> {
         let i = self.column(x, z)?;
-        let c = ((z & 15) * 16 + (x & 15)) as usize;
-        let m = match h {
+        let cell = ((z & 15) * 16 + (x & 15)) as usize;
+        let map = match heightmap {
             Heightmap::WorldSurface => 6,
             Heightmap::OceanFloor => 7,
             Heightmap::MotionBlocking => 8,
@@ -229,7 +231,7 @@ impl<'b> Region<'b> {
             Heightmap::WorldSurfaceWg => 4,
             Heightmap::OceanFloorWg => 5,
         };
-        Some(self.columns[i].maps[m][c])
+        Some(self.columns[i].maps[map][cell])
     }
 
     /// The first doubt since the last [`Region::take_doubt`], which clears it.

@@ -44,16 +44,21 @@ impl NeighbourBounds {
     /// The write bounds of every placed feature in `settings`' order.
     pub fn load(resources: &dyn Resources, settings: &FeatureSettings) -> Result<Self, LoadError> {
         let mut reaches = Vec::new();
-        for &r in settings.order().iter().flatten() {
-            if reaches.len() <= r {
-                reaches.resize(r + 1, None);
+        for &placed in settings.order().iter().flatten() {
+            if reaches.len() <= placed {
+                reaches.resize(placed + 1, None);
             }
-            if reaches[r].is_none() {
-                let p = settings.placed(r);
-                let name =
-                    p.id.clone()
-                        .unwrap_or_else(|| "an inline placed feature".into());
-                reaches[r] = Some(Reach::of_placed(resources, &p.json, &At::root(&name))?);
+            if reaches[placed].is_none() {
+                let feature = settings.placed(placed);
+                let name = feature
+                    .id
+                    .clone()
+                    .unwrap_or_else(|| "an inline placed feature".into());
+                reaches[placed] = Some(Reach::of_placed(
+                    resources,
+                    &feature.json,
+                    &At::root(&name),
+                )?);
             }
         }
         Ok(NeighbourBounds { reaches })
@@ -137,7 +142,7 @@ impl NeighbourBounds {
         settings: &FeatureSettings,
         heights: Heights<'_, '_>,
         biomes: &mut dyn FnMut([i32; 2]) -> Vec<BiomeId>,
-        n: [i32; 2],
+        chunk: [i32; 2],
         out: &mut Vec<Foreign>,
     ) {
         let ([cx, cz], min_y, max_y) = match heights {
@@ -154,28 +159,28 @@ impl NeighbourBounds {
         let mut listed = vec![false; self.reaches.len()];
         for dz in -1..=1 {
             for dx in -1..=1 {
-                for b in biomes([n[0] + dx, n[1] + dz]) {
-                    for &r in settings.lists(b).iter().flatten() {
-                        if let Some(l) = listed.get_mut(r) {
-                            *l = true;
+                for biome in biomes([chunk[0] + dx, chunk[1] + dz]) {
+                    for &placed in settings.lists(biome).iter().flatten() {
+                        if let Some(is_listed) = listed.get_mut(placed) {
+                            *is_listed = true;
                         }
                     }
                 }
             }
         }
         let ground = Chunk { listed, heights };
-        for t in decorator.try_boxes(n, min_y, max_y, &ground) {
-            let Some(Some(reach)) = self.reaches.get(t.placed) else {
+        for try_box in decorator.try_boxes(chunk, min_y, max_y, &ground) {
+            let Some(Some(reach)) = self.reaches.get(try_box.placed) else {
                 continue;
             };
-            for w in &reach.0 {
+            for write in &reach.0 {
                 let mut min = [0; 3];
                 let mut max = [0; 3];
                 for i in 0..3 {
-                    min[i] = t.min[i].saturating_add(w.min[i]).max(lo[i]);
-                    max[i] = t.max[i].saturating_add(w.max[i]).min(hi[i]);
+                    min[i] = try_box.min[i].saturating_add(write.min[i]).max(lo[i]);
+                    max[i] = try_box.max[i].saturating_add(write.max[i]).min(hi[i]);
                 }
-                if w.column {
+                if write.column {
                     min[1] = min_y;
                     max[1] = max_y;
                 }
@@ -183,9 +188,9 @@ impl NeighbourBounds {
                     out.push(Foreign {
                         min,
                         max,
-                        changes: w.changes,
-                        placed: t.placed,
-                        order: (t.step, t.index),
+                        changes: write.changes,
+                        placed: try_box.placed,
+                        order: (try_box.step, try_box.index),
                     });
                 }
             }
@@ -217,8 +222,11 @@ impl Ground for Chunk<'_, '_> {
         self.listed.get(placed).copied().unwrap_or(true)
     }
 
-    fn heights(&self, h: Heightmap, lo: [i32; 2], hi: [i32; 2]) -> (i32, i32) {
-        let frozen = matches!(h, Heightmap::WorldSurfaceWg | Heightmap::OceanFloorWg);
+    fn heights(&self, heightmap: Heightmap, lo: [i32; 2], hi: [i32; 2]) -> (i32, i32) {
+        let frozen = matches!(
+            heightmap,
+            Heightmap::WorldSurfaceWg | Heightmap::OceanFloorWg
+        );
         let region = match self.heights {
             Heights::Region(region) => region,
             Heights::Anywhere { min_y, max_y, .. } => return (min_y, max_y + 1),
@@ -230,7 +238,7 @@ impl Ground for Chunk<'_, '_> {
         let (mut least, mut most) = (i32::MAX, i32::MIN);
         for x in lo[0]..=hi[0] {
             for z in lo[1]..=hi[1] {
-                let Some(y) = region.terrain_height(h, x, z) else {
+                let Some(y) = region.terrain_height(heightmap, x, z) else {
                     return anywhere;
                 };
                 least = least.min(y);

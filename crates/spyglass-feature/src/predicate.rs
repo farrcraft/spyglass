@@ -50,13 +50,13 @@ impl BlockPredicate {
         resources: &dyn Resources,
         blocks: &mut Blocks,
     ) -> Result<BlockPredicate, LoadError> {
-        let o = object(json, at)?;
-        let kind = field(o, "type", at)?
+        let fields = object(json, at)?;
+        let kind = field(fields, "type", at)?
             .as_str()
             .map(full_id)
             .ok_or_else(|| at.child("type").error(LoadErrorKind::Shape("a type id")))?;
         let offset = |key: &str| -> Result<[i32; 3], LoadError> {
-            match o.get(key) {
+            match fields.get(key) {
                 None => Ok([0; 3]),
                 Some(v) => vec3(v, &at.child(key)),
             }
@@ -64,7 +64,7 @@ impl BlockPredicate {
         let list =
             |key: &'static str, blocks: &mut Blocks| -> Result<Vec<BlockPredicate>, LoadError> {
                 let at = at.child(key);
-                let Value::Array(items) = field(o, key, &at)? else {
+                let Value::Array(items) = field(fields, key, &at)? else {
                     return Err(at.error(LoadErrorKind::Shape("a list of block predicates")));
                 };
                 items
@@ -78,7 +78,7 @@ impl BlockPredicate {
         Ok(match kind.as_str() {
             "minecraft:true" => BlockPredicate::True,
             "minecraft:matching_blocks" => {
-                let ids = match field(o, "blocks", at)? {
+                let ids = match field(fields, "blocks", at)? {
                     Value::String(s) if s.starts_with('#') => {
                         spyglass_terrain::tag(resources, "tags/block", &s[1..])?
                     }
@@ -96,7 +96,7 @@ impl BlockPredicate {
                 BlockPredicate::MatchingBlocks(offset("offset")?, ids)
             }
             "minecraft:matching_block_tag" => {
-                let tag = field(o, "tag", at)?
+                let tag = field(fields, "tag", at)?
                     .as_str()
                     .map(full_id)
                     .ok_or_else(|| at.child("tag").error(LoadErrorKind::Shape("a tag id")))?;
@@ -104,7 +104,7 @@ impl BlockPredicate {
             }
             "minecraft:solid" => BlockPredicate::Solid(offset("offset")?),
             "minecraft:not" => BlockPredicate::Not(Box::new(BlockPredicate::parse(
-                field(o, "predicate", at)?,
+                field(fields, "predicate", at)?,
                 &at.child("predicate"),
                 resources,
                 blocks,
@@ -113,15 +113,15 @@ impl BlockPredicate {
             "minecraft:any_of" => BlockPredicate::AnyOf(list("predicates", blocks)?),
             "minecraft:inside_world_bounds" => BlockPredicate::InsideWorldBounds(offset("offset")?),
             "minecraft:volume_match" => {
-                let min = vec3(field(o, "min", at)?, &at.child("min"))?;
-                let max = vec3(field(o, "max", at)?, &at.child("max"))?;
+                let min = vec3(field(fields, "min", at)?, &at.child("min"))?;
+                let max = vec3(field(fields, "max", at)?, &at.child("max"))?;
                 if (0..3).any(|i| min[i] > max[i]) {
                     return Err(at.error(LoadErrorKind::Invalid(
                         "min bound cannot be larger than max bound",
                     )));
                 }
                 let test = BlockPredicate::parse(
-                    field(o, "match", at)?,
+                    field(fields, "match", at)?,
                     &at.child("match"),
                     resources,
                     blocks,
@@ -133,12 +133,12 @@ impl BlockPredicate {
                 }
             }
             "minecraft:below_heightmap" => {
-                let name = field(o, "heightmap", at)?.as_str().unwrap_or_default();
-                let h = Heightmap::parse(name).ok_or_else(|| {
+                let name = field(fields, "heightmap", at)?.as_str().unwrap_or_default();
+                let heightmap = Heightmap::parse(name).ok_or_else(|| {
                     at.child("heightmap")
                         .error(LoadErrorKind::Shape("a heightmap"))
                 })?;
-                BlockPredicate::BelowHeightmap(h)
+                BlockPredicate::BelowHeightmap(heightmap)
             }
             _ => {
                 return Err(at.child("type").error(LoadErrorKind::Unsupported {
@@ -154,21 +154,21 @@ impl BlockPredicate {
         match self {
             BlockPredicate::True => true,
             BlockPredicate::MatchingBlocks(offset, ids) => {
-                let s = region.get(add(pos, *offset));
-                let id = region.blocks().palette().block_id(s);
+                let state = region.get(add(pos, *offset));
+                let id = region.blocks().palette().block_id(state);
                 ids.iter().any(|b| b == id)
             }
             BlockPredicate::MatchingBlockTag(offset, tag) => {
-                let s = region.get(add(pos, *offset));
-                region.blocks().is(s, *tag)
+                let state = region.get(add(pos, *offset));
+                region.blocks().is(state, *tag)
             }
             BlockPredicate::Solid(offset) => {
-                let s = region.get(add(pos, *offset));
-                region.blocks().behaviour(s).solid
+                let state = region.get(add(pos, *offset));
+                region.blocks().behaviour(state).solid
             }
-            BlockPredicate::Not(p) => !p.test(region, pos),
-            BlockPredicate::AllOf(ps) => ps.iter().all(|p| p.test(region, pos)),
-            BlockPredicate::AnyOf(ps) => ps.iter().any(|p| p.test(region, pos)),
+            BlockPredicate::Not(inner) => !inner.test(region, pos),
+            BlockPredicate::AllOf(predicates) => predicates.iter().all(|p| p.test(region, pos)),
+            BlockPredicate::AnyOf(predicates) => predicates.iter().any(|p| p.test(region, pos)),
             BlockPredicate::InsideWorldBounds(offset) => {
                 !region.outside_build_height(pos[1].wrapping_add(offset[1]))
             }
@@ -184,34 +184,36 @@ impl BlockPredicate {
                 }
                 true
             }
-            BlockPredicate::BelowHeightmap(h) => pos[1] < region.height(*h, pos[0], pos[2]),
+            BlockPredicate::BelowHeightmap(heightmap) => {
+                pos[1] < region.height(*heightmap, pos[0], pos[2])
+            }
         }
     }
 
     /// Tests a state alone, for the predicates a feature applies to a block it has in hand
     /// (`matching_block_tag`, `matching_blocks`, `not`, `all_of`, `any_of`, `true`, at offset
     /// 0). `None` for one that needs the level.
-    pub fn test_state(&self, blocks: &Blocks, s: State) -> Option<bool> {
+    pub fn test_state(&self, blocks: &Blocks, state: State) -> Option<bool> {
         Some(match self {
             BlockPredicate::True => true,
             BlockPredicate::MatchingBlocks([0, 0, 0], ids) => {
-                let id = blocks.palette().block_id(s);
+                let id = blocks.palette().block_id(state);
                 ids.iter().any(|b| b == id)
             }
-            BlockPredicate::MatchingBlockTag([0, 0, 0], tag) => blocks.is(s, *tag),
-            BlockPredicate::Solid([0, 0, 0]) => blocks.behaviour(s).solid,
-            BlockPredicate::Not(p) => !p.test_state(blocks, s)?,
-            BlockPredicate::AllOf(ps) => {
-                for p in ps {
-                    if !p.test_state(blocks, s)? {
+            BlockPredicate::MatchingBlockTag([0, 0, 0], tag) => blocks.is(state, *tag),
+            BlockPredicate::Solid([0, 0, 0]) => blocks.behaviour(state).solid,
+            BlockPredicate::Not(inner) => !inner.test_state(blocks, state)?,
+            BlockPredicate::AllOf(predicates) => {
+                for p in predicates {
+                    if !p.test_state(blocks, state)? {
                         return Some(false);
                     }
                 }
                 true
             }
-            BlockPredicate::AnyOf(ps) => {
-                for p in ps {
-                    if p.test_state(blocks, s)? {
+            BlockPredicate::AnyOf(predicates) => {
+                for p in predicates {
+                    if p.test_state(blocks, state)? {
                         return Some(true);
                     }
                 }

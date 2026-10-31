@@ -38,10 +38,10 @@ pub struct Shape {
 
 impl Shape {
     fn index(&self, [x, y, z]: [i32; 3]) -> Option<usize> {
-        let d = [x - self.min[0], y - self.min[1], z - self.min[2]];
+        let offset = [x - self.min[0], y - self.min[1], z - self.min[2]];
         (0..3)
-            .all(|i| (0..self.size[i]).contains(&d[i]))
-            .then(|| ((d[0] * self.size[2] + d[2]) * self.size[1] + d[1]) as usize)
+            .all(|i| (0..self.size[i]).contains(&offset[i]))
+            .then(|| ((offset[0] * self.size[2] + offset[2]) * self.size[1] + offset[1]) as usize)
     }
 
     /// Whether the block at `pos` could be air before features: outside the level, where the
@@ -93,12 +93,12 @@ impl<'g> Outline<'g> {
         let (lo, hi) = (min[1].max(self.min_y), max[1].min(self.top - 1));
         if lo <= hi {
             let part = [size[0], hi - lo + 1, size[2]];
-            let density = self
+            let densities = self
                 .generator
                 .densities([min[0], lo, min[2]], part)
                 .expect("the outline's terrain has densities");
             // Volume order: y fastest, then x, then z.
-            for (i, d) in density.iter().enumerate() {
+            for (i, density) in densities.iter().enumerate() {
                 let (dy, dx, dz) = (
                     i as i32 % part[1],
                     (i as i32 / part[1]) % part[0],
@@ -108,7 +108,7 @@ impl<'g> Outline<'g> {
                 let at = shape.index(pos).expect("within the box");
                 let (rule_air, extended) = self.biomes([pos[0] >> 4, pos[2] >> 4]);
                 // AquiferSubstance: the default block where the density is positive.
-                let filled = f64::from(*d) > 0.0;
+                let filled = f64::from(*density) > 0.0;
                 shape.air[at] = !filled || rule_air || self.carved(pos);
                 shape.open[at] = !filled && !extended;
             }

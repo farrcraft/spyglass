@@ -129,13 +129,14 @@ impl Placer {
     ) -> Result<Placer, LoadError> {
         let mut features = Vec::new();
         let mut configured_ids = Vec::new();
-        for &r in placed {
-            let p = settings.placed(r);
-            let name =
-                p.id.clone()
-                    .unwrap_or_else(|| "an inline placed feature".into());
+        for &placed_ref in placed {
+            let placed_feature = settings.placed(placed_ref);
+            let name = placed_feature
+                .id
+                .clone()
+                .unwrap_or_else(|| "an inline placed feature".into());
             let at = At::root(&name);
-            let feature = field(object(&p.json, &at)?, "feature", &at)?;
+            let feature = field(object(&placed_feature.json, &at)?, "feature", &at)?;
             let named = feature.as_str().map(full_id);
             let (json, id) = match feature {
                 Value::String(id) => {
@@ -151,8 +152,8 @@ impl Placer {
                 inline => (inline.clone(), format!("{name}'s feature")),
             };
             let at = At::root(&id);
-            let o = object(&json, &at)?;
-            let kind = field(o, "type", &at)?
+            let fields = object(&json, &at)?;
+            let kind = field(fields, "type", &at)?
                 .as_str()
                 .map(full_id)
                 .ok_or_else(|| {
@@ -160,9 +161,9 @@ impl Placer {
                         .error(LoadErrorKind::Shape("a feature type"))
                 })?;
             // 26.2 nests the configuration under `config`; 26.3 flattens it.
-            let (config, config_at) = match o.get("config") {
-                Some(c) => (object(c, &at.child("config"))?, at.child("config")),
-                _ => (o, at.clone()),
+            let (config, config_at) = match fields.get("config") {
+                Some(nested) => (object(nested, &at.child("config"))?, at.child("config")),
+                _ => (fields, at.clone()),
             };
             let configured = match kind.as_str() {
                 "minecraft:lake" => {
@@ -191,8 +192,8 @@ impl Placer {
                 }
                 _ => continue,
             };
-            features.push((r, configured));
-            configured_ids.push((r, named));
+            features.push((placed_ref, configured));
+            configured_ids.push((placed_ref, named));
         }
         Ok(Placer {
             features,
@@ -348,15 +349,15 @@ impl Placer {
         // whatever the neighbours do.
         let mut unsure: Vec<(PlacedRef, Doubt)> = Vec::new();
         let mut unsure_anyway: Vec<(PlacedRef, Doubt)> = Vec::new();
-        let mut place = |t: &Try, random: &mut WorldgenRandom, region: &mut Region<'_>| {
+        let mut place = |attempt: &Try, random: &mut WorldgenRandom, region: &mut Region<'_>| {
             region.take_doubt();
-            let ours = self.reads(t.placed);
-            if ours.is_none() || !t.exact {
+            let ours = self.reads(attempt.placed);
+            if ours.is_none() || !attempt.exact {
                 // Not placed here, or where isn't known: what it writes isn't.
-                let why = Doubt::OtherFeature(t.placed);
+                let why = Doubt::OtherFeature(attempt.placed);
                 for list in [&mut unsure, &mut unsure_anyway] {
-                    if !list.iter().any(|(r, _)| *r == t.placed) {
-                        list.push((t.placed, why));
+                    if !list.iter().any(|(r, _)| *r == attempt.placed) {
+                        list.push((attempt.placed, why));
                     }
                 }
                 return Drawn::Unknown;
@@ -366,24 +367,24 @@ impl Placer {
                 (identity || f.changes == Changes::Any)
                     && boxes.iter().any(|ReadBox(lo, hi, column)| {
                         (0..3).all(|i| {
-                            let (a, b) = if i == 1 && *column {
+                            let (least, greatest) = if i == 1 && *column {
                                 (i32::MIN, i32::MAX)
                             } else {
                                 (
-                                    t.pos[i].saturating_add(lo[i]),
-                                    t.pos[i].saturating_add(hi[i]),
+                                    attempt.pos[i].saturating_add(lo[i]),
+                                    attempt.pos[i].saturating_add(hi[i]),
                                 )
                             };
-                            a <= f.max[i] && f.min[i] <= b
+                            least <= f.max[i] && f.min[i] <= greatest
                         })
                     })
             };
             // Its own earlier draws, or an earlier unsure feature's writes it reads.
             let doubt = |unsure: &[(PlacedRef, Doubt)]| {
                 let find = |r: PlacedRef| unsure.iter().find(|(u, _)| *u == r).map(|(_, d)| *d);
-                find(t.placed).or_else(|| {
+                find(attempt.placed).or_else(|| {
                     own.iter()
-                        .filter(|f| f.order < (t.step, t.index) && reads(f))
+                        .filter(|f| f.order < (attempt.step, attempt.index) && reads(f))
                         .find_map(|f| find(f.placed))
                 })
             };
@@ -392,7 +393,7 @@ impl Placer {
             let piece = |in_chunk: bool| {
                 structures
                     .iter()
-                    .filter(|p| p.step <= t.step)
+                    .filter(|p| p.step <= attempt.step)
                     .find(|p| {
                         let mut min = p.min;
                         let mut max = p.max;
@@ -408,13 +409,13 @@ impl Placer {
                                 min,
                                 max,
                                 changes: Changes::Any,
-                                placed: t.placed,
+                                placed: attempt.placed,
                                 order: (0, 0),
                             })
                     })
                     .map(|p| Doubt::Structure(p.structure))
             };
-            let tie = (!t.certain).then_some(Doubt::Tie);
+            let tie = (!attempt.certain).then_some(Doubt::Tie);
             let why = tie.or_else(|| piece(true)).or_else(|| doubt(&unsure));
             let anyway = foreign
                 .iter()
@@ -425,16 +426,16 @@ impl Placer {
             if let Some(why) = why {
                 region.doubt(why);
             }
-            let Some(placed) = self.place(t.placed, region, random, t.pos, seed) else {
+            let Some(placed) = self.place(attempt.placed, region, random, attempt.pos, seed) else {
                 return Drawn::Unknown;
             };
             let why = region.take_doubt().or(why);
             let anyway = why.or(anyway);
-            for (list, d) in [(&mut unsure, why), (&mut unsure_anyway, anyway)] {
-                if let Some(d) = d
-                    && !list.iter().any(|(r, _)| *r == t.placed)
+            for (list, doubt) in [(&mut unsure, why), (&mut unsure_anyway, anyway)] {
+                if let Some(doubt) = doubt
+                    && !list.iter().any(|(r, _)| *r == attempt.placed)
                 {
-                    list.push((t.placed, d));
+                    list.push((attempt.placed, doubt));
                 }
             }
             let outcome = match why {
@@ -443,7 +444,7 @@ impl Placer {
                 None => Outcome::Declined,
             };
             out.push(Placement {
-                at: *t,
+                at: *attempt,
                 outcome,
                 neighbours: anyway,
             });

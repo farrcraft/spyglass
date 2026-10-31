@@ -72,21 +72,21 @@ impl Wanted {
     ) -> Result<Wanted, LoadError> {
         wanted
             .iter()
-            .map(|&r| {
-                let placed = settings.placed(r);
+            .map(|&placed_ref| {
+                let placed = settings.placed(placed_ref);
                 let name = placed
                     .id
                     .clone()
                     .unwrap_or_else(|| "an inline placed feature".into());
                 let at = At::root(&name);
-                let o = object(&placed.json, &at)?;
-                let modifiers = match o.get("placement") {
+                let fields = object(&placed.json, &at)?;
+                let modifiers = match fields.get("placement") {
                     None => Vec::new(),
                     Some(json) => {
                         Modifier::parse_list(json, &at.child("placement"), reading.as_deref_mut())?
                     }
                 };
-                Ok((r, modifiers))
+                Ok((placed_ref, modifiers))
             })
             .collect::<Result<_, LoadError>>()
             .map(Wanted)
@@ -197,8 +197,8 @@ impl<'a> Decorator<'a> {
         feature: &mut Feature<'_, 'b>,
     ) -> Vec<Try> {
         let mut random = WorldgenRandom::new(0);
-        let (x0, z0) = (cx.wrapping_shl(4), cz.wrapping_shl(4));
-        let decoration = random.set_decoration_seed(self.seed, x0, z0);
+        let (corner_x, corner_z) = (cx.wrapping_shl(4), cz.wrapping_shl(4));
+        let decoration = random.set_decoration_seed(self.seed, corner_x, corner_z);
         let mut out = Vec::new();
         for (step, order) in self.settings.order().iter().enumerate() {
             for (index, placed) in order.iter().enumerate() {
@@ -218,7 +218,7 @@ impl<'a> Decorator<'a> {
                     exact: true,
                     certain: true,
                 };
-                run.apply(modifiers, [x0, self.origin_y, z0]);
+                run.apply(modifiers, [corner_x, self.origin_y, corner_z]);
             }
         }
         out
@@ -281,9 +281,9 @@ pub struct TryBox {
 pub trait Ground {
     /// Whether `placed` runs in the chunk: a biome stored in it or its neighbours lists it.
     fn runs(&self, placed: PlacedRef) -> bool;
-    /// The least and greatest first free y heightmap `h` can give over the columns from `lo`
+    /// The least and greatest first free y `heightmap` can give over the columns from `lo`
     /// to `hi` (x and z) when the chunk is decorated, whatever decorated before.
-    fn heights(&self, h: Heightmap, lo: [i32; 2], hi: [i32; 2]) -> (i32, i32);
+    fn heights(&self, heightmap: Heightmap, lo: [i32; 2], hi: [i32; 2]) -> (i32, i32);
 }
 
 impl Decorator<'_> {
@@ -299,8 +299,8 @@ impl Decorator<'_> {
         ground: &dyn Ground,
     ) -> Vec<TryBox> {
         let mut random = WorldgenRandom::new(0);
-        let (x0, z0) = (cx.wrapping_shl(4), cz.wrapping_shl(4));
-        let decoration = random.set_decoration_seed(self.seed, x0, z0);
+        let (corner_x, corner_z) = (cx.wrapping_shl(4), cz.wrapping_shl(4));
+        let decoration = random.set_decoration_seed(self.seed, corner_x, corner_z);
         let mut out = Vec::new();
         for (step, order) in self.settings.order().iter().enumerate() {
             for (index, placed) in order.iter().enumerate() {
@@ -323,7 +323,7 @@ impl Decorator<'_> {
                     min_y,
                     max_y,
                 };
-                let origin = [x0, self.origin_y, z0];
+                let origin = [corner_x, self.origin_y, corner_z];
                 run.apply(modifiers, origin, origin);
             }
         }
@@ -348,17 +348,21 @@ struct Boxes<'r, 'a> {
 }
 
 impl Boxes<'_, '_> {
+    /// The rest of the modifiers on the box from `lo` to `hi`. While the draws are known, each
+    /// modifier draws as the game does and moves the box by what it drew; once they aren't, it
+    /// grows the box by everything the modifier could do, and one copy stands for all of a
+    /// count's.
     fn apply(&mut self, modifiers: &[Modifier], lo: [i32; 3], hi: [i32; 3]) {
         let Some((modifier, rest)) = modifiers.split_first() else {
-            let t = TryBox {
+            let try_box = TryBox {
                 placed: self.placed,
                 step: self.step,
                 index: self.index,
                 min: lo,
                 max: hi,
             };
-            if self.out.last() != Some(&t) {
-                self.out.push(t);
+            if self.out.last() != Some(&try_box) {
+                self.out.push(try_box);
             }
             // The feature draws what its blocks decide.
             self.known = false;
@@ -374,12 +378,12 @@ impl Boxes<'_, '_> {
         match modifier {
             Modifier::Count(count) => {
                 if self.known {
-                    let n = count.sample(self.random);
-                    for _ in 0..n {
-                        let was = self.known;
+                    let copies = count.sample(self.random);
+                    for _ in 0..copies {
+                        let known_before = self.known;
                         self.apply(rest, lo, hi);
                         // A copy that began unknown gave every box; the rest give the same.
-                        if !was {
+                        if !known_before {
                             break;
                         }
                     }
@@ -394,17 +398,17 @@ impl Boxes<'_, '_> {
             }
             Modifier::NoiseBasedCount { .. } | Modifier::NoiseThresholdCount { .. } => {
                 // No draws: a single position's count is known, a range's could be anything.
-                let n = if lo == hi {
+                let copies = if lo == hi {
                     self.decorator
                         .noise_count(modifier, lo[0], lo[2])
                         .unwrap_or(0)
                 } else {
                     1
                 };
-                for _ in 0..n {
-                    let was = self.known;
+                for _ in 0..copies {
+                    let known_before = self.known;
                     self.apply(rest, lo, hi);
-                    if !was {
+                    if !known_before {
                         break;
                     }
                 }
@@ -419,26 +423,26 @@ impl Boxes<'_, '_> {
                 }
             }
             Modifier::HeightRange(height) => {
-                let (a, b) = if self.known {
+                let (least_y, greatest_y) = if self.known {
                     let y = height.sample(self.random, self.decorator.anchors);
                     (y, y)
                 } else {
                     height.range(self.decorator.anchors)
                 };
-                self.apply(rest, [lo[0], a, lo[2]], [hi[0], b, hi[2]]);
+                self.apply(rest, [lo[0], least_y, lo[2]], [hi[0], greatest_y, hi[2]]);
             }
             Modifier::Offset(providers) => {
                 if self.known {
-                    let d = [
+                    let offset = [
                         providers[0].sample(self.random),
                         providers[1].sample(self.random),
                         providers[2].sample(self.random),
                     ];
-                    self.apply(rest, add(lo, d), add(hi, d));
+                    self.apply(rest, add(lo, offset), add(hi, offset));
                 } else {
-                    let dl = [providers[0].min(), providers[1].min(), providers[2].min()];
-                    let dh = [providers[0].max(), providers[1].max(), providers[2].max()];
-                    self.apply(rest, add(lo, dl), add(hi, dh));
+                    let least = [providers[0].min(), providers[1].min(), providers[2].min()];
+                    let greatest = [providers[0].max(), providers[1].max(), providers[2].max()];
+                    self.apply(rest, add(lo, least), add(hi, greatest));
                 }
             }
             Modifier::Biome => {
@@ -460,12 +464,12 @@ impl Boxes<'_, '_> {
                 Some(Read::EnvironmentScan {
                     down, max_steps, ..
                 }) => {
-                    let (a, b) = if *down {
+                    let (least_y, greatest_y) = if *down {
                         (lo[1].saturating_sub(*max_steps), hi[1])
                     } else {
                         (lo[1], hi[1].saturating_add(*max_steps))
                     };
-                    self.apply(rest, [lo[0], a, lo[2]], [hi[0], b, hi[2]]);
+                    self.apply(rest, [lo[0], least_y, lo[2]], [hi[0], greatest_y, hi[2]]);
                 }
                 Some(
                     Read::SurfaceRelativeThreshold { .. }
@@ -474,13 +478,15 @@ impl Boxes<'_, '_> {
                 ) => {
                     self.apply(rest, lo, hi);
                 }
-                Some(Read::Heightmap(h)) => {
-                    let (a, b) = self.ground.heights(*h, [lo[0], lo[2]], [hi[0], hi[2]]);
+                Some(Read::Heightmap(heightmap)) => {
+                    let (least_y, greatest_y) =
+                        self.ground
+                            .heights(*heightmap, [lo[0], lo[2]], [hi[0], hi[2]]);
                     // HeightmapPlacement: nothing at the level's bottom.
-                    if b <= self.min_y {
+                    if greatest_y <= self.min_y {
                         return;
                     }
-                    self.apply(rest, [lo[0], a, lo[2]], [hi[0], b, hi[2]]);
+                    self.apply(rest, [lo[0], least_y, lo[2]], [hi[0], greatest_y, hi[2]]);
                 }
                 // A modifier not ported: anywhere in the column.
                 _ => self.apply(rest, [lo[0], self.min_y, lo[2]], [hi[0], self.max_y, hi[2]]),
@@ -527,8 +533,8 @@ impl Run<'_, '_, '_, '_> {
                 }
             }
             Modifier::NoiseBasedCount { .. } | Modifier::NoiseThresholdCount { .. } => {
-                let n = self.decorator.noise_count(modifier, x, z).unwrap_or(0);
-                for _ in 0..n {
+                let copies = self.decorator.noise_count(modifier, x, z).unwrap_or(0);
+                for _ in 0..copies {
                     self.apply(rest, pos);
                 }
             }
@@ -585,9 +591,9 @@ impl Run<'_, '_, '_, '_> {
             .expect("reading needs the region");
         let doubt_before = region.take_doubt();
         let next = match read {
-            Read::Heightmap(h) => {
-                let h = region.height(*h, x, z);
-                (h > region.min_y()).then_some([x, h, z])
+            Read::Heightmap(heightmap) => {
+                let height = region.height(*heightmap, x, z);
+                (height > region.min_y()).then_some([x, height, z])
             }
             Read::EnvironmentScan {
                 down,
@@ -600,11 +606,11 @@ impl Run<'_, '_, '_, '_> {
                 min,
                 max,
             } => {
-                let h = i64::from(region.height(*heightmap, x, z));
-                let (lo, hi) = (h + i64::from(*min), h + i64::from(*max));
+                let surface = i64::from(region.height(*heightmap, x, z));
+                let (lo, hi) = (surface + i64::from(*min), surface + i64::from(*max));
                 (lo <= i64::from(y) && i64::from(y) <= hi).then_some(pos)
             }
-            Read::Filter(p) => p.test(region, pos).then_some(pos),
+            Read::Filter(predicate) => predicate.test(region, pos).then_some(pos),
             Read::SurfaceWaterDepth { max } => {
                 let depth = region
                     .height(Heightmap::WorldSurface, x, z)
@@ -625,7 +631,7 @@ impl Run<'_, '_, '_, '_> {
 
     /// A try reaches the feature at `pos`; `known` if every modifier on the way is.
     fn reach(&mut self, pos: [i32; 3], known: bool) {
-        let t = Try {
+        let found = Try {
             placed: self.placed,
             step: self.step,
             index: self.index,
@@ -633,12 +639,12 @@ impl Run<'_, '_, '_, '_> {
             exact: self.exact && known,
             certain: self.certain,
         };
-        self.out.push(t);
+        self.out.push(found);
         // On the blocks, every try reaches the feature, which knows from `exact` whether its
         // position is the game's.
         let drawn = match self.region.as_deref_mut() {
-            Some(region) => (self.feature)(&t, self.random, Some(region)),
-            None if known && self.certain => (self.feature)(&t, self.random, None),
+            Some(region) => (self.feature)(&found, self.random, Some(region)),
+            None if known && self.certain => (self.feature)(&found, self.random, None),
             None => Drawn::Unknown,
         };
         if drawn == Drawn::Unknown {

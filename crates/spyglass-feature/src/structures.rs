@@ -49,23 +49,25 @@ pub fn pieces(
     max_y: i32,
 ) -> Vec<Piece> {
     let mut out = Vec::new();
-    let r = REACH_CHUNKS;
-    for (set, s) in sets.sets().iter().enumerate() {
-        if !s.possible
-            || !s
+    let reach = REACH_CHUNKS;
+    for (set, structure_set) in sets.sets().iter().enumerate() {
+        if !structure_set.possible
+            || !structure_set
                 .entries
                 .iter()
                 .any(|e| sets.structures()[e.structure].step <= last_step)
         {
             continue;
         }
-        for (start, selection) in starts.starts_in(set, [cx - r, cz - r], [cx + r, cz + r]) {
+        for (start, selection) in
+            starts.starts_in(set, [cx - reach, cz - reach], [cx + reach, cz + reach])
+        {
             for &(structure, check) in &selection.tries {
-                let st = &sets.structures()[structure];
-                if st.step > last_step || check == Check::Rejected {
+                let info = &sets.structures()[structure];
+                if info.step > last_step || check == Check::Rejected {
                     continue;
                 }
-                let laid_out = match st.kind {
+                let laid_out = match info.kind {
                     StructureType::Jigsaw => starts.assemble(structure, start),
                     _ => None,
                 };
@@ -73,34 +75,42 @@ pub fn pieces(
                     Some(Assembly::Built(layout)) => {
                         // A mineshaft's corridors drop supports below their box to solid
                         // ground and hang chains above it: whole columns.
-                        let column = st.kind == StructureType::Mineshaft;
-                        out.extend(layout.pieces.iter().map(|b| Piece {
-                            min: [b.min[0], if column { min_y } else { b.min[1] }, b.min[2]],
-                            max: [b.max[0], if column { max_y } else { b.max[1] }, b.max[2]],
-                            step: st.step,
+                        let column = info.kind == StructureType::Mineshaft;
+                        out.extend(layout.pieces.iter().map(|piece| Piece {
+                            min: [
+                                piece.min[0],
+                                if column { min_y } else { piece.min[1] },
+                                piece.min[2],
+                            ],
+                            max: [
+                                piece.max[0],
+                                if column { max_y } else { piece.max[1] },
+                                piece.max[2],
+                            ],
+                            step: info.step,
                             structure,
                         }));
                     }
                     Some(Assembly::NoStart) if check == Check::Passes => {}
                     // One piece of a fixed size at the start chunk's corner, its height
                     // following the surface (the treasure's chest scans down): whole columns.
-                    _ if footprint(st.kind).is_some() => {
-                        let (lo, hi) = footprint(st.kind).unwrap_or((0, 15));
+                    _ if footprint(info.kind).is_some() => {
+                        let (lo, hi) = footprint(info.kind).unwrap_or((0, 15));
                         out.push(Piece {
                             min: [start[0] * 16 + lo, min_y, start[1] * 16 + lo],
                             max: [start[0] * 16 + hi, max_y, start[1] * 16 + hi],
-                            step: st.step,
+                            step: info.step,
                             structure,
                         });
                     }
                     _ => out.push(Piece {
-                        min: [(start[0] - r) * 16, min_y, (start[1] - r) * 16],
+                        min: [(start[0] - reach) * 16, min_y, (start[1] - reach) * 16],
                         max: [
-                            (start[0] + r + 1) * 16 - 1,
+                            (start[0] + reach + 1) * 16 - 1,
                             max_y,
-                            (start[1] + r + 1) * 16 - 1,
+                            (start[1] + reach + 1) * 16 - 1,
                         ],
-                        step: st.step,
+                        step: info.step,
                         structure,
                     }),
                 }

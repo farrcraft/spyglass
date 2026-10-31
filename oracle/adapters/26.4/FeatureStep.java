@@ -140,6 +140,14 @@ final class FeatureStep {
             return StandIns.allocate(Decoration.GameServer.class);
         }
 
+        /** No chunk is lit yet: {@link Unlit}. */
+        @Override
+        public net.minecraft.world.level.lighting.LevelLightEngine getLightEngine() {
+            Unlit light = StandIns.allocate(Unlit.class);
+            light.sky = type.hasSkyLight();
+            return light;
+        }
+
         /** Entities placed by features (the End's crystals) are numbered from 1. */
         @Override
         public int getNextEntityId() {

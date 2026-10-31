@@ -104,20 +104,19 @@ final class Decoration {
 
     /**
      * {@code ChunkStatusTasks.generateFeatures} for the chunk at {@code pos}, with its neighbours
-     * through {@code buildTerrain} and its heightmap priming, none decorated.
+     * through {@code buildTerrain} and its heightmap priming. With {@code neighboursFirst}, the 5
+     * x 5 chunks around it are generated and each of its 8 neighbours is decorated first, z then
+     * x ascending, recording nothing; otherwise none is.
      */
     static void decorate(Game game, NoiseBasedChunkGenerator generator, LevelHeightAccessor height,
-            RandomState random, long seed, ChunkPos pos) {
-        ChunkStep step = ChunkPyramid.GENERATION_PYRAMID.getStepTo(ChunkStatus.FEATURES);
+            RandomState random, long seed, ChunkPos pos, boolean neighboursFirst) {
+        int reach = neighboursFirst ? 2 : 1;
         Map<ChunkPos, ChunkAccess> chunks = new HashMap<>();
-        for (int dz = -1; dz <= 1; dz++) {
-            for (int dx = -1; dx <= 1; dx++) {
+        for (int dz = -reach; dz <= reach; dz++) {
+            for (int dx = -reach; dx <= reach; dx++) {
                 ChunkPos at = new ChunkPos(pos.x() + dx, pos.z() + dz);
                 ChunkAccess chunk = Chunks.generate(game, generator, height, random, seed, at);
                 FeatureStep.afterTerrain(chunk);
-                int distance = Math.max(Math.abs(dx), Math.abs(dz));
-                var deps = step.directDependencies();
-                ((ProtoChunk) chunk).setPersistedStatus(deps.get(Math.min(distance, deps.size() - 1)));
                 chunks.put(at, chunk);
             }
         }
@@ -131,6 +130,31 @@ final class Decoration {
         Cache cache = StandIns.allocate(Cache.class);
         cache.level = level;
         level.cache = cache;
+        if (neighboursFirst) {
+            for (int dz = -1; dz <= 1; dz++) {
+                for (int dx = -1; dx <= 1; dx++) {
+                    if (dx != 0 || dz != 0) {
+                        ChunkPos neighbour = new ChunkPos(pos.x() + dx, pos.z() + dz);
+                        Features.quiet(() -> decorateOne(level, generator, chunks, neighbour));
+                    }
+                }
+            }
+        }
+        decorateOne(level, generator, chunks, pos);
+    }
+
+    /** One chunk's {@code generateFeatures}, over the chunks around it in {@code chunks}. */
+    private static void decorateOne(FeatureStep.Server level, NoiseBasedChunkGenerator generator,
+            Map<ChunkPos, ChunkAccess> chunks, ChunkPos pos) {
+        ChunkStep step = ChunkPyramid.GENERATION_PYRAMID.getStepTo(ChunkStatus.FEATURES);
+        var deps = step.directDependencies();
+        for (int dz = -1; dz <= 1; dz++) {
+            for (int dx = -1; dx <= 1; dx++) {
+                ChunkAccess chunk = chunks.get(new ChunkPos(pos.x() + dx, pos.z() + dz));
+                int distance = Math.max(Math.abs(dx), Math.abs(dz));
+                ((ProtoChunk) chunk).setPersistedStatus(deps.get(Math.min(distance, deps.size() - 1)));
+            }
+        }
         StaticCache2D<GenerationChunkHolder> holders = StaticCache2D.create(pos.x(), pos.z(), 1, (x, z) -> {
             ChunkHolder holder = StandIns.allocate(ChunkHolder.class);
             holder.chunk = chunks.get(new ChunkPos(x, z));

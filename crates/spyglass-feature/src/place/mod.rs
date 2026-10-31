@@ -1,6 +1,8 @@
 //! The target features themselves: whether a try places, and the blocks it writes
 //! (`docs/specs/features.md#placing`).
 
+mod block_blob;
+mod dripstone;
 mod fossil;
 mod geode;
 mod lake;
@@ -14,10 +16,13 @@ use spyglass_density::Resources;
 use spyglass_rng::WorldgenRandom;
 
 use crate::blocks::Blocks;
+use crate::decorate::{Decorator, Drawn, Try};
 use crate::order::PlacedRef;
-use crate::region::Region;
+use crate::region::{Doubt, Region};
 use crate::settings::FeatureSettings;
 
+pub use block_blob::BlockBlob;
+pub use dripstone::LargeDripstone;
 pub use fossil::Fossil;
 pub use geode::Geode;
 pub use lake::Lake;
@@ -28,6 +33,31 @@ pub use well::{DesertWell, Overlay};
 const FEATURE: &str = "worldgen/feature";
 /// Configured features, in 26.2.
 const CONFIGURED_FEATURE: &str = "worldgen/configured_feature";
+
+/// What a target feature did at a try.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Outcome {
+    /// It placed, certainly.
+    Placed,
+    /// It declined, certainly.
+    Declined,
+    /// spyglass's answer, which something it can't know could change.
+    Candidate {
+        /// Whether it placed on the blocks spyglass has.
+        placed: bool,
+        /// Why it isn't certain.
+        why: Doubt,
+    },
+}
+
+/// A target feature's try in a chunk and what it did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Placement {
+    /// The try.
+    pub at: Try,
+    /// What it did.
+    pub outcome: Outcome,
+}
 
 /// A configured feature spyglass places.
 #[derive(Debug, Clone)]
@@ -44,6 +74,10 @@ pub enum Configured {
     DesertWell(DesertWell),
     /// `overlay` of `template` features: 26.3's desert well.
     Overlay(Overlay),
+    /// `block_blob`: the forest rock.
+    BlockBlob(BlockBlob),
+    /// `large_dripstone`; 26.4's `large_speleothem`.
+    LargeDripstone(Box<LargeDripstone>),
 }
 
 /// The configured features of the placed features asked for.
@@ -113,6 +147,14 @@ impl Placer {
                 "minecraft:overlay" => {
                     Configured::Overlay(Overlay::load(config, &config_at, resources, blocks)?)
                 }
+                "minecraft:block_blob" => {
+                    Configured::BlockBlob(BlockBlob::load(config, &config_at, resources, blocks)?)
+                }
+                "minecraft:large_dripstone" | "minecraft:large_speleothem" => {
+                    Configured::LargeDripstone(Box::new(LargeDripstone::load(
+                        config, &config_at, resources, blocks,
+                    )?))
+                }
                 _ => continue,
             };
             features.push((r, configured));
@@ -143,6 +185,52 @@ impl Placer {
             Configured::Fossil(fossil) => fossil.place(region, random, pos),
             Configured::DesertWell(well) => well.place(region, random, pos),
             Configured::Overlay(overlay) => overlay.place(region, random, pos),
+            Configured::BlockBlob(blob) => blob.place(region, random, pos),
+            Configured::LargeDripstone(dripstone) => dripstone.place(region, random, pos),
         })
+    }
+
+    /// Decorates the region's chunk with `decorator`'s placed features: those this placer places
+    /// are placed, and each try's outcome returned in decoration order; any other that reaches
+    /// its feature puts everything after it in doubt (`docs/specs/features.md#certainty`).
+    pub fn decorate(
+        &self,
+        decorator: &Decorator<'_>,
+        region: &mut Region<'_>,
+        seed: i64,
+    ) -> Vec<Placement> {
+        let mut out = Vec::new();
+        let mut after: Option<Doubt> = None;
+        let mut place = |t: &Try, random: &mut WorldgenRandom, region: &mut Region<'_>| {
+            // Once something in the chunk is in doubt, everything after it is: a candidate's
+            // blocks may not be the game's.
+            region.take_doubt();
+            if let Some(why) = after.or((!t.certain).then_some(Doubt::Tie)) {
+                region.doubt(why);
+            }
+            if !t.exact {
+                // Where it went isn't known, so neither is what it wrote.
+                after.get_or_insert(Doubt::OtherFeature(t.placed));
+                return Drawn::Unknown;
+            }
+            let Some(placed) = self.place(t.placed, region, random, t.pos, seed) else {
+                // Not placed here: whatever it wrote is unknown.
+                after.get_or_insert(Doubt::OtherFeature(t.placed));
+                return Drawn::Unknown;
+            };
+            let why = region.take_doubt();
+            if let Some(why) = why {
+                after.get_or_insert(why);
+            }
+            let outcome = match why {
+                Some(why) => Outcome::Candidate { placed, why },
+                None if placed => Outcome::Placed,
+                None => Outcome::Declined,
+            };
+            out.push(Placement { at: *t, outcome });
+            Drawn::Known
+        };
+        decorator.decorate(region, &mut place);
+        out
     }
 }

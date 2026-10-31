@@ -133,7 +133,7 @@ impl<'a> Decorator<'a> {
 
     /// The tries in the region's chunk, in decoration order, on its blocks: the modifiers that
     /// read blocks read the region as each feature leaves it. `feature` is called at every try
-    /// with the region, and places what it does.
+    /// with the region, exact or not, and places what it does.
     pub fn decorate<'b>(
         &self,
         region: &mut Region<'b>,
@@ -324,10 +324,12 @@ impl Run<'_, '_, '_, '_> {
             certain: self.certain,
         };
         self.out.push(t);
+        // On the blocks, every try reaches the feature, which knows from `exact` whether its
+        // position is the game's.
         let drawn = match self.region.as_deref_mut() {
-            Some(region) if known => (self.feature)(&t, self.random, Some(region)),
+            Some(region) => (self.feature)(&t, self.random, Some(region)),
             None if known && self.certain => (self.feature)(&t, self.random, None),
-            _ => Drawn::Unknown,
+            None => Drawn::Unknown,
         };
         if drawn == Drawn::Unknown {
             self.exact = false;

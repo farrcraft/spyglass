@@ -18,6 +18,8 @@ pub enum BlockPredicate {
     MatchingBlocks([i32; 3], Vec<String>),
     /// `matching_block_tag`: the block at the offset is in the tag.
     MatchingBlockTag([i32; 3], Tag),
+    /// `solid`: the block at the offset is solid (`isSolid`).
+    Solid([i32; 3]),
     /// `not`.
     Not(Box<BlockPredicate>),
     /// `all_of`: every one, in order, stopping at the first that fails.
@@ -100,6 +102,7 @@ impl BlockPredicate {
                     .ok_or_else(|| at.child("tag").error(LoadErrorKind::Shape("a tag id")))?;
                 BlockPredicate::MatchingBlockTag(offset("offset")?, blocks.tag(resources, &tag)?)
             }
+            "minecraft:solid" => BlockPredicate::Solid(offset("offset")?),
             "minecraft:not" => BlockPredicate::Not(Box::new(BlockPredicate::parse(
                 field(o, "predicate", at)?,
                 &at.child("predicate"),
@@ -159,6 +162,10 @@ impl BlockPredicate {
                 let s = region.get(add(pos, *offset));
                 region.blocks().is(s, *tag)
             }
+            BlockPredicate::Solid(offset) => {
+                let s = region.get(add(pos, *offset));
+                region.blocks().behaviour(s).solid
+            }
             BlockPredicate::Not(p) => !p.test(region, pos),
             BlockPredicate::AllOf(ps) => ps.iter().all(|p| p.test(region, pos)),
             BlockPredicate::AnyOf(ps) => ps.iter().any(|p| p.test(region, pos)),
@@ -192,6 +199,7 @@ impl BlockPredicate {
                 ids.iter().any(|b| b == id)
             }
             BlockPredicate::MatchingBlockTag([0, 0, 0], tag) => blocks.is(s, *tag),
+            BlockPredicate::Solid([0, 0, 0]) => blocks.behaviour(s).solid,
             BlockPredicate::Not(p) => !p.test_state(blocks, s)?,
             BlockPredicate::AllOf(ps) => {
                 for p in ps {

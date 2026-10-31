@@ -13,6 +13,6 @@ mod settings;
 pub use blocks::{Blocks, Heightmap};
 pub use decorate::{Decorator, Drawn, Try};
 pub use modifier::{Modifier, Read, Reading};
-pub use place::Placer;
+pub use place::{Outcome, Placement, Placer};
 pub use region::{Doubt, Region};
 pub use settings::{FeatureSettings, Placed};

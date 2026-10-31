@@ -1,19 +1,20 @@
 //! Placing on the blocks, against the oracle's feature golden files
 //! (`docs/specs/oracle.md#feature-golden-files`): every chunk decorated on its own, on its 3 × 3
-//! carved chunks, compared call by call with the game's.
+//! carved chunks, with every feature of the steps up to the last target's, compared call by
+//! call with the game's: every certain answer must be the game's.
 //!
 //! Needs `cargo xtask oracle features` and a bundle for the same version. Run with
 //! `cargo test --release -p spyglass-feature --test placing -- --ignored`.
 
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use rayon::prelude::*;
 use spyglass_biome::BiomeSource;
 use spyglass_blocks::BlockSettings;
 use spyglass_data::bundle::Bundle;
-use spyglass_feature::{Blocks, Decorator, Drawn, FeatureSettings, Placer, Reading, Region, Try};
+use spyglass_feature::{Blocks, Decorator, FeatureSettings, Outcome, Placer, Reading, Region};
 use spyglass_oracle::features::FeatureFile;
-use spyglass_rng::{RandomSource, WorldgenRandom};
 
 /// One file's comparison.
 #[derive(Default)]
@@ -21,12 +22,10 @@ struct Report {
     failures: Vec<String>,
     /// Calls compared and matched.
     matched: usize,
-    /// Calls not compared: after one spyglass can't place yet, or on a tie.
-    skipped: usize,
+    /// Calls not compared: from a chunk's first candidate on, by its reason.
+    skipped: BTreeMap<String, usize>,
     chunks: usize,
     time: std::time::Duration,
-    /// Calls not compared, by why the chunk's comparison stopped.
-    reasons: std::collections::BTreeMap<String, usize>,
 }
 
 fn check(path: &Path) -> Report {
@@ -46,7 +45,9 @@ fn check(path: &Path) -> Report {
     let generator = settings.generator(file.seed).unwrap();
     let mut blocks = Blocks::new(&bundle, settings.palette()).unwrap();
 
-    let mut wanted = Vec::new();
+    // The targets the file records, and every feature of the steps up to the last of theirs.
+    let id = |r: usize| features.placed(r).id.clone().unwrap_or_default();
+    let mut targets = Vec::new();
     for chunk in &file.chunks {
         for t in &chunk.tries {
             let r = features
@@ -54,13 +55,23 @@ fn check(path: &Path) -> Report {
                 .iter()
                 .flatten()
                 .copied()
-                .find(|&r| features.placed(r).id.as_deref() == Some(t.feature.as_str()))
+                .find(|&r| id(r) == t.feature)
                 .unwrap_or_else(|| panic!("{} isn't in the order", t.feature));
-            if !wanted.contains(&r) {
-                wanted.push(r);
+            if !targets.contains(&r) {
+                targets.push(r);
             }
         }
     }
+    let last_step = features
+        .order()
+        .iter()
+        .rposition(|step| step.iter().any(|r| targets.contains(r)))
+        .unwrap_or(0);
+    let wanted: Vec<usize> = features.order()[..=last_step]
+        .iter()
+        .flatten()
+        .copied()
+        .collect();
     let placer = Placer::load(&bundle, &features, &mut blocks, &wanted).unwrap();
     let terrain = settings.terrain();
     let mut reading = Reading {
@@ -77,9 +88,8 @@ fn check(path: &Path) -> Report {
         Some(&mut reading),
     )
     .unwrap();
-    let name = |t: &Try| features.placed(t.placed).id.clone().unwrap_or_default();
     // Neighbouring golden chunks share their carved chunks.
-    let mut carved = std::collections::HashMap::new();
+    let mut carved = HashMap::new();
     for chunk in &file.chunks {
         let [cx, cz] = chunk.chunk;
         let start = std::time::Instant::now();
@@ -94,96 +104,70 @@ fn check(path: &Path) -> Report {
             }
         }
         let mut region = Region::new(&blocks, chunk.chunk, chunks);
-        let game = &chunk.tries;
-        let mut next = 0;
-        let mut stopped = false;
-        let mut reason = String::new();
-        let mut failures = Vec::new();
-        let mut matched = 0;
-        let mut place = |t: &Try, random: &mut WorldgenRandom, region: &mut Region<'_>| {
-            if stopped {
-                return Drawn::Unknown;
-            }
-            let ours = (name(t), t.pos);
-            let Some(g) = game.get(next) else {
-                failures.push(format!(
-                    "seed {} chunk {:?}: spyglass calls {} at {:?} after the game's last",
-                    file.seed, chunk.chunk, ours.0, ours.1
-                ));
-                stopped = true;
-                return Drawn::Unknown;
-            };
-            if !t.certain {
-                reason = "tied biome at the try".into();
-                stopped = true;
-                return Drawn::Unknown;
-            }
-            if ours.0 != g.feature || ours.1 != g.pos {
-                failures.push(format!(
-                    "seed {} chunk {:?} call {next}: game {} at {:?}, spyglass {} at {:?}",
-                    file.seed, chunk.chunk, g.feature, g.pos, ours.0, ours.1
-                ));
-                stopped = true;
-                return Drawn::Unknown;
-            }
-            next += 1;
-            region.take_doubt();
-            if let Some(placed) = placer.place(t.placed, region, random, t.pos, file.seed) {
-                if let Some(why) = region.take_doubt() {
-                    // Not compared: the answer isn't certain.
-                    reason = format!("{why:?} in {}", g.feature);
-                    next -= 1;
-                    stopped = true;
-                    return Drawn::Unknown;
-                }
-                if placed != g.placed {
-                    failures.push(format!(
-                        "seed {} chunk {:?} call {}: {} at {:?}: game {}, spyglass {}",
-                        file.seed,
-                        chunk.chunk,
-                        next - 1,
-                        g.feature,
-                        g.pos,
-                        if g.placed { "placed" } else { "declined" },
-                        if placed { "placed" } else { "declined" },
-                    ));
-                    stopped = true;
-                    return Drawn::Unknown;
-                }
-                matched += 1;
-                return Drawn::Known;
-            }
-            matched += 1;
-            if g.placed {
-                // Its blocks aren't placed yet: nothing after is known.
-                reason = format!("{} isn't placed", g.feature);
-                stopped = true;
-                return Drawn::Unknown;
-            }
-            if g.feature.starts_with("minecraft:monster_room") {
-                random.next_int_bounded(2);
-                random.next_int_bounded(2);
-            }
-            Drawn::Known
-        };
-        decorator.decorate(&mut region, &mut place);
-        if !stopped && next < game.len() {
-            failures.push(format!(
-                "seed {} chunk {:?}: the game has {} calls, spyglass {next}",
-                file.seed,
-                chunk.chunk,
-                game.len()
-            ));
-        }
-        let skipped = game.len().saturating_sub(next);
-        if skipped > 0 {
-            *report.reasons.entry(reason).or_default() += skipped;
-        }
-        report.skipped += skipped;
-        report.matched += matched;
-        report.failures.extend(failures);
+        // The golden files record the targets' calls.
+        let ours: Vec<_> = placer
+            .decorate(&decorator, &mut region, file.seed)
+            .into_iter()
+            .filter(|p| targets.contains(&p.at.placed))
+            .collect();
         report.time += start.elapsed();
         report.chunks += 1;
+        let game = &chunk.tries;
+        let at = |i: usize| format!("seed {} chunk {:?} call {i}", file.seed, chunk.chunk);
+        let mut compared = 0;
+        let mut reason = None;
+        for (i, g) in game.iter().enumerate() {
+            let Some(p) = ours.get(i) else {
+                report.failures.push(format!(
+                    "{}: the game calls {} at {:?}, spyglass has no more",
+                    at(i),
+                    g.feature,
+                    g.pos
+                ));
+                break;
+            };
+            let placed = match p.outcome {
+                Outcome::Candidate { why, .. } => {
+                    let why = match why {
+                        spyglass_feature::Doubt::OtherFeature(r) => format!("after {}", id(r)),
+                        why => format!("{why:?}"),
+                    };
+                    reason = Some(format!("{why} at {}", id(p.at.placed)));
+                    break;
+                }
+                Outcome::Placed => true,
+                Outcome::Declined => false,
+            };
+            if id(p.at.placed) != g.feature || p.at.pos != g.pos || placed != g.placed {
+                report.failures.push(format!(
+                    "{}: game {} at {:?} {}, spyglass {} at {:?} {}",
+                    at(i),
+                    g.feature,
+                    g.pos,
+                    if g.placed { "placed" } else { "declined" },
+                    id(p.at.placed),
+                    p.at.pos,
+                    if placed { "placed" } else { "declined" },
+                ));
+                break;
+            }
+            compared += 1;
+        }
+        report.matched += compared;
+        if let Some(reason) = reason {
+            *report.skipped.entry(reason).or_default() += game.len() - compared;
+        } else if compared == game.len() {
+            let extra = ours[compared..]
+                .iter()
+                .filter(|p| !matches!(p.outcome, Outcome::Candidate { .. }))
+                .count();
+            if extra > 0 {
+                report.failures.push(format!(
+                    "seed {} chunk {:?}: {extra} certain calls after the game's last",
+                    file.seed, chunk.chunk
+                ));
+            }
+        }
     }
     report
 }
@@ -199,22 +183,22 @@ fn placing_matches_the_game() {
     );
     let reports: Vec<Report> = files.par_iter().map(|p| check(p)).collect();
     let matched: usize = reports.iter().map(|r| r.matched).sum();
-    let skipped: usize = reports.iter().map(|r| r.skipped).sum();
     let failures: Vec<&String> = reports.iter().flat_map(|r| &r.failures).collect();
     let chunks: usize = reports.iter().map(|r| r.chunks).sum();
     let time: std::time::Duration = reports.iter().map(|r| r.time).sum();
-    let mut reasons = std::collections::BTreeMap::new();
+    let mut skipped = BTreeMap::new();
     for r in &reports {
-        for (k, v) in &r.reasons {
-            *reasons.entry(k.clone()).or_insert(0) += v;
+        for (k, v) in &r.skipped {
+            *skipped.entry(k.clone()).or_insert(0) += v;
         }
     }
-    for (k, v) in &reasons {
+    for (k, v) in &skipped {
         println!("  not compared, {k}: {v}");
     }
     println!(
-        "{} files: {matched} calls match, {skipped} not compared, {} differences; {:.2} ms a chunk",
+        "{} files: {matched} calls match, {} not compared, {} differences; {:.2} ms a chunk",
         files.len(),
+        skipped.values().sum::<usize>(),
         failures.len(),
         time.as_secs_f64() * 1e3 / chunks.max(1) as f64
     );

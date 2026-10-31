@@ -151,13 +151,28 @@ From 26.3 the well is data. `offset` and `block_predicate_filter` check the sand
 
 ### Certainty
 
-A placing answer is certain unless it read something spyglass can't know, which makes it a candidate with a reason:
+Placing runs every placed feature of the steps it's asked for, not only the targets: the features of the same steps that spyglass places too (the forest rock and large dripstone, [below](#block-blob)) are placed exactly. A placing answer is certain unless something spyglass can't know could change it, which makes it a candidate with a reason:
 
 - **A tie:** a block that depends on a tied biome ([material.md](material.md#ties)), or a tied biome at the try.
-- **A shape update or waterlogging** that a template's placing would cause (above).
+- **Another feature:** one spyglass doesn't place reached its feature earlier in the chunk (or its position wasn't known), and could have written anything in the region.
+- **A shape update or waterlogging** that a template's placing would cause ([above](#templates)).
 - **Outside the region:** a read past the 3 × 3, which vanilla features don't make.
 
-The blocks a candidate writes are in doubt too, so later answers that read them are candidates.
+Once one answer in a chunk is a candidate, every later one is too: a candidate's blocks may not be the game's.
+
+### Block blob
+
+`BlockBlobFeature` (`forest_rock`), the same in every version. From the origin, down while above `min y + 3` and the block below fails `can_place_on`; at `min y + 3` or below, it declines. Then three times: `a`, `b`, `c` each `nextInt(2)`, `f = (a + b + c)·0.333 + 0.5` in `float`, and `state` on every position within `(a, b, c)` of the centre whose squared distance is at most `(double)(f·f)`; then the centre moves by `(nextInt(2) − 1, −nextInt(2), nextInt(2) − 1)`.
+
+### Large dripstone
+
+`LargeDripstoneFeature` (`large_dripstone`; 26.4's `large_speleothem`, whose `base_block` 26.2 and 26.3 hard-code as dripstone block), the same algorithm in every version. Nothing unless the origin is air or water.
+
+1. **The cave:** up and down from the origin through air and water (`Column.scan`, at most `floor_to_ceiling_search_range` blocks, default 30), each end needing the base block, a block in `replaceable_blocks` or lava. A cave fewer than 4 high declines.
+2. **The radius:** `randomBetweenInclusive(min, clamp((int)(height · ratio), min, max))` of `column_radius`'s bounds. A stalactite below the ceiling and a stalagmite above the floor each draw a bluntness, then a height scale.
+3. **Wind**, if both have at least `min_radius_for_wind` and `min_bluntness_for_wind`: a speed from `wind_speed`, an angle `nextFloat()·π`, and an offset that grows with the distance from the origin's y, at most `16 − radius`. 26.4's sine and cosine are rounded (switch `rounded_trig`).
+4. **Each root** moves back into the ceiling or floor, up to `min(10, height)` blocks, until a circle of its radius is mostly in stone; lava on the way, or halving the radius to 1, gives up on that one.
+5. **Each column** within the radius: the height at its distance (`getSpeleothemHeight`, in `double`), cut to `0.8` to `1` of it when `nextFloat() < 0.2`, then the base block into air, water or lava along it (offset by the wind), stopping at base stone once it has placed one, and for a stalagmite at the `WORLD_SURFACE_WG` heightmap.
 
 ## Testing
 

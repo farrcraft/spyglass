@@ -137,12 +137,13 @@ interface GameApi {
     void recordFeatures(Game game, java.util.Set<String> placed) throws Exception;
 
     /**
-     * Decorates the chunk at {@code pos} on its own, as {@code ChunkStatusTasks.generateFeatures}
-     * does: it and its 8 neighbours generated through the step before features, none decorated,
-     * with no structures; a {@code WorldGenRegion} over them; the generator's own
-     * {@code applyBiomeDecoration}. The region reports what it's generating to
-     * {@link Features#generating}.
+     * Decorates the chunk at {@code pos} as {@code ChunkStatusTasks.generateFeatures} does: it and
+     * its 8 neighbours generated through the step before features, with no structures; a
+     * {@code WorldGenRegion} over them; the generator's own {@code applyBiomeDecoration}. The
+     * region reports what it's generating to {@link Features#generating}. With
+     * {@code neighboursFirst}, each of the 8 neighbours is first decorated in full, z then x
+     * ascending, inside {@link Features#quiet}; otherwise none is.
      */
     void decorate(Game game, NoiseBasedChunkGenerator generator, LevelHeightAccessor height, RandomState random,
-            long seed, ChunkPos pos);
+            long seed, ChunkPos pos, boolean neighboursFirst);
 }

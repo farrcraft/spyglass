@@ -29,6 +29,9 @@ pub struct FeatureChunk {
     pub chunk: [i32; 2],
     /// The calls to target features, in the order they happened.
     pub tries: Vec<GoldenTry>,
+    /// The same, with the chunk's 8 neighbours decorated first; `None` in files made before
+    /// the harness ran it.
+    pub after_neighbours: Option<Vec<GoldenTry>>,
 }
 
 /// A call to a target feature.
@@ -80,22 +83,34 @@ impl FeatureFile {
                 int(&chunk["chunk"][0], "chunk")? as i32,
                 int(&chunk["chunk"][1], "chunk")? as i32,
             ];
-            let mut tries = Vec::new();
-            for t in chunk["tries"].as_array().ok_or("no tries")? {
-                tries.push(GoldenTry {
-                    feature: t["feature"]
-                        .as_str()
-                        .ok_or("a try has no feature")?
-                        .to_string(),
-                    pos: [
-                        int(&t["pos"][0], "pos")? as i32,
-                        int(&t["pos"][1], "pos")? as i32,
-                        int(&t["pos"][2], "pos")? as i32,
-                    ],
-                    placed: t["placed"].as_bool().ok_or("placed isn't a bool")?,
-                });
-            }
-            chunks.push(FeatureChunk { chunk: pos, tries });
+            let calls = |list: &Value| -> Result<Vec<GoldenTry>, String> {
+                let mut tries = Vec::new();
+                for t in list.as_array().ok_or("no tries")? {
+                    tries.push(GoldenTry {
+                        feature: t["feature"]
+                            .as_str()
+                            .ok_or("a try has no feature")?
+                            .to_string(),
+                        pos: [
+                            int(&t["pos"][0], "pos")? as i32,
+                            int(&t["pos"][1], "pos")? as i32,
+                            int(&t["pos"][2], "pos")? as i32,
+                        ],
+                        placed: t["placed"].as_bool().ok_or("placed isn't a bool")?,
+                    });
+                }
+                Ok(tries)
+            };
+            let tries = calls(&chunk["tries"])?;
+            let after_neighbours = match chunk.get("after_neighbours") {
+                None => None,
+                Some(list) => Some(calls(list)?),
+            };
+            chunks.push(FeatureChunk {
+                chunk: pos,
+                tries,
+                after_neighbours,
+            });
         }
         Ok(FeatureFile {
             version: text("version")?,
@@ -133,7 +148,8 @@ mod tests {
             "dimension": "minecraft:overworld",
             "order": [[], ["minecraft:a", null]],
             "chunks": [{"chunk": [-1, 2], "tries": [
-                {"feature": "minecraft:a", "pos": [-12, 40, 33], "placed": true}]}]}"#;
+                {"feature": "minecraft:a", "pos": [-12, 40, 33], "placed": true}],
+                "after_neighbours": []}]}"#;
         let file = FeatureFile::parse(text.as_bytes()).unwrap();
         assert_eq!(
             (file.seed, file.dimension.as_str()),
@@ -152,6 +168,7 @@ mod tests {
                 placed: true
             }]
         );
+        assert_eq!(file.chunks[0].after_neighbours, Some(vec![]));
         assert!(FeatureFile::parse(br#"{"format": 2}"#).is_err());
     }
 }

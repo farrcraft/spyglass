@@ -403,8 +403,8 @@ final class Adapter implements GameApi {
 
     @Override
     public void decorate(Game game, NoiseBasedChunkGenerator generator, LevelHeightAccessor height,
-            RandomState random, long seed, ChunkPos pos) {
-        Decoration.decorate(game, generator, height, random, seed, pos);
+            RandomState random, long seed, ChunkPos pos, boolean neighboursFirst) {
+        Decoration.decorate(game, generator, height, random, seed, pos, neighboursFirst);
     }
 
     @Override

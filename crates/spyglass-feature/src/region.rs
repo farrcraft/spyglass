@@ -20,6 +20,9 @@ pub enum Doubt {
     Tie,
     /// It read outside the region, which vanilla features don't.
     OutsideRegion,
+    /// A feature spyglass doesn't place, this placed feature, ran earlier in the chunk and could
+    /// have changed what it read.
+    OtherFeature(crate::order::PlacedRef),
     /// A template placed beside a block whose shape update could change it (a fence, a plant).
     ShapeUpdate,
     /// A template placed a block that can hold water where water could flow into it.

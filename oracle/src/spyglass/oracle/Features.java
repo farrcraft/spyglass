@@ -101,6 +101,25 @@ final class Features {
         }
     }
 
+    /**
+     * Runs {@code decoration} recording nothing and stopping nowhere: a neighbour decorated in
+     * full before the chunk recorded.
+     */
+    static void quiet(Runnable decoration) {
+        List<Try> tries = TRIES.get();
+        Set<String> steps = STEPS.get();
+        Supplier<String> generating = GENERATING.get();
+        TRIES.remove();
+        STEPS.remove();
+        try {
+            decoration.run();
+        } finally {
+            TRIES.set(tries);
+            STEPS.set(steps);
+            GENERATING.set(generating);
+        }
+    }
+
     /** Whether {@code e}, or what caused it, is a {@link Stop}. */
     private static boolean stopped(Throwable e) {
         for (Throwable t = e; t != null; t = t.getCause()) {
@@ -181,31 +200,10 @@ final class Features {
         var futures = new ArrayList<Future<JsonObject>>();
         for (ChunkPos pos : chunks(game, generator, random, seed, order)) {
             futures.add(pool.submit(() -> {
-                var tries = new ArrayList<Try>();
-                TRIES.set(tries);
-                STEPS.set(early);
-                try {
-                    api.decorate(game, generator, height, random, seed, pos);
-                } catch (RuntimeException e) {
-                    if (!stopped(e)) {
-                        throw e;
-                    }
-                } finally {
-                    TRIES.remove();
-                    GENERATING.remove();
-                    STEPS.remove();
-                }
                 var o = new JsonObject();
                 o.add("chunk", ints(pos.x(), pos.z()));
-                var list = new JsonArray();
-                for (Try t : tries) {
-                    var j = new JsonObject();
-                    j.addProperty("feature", t.feature());
-                    j.add("pos", ints(t.x(), t.y(), t.z()));
-                    j.addProperty("placed", t.placed());
-                    list.add(j);
-                }
-                o.add("tries", list);
+                o.add("tries", calls(game, generator, height, random, seed, pos, early, false));
+                o.add("after_neighbours", calls(game, generator, height, random, seed, pos, early, true));
                 return o;
             }));
         }
@@ -219,6 +217,38 @@ final class Features {
         }
         root.add("chunks", chunks);
         return root;
+    }
+
+    /**
+     * The target features' calls decorating the chunk at {@code pos}, up to the last step with a
+     * target ({@code early} holds its placed features); with {@code neighboursFirst}, after its 8
+     * neighbours were decorated in full.
+     */
+    private static JsonArray calls(Game game, NoiseBasedChunkGenerator generator, LevelHeightAccessor height,
+            RandomState random, long seed, ChunkPos pos, Set<String> early, boolean neighboursFirst) {
+        var tries = new ArrayList<Try>();
+        TRIES.set(tries);
+        STEPS.set(early);
+        try {
+            GameApi.get().decorate(game, generator, height, random, seed, pos, neighboursFirst);
+        } catch (RuntimeException e) {
+            if (!stopped(e)) {
+                throw e;
+            }
+        } finally {
+            TRIES.remove();
+            GENERATING.remove();
+            STEPS.remove();
+        }
+        var list = new JsonArray();
+        for (Try t : tries) {
+            var j = new JsonObject();
+            j.addProperty("feature", t.feature());
+            j.add("pos", ints(t.x(), t.y(), t.z()));
+            j.addProperty("placed", t.placed());
+            list.add(j);
+        }
+        return list;
     }
 
     /**

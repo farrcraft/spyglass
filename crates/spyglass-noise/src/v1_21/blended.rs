@@ -10,15 +10,21 @@ use crate::mth;
 /// 26.2, seeded (`docs/specs/noise.md`, "26.2 blended noise").
 #[derive(Debug, Clone)]
 pub struct BlendedNoise {
+    /// The terrain the blend gives where the main noise is low (`minLimitNoise`, 16 octaves).
     min_limit: PerlinNoise,
+    /// The terrain the blend gives where the main noise is high (`maxLimitNoise`, 16 octaves).
     max_limit: PerlinNoise,
+    /// What picks between the two limits (`mainNoise`, 8 octaves, sampled more coarsely).
     main: PerlinNoise,
     /// `xzMultiplier`: `684.412 · xz_scale`.
     xz_multiplier: f64,
     /// `yMultiplier`: `684.412 · y_scale`.
     y_multiplier: f64,
+    /// What the main noise's x and z are divided by, on top of the multiplier (`xzFactor`).
     xz_factor: f64,
+    /// What the main noise's y is divided by (`yFactor`).
     y_factor: f64,
+    /// The smear's step, times `y_multiplier` (`smearScaleMultiplier`): larger smears y more.
     smear_scale_multiplier: f64,
 }
 
@@ -64,46 +70,49 @@ impl BlendedNoise {
     /// blended by `Mth.clampedLerp(t, min / 512, max / 512) / 128`. As the game does, the `min`
     /// sum is skipped (left 0) when `t ≥ 1` and the `max` sum when `t ≤ 0`; that's not only an
     /// optimization, since at `t = 1` exactly the lerp reads the skipped `min` as 0.
+    ///
+    /// Each octave set is summed from octave 0 down, the frequency halving and the weight
+    /// (`1 / frequency`) doubling at each step, so the coarsest octaves count most.
     pub fn compute(&self, block_x: i32, block_y: i32, block_z: i32) -> f64 {
         let x = f64::from(block_x) * self.xz_multiplier;
         let y = f64::from(block_y) * self.y_multiplier;
         let z = f64::from(block_z) * self.xz_multiplier;
-        let mx = x / self.xz_factor;
-        let my = y / self.y_factor;
-        let mz = z / self.xz_factor;
+        let main_x = x / self.xz_factor;
+        let main_y = y / self.y_factor;
+        let main_z = z / self.xz_factor;
         let smear = self.y_multiplier * self.smear_scale_multiplier;
         let main_smear = smear / self.y_factor;
         let (mut min, mut max, mut main) = (0.0, 0.0, 0.0);
-        let mut f = 1.0;
+        let mut frequency = 1.0;
         for i in 0..8 {
             if let Some(noise) = self.main.octave_noise(i) {
                 main += noise.noise_smeared(
-                    wrap(mx * f),
-                    wrap(my * f),
-                    wrap(mz * f),
-                    main_smear * f,
-                    my * f,
-                ) / f;
+                    wrap(main_x * frequency),
+                    wrap(main_y * frequency),
+                    wrap(main_z * frequency),
+                    main_smear * frequency,
+                    main_y * frequency,
+                ) / frequency;
             }
-            f /= 2.0;
+            frequency /= 2.0;
         }
         let t = (main / 10.0 + 1.0) / 2.0;
         // dcmpl/iflt and dcmpg/ifgt: a NaN t skips neither.
         let skip_min = t >= 1.0;
         let skip_max = t <= 0.0;
-        f = 1.0;
+        frequency = 1.0;
         for i in 0..16 {
-            let wx = wrap(x * f);
-            let wy = wrap(y * f);
-            let wz = wrap(z * f);
-            let smear_f = smear * f;
+            let wx = wrap(x * frequency);
+            let wy = wrap(y * frequency);
+            let wz = wrap(z * frequency);
+            let octave_smear = smear * frequency;
             if !skip_min && let Some(noise) = self.min_limit.octave_noise(i) {
-                min += noise.noise_smeared(wx, wy, wz, smear_f, y * f) / f;
+                min += noise.noise_smeared(wx, wy, wz, octave_smear, y * frequency) / frequency;
             }
             if !skip_max && let Some(noise) = self.max_limit.octave_noise(i) {
-                max += noise.noise_smeared(wx, wy, wz, smear_f, y * f) / f;
+                max += noise.noise_smeared(wx, wy, wz, octave_smear, y * frequency) / frequency;
             }
-            f /= 2.0;
+            frequency /= 2.0;
         }
         mth::clamped_lerp(t, min / 512.0, max / 512.0) / 128.0
     }

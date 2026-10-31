@@ -26,8 +26,8 @@ impl Noise for PerlinNoise {
         PerlinNoise::get(self, x, y, z)
     }
 
-    fn add_to_volume(&self, b: &mut [f32], v: &Volume, xz: f64, y: f64, factor: f32) {
-        PerlinNoise::add_to_volume(self, b, v, xz, y, factor);
+    fn add_to_volume(&self, buffer: &mut [f32], volume: &Volume, xz: f64, y: f64, factor: f32) {
+        PerlinNoise::add_to_volume(self, buffer, volume, xz, y, factor);
     }
 }
 
@@ -36,8 +36,8 @@ impl Noise for SmearedPerlinNoise {
         SmearedPerlinNoise::get(self, x, y, z)
     }
 
-    fn add_to_volume(&self, b: &mut [f32], v: &Volume, xz: f64, y: f64, factor: f32) {
-        SmearedPerlinNoise::add_to_volume(self, b, v, xz, y, factor);
+    fn add_to_volume(&self, buffer: &mut [f32], volume: &Volume, xz: f64, y: f64, factor: f32) {
+        SmearedPerlinNoise::add_to_volume(self, buffer, volume, xz, y, factor);
     }
 }
 
@@ -57,6 +57,7 @@ pub struct Layer<N = PerlinNoise> {
 /// of one kind, which is all this port supports. Both sum the same way.
 #[derive(Debug, Clone)]
 pub struct NoiseStack<N = PerlinNoise> {
+    /// The layers, in the order they're summed.
     layers: Vec<Layer<N>>,
 }
 

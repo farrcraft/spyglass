@@ -41,7 +41,8 @@ pub fn wrap(d: f64) -> f64 {
     }
 }
 
-/// `GradientNoise.gradDot(int, float, float, float)`.
+/// `GradientNoise.gradDot(int, float, float, float)`: the dot of a corner's gradient, picked by
+/// its hash, with the offset from that corner to the point.
 fn grad_dot(hash: i32, x: f32, y: f32, z: f32) -> f32 {
     let [gx, gy, gz] = GRADIENT[(hash & 15) as usize];
     gx as f32 * x + gy as f32 * y + gz as f32 * z
@@ -62,7 +63,10 @@ pub(crate) fn permutation(random: &mut impl RandomSource) -> [u8; 256] {
 /// `PerlinNoise` (with the state of `GradientNoise`): one octave.
 #[derive(Debug, Clone)]
 pub struct PerlinNoise {
+    /// The shuffled `0..=255` that hashes lattice corners to gradients.
     perms: [u8; 256],
+    /// Added to every coordinate after wrapping, so each octave samples its own part of the
+    /// lattice (`offsetX`, `offsetY`, `offsetZ`).
     offset: [f64; 3],
 }
 
@@ -92,7 +96,9 @@ impl PerlinNoise {
         i32::from(self.perms[(i & 255) as usize])
     }
 
-    /// `get(double, double, double)`.
+    /// `get(double, double, double)`: the noise at a point, about −1 to 1. The point is split
+    /// into its lattice cell (`xi`, `yi`, `zi`) and its fraction within it (`xf`, `yf`, `zf`),
+    /// in `f32` from 26.3.
     pub fn get(&self, x: f64, y: f64, z: f64) -> f32 {
         let x = wrap(x) + self.offset[0];
         let y = wrap(y) + self.offset[1];
@@ -167,6 +173,7 @@ impl PerlinNoise {
                     let (yf, y_smooth) = fractions(y, yw, yi);
                     let ty = mth::smoothstep(y_smooth);
                     if last_yi != yi {
+                        // The corner hashes, as in `sample_and_lerp`.
                         let add = |p: i32, q: i32| p.wrapping_add(q);
                         let h00 = self.permute(add(h0, yi));
                         let h01 = self.permute(add(add(h0, yi), 1));
@@ -189,20 +196,22 @@ impl PerlinNoise {
                         });
                         last_yi = yi;
                     }
-                    let c = |i: usize, fy: f32| corners[i].0 + corners[i].1 * fy;
+                    // A corner's full gradient dot: its cached x and z part plus its gradient y
+                    // times the y offset to it.
+                    let dot = |i: usize, fy: f32| corners[i].0 + corners[i].1 * fy;
                     let y1 = yf - 1.0;
                     let value = mth::lerp3(
                         tx,
                         ty,
                         tz,
-                        c(0, yf),
-                        c(1, yf),
-                        c(2, y1),
-                        c(3, y1),
-                        c(4, yf),
-                        c(5, yf),
-                        c(6, y1),
-                        c(7, y1),
+                        dot(0, yf),
+                        dot(1, yf),
+                        dot(2, y1),
+                        dot(3, y1),
+                        dot(4, yf),
+                        dot(5, yf),
+                        dot(6, y1),
+                        dot(7, y1),
                     );
                     buffer[index] += factor * value;
                     index += 1;
@@ -211,8 +220,14 @@ impl PerlinNoise {
         }
     }
 
-    /// `sampleAndLerp(int, int, int, float, float, float, float)`. `y_smooth` is the fraction
-    /// that drives the y smoothstep; plain Perlin passes `yf` again, smeared Perlin doesn't.
+    /// `sampleAndLerp(int, int, int, float, float, float, float)`: the noise in cell
+    /// `(xi, yi, zi)` at fraction `(xf, yf, zf)`. `y_smooth` is the fraction that drives the y
+    /// smoothstep; plain Perlin passes `yf` again, smeared Perlin doesn't.
+    ///
+    /// Each of the cell's eight corners hashes, through the permutation table, to one of the
+    /// gradients, and contributes the gradient's dot with the offset from that corner to the
+    /// point. The eight are blended by the fractions' smoothsteps (the fade curve), whose zero
+    /// slope at 0 and 1 hides the lattice's seams.
     #[allow(
         clippy::too_many_arguments,
         reason = "mirrors the game's sampleAndLerp"
@@ -263,7 +278,9 @@ const SHIFT_UP_EPSILON: f64 = 1.000_000_011_686_097_4e-7;
 /// scale, so the noise smears along y. Old blended noise is built from it.
 #[derive(Debug, Clone)]
 pub struct SmearedPerlinNoise {
+    /// The plain noise whose y input is smeared.
     noise: PerlinNoise,
+    /// The step the gradients' y input is rounded down to (`fudgeYScale`).
     fudge_y_scale: f64,
 }
 
@@ -296,6 +313,8 @@ impl SmearedPerlinNoise {
         let zw = wrap(z) + oz;
         let (xi, yi, zi) = (mth::floor(xw), mth::floor(yw), mth::floor(zw));
         let xf = (xw - f64::from(xi)) as f32;
+        // The y fraction in `f64` (the game's `yd`), which the smoothstep sees; the gradients
+        // see it less its fudge.
         let yd = yw - f64::from(yi);
         let zf = (zw - f64::from(zi)) as f32;
         let yf = (yd - self.compute_fudge_y(y, yd)) as f32;
@@ -323,8 +342,8 @@ impl SmearedPerlinNoise {
     /// `computeFudgeY(double, double)`: `y` itself when `0 ≤ y < yd` (the input before
     /// wrapping), else `yd`, rounded down to a multiple of the scale after a small upward shift.
     fn compute_fudge_y(&self, y: f64, yd: f64) -> f64 {
-        let r = if y >= 0.0 && y < yd { y } else { yd };
-        f64::from(mth::floor(r / self.fudge_y_scale + SHIFT_UP_EPSILON)) * self.fudge_y_scale
+        let rounded = if y >= 0.0 && y < yd { y } else { yd };
+        f64::from(mth::floor(rounded / self.fudge_y_scale + SHIFT_UP_EPSILON)) * self.fudge_y_scale
     }
 }
 

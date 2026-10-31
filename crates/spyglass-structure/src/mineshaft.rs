@@ -44,6 +44,7 @@ enum Direction {
 /// What a piece is, as far as its children need.
 #[derive(Debug, Clone, Copy)]
 enum Kind {
+    /// `MineShaftRoom`, the start.
     Room,
     /// `MineShaftCorridor`, with its orientation.
     Corridor(Direction),
@@ -53,21 +54,32 @@ enum Kind {
     Stairs(Direction),
 }
 
+/// A piece just made, before its children.
 #[derive(Debug, Clone, Copy)]
 struct Piece {
+    /// What it is.
     kind: Kind,
+    /// The blocks it takes.
     bbox: BoundingBox,
     /// `genDepth`.
     depth: i32,
 }
 
-fn span(b: &BoundingBox, axis: usize) -> i32 {
-    b.max[axis].wrapping_sub(b.min[axis]).wrapping_add(1)
+/// How many blocks `bbox` spans on `axis` (0 for x, 1 for y, 2 for z).
+fn span(bbox: &BoundingBox, axis: usize) -> i32 {
+    bbox.max[axis].wrapping_sub(bbox.min[axis]).wrapping_add(1)
 }
 
 /// `StructurePiecesBuilder` and the context random, while the pieces are laid out.
+///
+/// The layout grows from the room, depth first: each piece, once added, adds its children at
+/// its exits, each a random corridor, crossing or stairs that's kept only if its box hits no
+/// piece so far. Every choice draws from the one random, so the order of the calls is the
+/// order of the draws.
 struct Builder {
+    /// The context random.
     random: LegacyRandomSource,
+    /// Every piece's box so far, in the order added.
     pieces: Vec<BoundingBox>,
     /// The start piece's box (the room's), for the distance limit.
     start: BoundingBox,
@@ -79,8 +91,8 @@ impl Builder {
     }
 
     /// `findCollisionPiece(box) != null`.
-    fn collides(&self, b: &BoundingBox) -> bool {
-        self.pieces.iter().any(|p| p.intersects(b))
+    fn collides(&self, bbox: &BoundingBox) -> bool {
+        self.pieces.iter().any(|p| p.intersects(bbox))
     }
 
     /// `MineshaftPieces.generateAndAddPiece`: no piece beyond the depth limit or more than 80
@@ -111,13 +123,13 @@ impl Builder {
         direction: Direction,
         depth: i32,
     ) -> Option<Piece> {
-        let r = self.next_int(100);
-        let (kind, bbox) = if r >= 80 {
+        let roll = self.next_int(100);
+        let (kind, bbox) = if roll >= 80 {
             (
                 Kind::Crossing(direction),
                 self.find_crossing(x, y, z, direction)?,
             )
-        } else if r >= 70 {
+        } else if roll >= 70 {
             (
                 Kind::Stairs(direction),
                 self.find_stairs(x, y, z, direction)?,
@@ -136,14 +148,20 @@ impl Builder {
 
     /// A box at the origin, moved to `(x, y, z)`, if nothing collides with it.
     fn free_at(&self, min: [i32; 3], max: [i32; 3], x: i32, y: i32, z: i32) -> Option<BoundingBox> {
-        let b = BoundingBox { min, max }.moved([x, y, z]);
-        (!self.collides(&b)).then_some(b)
+        let bbox = BoundingBox { min, max }.moved([x, y, z]);
+        (!self.collides(&bbox)).then_some(bbox)
     }
 
     /// `MineShaftCrossing.findCrossing`: two floors (6 high) on `nextInt(4) == 0`.
-    fn find_crossing(&mut self, x: i32, y: i32, z: i32, d: Direction) -> Option<BoundingBox> {
+    fn find_crossing(
+        &mut self,
+        x: i32,
+        y: i32,
+        z: i32,
+        direction: Direction,
+    ) -> Option<BoundingBox> {
         let top = if self.next_int(4) == 0 { 6 } else { 2 };
-        let (min, max) = match d {
+        let (min, max) = match direction {
             Direction::North => ([-1, 0, -4], [3, top, 0]),
             Direction::South => ([-1, 0, 0], [3, top, 4]),
             Direction::West => ([-4, 0, -1], [0, top, 3]),
@@ -153,8 +171,8 @@ impl Builder {
     }
 
     /// `MineShaftStairs.findStairs`: no draws.
-    fn find_stairs(&mut self, x: i32, y: i32, z: i32, d: Direction) -> Option<BoundingBox> {
-        let (min, max) = match d {
+    fn find_stairs(&mut self, x: i32, y: i32, z: i32, direction: Direction) -> Option<BoundingBox> {
+        let (min, max) = match direction {
             Direction::North => ([0, -5, -8], [2, 2, 0]),
             Direction::South => ([0, -5, 0], [2, 2, 8]),
             Direction::West => ([-8, -5, 0], [0, 2, 2]),
@@ -165,18 +183,24 @@ impl Builder {
 
     /// `MineShaftCorridor.findCorridorSize`: `nextInt(3) + 2` sections of 5, one fewer each
     /// time the box collides, down to none.
-    fn find_corridor_size(&mut self, x: i32, y: i32, z: i32, d: Direction) -> Option<BoundingBox> {
+    fn find_corridor_size(
+        &mut self,
+        x: i32,
+        y: i32,
+        z: i32,
+        direction: Direction,
+    ) -> Option<BoundingBox> {
         let mut sections = self.next_int(3).wrapping_add(2);
         while sections > 0 {
             let len = sections.wrapping_mul(5).wrapping_sub(1);
-            let (min, max) = match d {
+            let (min, max) = match direction {
                 Direction::North => ([0, 0, len.wrapping_neg()], [2, 2, 0]),
                 Direction::South => ([0, 0, 0], [2, 2, len]),
                 Direction::West => ([len.wrapping_neg(), 0, 0], [0, 2, 2]),
                 Direction::East => ([0, 0, 0], [len, 2, 2]),
             };
-            if let Some(b) = self.free_at(min, max, x, y, z) {
-                return Some(b);
+            if let Some(bbox) = self.free_at(min, max, x, y, z) {
+                return Some(bbox);
             }
             sections -= 1;
         }
@@ -185,21 +209,21 @@ impl Builder {
 
     /// Each piece type's `addChildren`.
     fn add_children(&mut self, piece: &Piece) {
-        let b = piece.bbox;
+        let bbox = piece.bbox;
         let depth = piece.depth;
-        let [min_x, min_y, min_z] = b.min;
-        let [max_x, _, max_z] = b.max;
+        let [min_x, min_y, min_z] = bbox.min;
+        let [max_x, _, max_z] = bbox.max;
         match piece.kind {
-            Kind::Room => self.room_children(&b, depth),
-            Kind::Corridor(o) => {
+            Kind::Room => self.room_children(&bbox, depth),
+            Kind::Corridor(orientation) => {
                 // One exit at the end, or to either side near it, by nextInt(4); its y draws
                 // after the choice.
                 let end = self.next_int(4);
-                let (x, z, d) = match (o, end) {
-                    (Direction::North, 0 | 1) => (min_x, min_z.wrapping_sub(1), o),
+                let (x, z, exit) = match (orientation, end) {
+                    (Direction::North, 0 | 1) => (min_x, min_z.wrapping_sub(1), orientation),
                     (Direction::North, 2) => (min_x.wrapping_sub(1), min_z, Direction::West),
                     (Direction::North, _) => (max_x.wrapping_add(1), min_z, Direction::East),
-                    (Direction::South, 0 | 1) => (min_x, max_z.wrapping_add(1), o),
+                    (Direction::South, 0 | 1) => (min_x, max_z.wrapping_add(1), orientation),
                     (Direction::South, 2) => (
                         min_x.wrapping_sub(1),
                         max_z.wrapping_sub(3),
@@ -210,10 +234,10 @@ impl Builder {
                         max_z.wrapping_sub(3),
                         Direction::East,
                     ),
-                    (Direction::West, 0 | 1) => (min_x.wrapping_sub(1), min_z, o),
+                    (Direction::West, 0 | 1) => (min_x.wrapping_sub(1), min_z, orientation),
                     (Direction::West, 2) => (min_x, min_z.wrapping_sub(1), Direction::North),
                     (Direction::West, _) => (min_x, max_z.wrapping_add(1), Direction::South),
-                    (Direction::East, 0 | 1) => (max_x.wrapping_add(1), min_z, o),
+                    (Direction::East, 0 | 1) => (max_x.wrapping_add(1), min_z, orientation),
                     (Direction::East, 2) => (
                         max_x.wrapping_sub(3),
                         min_z.wrapping_sub(1),
@@ -226,11 +250,11 @@ impl Builder {
                     ),
                 };
                 let y = min_y.wrapping_sub(1).wrapping_add(self.next_int(3));
-                self.generate_and_add(x, y, z, d, depth);
+                self.generate_and_add(x, y, z, exit, depth);
                 // Side branches every 5 blocks, one level deeper.
                 if depth < MAX_DEPTH {
                     let deeper = depth.wrapping_add(1);
-                    if matches!(o, Direction::North | Direction::South) {
+                    if matches!(orientation, Direction::North | Direction::South) {
                         let mut z = min_z.wrapping_add(3);
                         while z.wrapping_add(3) <= max_z {
                             match self.next_int(5) {
@@ -277,9 +301,10 @@ impl Builder {
                     }
                 }
             }
-            Kind::Crossing(d) => {
-                let north = |s: &mut Self, y| {
-                    s.generate_and_add(
+            Kind::Crossing(direction) => {
+                // An exit on each side but the one it was entered from.
+                let north = |builder: &mut Self, y| {
+                    builder.generate_and_add(
                         min_x.wrapping_add(1),
                         y,
                         min_z.wrapping_sub(1),
@@ -287,8 +312,8 @@ impl Builder {
                         depth,
                     )
                 };
-                let south = |s: &mut Self, y| {
-                    s.generate_and_add(
+                let south = |builder: &mut Self, y| {
+                    builder.generate_and_add(
                         min_x.wrapping_add(1),
                         y,
                         max_z.wrapping_add(1),
@@ -296,8 +321,8 @@ impl Builder {
                         depth,
                     )
                 };
-                let west = |s: &mut Self, y| {
-                    s.generate_and_add(
+                let west = |builder: &mut Self, y| {
+                    builder.generate_and_add(
                         min_x.wrapping_sub(1),
                         y,
                         min_z.wrapping_add(1),
@@ -305,8 +330,8 @@ impl Builder {
                         depth,
                     )
                 };
-                let east = |s: &mut Self, y| {
-                    s.generate_and_add(
+                let east = |builder: &mut Self, y| {
+                    builder.generate_and_add(
                         max_x.wrapping_add(1),
                         y,
                         min_z.wrapping_add(1),
@@ -314,7 +339,7 @@ impl Builder {
                         depth,
                     )
                 };
-                match d {
+                match direction {
                     Direction::North => {
                         north(self, min_y);
                         west(self, min_y);
@@ -337,7 +362,7 @@ impl Builder {
                     }
                 }
                 // isTwoFloored: the upper floor's exits, each on a coin.
-                if span(&b, 1) > 3 {
+                if span(&bbox, 1) > 3 {
                     let upper = min_y.wrapping_add(3).wrapping_add(1);
                     if self.random.next_boolean() {
                         north(self, upper);
@@ -353,7 +378,7 @@ impl Builder {
                     }
                 }
             }
-            Kind::Stairs(o) => match o {
+            Kind::Stairs(orientation) => match orientation {
                 Direction::North => self.generate_and_add(
                     min_x,
                     min_y,
@@ -388,13 +413,13 @@ impl Builder {
 
     /// `MineShaftRoom.addChildren`: exits along each side (north, south, west, east), at a
     /// random offset and height, at least 4 blocks apart.
-    fn room_children(&mut self, b: &BoundingBox, depth: i32) {
-        let mut height = span(b, 1).wrapping_sub(3).wrapping_sub(1);
+    fn room_children(&mut self, bbox: &BoundingBox, depth: i32) {
+        let mut height = span(bbox, 1).wrapping_sub(3).wrapping_sub(1);
         if height <= 0 {
             height = 1;
         }
-        let [min_x, min_y, min_z] = b.min;
-        let [max_x, _, max_z] = b.max;
+        let [min_x, min_y, min_z] = bbox.min;
+        let [max_x, _, max_z] = bbox.max;
         let sides = [
             (Direction::North, 0),
             (Direction::South, 0),
@@ -402,7 +427,7 @@ impl Builder {
             (Direction::East, 2),
         ];
         for (direction, axis) in sides {
-            let len = span(b, axis);
+            let len = span(bbox, axis);
             let mut pos: i32 = 0;
             while pos < len {
                 pos = pos.wrapping_add(self.next_int(len));
@@ -498,8 +523,8 @@ impl Mineshaft {
             }
             y.wrapping_sub(bounds.max[1])
         };
-        for p in &mut pieces {
-            *p = p.moved([0, dy, 0]);
+        for piece in &mut pieces {
+            *piece = piece.moved([0, dy, 0]);
         }
         let mut bounds = bounds.moved([0, dy, 0]);
         if self.adapts_terrain {

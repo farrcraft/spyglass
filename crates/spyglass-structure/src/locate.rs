@@ -367,23 +367,27 @@ impl Starts<'_> {
         if spreads.is_empty() {
             return nearest.finish();
         }
-        let (cx, cz) = (from[0] >> 4, from[2] >> 4);
-        // The cell holding chunk (cx + spacing·dx, cz + spacing·dz), as locate takes it.
+        let (from_chunk_x, from_chunk_z) = (from[0] >> 4, from[2] >> 4);
+        // The cell holding chunk (from_chunk_x + spacing·dx, from_chunk_z + spacing·dz), as
+        // locate takes it.
         let cell = |spread: &crate::RandomSpread, dx: i32, dz: i32| {
             [
-                cx.wrapping_add(spread.spacing.wrapping_mul(dx))
+                from_chunk_x
+                    .wrapping_add(spread.spacing.wrapping_mul(dx))
                     .div_euclid(spread.spacing),
-                cz.wrapping_add(spread.spacing.wrapping_mul(dz))
+                from_chunk_z
+                    .wrapping_add(spread.spacing.wrapping_mul(dz))
                     .div_euclid(spread.spacing),
             ]
         };
-        for r in 0..=radius {
+        // `ring_radius` is locate's `r`: how many cells out the square ring is.
+        for ring_radius in 0..=radius {
             let mut batch: Vec<Chunk> = Vec::new();
             for &(rank, set, spread) in &spreads {
                 let salt = sets.sets()[set].placement.salt;
-                for [dx, dz] in ring(r) {
-                    let [gx, gz] = cell(&spread, dx, dz);
-                    let chunk = spread.cell_chunk(self.placements().seed(), salt, gx, gz);
+                for [dx, dz] in ring(ring_radius) {
+                    let [cell_x, cell_z] = cell(&spread, dx, dz);
+                    let chunk = spread.cell_chunk(self.placements().seed(), salt, cell_x, cell_z);
                     if self
                         .placements()
                         .is_structure_chunk(set, chunk[0], chunk[1])
@@ -408,22 +412,28 @@ impl Starts<'_> {
                 .iter()
                 .flat_map(|&(_, set, spread)| {
                     let offset = sets.sets()[set].placement.locate_offset;
-                    ring(r + 1).map(move |[dx, dz]| {
-                        let [gx, gz] = cell(&spread, dx, dz);
+                    ring(ring_radius + 1).map(move |[dx, dz]| {
+                        let [cell_x, cell_z] = cell(&spread, dx, dz);
                         // The blocks the cell's locate positions span on one axis; `None` where
                         // they'd wrap, as locate_pos's i32 arithmetic would there.
-                        let span = |g: i32, o: i32| {
-                            let low = i64::from(g) * i64::from(spread.spacing);
+                        let span = |cell: i32, axis_offset: i32| {
+                            let low = i64::from(cell) * i64::from(spread.spacing);
                             let high = low + i64::from(spread.spacing - spread.separation) - 1;
-                            let block = |c: i64| i32::try_from(c * 16 + i64::from(o)).ok();
+                            let block = |chunk: i64| {
+                                i32::try_from(chunk * 16 + i64::from(axis_offset)).ok()
+                            };
                             Some((i64::from(block(low)?), i64::from(block(high)?)))
                         };
-                        let axis = |g, o, v| span(g, o).map_or(0, |s| gap(s, v));
-                        axis(gx, offset[0], from[0]).pow(2) + axis(gz, offset[2], from[2]).pow(2)
+                        // The gap from `from` on one axis; 0 where the span wraps.
+                        let axis = |cell, axis_offset, origin| {
+                            span(cell, axis_offset).map_or(0, |range| gap(range, origin))
+                        };
+                        axis(cell_x, offset[0], from[0]).pow(2)
+                            + axis(cell_z, offset[2], from[2]).pow(2)
                     })
                 })
                 .min();
-            if next.is_none_or(|d| d > best.distance) {
+            if next.is_none_or(|least| least > best.distance) {
                 break;
             }
         }
@@ -436,21 +446,23 @@ impl Starts<'_> {
         batch.sort_by_key(|c| (c.key, !c.exact));
         // A chunk listed twice (a ring position and another's alternative) is decided once.
         batch.dedup_by_key(|c| c.key);
-        for c in batch {
+        for candidate in batch {
             // Past the best certain start, or (at an equal key) the same chunk again.
-            if nearest.best.is_some_and(|b| c.key >= b) {
+            if nearest.best.is_some_and(|b| candidate.key >= b) {
                 break;
             }
-            let Some((structures, certain)) = self.targets_at(c.set, c.chunk, targets) else {
+            let Some((structures, certain)) =
+                self.targets_at(candidate.set, candidate.chunk, targets)
+            else {
                 continue;
             };
-            let certain = certain && c.exact;
-            let position = self.locate_pos(c.set, c.chunk);
+            let certain = certain && candidate.exact;
+            let position = self.locate_pos(candidate.set, candidate.chunk);
             nearest.hits.push((
-                c.key,
+                candidate.key,
                 StructureHit {
-                    set: c.set,
-                    chunk: c.chunk,
+                    set: candidate.set,
+                    chunk: candidate.chunk,
                     position,
                     structures,
                     certain,
@@ -459,7 +471,7 @@ impl Starts<'_> {
             ));
             if certain {
                 // Sorted, and nothing past the best is decided: this is the new best.
-                nearest.best = Some(c.key);
+                nearest.best = Some(candidate.key);
             } else if nearest.candidates() >= MAX_UNCERTAIN {
                 nearest.complete = false;
                 return false;
@@ -521,17 +533,21 @@ impl Starts<'_> {
 /// origin to the locate position, the set's rank among the targets' sets, chunk z, chunk x.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct Key {
+    /// Horizontal distance squared from the origin to the locate position.
     distance: i128,
+    /// The set's rank among the targets' sets.
     rank: usize,
+    /// Chunk z.
     z: i32,
+    /// Chunk x.
     x: i32,
 }
 
 impl Key {
     fn of(from: [i32; 3], position: [i32; 3], rank: usize, [x, z]: [i32; 2]) -> Key {
-        let d = |i: usize| i128::from(position[i]) - i128::from(from[i]);
+        let delta = |i: usize| i128::from(position[i]) - i128::from(from[i]);
         Key {
-            distance: d(0) * d(0) + d(2) * d(2),
+            distance: delta(0) * delta(0) + delta(2) * delta(2),
             rank,
             z,
             x,
@@ -541,8 +557,11 @@ impl Key {
 
 /// A chunk [`Starts::nearest`] may decide.
 struct Chunk {
+    /// Where it ranks.
     key: Key,
+    /// The structure set.
     set: usize,
+    /// The placement chunk.
     chunk: [i32; 2],
     /// False for a ring position's alternative, or one that's tie- or platform-dependent:
     /// only ever a candidate.
@@ -551,10 +570,13 @@ struct Chunk {
 
 /// [`Starts::nearest`]'s progress.
 struct Nearest {
+    /// The search's origin.
     from: [i32; 3],
+    /// Every chunk decided to hold a possible start, with its key, in the order decided.
     hits: Vec<(Key, StructureHit)>,
     /// The nearest certain start so far.
     best: Option<Key>,
+    /// Whether the hits still hold the game's answer: false once the search gives up early.
     complete: bool,
 }
 

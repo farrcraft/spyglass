@@ -143,6 +143,7 @@ fn read_nbt(path: &Path) -> Result<Tag, WorldError> {
 
 /// A field lookup in one file, with errors naming the file and the field.
 struct Fields<'a> {
+    /// The file, for errors.
     path: &'a Path,
 }
 
@@ -160,6 +161,7 @@ impl Fields<'_> {
         field.split('.').try_fold(root, |t, name| t.get(name))
     }
 
+    /// The tag at a dotted path, or an error saying what was `expected` there.
     fn req<'t>(
         &self,
         root: &'t Tag,
@@ -209,7 +211,9 @@ impl Fields<'_> {
     }
 }
 
-/// `UUIDUtil.uuidFromIntArray` as the hyphenated lower-case text player files are named by.
+/// `UUIDUtil.uuidFromIntArray` as the hyphenated lower-case text player files are named by:
+/// the four ints are the UUID's 128 bits, most significant first, and the hyphens split the
+/// middle two.
 fn uuid_text(ints: &[i32]) -> Option<String> {
     let [a, b, c, d] = *ints else { return None };
     let (a, b, c, d) = (a as u32, b as u32, c as u32, d as u32);
@@ -234,11 +238,12 @@ impl Save {
         let dir = dir.into();
         let level_path = dir.join("level.dat");
         let level = read_nbt(&level_path)?;
-        let lf = Fields { path: &level_path };
+        let level_fields = Fields { path: &level_path };
 
-        let (layout, seed, generate_structures, generators) = Self::world_gen(&dir, &level, &lf)?;
+        let (layout, seed, generate_structures, generators) =
+            Self::world_gen(&dir, &level, &level_fields)?;
 
-        let spawn = match lf.get(&level, "Data.spawn") {
+        let spawn = match level_fields.get(&level, "Data.spawn") {
             // 26.x: Data.spawn {pos: [I; x, y, z], dimension}.
             Some(spawn) => Some(Location {
                 dimension: spawn
@@ -246,13 +251,19 @@ impl Save {
                     .and_then(Tag::as_str)
                     .unwrap_or("minecraft:overworld")
                     .to_string(),
-                pos: lf.pos(spawn, "pos")?,
+                pos: level_fields.pos(spawn, "pos")?,
             }),
             // Before: Data.SpawnX, SpawnY, SpawnZ, in the overworld.
             None => match (
-                lf.get(&level, "Data.SpawnX").and_then(Tag::as_int),
-                lf.get(&level, "Data.SpawnY").and_then(Tag::as_int),
-                lf.get(&level, "Data.SpawnZ").and_then(Tag::as_int),
+                level_fields
+                    .get(&level, "Data.SpawnX")
+                    .and_then(Tag::as_int),
+                level_fields
+                    .get(&level, "Data.SpawnY")
+                    .and_then(Tag::as_int),
+                level_fields
+                    .get(&level, "Data.SpawnZ")
+                    .and_then(Tag::as_int),
             ) {
                 (Some(x), Some(y), Some(z)) => Some(Location {
                     dimension: "minecraft:overworld".into(),
@@ -262,28 +273,28 @@ impl Save {
             },
         };
 
-        let player = Self::player(&dir, &level, &lf)?;
+        let player = Self::player(&dir, &level, &level_fields)?;
         Ok(Save {
             layout,
-            name: lf
+            name: level_fields
                 .get(&level, "Data.LevelName")
                 .and_then(Tag::as_str)
                 .unwrap_or_default()
                 .to_string(),
-            data_version: match lf.get(&level, "Data.DataVersion") {
+            data_version: match level_fields.get(&level, "Data.DataVersion") {
                 None => None,
-                Some(_) => Some(lf.int(&level, "Data.DataVersion")?),
+                Some(_) => Some(level_fields.int(&level, "Data.DataVersion")?),
             },
-            version_name: lf
+            version_name: level_fields
                 .get(&level, "Data.Version.Name")
                 .and_then(Tag::as_str)
                 .map(str::to_string),
             seed,
             generate_structures,
             generators,
-            enabled_packs: lf.strings(&level, "Data.DataPacks.Enabled")?,
-            disabled_packs: lf.strings(&level, "Data.DataPacks.Disabled")?,
-            was_modded: lf
+            enabled_packs: level_fields.strings(&level, "Data.DataPacks.Enabled")?,
+            disabled_packs: level_fields.strings(&level, "Data.DataPacks.Disabled")?,
+            was_modded: level_fields
                 .get(&level, "Data.WasModded")
                 .and_then(Tag::as_int)
                 .is_some_and(|v| v != 0),
@@ -297,19 +308,19 @@ impl Save {
     fn world_gen(
         dir: &Path,
         level: &Tag,
-        lf: &Fields<'_>,
+        level_fields: &Fields<'_>,
     ) -> Result<(Layout, i64, bool, BTreeMap<String, Value>), WorldError> {
         let settings_path = dir
             .join("data")
             .join("minecraft")
             .join("world_gen_settings.dat");
-        let (layout, settings_file, settings_root, settings) = if settings_path.is_file() {
+        let (layout, settings_file, settings_root, settings_prefix) = if settings_path.is_file() {
             let tag = read_nbt(&settings_path)?;
             (Layout::Current, settings_path, tag, "data")
-        } else if lf.get(level, "Data.WorldGenSettings").is_some() {
+        } else if level_fields.get(level, "Data.WorldGenSettings").is_some() {
             (
                 Layout::Legacy,
-                lf.path.to_path_buf(),
+                level_fields.path.to_path_buf(),
                 level.clone(),
                 "Data.WorldGenSettings",
             )
@@ -320,7 +331,7 @@ impl Save {
                 ("name", "Data.generatorName"),
                 ("options", "Data.generatorOptions"),
             ] {
-                if let Some(v) = lf.get(level, field) {
+                if let Some(v) = level_fields.get(level, field) {
                     generator.insert(key.into(), v.to_json());
                 }
             }
@@ -328,47 +339,49 @@ impl Save {
                 "minecraft:overworld".to_string(),
                 serde_json::json!({ "legacy_generator": generator }),
             )]);
-            let structures = lf
+            let structures = level_fields
                 .get(level, "Data.MapFeatures")
                 .and_then(Tag::as_int)
                 .is_none_or(|v| v != 0);
             return Ok((
                 Layout::Before116,
-                lf.long(level, "Data.RandomSeed")?,
+                level_fields.long(level, "Data.RandomSeed")?,
                 structures,
                 generators,
             ));
         };
-        let sf = Fields {
+        let settings_fields = Fields {
             path: &settings_file,
         };
-        let field = |name: &str| format!("{settings}.{name}");
-        let generate = sf
+        let field = |name: &str| format!("{settings_prefix}.{name}");
+        let generate = settings_fields
             .get(&settings_root, &field("generate_structures"))
-            .or_else(|| sf.get(&settings_root, &field("generate_features")));
+            .or_else(|| settings_fields.get(&settings_root, &field("generate_features")));
         let generate_structures = match generate {
             None => true,
             Some(t) => {
-                t.as_int()
-                    .ok_or_else(|| sf.error(&field("generate_structures"), "a boolean"))?
-                    != 0
+                t.as_int().ok_or_else(|| {
+                    settings_fields.error(&field("generate_structures"), "a boolean")
+                })? != 0
             }
         };
-        let dimensions = sf
+        let dimensions = settings_fields
             .req(
                 &settings_root,
                 &field("dimensions"),
                 "a compound of dimensions",
             )?
             .as_compound()
-            .ok_or_else(|| sf.error(&field("dimensions"), "a compound of dimensions"))?;
+            .ok_or_else(|| {
+                settings_fields.error(&field("dimensions"), "a compound of dimensions")
+            })?;
         let generators = dimensions
             .iter()
             .filter_map(|(id, dim)| Some((id.clone(), dim.get("generator")?.to_json())))
             .collect();
         Ok((
             layout,
-            sf.long(&settings_root, &field("seed"))?,
+            settings_fields.long(&settings_root, &field("seed"))?,
             generate_structures,
             generators,
         ))
@@ -376,7 +389,11 @@ impl Save {
 
     /// The single player: `Data.Player` before 26.x; in 26.x, `players/data/<uuid>.dat` for
     /// `Data.singleplayer_uuid`. `None` for server saves.
-    fn player(dir: &Path, level: &Tag, lf: &Fields<'_>) -> Result<Option<Location>, WorldError> {
+    fn player(
+        dir: &Path,
+        level: &Tag,
+        level_fields: &Fields<'_>,
+    ) -> Result<Option<Location>, WorldError> {
         let location = |fields: &Fields<'_>, tag: &Tag| -> Result<Location, WorldError> {
             // An id since 1.16; before, an int: 0, -1 or 1.
             let dimension = match tag.get("Dimension") {
@@ -393,14 +410,14 @@ impl Save {
                 pos: fields.pos(tag, "Pos")?,
             })
         };
-        if let Some(player) = lf.get(level, "Data.Player") {
-            return location(lf, player).map(Some);
+        if let Some(player) = level_fields.get(level, "Data.Player") {
+            return location(level_fields, player).map(Some);
         }
-        let Some(Tag::IntArray(ints)) = lf.get(level, "Data.singleplayer_uuid") else {
+        let Some(Tag::IntArray(ints)) = level_fields.get(level, "Data.singleplayer_uuid") else {
             return Ok(None);
         };
-        let uuid =
-            uuid_text(ints).ok_or_else(|| lf.error("Data.singleplayer_uuid", "four ints"))?;
+        let uuid = uuid_text(ints)
+            .ok_or_else(|| level_fields.error("Data.singleplayer_uuid", "four ints"))?;
         let path = dir.join("players").join("data").join(format!("{uuid}.dat"));
         if !path.is_file() {
             return Ok(None);

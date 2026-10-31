@@ -1,6 +1,6 @@
 # 0054. Block behaviour from the running game, by a committed dumper class
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-30
 
 ## Context

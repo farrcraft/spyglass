@@ -1,8 +1,8 @@
 # m19. Features in the API, the CLI, the viewer and search
 
-- Status: Draft
+- Status: In progress
 - Milestone: [19. Features](../roadmap/19-features.md)
-- Started: YYYY-MM-DD
+- Started: 2026-10-30
 - Completed: YYYY-MM-DD
 
 ## Goal
@@ -11,7 +11,7 @@ Features as answers everywhere structures are: in an area, nearest, in `--json`,
 
 ## Approach
 
-**Queries** in the `spyglass` API, as [locate.md](../specs/locate.md) has them for structures: `Session::features_in(query, area)` and `Session::nearest_feature(query, from, radius)`. Each answer has its position, whether it's certain, and a candidate's reason from [m19-placing](m19-placing.md). Features are named by placed feature (`minecraft:monster_room`, `minecraft:monster_room_deep`) or configured feature (`minecraft:monster_room` covers both). The spec decides which.
+**Queries** in the `spyglass` API, as [locate.md](../specs/locate.md) has them for structures: `Session::features_in(query, area)` and `Session::nearest_feature(query, from, radius)`. Each answer has its position, whether it's certain, and a candidate's reason from [m19-placing](completed/m19-placing.md). Features are named by placed feature (`minecraft:monster_room`, `minecraft:monster_room_deep`) or configured feature (`minecraft:monster_room` covers both). The spec decides which.
 
 **Cost first.** Placing needs a chunk's blocks, about 40 ms each, but tries are cheap. Each query works from tries first, and places only the chunks whose tries could answer it. The plan measures a 1:4 viewer tile of dungeons and a nearest dungeon from the origin.
 
@@ -45,3 +45,5 @@ Features as answers everywhere structures are: in an area, nearest, in `--json`,
 - [ ] getting-started: feature commands and layers.
 
 ## Notes
+
+- 2026-10-30: **Design before code.** A feature argument names every target placed feature whose id, or whose configured feature's id, is the argument (`minecraft:monster_room` both dungeons; `minecraft:fossil_coal` the upper fossils); one spyglass doesn't place is an error saying so. Each answer: the placed feature, the position, whether it's certain on its own and its reason if not, and whether it holds whatever the neighbours do ([ADR 0056](../adr/0056-two-certainties-on-its-own-and-whatever-the-neighbours.md)). Tries placed by spyglass and candidates are answers; a candidate that declined on spyglass's blocks is one too, marked unlikely. `nearest_feature` goes out in rings of chunks and places only those where the target's tries reach their feature.

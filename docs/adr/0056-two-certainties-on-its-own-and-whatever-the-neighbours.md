@@ -1,6 +1,6 @@
 # 0056. Two certainties: on its own, and whatever the neighbours do
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-30
 - Supersedes: [0055](0055-neighbours-decorated-first-make-candidates.md)
 

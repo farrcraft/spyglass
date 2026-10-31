@@ -2,7 +2,7 @@
 
 - Status: In progress
 - Depends on: [18](completed/18-surface-veins-and-carvers.md)
-- Plans, in order: [m19-decoration](../plans/completed/m19-decoration.md), [m19-placing](../plans/m19-placing.md), [m19-queries](../plans/m19-queries.md)
+- Plans, in order: [m19-decoration](../plans/completed/m19-decoration.md), [m19-placing](../plans/completed/m19-placing.md), [m19-queries](../plans/m19-queries.md)
 
 ## Goal
 
@@ -26,7 +26,7 @@ Not in scope:
 
 ## Exit criteria
 
-- [ ] Every feature in scope matches the game's positions in the golden area of each golden seed, for every supported version. Candidates are listed with their reason, and none is the game's answer reported as certain and wrong.
+- [x] Every feature in scope matches the game's positions in the golden area of each golden seed, for every supported version. Candidates are listed with their reason, and none is the game's answer reported as certain and wrong. _Certain on its own, for the chunk decorated before its neighbours ([ADR 0056](../adr/0056-two-certainties-on-its-own-and-whatever-the-neighbours.md)); m19-placing._
 - [ ] `spyglass locate feature minecraft:monster_room` answers from the origin on a real seed, and the viewer draws dungeons at 1:4.
 - [ ] A seed search for two dungeons within 16 blocks of each other near spawn returns seeds whose pairs the game confirms (an ignored oracle test).
 - [ ] `cargo xtask check` and `cargo xtask oracle-test` pass.

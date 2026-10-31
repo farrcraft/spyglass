@@ -114,18 +114,14 @@ final class Decoration {
             for (int dx = -1; dx <= 1; dx++) {
                 ChunkPos at = new ChunkPos(pos.x() + dx, pos.z() + dz);
                 ChunkAccess chunk = Chunks.generate(game, generator, height, random, seed, at);
-                // The rest of ChunkStatusTasks.buildTerrain: no retrogen in a new chunk, then the
-                // heightmaps features read.
-                Heightmap.primeHeightmaps(chunk, EnumSet.of(Heightmap.Types.MOTION_BLOCKING,
-                        Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, Heightmap.Types.OCEAN_FLOOR,
-                        Heightmap.Types.WORLD_SURFACE));
+                FeatureStep.afterTerrain(chunk);
                 int distance = Math.max(Math.abs(dx), Math.abs(dz));
                 var deps = step.directDependencies();
                 ((ProtoChunk) chunk).setPersistedStatus(deps.get(Math.min(distance, deps.size() - 1)));
                 chunks.put(at, chunk);
             }
         }
-        Server level = StandIns.allocate(Server.class);
+        FeatureStep.Server level = StandIns.allocate(FeatureStep.Server.class);
         level.seed = seed;
         level.generator = generator;
         level.random = random;
@@ -141,26 +137,11 @@ final class Decoration {
             return holder;
         });
         ChunkAccess center = chunks.get(pos);
+        FeatureStep.beforeFeatures(center);
         WorldGenRegion region = new Region(level, holders, step, center);
         Manager structures = StandIns.allocate(Manager.class);
         generator.applyBiomeDecoration(region, center, structures);
         Blender.generateBorderTicks(region, center);
-    }
-
-    /** Zero, false or null, as a value of {@code type}. */
-    private static Object zero(Class<?> type) {
-        if (type == long.class) {
-            return 0L;
-        } else if (type == int.class) {
-            return 0;
-        } else if (type == boolean.class) {
-            return false;
-        } else if (type == float.class) {
-            return 0f;
-        } else if (type == double.class) {
-            return 0.0;
-        }
-        return null;
     }
 
     /** The dimension type of the dimension {@code generator} is. */
@@ -186,93 +167,6 @@ final class Decoration {
         }
     }
 
-    /** The server level, for what the region asks of it. */
-    static class Server extends ServerLevel {
-        long seed;
-        NoiseBasedChunkGenerator generator;
-        RandomState random;
-        DimensionType type;
-        Game game;
-        LevelHeightAccessor height;
-        Cache cache;
-        int entities;
-
-        /** Never run: instances are made by {@link StandIns#allocate}. */
-        Server() {
-            super(null, null, null, null, null, null, false, 0L, null, false);
-        }
-
-        @Override
-        public long getSeed() {
-            return seed;
-        }
-
-        /** A new world's: game time 0, as ticks scheduled during generation read it. */
-        @Override
-        public LevelData getLevelData() {
-            return (LevelData) Proxy.newProxyInstance(LevelData.class.getClassLoader(),
-                    new Class<?>[] {LevelData.class}, (proxy, method, args) -> zero(method.getReturnType()));
-        }
-
-        @Override
-        public ServerChunkCache getChunkSource() {
-            return cache;
-        }
-
-        @Override
-        public DimensionType dimensionType() {
-            return type;
-        }
-
-        /** For chunks outside the region, which decoration doesn't read: fails if it's asked. */
-        @Override
-        public BiomeResolver uncachedBiomeResolver() {
-            return (x, y, z) -> {
-                throw new UnsupportedOperationException("a biome outside the region, at quart " + x + ", " + z);
-            };
-        }
-
-        @Override
-        public FeatureFlagSet enabledFeatures() {
-            return FeatureFlags.DEFAULT_FLAGS;
-        }
-
-        @Override
-        public net.minecraft.core.RegistryAccess registryAccess() {
-            return game.access;
-        }
-
-        @Override
-        public int getMinY() {
-            return height.getMinY();
-        }
-
-        @Override
-        public int getHeight() {
-            return height.getHeight();
-        }
-
-        @Override
-        public int getSeaLevel() {
-            return generator.getSeaLevel();
-        }
-
-        @Override
-        public void updatePOIOnBlockStateChange(BlockPos pos, BlockState before, BlockState after) {}
-
-        /** Only for its structure templates, which fossils place. */
-        @Override
-        public MinecraftServer getServer() {
-            return StandIns.allocate(GameServer.class);
-        }
-
-        /** Entities placed by features (the End's crystals) are numbered from 1. */
-        @Override
-        public int getNextEntityId() {
-            return ++entities;
-        }
-    }
-
     /** A server with only structure templates. */
     static class GameServer extends DedicatedServer {
         /** Never run: instances are made by {@link StandIns#allocate}. */
@@ -288,7 +182,7 @@ final class Decoration {
 
     /** The level's chunk source: only its random state and generator. */
     static class Cache extends ServerChunkCache {
-        Server level;
+        FeatureStep.Server level;
 
         /** Never run: instances are made by {@link StandIns#allocate}. */
         Cache() {

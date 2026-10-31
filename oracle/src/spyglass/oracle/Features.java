@@ -226,7 +226,7 @@ final class Features {
      * square around the origin, then the chunks found for each rare feature.
      */
     private static Set<ChunkPos> chunks(Game game, NoiseBasedChunkGenerator generator, RandomState random,
-            long seed, JsonArray order) {
+            long seed, JsonArray order) throws ReflectiveOperationException {
         Set<ChunkPos> chunks = new LinkedHashSet<>();
         boolean any = false;
         for (var step : order) {
@@ -255,6 +255,10 @@ final class Features {
                         || !(placed.placement().get(0) instanceof RarityFilter rarity)) {
                     continue;
                 }
+                // A record's accessor from 26.3, a private field in 26.2.
+                Field chanceField = RarityFilter.class.getDeclaredField("chance");
+                chanceField.setAccessible(true);
+                int chance = chanceField.getInt(rarity);
                 int found = 0;
                 // Rings of chunks outwards from the origin.
                 for (int r = 0; r <= RARE_RADIUS && found < RARE.get(id); r++) {
@@ -266,7 +270,7 @@ final class Features {
                             var rng = new WorldgenRandom(new XoroshiroRandomSource(0L));
                             long decoration = rng.setDecorationSeed(seed, x << 4, z << 4);
                             rng.setFeatureSeed(decoration, index, step);
-                            if (!(rng.nextFloat() < 1.0f / rarity.chance())) {
+                            if (!(rng.nextFloat() < 1.0f / chance)) {
                                 continue;
                             }
                             // The biome at quart (2, 16, 2) of the chunk: y 64, near its middle.

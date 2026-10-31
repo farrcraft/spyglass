@@ -397,6 +397,17 @@ final class Adapter implements GameApi {
     }
 
     @Override
+    public void recordFeatures(Game game, java.util.Set<String> placed) throws Exception {
+        Decoration.record(game, placed);
+    }
+
+    @Override
+    public void decorate(Game game, NoiseBasedChunkGenerator generator, LevelHeightAccessor height,
+            RandomState random, long seed, ChunkPos pos) {
+        Decoration.decorate(game, generator, height, random, seed, pos);
+    }
+
+    @Override
     public JsonArray probeTerrain(Game game, List<String> seeds) {
         return ProbeWorldgen.terrain(game, seeds);
     }

@@ -145,13 +145,17 @@ impl Depth {
 
 /// Loads named density functions and noises, sharing each one however often it's referenced.
 pub struct Loader<'r, R: Resources + ?Sized> {
+    /// Where named functions and noises are read from.
     resources: &'r R,
     /// The resources' behavior switches, baked into what's loaded.
     behavior: Behavior,
+    /// Each named function loaded so far, by full id.
     functions: HashMap<String, Df>,
+    /// Each noise loaded so far, by full id.
     noises: HashMap<String, NormalNoiseParameters>,
     /// Named functions being loaded, outermost first, for cycle detection.
     loading: Vec<String>,
+    /// How deeply nested the function being read is, against [`MAX_NESTING`].
     depth: Depth,
 }
 
@@ -171,9 +175,9 @@ impl<'r, R: Resources + ?Sized> Loader<'r, R> {
     /// The named density function `id`, loaded once and shared.
     pub fn function(&mut self, id: &str) -> LoadResult<Df> {
         let id = full_id(id);
-        if let Some(f) = self.functions.get(&id).cloned() {
+        if let Some(function) = self.functions.get(&id).cloned() {
             self.depth.reuse(&id, &At::root(&id))?;
-            return Ok(f);
+            return Ok(function);
         }
         if let Some(start) = self.loading.iter().position(|l| *l == id) {
             let mut cycle = self.loading[start..].to_vec();
@@ -190,25 +194,25 @@ impl<'r, R: Resources + ?Sized> Loader<'r, R> {
         let parsed = self.parse_function(&json, &at);
         self.depth.finish(&id, outer, parsed.is_ok());
         self.loading.pop();
-        let f = parsed?;
-        self.functions.insert(id, f.clone());
-        Ok(f)
+        let function = parsed?;
+        self.functions.insert(id, function.clone());
+        Ok(function)
     }
 
     /// The noise `id`'s parameters, loaded once.
     pub fn noise(&mut self, id: &str) -> LoadResult<NormalNoiseParameters> {
         let id = full_id(id);
-        if let Some(p) = self.noises.get(&id) {
-            return Ok(p.clone());
+        if let Some(parameters) = self.noises.get(&id) {
+            return Ok(parameters.clone());
         }
         let at = At::root(&id);
         let json = self
             .resources
             .resource(NOISE, &id)
             .map_err(|e| at.error(e.into()))?;
-        let p = parse_noise(&json, &at)?;
-        self.noises.insert(id, p.clone());
-        Ok(p)
+        let parameters = parse_noise(&json, &at)?;
+        self.noises.insert(id, parameters.clone());
+        Ok(parameters)
     }
 
     /// A density function written inline in another resource, such as a noise router entry:
@@ -253,8 +257,8 @@ impl<'r, R: Resources + ?Sized> Loader<'r, R> {
         // The types registered from an enum's values, each id one constant.
         if let Some(op) = binary_type(&kind) {
             // BinaryFunction: {"left", "right"}.
-            let f = DensityFunction::Binary(op, arg(self, "left")?, arg(self, "right")?);
-            return Ok(Arc::new(f));
+            let function = DensityFunction::Binary(op, arg(self, "left")?, arg(self, "right")?);
+            return Ok(Arc::new(function));
         }
         if let Some(op) = unary_type(&kind) {
             // UnaryFunction: {"input"}.
@@ -273,7 +277,7 @@ impl<'r, R: Resources + ?Sized> Loader<'r, R> {
                 multiple,
             }));
         }
-        let f = match kind.as_str() {
+        let function = match kind.as_str() {
             // ConstantFunction.CODEC: {"value": NOISE_VALUE_CODEC}.
             "minecraft:constant" => DensityFunction::Constant(noise_value(
                 field(obj, "value", at)?,
@@ -362,11 +366,11 @@ impl<'r, R: Resources + ?Sized> Loader<'r, R> {
                         zero += 1;
                         return Ok(Arc::new(DensityFunction::Constant(0.0)));
                     };
-                    let f = this.parse_function(value, &at.child(name))?;
-                    if !value.is_string() && f.is_zero() {
+                    let function = this.parse_function(value, &at.child(name))?;
+                    if !value.is_string() && function.is_zero() {
                         zero += 1;
                     }
-                    Ok(f)
+                    Ok(function)
                 };
                 let offset_x = offset(self, "offset_x")?;
                 let offset_y = offset(self, "offset_y")?;
@@ -443,7 +447,7 @@ impl<'r, R: Resources + ?Sized> Loader<'r, R> {
                 }));
             }
         };
-        Ok(Arc::new(f))
+        Ok(Arc::new(function))
     }
 
     /// A `noise` field: a noise id, loaded so it can be bound later. The game can't use an
@@ -793,25 +797,25 @@ fn parse_noise_v26_3(obj: &Map<String, Value>, at: &At<'_>) -> LoadResult<Parame
     };
     let base_octave = ranged_int("base_octave", -32, 32)?
         .ok_or_else(|| at.error(LoadErrorKind::Missing("base_octave")))?;
-    let mut p = Parameters::new(base_octave);
+    let mut parameters = Parameters::new(base_octave);
     if let Some(n) = ranged_int("octave_count", 1, 32)? {
-        p.octave_count = n;
+        parameters.octave_count = n;
     }
     if let Some(v) = obj.get("base_amplitude") {
-        let a = double(v, &at.child("base_amplitude"))?;
+        let amplitude = double(v, &at.child("base_amplitude"))?;
         // Codec.doubleRange(9.999999747378752E-6, 1000000).
-        if !(9.999_999_747_378_752e-6..=1_000_000.0).contains(&a) {
+        if !(9.999_999_747_378_752e-6..=1_000_000.0).contains(&amplitude) {
             return Err(at.child("base_amplitude").error(out_of_range(
                 v,
                 9.999_999_747_378_752e-6,
                 1_000_000,
             )));
         }
-        p.base_amplitude = a;
+        parameters.base_amplitude = amplitude;
     }
     if let Some(v) = obj.get("normalize") {
         // Codec.either(BOOL, "legacy"): true is enabled, false disabled.
-        p.normalize = match v {
+        parameters.normalize = match v {
             Value::Bool(true) => Normalization::Enabled,
             Value::Bool(false) => Normalization::Disabled,
             Value::String(s) if s == "legacy" => Normalization::Legacy,
@@ -830,15 +834,15 @@ fn parse_noise_v26_3(obj: &Map<String, Value>, at: &At<'_>) -> LoadResult<Parame
         if list.len() > 32 {
             return Err(list_at.error(LoadErrorKind::Invalid("at most 32 amplitude modifiers")));
         }
-        p.amplitude_modifiers = list
+        parameters.amplitude_modifiers = list
             .iter()
             .enumerate()
             .map(|(i, m)| {
                 let at = list_at.child(&format!("[{i}]"));
-                let d = double(m, &at)?;
+                let modifier = double(m, &at)?;
                 // Codec.doubleRange(0, 1000000).
-                if (0.0..=1_000_000.0).contains(&d) {
-                    Ok(d)
+                if (0.0..=1_000_000.0).contains(&modifier) {
+                    Ok(modifier)
                 } else {
                     Err(at.error(out_of_range(m, 0, 1_000_000)))
                 }
@@ -846,10 +850,12 @@ fn parse_noise_v26_3(obj: &Map<String, Value>, at: &At<'_>) -> LoadResult<Parame
             .collect::<LoadResult<_>>()?;
     }
     // Parameters.validate.
-    if !p.amplitude_modifiers.is_empty() && p.amplitude_modifiers.len() != p.octave_count as usize {
+    if !parameters.amplitude_modifiers.is_empty()
+        && parameters.amplitude_modifiers.len() != parameters.octave_count as usize
+    {
         return Err(at.error(LoadErrorKind::Invalid(
             "amplitude_modifiers must be empty or have octave_count entries",
         )));
     }
-    Ok(p)
+    Ok(parameters)
 }

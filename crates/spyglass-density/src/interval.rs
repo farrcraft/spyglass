@@ -157,13 +157,14 @@ impl Interval {
         if a.is_nai() || b.is_nai() {
             return Ok(Interval::NAI);
         }
-        let p = mul_bound(a.min, b.min);
-        let q = mul_bound(a.min, b.max);
-        let r = mul_bound(a.max, b.min);
-        let s = mul_bound(a.max, b.max);
+        // Each product of a bound of `a` and a bound of `b`.
+        let min_min = mul_bound(a.min, b.min);
+        let min_max = mul_bound(a.min, b.max);
+        let max_min = mul_bound(a.max, b.min);
+        let max_max = mul_bound(a.max, b.max);
         Interval::of(
-            java::min(java::min(p, q), java::min(r, s)),
-            java::max(java::max(p, q), java::max(r, s)),
+            java::min(java::min(min_min, min_max), java::min(max_min, max_max)),
+            java::max(java::max(min_min, min_max), java::max(max_min, max_max)),
         )
     }
 
@@ -238,12 +239,12 @@ impl Interval {
         if i.is_nai() {
             return Ok(Interval::NAI);
         }
-        let (a, b) = (i.min * i.min, i.max * i.max);
-        let top = java::max(a, b);
+        let (min_squared, max_squared) = (i.min * i.min, i.max * i.max);
+        let top = java::max(min_squared, max_squared);
         if i.contains(0.0) {
             Interval::of(0.0, top)
         } else {
-            Interval::of(java::min(a, b), top)
+            Interval::of(java::min(min_squared, max_squared), top)
         }
     }
 
@@ -252,11 +253,11 @@ impl Interval {
         if i.is_nai() {
             return Ok(Interval::NAI);
         }
-        let (a, b) = (f(i.min), f(i.max));
-        if a.is_nan() || b.is_nan() {
+        let (from_min, from_max) = (f(i.min), f(i.max));
+        if from_min.is_nan() || from_max.is_nan() {
             return Err(IntervalError::MonotonicNaN);
         }
-        Interval::of(java::min(a, b), java::max(a, b))
+        Interval::of(java::min(from_min, from_max), java::max(from_min, from_max))
     }
 
     /// `log(i)`: NaI if every value is negative, else `ln` of the non-negative part.
@@ -316,14 +317,14 @@ impl Interval {
         if first == second {
             return Interval::exact(first);
         }
-        let (a, b) = (
+        let (at_min, at_max) = (
             lerp_infinite_bound(alpha.min, first, second),
             lerp_infinite_bound(alpha.max, first, second),
         );
-        if a.is_nan() || b.is_nan() {
+        if at_min.is_nan() || at_max.is_nan() {
             return Ok(Interval::NAI);
         }
-        Interval::encapsulating_values(a, b)
+        Interval::encapsulating_values(at_min, at_max)
     }
 
     /// `pow(base, exponent)`.
@@ -355,7 +356,8 @@ fn mul_bound(a: f32, b: f32) -> f32 {
     if a == 0.0 || b == 0.0 { 0.0 } else { a * b }
 }
 
-/// `lerpInfiniteBound(t, first, second)`.
+/// `lerpInfiniteBound(t, first, second)`: `(1 − t) · first + t · second`, where infinite terms
+/// of opposite signs take the side `t` is clamped to, or NaN strictly between.
 fn lerp_infinite_bound(t: f32, first: f32, second: f32) -> f32 {
     let a = mul_bound(1.0 - t, first);
     let b = mul_bound(t, second);
@@ -390,11 +392,11 @@ fn pow_base(base: f32, exponent: Interval) -> IntervalResult {
         return Ok(Interval::NAI);
     }
     if exponent.min == exponent.max {
-        let v = powf(base, exponent.min);
-        return if v.is_nan() {
+        let value = powf(base, exponent.min);
+        return if value.is_nan() {
             Ok(Interval::NAI)
         } else {
-            Interval::exact(v)
+            Interval::exact(value)
         };
     }
     if base == 0.0 {

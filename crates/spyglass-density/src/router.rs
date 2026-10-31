@@ -35,7 +35,9 @@ pub struct ClimateRouter(Family);
 #[derive(Debug, Clone)]
 enum Family {
     V26_3 {
+        /// The six climate entries, in `Climate.Sampler`'s order.
         functions: [Df; 6],
+        /// The noises they use, by full id.
         noises: HashMap<String, NormalNoiseParameters>,
         /// `legacy_random_source`.
         legacy: bool,

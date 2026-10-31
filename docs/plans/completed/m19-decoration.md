@@ -47,7 +47,7 @@ The API (`Session::feature_tries`) and the CLI come with [m19-queries](../m19-qu
 ## Tasks
 
 - [x] **Spike:** decoration in 26.2, 26.3 and 26.4-snapshot-6: `applyBiomeDecoration`, `FeatureSorter`, `WorldgenRandom`'s decoration and feature seeds and the random source behind them, and each target modifier. Note what each version changes, and turn any change that doesn't show in the data into a switch ([ADR 0026](../../adr/0026-how-game-versions-coexist.md)). Record findings here.
-- [x] **ADR:** the `spyglass-feature` crate ([ADR 0052](../../adr/0052-features-in-their-own-crate.md), proposed) and its place in the layers (`docs/architecture.md`).
+- [x] **ADR:** the `spyglass-feature` crate ([ADR 0052](../../adr/0052-features-in-their-own-crate.md)) and its place in the layers (`docs/architecture.md`).
 - [x] **Data:** placed features and their modifiers, with fixture tests. _The target configured features' own data is loaded with placing, in m19-placing._
 - [x] **The order:** the global order per step from every possible biome's lists, with the game's failure when they disagree. Fixture tests, and an ignored test against the golden files' orders. _Every version's lists load and sort (`every_dimension_sorts`), and match the game's order in every dimension (`tries_match_the_game`)._
 - [x] **Seeds:** `WorldgenRandom` over Xoroshiro, and the decoration and feature seeds, in `spyglass-rng` ([rng.md](../../specs/rng.md)), checked against the oracle's probe files in every version.
@@ -69,7 +69,7 @@ The API (`Session::feature_tries`) and the CLI come with [m19-queries](../m19-qu
 - [x] `docs/specs/features.md`: decoration, the order, seeds, modifiers, tries.
 - [x] rng.md: the decoration and feature seeds.
 - [x] oracle.md: feature golden files and how the harness makes them.
-- [x] An ADR for the crate ([0052](../../adr/0052-features-in-their-own-crate.md)), and one for how the oracle decorates ([0053](../../adr/0053-the-oracle-decorates-chunks-on-their-own.md)), both proposed.
+- [x] An ADR for the crate ([0052](../../adr/0052-features-in-their-own-crate.md)), and one for how the oracle decorates ([0053](../../adr/0053-the-oracle-decorates-chunks-on-their-own.md)), both accepted.
 - [x] architecture.md: the new crate.
 
 ## Notes

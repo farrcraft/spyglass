@@ -1,6 +1,6 @@
 # 0053. The oracle decorates chunks on their own, recording the target features' calls
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-30
 
 ## Context

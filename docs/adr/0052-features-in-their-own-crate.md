@@ -1,6 +1,6 @@
 # 0052. Features in a crate of their own
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-30
 
 ## Context

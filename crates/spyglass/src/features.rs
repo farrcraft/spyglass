@@ -170,9 +170,27 @@ pub struct FoundFeature {
     pub likely: bool,
     /// Why it's a candidate, if it is.
     pub reason: Option<String>,
-    /// Why neighbours decorated first could change it, if they could; `None` if it holds
-    /// whatever the neighbours do (ADR 0056).
-    pub neighbours: Option<String>,
+    /// Whether neighbours decorated first could change it (ADR 0056), if that was asked for.
+    pub neighbours: Neighbours,
+}
+
+/// Whether a feature holds whatever its chunk's neighbours do.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Neighbours {
+    /// Not asked for ([`FeatureOptions::neighbours`]).
+    NotChecked,
+    /// It holds whatever the neighbours do.
+    Hold,
+    /// Neighbours decorated first could change it, and why.
+    Could(String),
+}
+
+/// What a feature query works out besides where features are.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FeatureOptions {
+    /// Whether each answer holds whatever the neighbours do: about half a chunk's time.
+    pub neighbours: bool,
 }
 
 /// The answer to [`Session::nearest_feature`].
@@ -203,13 +221,14 @@ impl<'w> Session<'w> {
         query: &FeatureQuery,
         min: [i32; 2],
         max: [i32; 2],
+        options: FeatureOptions,
     ) -> Result<Vec<FoundFeature>> {
         self.check_world(query.world, &query.argument)?;
         let mut cache = Cache::default();
         let mut out = Vec::new();
         for cz in min[1]..=max[1] {
             for cx in min[0]..=max[0] {
-                out.extend(self.chunk_features(query, [cx, cz], &mut cache)?);
+                out.extend(self.chunk_features(query, [cx, cz], options, &mut cache)?);
             }
         }
         Ok(out)
@@ -222,6 +241,7 @@ impl<'w> Session<'w> {
         query: &FeatureQuery,
         from: [i32; 3],
         radius: i32,
+        options: FeatureOptions,
     ) -> Result<FeatureLocate> {
         self.check_world(query.world, &query.argument)?;
         let mut cache = Cache::default();
@@ -246,7 +266,7 @@ impl<'w> Session<'w> {
                         continue;
                     }
                     let chunk = [centre[0] + dx, centre[1] + dz];
-                    for f in self.chunk_features(query, chunk, &mut cache)? {
+                    for f in self.chunk_features(query, chunk, options, &mut cache)? {
                         if f.certain {
                             best = Some(best.map_or(dist(f.position), |b| b.min(dist(f.position))));
                         }
@@ -275,6 +295,7 @@ impl<'w> Session<'w> {
         &self,
         query: &FeatureQuery,
         chunk: [i32; 2],
+        options: FeatureOptions,
         cache: &mut Cache,
     ) -> Result<Vec<FoundFeature>> {
         let world = self.world;
@@ -320,9 +341,12 @@ impl<'w> Session<'w> {
             min_y,
             &f.everything,
         );
-        let foreign = f
-            .bounds
-            .writes(&everything, &f.settings, &region, &mut biomes);
+        let foreign = if options.neighbours {
+            f.bounds
+                .writes(&everything, &f.settings, &region, &mut biomes)
+        } else {
+            Vec::new()
+        };
         let own = f
             .bounds
             .own_writes(&everything, &f.settings, &region, &mut biomes);
@@ -372,7 +396,11 @@ impl<'w> Session<'w> {
                     certain,
                     likely,
                     reason: why.map(reason),
-                    neighbours: p.neighbours.map(reason),
+                    neighbours: match (options.neighbours, p.neighbours) {
+                        (false, _) => Neighbours::NotChecked,
+                        (true, None) => Neighbours::Hold,
+                        (true, Some(d)) => Neighbours::Could(reason(d)),
+                    },
                 })
             })
             .collect())

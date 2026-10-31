@@ -33,7 +33,14 @@ fn features_in_are_the_game_s() {
     for path in files.iter().take(2) {
         let file = FeatureFile::read(path).unwrap();
         let session = world.session(file.seed).unwrap();
-        let found = session.features_in(&query, [-8, -8], [7, 7]).unwrap();
+        let found = session
+            .features_in(
+                &query,
+                [-8, -8],
+                [7, 7],
+                spyglass::FeatureOptions::default(),
+            )
+            .unwrap();
         chunks += 256;
         let placed: HashSet<[i32; 3]> = file
             .chunks

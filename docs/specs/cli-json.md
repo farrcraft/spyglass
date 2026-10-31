@@ -84,7 +84,7 @@ Each hit: `position` (`{x, y, z}`), `biome` (the biome there), `tied` (every bio
 | `complete` | bool        | Whether the hits end at a certain one.                                                                    |
 | `hits`     | array       | Nearest first: every candidate nearer than the nearest certain feature, then that one. Empty: none found. |
 
-Each hit ([locate.md](locate.md#features)): `feature` (the placed feature), `position` (`{x, y, z}`, where the game calls it), `certain`, `likely` (whether it placed on spyglass's blocks; a certain one always did), `reason` (why it's a candidate, or null), `neighbours` (why neighbours decorated first could change it, or null where it holds whatever they do) and `blocks_away`. Unlikely candidates are left out unless `--all`.
+Each hit ([locate.md](locate.md#features)): `feature` (the placed feature), `position` (`{x, y, z}`, where the game calls it), `certain`, `likely` (whether it placed on spyglass's blocks; a certain one always did), `reason` (why it's a candidate, or null), `neighbours_checked` (whether `--neighbours` asked), `neighbours` (why neighbours decorated first could change it; null where it holds whatever they do, or unchecked) and `blocks_away`. Unlikely candidates are left out unless `--all`.
 
 ## `features`
 

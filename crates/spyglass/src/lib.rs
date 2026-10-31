@@ -49,7 +49,7 @@ use spyglass_structure::{
 use spyglass_terrain::{Terrain, TerrainSettings};
 
 pub use blocks::{BlockAt, BlockColumn, Carvers, ChunkBlocks};
-pub use features::{FeatureLocate, FeatureQuery, FoundFeature};
+pub use features::{FeatureLocate, FeatureOptions, FeatureQuery, FoundFeature, Neighbours};
 pub use game::{Game, GameSession};
 pub use render::{
     BiomeMap, CarverKind, CarvingMap, DEFAULT_MAP_Y, HeightMap, Image, Layers, MARKER_REACH,

@@ -260,6 +260,11 @@ impl Blocks {
         self.entries[usize::from(s)].tags & (1 << tag.0) != 0
     }
 
+    /// The heightmaps a state counts for, a bit per [`Heightmap`] by its order.
+    pub fn heightmap_bits(&self, s: State) -> u8 {
+        self.entries[usize::from(s)].heightmaps
+    }
+
     /// Whether a state counts for heightmap `h`.
     pub fn counts_for(&self, s: State, h: Heightmap) -> bool {
         self.entries[usize::from(s)].heightmaps & h.bit() != 0

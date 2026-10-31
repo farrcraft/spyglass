@@ -67,14 +67,37 @@ impl<'b> Region<'b> {
             .into_iter()
             .map(|chunk| {
                 let mut maps = [[min_y; 256]; 10];
-                for (i, column) in (0..256).enumerate() {
-                    let (x, z) = (column % 16, column / 16);
-                    for (m, h) in LIVE
-                        .iter()
-                        .chain(&[Heightmap::WorldSurfaceWg, Heightmap::OceanFloorWg])
-                        .enumerate()
-                    {
-                        maps[m][i] = first_free(blocks, &chunk, *h, x, z, min_y + height);
+                // [`LIVE`]'s, then the `_WG` ones: each map's heightmap bit.
+                let order = [
+                    Heightmap::WorldSurface,
+                    Heightmap::OceanFloor,
+                    Heightmap::MotionBlocking,
+                    Heightmap::MotionBlockingNoLeaves,
+                    Heightmap::WorldSurfaceWg,
+                    Heightmap::OceanFloorWg,
+                ]
+                .map(|h| 1u8 << h as u8);
+                #[allow(
+                    clippy::needless_range_loop,
+                    reason = "the column index addresses ten maps"
+                )]
+                for i in 0..256 {
+                    let (x, z) = (i as i32 % 16, i as i32 / 16);
+                    // Down the column once, each heightmap taking the first block it counts.
+                    let mut left = order.iter().fold(0u8, |a, b| a | b);
+                    for y in (min_y..min_y + height).rev() {
+                        let bits = blocks.heightmap_bits(chunk.get([x, y, z])) & left;
+                        if bits != 0 {
+                            for (m, bit) in order.iter().enumerate() {
+                                if bits & bit != 0 {
+                                    maps[m][i] = y + 1;
+                                }
+                            }
+                            left &= !bits;
+                            if left == 0 {
+                                break;
+                            }
+                        }
                     }
                     for m in 0..4 {
                         maps[6 + m][i] = maps[m][i];
@@ -223,12 +246,4 @@ impl<'b> Region<'b> {
     pub fn center_chunk(&self) -> &Chunk {
         &self.columns[4].chunk
     }
-}
-
-/// One above the top block in a column that heightmap `h` counts, or `min_y`.
-fn first_free(blocks: &Blocks, chunk: &Chunk, h: Heightmap, x: i32, z: i32, top: i32) -> i32 {
-    (chunk.min_y..top)
-        .rev()
-        .find(|&y| blocks.counts_for(chunk.get([x, y, z]), h))
-        .map_or(chunk.min_y, |y| y + 1)
 }

@@ -254,6 +254,7 @@ pub struct FeatureHit<'a> {
     pub certain: bool,
     pub likely: bool,
     pub reason: Option<&'a str>,
+    pub neighbours_checked: bool,
     pub neighbours: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blocks_away: Option<i32>,
@@ -268,7 +269,11 @@ impl<'a> FeatureHit<'a> {
             certain: f.certain,
             likely: f.likely,
             reason: f.reason.as_deref(),
-            neighbours: f.neighbours.as_deref(),
+            neighbours_checked: f.neighbours != spyglass::Neighbours::NotChecked,
+            neighbours: match &f.neighbours {
+                spyglass::Neighbours::Could(why) => Some(why),
+                _ => None,
+            },
             blocks_away: from.map(|o| {
                 let (dx, dz) = (i64::from(x - o[0]), i64::from(z - o[2]));
                 ((dx * dx + dz * dz) as f64).sqrt() as i32

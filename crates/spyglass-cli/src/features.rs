@@ -31,7 +31,15 @@ pub fn run(args: &Features) -> Result<()> {
         report: report.as_ref(),
     };
     let query = world.feature_query(&args.target)?;
-    let found = session.features_in(&query, [chunks[0], chunks[1]], [chunks[2], chunks[3]])?;
+    let options = spyglass::FeatureOptions {
+        neighbours: args.neighbours,
+    };
+    let found = session.features_in(
+        &query,
+        [chunks[0], chunks[1]],
+        [chunks[2], chunks[3]],
+        options,
+    )?;
     let hits: Vec<&spyglass::FoundFeature> = found
         .iter()
         .filter(|f| {

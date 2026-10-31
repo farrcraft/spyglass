@@ -126,10 +126,18 @@ pub fn structure(
     Ok(())
 }
 
-pub fn feature(out: &Out<'_>, target: &str, from: [i32; 3], radius: i32, all: bool) -> Result<()> {
+pub fn feature(
+    out: &Out<'_>,
+    target: &str,
+    from: [i32; 3],
+    radius: i32,
+    all: bool,
+    neighbours: bool,
+) -> Result<()> {
     let session = out.session;
     let query = session.world().feature_query(target)?;
-    let found = session.nearest_feature(&query, from, radius)?;
+    let options = spyglass::FeatureOptions { neighbours };
+    let found = session.nearest_feature(&query, from, radius, options)?;
     let hits: Vec<&spyglass::FoundFeature> = found
         .hits
         .iter()
@@ -189,6 +197,15 @@ pub fn feature_line(f: &spyglass::FoundFeature, from: Option<[i32; 3]>) {
 
 /// What the answers mean, after them.
 pub fn feature_notes(hits: &[&spyglass::FoundFeature], all: bool) {
+    if hits
+        .iter()
+        .all(|f| f.neighbours == spyglass::Neighbours::NotChecked)
+        && !hits.is_empty()
+    {
+        out!(
+            "Certain is for the chunk decorated before its neighbours (--neighbours checks whether each holds whatever they do)."
+        );
+    }
     if hits.iter().any(|f| !f.certain) {
         out!(
             "Candidates are where something spyglass can't know could change the answer: listed likely if they placed on spyglass's blocks{}.",
@@ -199,9 +216,12 @@ pub fn feature_notes(hits: &[&spyglass::FoundFeature], all: bool) {
             }
         );
     }
-    if hits.iter().any(|f| f.neighbours.is_some()) {
+    if hits
+        .iter()
+        .any(|f| matches!(f.neighbours, spyglass::Neighbours::Could(_)))
+    {
         out!(
-            "Certain is for the chunk decorated before its neighbours; a neighbour decorated first could change any of these."
+            "Certain is for the chunk decorated before its neighbours; neighbours decorated first could change these."
         );
     }
 }

@@ -147,8 +147,16 @@ fn run_locate(what: &Locate) -> Result<()> {
             from,
             radius,
             all,
+            neighbours,
             ..
-        } => locate::feature(&out, target, out.origin(from.from)?, *radius, *all)?,
+        } => locate::feature(
+            &out,
+            target,
+            out.origin(from.from)?,
+            *radius,
+            *all,
+            *neighbours,
+        )?,
         Locate::Biome {
             biome,
             from,

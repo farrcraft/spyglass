@@ -65,6 +65,10 @@ pub struct Features {
     /// place.
     #[arg(long)]
     pub all: bool,
+    /// Also check whether each answer holds whatever the neighbouring chunks do, if they're
+    /// decorated first: about twice as slow.
+    #[arg(long)]
+    pub neighbours: bool,
     #[command(flatten)]
     pub common: Common,
 }
@@ -522,6 +526,10 @@ pub enum Locate {
         /// still place.
         #[arg(long)]
         all: bool,
+        /// Also check whether each answer holds whatever the neighbouring chunks do, if
+        /// they're decorated first: about twice as slow.
+        #[arg(long)]
+        neighbours: bool,
     },
     /// The nearest biome, searched in 3D from `--from`, as `/locate biome` does.
     Biome {

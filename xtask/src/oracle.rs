@@ -198,6 +198,7 @@ const GOLDEN_REGIONS: &[(&str, i32, i32, i32)] = &[
     ("border-neg", -29_999_984, -29_999_984, 64),
 ];
 
+/// The dimensions golden files are made for.
 const GOLDEN_DIMENSIONS: &[&str] = &[
     "minecraft:overworld",
     "minecraft:the_nether",
@@ -209,6 +210,7 @@ fn dimension_dir(dimension: &str) -> &str {
     dimension.rsplit(':').next().unwrap_or(dimension)
 }
 
+/// Runs `cargo xtask oracle <cmd>`: builds the harness, then has it write the files asked for.
 pub fn run(cmd: OracleCmd) -> Result<()> {
     match cmd {
         OracleCmd::Build(common) => build(&common).map(drop),
@@ -452,6 +454,7 @@ fn merge_bundle(version: &str, pack: &Path, variant: &str) -> Result<PathBuf> {
     Ok(out)
 }
 
+/// Every file under `dir`, into `out`.
 fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
     for entry in fs::read_dir(dir)? {
         let path = entry?.path();
@@ -517,19 +520,30 @@ fn golden_jobs(biomes: &Path) -> Vec<Job> {
     jobs
 }
 
+/// One biome grid to make.
 struct Job {
+    /// The seed, as the game reads it: a number, or text to hash.
     seed: String,
+    /// The dimension's id.
     dimension: String,
+    /// The region's west edge, in blocks.
     x: i32,
+    /// The region's north edge, in blocks.
     z: i32,
+    /// The region's side, in blocks.
     size: i32,
+    /// The grid file to write.
     out: PathBuf,
 }
 
 /// A compiled harness, ready to run.
 pub(crate) struct Harness {
+    /// The game version it runs; with a suffix (`+testpack`, `+no-carvers`) for variant runs,
+    /// which writes their files under that name.
     pub(crate) version: String,
+    /// The game's data version, which picks the adapter.
     pub(crate) data_version: u32,
+    /// The JDK's `java`.
     pub(crate) java: PathBuf,
     /// The JDK's major version.
     pub(crate) major: u32,
@@ -542,6 +556,8 @@ pub(crate) struct Harness {
 }
 
 impl Harness {
+    /// Runs the harness's `Main` with `args`, the data packs first, in
+    /// `target/oracle/<version>/run/`.
     fn run(&self, args: &[OsString]) -> Result<()> {
         let run_dir = self.work.join("run");
         fs::create_dir_all(&run_dir)?;
@@ -668,6 +684,8 @@ impl Harness {
         self.biomes(&golden_jobs(&biomes), threads)
     }
 
+    /// Makes the biome grids of `jobs`: written to a jobs file, a line each, which the
+    /// harness works through on `threads` threads.
     fn biomes(&self, jobs: &[Job], threads: Option<usize>) -> Result<()> {
         let mut lines = String::new();
         for job in jobs {
@@ -697,13 +715,17 @@ impl Harness {
         let jobs_file = self.work.join("jobs.txt");
         fs::write(&jobs_file, lines)?;
         let mut args: Vec<OsString> = vec!["biomes".into(), jobs_file.into()];
-        if let Some(n) = threads {
-            args.extend(["--threads".into(), n.to_string().into()]);
+        if let Some(threads) = threads {
+            args.extend(["--threads".into(), threads.to_string().into()]);
         }
         self.run(&args)
     }
 }
 
+/// Builds the harness for `common`'s version: resolves the version, fetches and unpacks its
+/// server jar (both kept between runs), finds a JDK of the major version the game needs, picks
+/// the adapter by the game's data version, and compiles `oracle/src` with it against the game's
+/// jars, unless nothing changed since the last build.
 pub(crate) fn build(common: &Common) -> Result<Harness> {
     let resolved = extract::resolve(&common.game_version)?;
     let (server, major) = (&resolved.download, resolved.java_major);
@@ -931,6 +953,7 @@ fn compile(
     Ok(())
 }
 
+/// Every `.java` file under `dir`, into `out`.
 fn collect_java(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
     for entry in fs::read_dir(dir).with_context(|| format!("reading {}", dir.display()))? {
         let path = entry?.path();

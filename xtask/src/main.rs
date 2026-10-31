@@ -331,16 +331,16 @@ impl Report {
 }
 
 fn doctor(game_version: &str, explicit_java: Option<&Path>) -> Result<()> {
-    let mut r = Report { failures: 0 };
+    let mut report = Report { failures: 0 };
     let setup = "run scripts/setup.ps1 (Windows) or scripts/setup.sh";
-    rust_checks(&mut r, setup);
-    hook_checks(&mut r, setup);
-    java_checks(&mut r, game_version, explicit_java);
-    bundles_check(&mut r);
-    docker_check(&mut r);
+    rust_checks(&mut report, setup);
+    hook_checks(&mut report, setup);
+    java_checks(&mut report, game_version, explicit_java);
+    bundles_check(&mut report);
+    docker_check(&mut report);
     println!();
-    if r.failures > 0 {
-        bail!("{} check(s) failed", r.failures);
+    if report.failures > 0 {
+        bail!("{} check(s) failed", report.failures);
     }
     println!("Ready.");
     Ok(())

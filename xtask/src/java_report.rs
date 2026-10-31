@@ -65,6 +65,7 @@ pub fn run(args: &JavaReport) -> Result<()> {
     Ok(())
 }
 
+/// Compiles `source` with the JDK in `jdk_bin` into the folder `out`.
 fn compile(jdk_bin: &Path, source: &Path, out: &Path) -> Result<()> {
     let javac = jdk_bin.join(if cfg!(windows) { "javac.exe" } else { "javac" });
     let output = Command::new(&javac)

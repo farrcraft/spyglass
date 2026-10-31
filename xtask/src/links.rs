@@ -176,6 +176,7 @@ fn prose_lines(text: &str) -> impl Iterator<Item = (usize, &str)> {
 struct Anchors(HashMap<PathBuf, HashSet<String>>);
 
 impl Anchors {
+    /// The anchors of the file at `path`, read the first time it's asked for.
     fn of(&mut self, path: &Path) -> Result<&HashSet<String>> {
         if !self.0.contains_key(path) {
             let text = fs::read_to_string(path)

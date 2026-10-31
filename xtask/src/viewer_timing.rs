@@ -38,6 +38,7 @@ pub struct ViewerTiming {
 /// marked and whether terrain confirms them.
 type Layers = (u32, bool, bool, &'static [&'static str], bool);
 
+/// Scenario `scenario`'s settings, if there's one by that number.
 fn layers(scenario: u32) -> Option<Layers> {
     Some(match scenario {
         1 => (4, false, false, &[], true),

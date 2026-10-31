@@ -27,6 +27,7 @@ struct Scope {
 }
 
 impl Scope {
+    /// Every job either scope runs.
     fn or(self, other: Scope) -> Scope {
         Scope {
             check: self.check || other.check,
@@ -105,6 +106,7 @@ fn scope(files: &[&str]) -> Scope {
     }
 }
 
+/// Prints the jobs the changes since `args.base` need.
 pub fn run(args: &CiScope) -> Result<()> {
     let out = command("git")
         .args(["diff", "--name-only", &format!("{}...HEAD", args.base)])

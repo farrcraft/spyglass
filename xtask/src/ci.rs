@@ -56,6 +56,7 @@ enum Output {
 }
 
 impl Output {
+    /// Every output, in the order a job makes them.
     const ALL: [Output; 8] = [
         Output::Probe,
         Output::Biomes,
@@ -130,6 +131,9 @@ fn made(outputs: &[Output]) -> Vec<Input> {
     made
 }
 
+/// Runs one CI job: extracts the bundle, makes the oracle outputs selected (golden files with
+/// one harness build, then `/locate` answers from a server, then the test pack's), and runs the
+/// comparisons whose inputs the job made.
 pub fn run(args: &Ci) -> Result<()> {
     let only = !args.only.is_empty();
     if args.shard.is_some() && args.only != [Output::Heights] {

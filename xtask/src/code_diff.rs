@@ -153,11 +153,14 @@ fn short(class: &str) -> &str {
 /// A form a class's codecs accept: a type id it registers, or a field it reads.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Form {
+    /// A type id, as registered.
     Type(String),
+    /// A field's name.
     Field(String),
 }
 
 impl Form {
+    /// Whether a bundle's data uses it.
     fn used_by(&self, data: &DataNames) -> bool {
         match self {
             Form::Type(id) => data.types.contains(id.rsplit(':').next().unwrap_or(id)),
@@ -223,6 +226,7 @@ fn string_constant(line: &str) -> Option<&str> {
     line.split_once("// String ").map(|(_, s)| s)
 }
 
+/// Where `version`'s disassembly is kept between runs.
 fn dump_dir(version: &str) -> PathBuf {
     repo_root()
         .join("target")
@@ -281,6 +285,7 @@ fn classes(jdk_bin: &Path, version: &str) -> Result<BTreeMap<String, String>> {
     Ok(out)
 }
 
+/// A JDK tool's file name on this platform.
 fn exe(tool: &str) -> String {
     if cfg!(windows) {
         format!("{tool}.exe")
@@ -289,6 +294,7 @@ fn exe(tool: &str) -> String {
     }
 }
 
+/// Runs `command` and returns its output; failing, its error output.
 fn run(command: &mut Command) -> Result<String> {
     let output = command
         .output()
@@ -336,9 +342,9 @@ fn declared(line: &str) -> Option<String> {
 /// (`12: `), constant-pool indices (`#34`, `#5:6`), branch targets, switch-table targets,
 /// lambda numbers and runs of whitespace.
 fn normalize(line: &str) -> String {
-    let mut s = line.trim().to_string();
+    let mut text = line.trim().to_string();
     // A bytecode offset, or a switch-table entry ("1: 45", "default: 45").
-    if let Some((head, rest)) = s.split_once(": ")
+    if let Some((head, rest)) = text.split_once(": ")
         && (head.parse::<i64>().is_ok() || head == "default")
     {
         let rest = rest.trim();
@@ -346,11 +352,11 @@ fn normalize(line: &str) -> String {
             return if head == "default" { "default" } else { "case" }.to_string();
         }
         if head != "default" {
-            s = rest.to_string();
+            text = rest.to_string();
         }
     }
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {
         if c == '#' && chars.peek().is_some_and(char::is_ascii_digit) {
             out.push('#');

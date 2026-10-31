@@ -15,15 +15,22 @@ const VERSION_VAR: &str = "SPYGLASS_ORACLE_VERSION";
 /// What a test reads: a bundle, or one of the oracle's outputs under `oracle-out/<version>/`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Input {
+    /// A bundle, extracted or a merged test pack's.
     Bundle,
     /// A bundle extracted into `bundles/`, which the front ends find by version; not a merged
     /// test pack's.
     Extracted,
+    /// The probe files.
     Probe,
+    /// The biome grids.
     Biomes,
+    /// The structure files.
     Structures,
+    /// The spawn files.
     Spawn,
+    /// The `/locate` answers.
     Locate,
+    /// The height files.
     Heights,
     /// The block files with carvers.
     Blocks,
@@ -346,8 +353,11 @@ const PINNED: &[(&str, &[&str])] = &[
 
 /// How one version's run went.
 enum Outcome {
+    /// This many tests ran, and passed.
     Passed(usize),
+    /// A test failed, or cargo did.
     Failed,
+    /// None of its tests had their inputs.
     NoInputs,
 }
 
@@ -460,8 +470,8 @@ fn run_version(root: &Path, version: &str, made: &[Input], keep: Keep<'_>) -> Re
     let mut cmd = command("cargo");
     cmd.env(VERSION_VAR, version)
         .args(["test", "--release", "--no-fail-fast"]);
-    for p in &packages {
-        cmd.args(["-p", p]);
+    for package in &packages {
+        cmd.args(["-p", package]);
     }
     cmd.args(["--", "--ignored", "--exact"]).args(&names);
     Ok(if cmd.status().context("failed to run cargo")?.success() {

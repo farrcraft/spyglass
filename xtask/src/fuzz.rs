@@ -88,6 +88,7 @@ fn asan_runtime_dir() -> Option<PathBuf> {
     found.pop()
 }
 
+/// The entries of `dir`, none if it can't be read.
 fn children(dir: &Path) -> Vec<PathBuf> {
     fs::read_dir(dir)
         .into_iter()

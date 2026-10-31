@@ -3722,11 +3722,14 @@ dependencies = [
 name = "spyglass-feature"
 version = "0.1.0"
 dependencies = [
+ "rayon",
  "serde_json",
  "spyglass-biome",
+ "spyglass-blocks",
  "spyglass-data",
  "spyglass-density",
  "spyglass-oracle",
+ "spyglass-rng",
  "spyglass-terrain",
 ]
 

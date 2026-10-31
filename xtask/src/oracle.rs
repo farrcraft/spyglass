@@ -78,6 +78,18 @@ pub enum OracleCmd {
         #[arg(long = "seed")]
         seeds: Vec<String>,
     },
+    /// Write feature golden files (each chunk decorated on its own, with every call to a target
+    /// feature) for the golden seeds and dimensions into `oracle-out/<version>/features/`.
+    Features {
+        #[command(flatten)]
+        common: Common,
+        /// Parallel chunks. Defaults to the number of CPUs.
+        #[arg(long)]
+        threads: Option<usize>,
+        /// Only these seeds, instead of the golden ones.
+        #[arg(long = "seed")]
+        seeds: Vec<String>,
+    },
     /// Print one column of a generated chunk beside the generator's `getBaseColumn`, marking
     /// where they differ. For finding where blocks go wrong.
     Column {
@@ -262,6 +274,19 @@ pub fn run(cmd: OracleCmd) -> Result<()> {
             };
             blocks(&mut harness, threads, &seeds)
         }
+        OracleCmd::Features {
+            common,
+            threads,
+            seeds,
+        } => {
+            let harness = build(&common)?;
+            let seeds: Vec<&str> = if seeds.is_empty() {
+                GOLDEN_SEEDS.to_vec()
+            } else {
+                seeds.iter().map(String::as_str).collect()
+            };
+            harness.features(threads, &seeds)
+        }
         OracleCmd::Column {
             common,
             seed,
@@ -429,7 +454,7 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-/// Every golden file: probes, structures, spawn, heights, blocks, and the biome grids.
+/// Every golden file: probes, structures, spawn, heights, blocks, features, and the biome grids.
 fn golden(common: &Common, threads: Option<usize>) -> Result<()> {
     let mut harness = build(common)?;
     harness.probe()?;
@@ -437,6 +462,7 @@ fn golden(common: &Common, threads: Option<usize>) -> Result<()> {
     harness.spawn()?;
     harness.heights(threads, GOLDEN_SEEDS)?;
     blocks(&mut harness, threads, GOLDEN_SEEDS)?;
+    harness.features(threads, GOLDEN_SEEDS)?;
     harness.golden_biomes(threads)?;
     println!(
         "golden files in {}",
@@ -583,6 +609,16 @@ impl Harness {
             extra.extend(["--threads".into(), threads.to_string().into()]);
         }
         self.per_dimension("blocks", &extra, seeds)
+    }
+
+    /// Writes `oracle-out/<version>/features/<dimension>/` for each golden dimension, replacing
+    /// what was there.
+    pub(crate) fn features(&self, threads: Option<usize>, seeds: &[&str]) -> Result<()> {
+        let mut extra: Vec<OsString> = Vec::new();
+        if let Some(threads) = threads {
+            extra.extend(["--threads".into(), threads.to_string().into()]);
+        }
+        self.per_dimension("features", &extra, seeds)
     }
 
     /// Runs harness command `kind` for `seeds` once per golden dimension, into

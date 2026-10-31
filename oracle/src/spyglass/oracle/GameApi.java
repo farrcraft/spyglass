@@ -128,4 +128,21 @@ interface GameApi {
      */
     ChunkAccess generateChunk(Game game, NoiseBasedChunkGenerator generator, LevelHeightAccessor height,
             RandomState random, long seed, ChunkPos pos);
+
+    /**
+     * Wraps the configured feature of each placed feature in {@code placed} (by id) in the
+     * registry, so each call to it reports to {@link Features#record}, then places as before.
+     * Once per game.
+     */
+    void recordFeatures(Game game, java.util.Set<String> placed) throws Exception;
+
+    /**
+     * Decorates the chunk at {@code pos} on its own, as {@code ChunkStatusTasks.generateFeatures}
+     * does: it and its 8 neighbours generated through the step before features, none decorated,
+     * with no structures; a {@code WorldGenRegion} over them; the generator's own
+     * {@code applyBiomeDecoration}. The region reports what it's generating to
+     * {@link Features#generating}.
+     */
+    void decorate(Game game, NoiseBasedChunkGenerator generator, LevelHeightAccessor height, RandomState random,
+            long seed, ChunkPos pos);
 }

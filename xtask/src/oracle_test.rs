@@ -29,6 +29,8 @@ pub(crate) enum Input {
     Blocks,
     /// The block files without carvers, under `oracle-out/<version>+no-carvers/`.
     BlocksNoCarvers,
+    /// The feature files.
+    Features,
 }
 
 impl Input {
@@ -54,6 +56,7 @@ impl Input {
             Input::Locate => "locate",
             Input::Heights => "heights",
             Input::Blocks => "blocks",
+            Input::Features => "features",
             Input::BlocksNoCarvers => {
                 return root
                     .join("oracle-out")
@@ -76,6 +79,7 @@ impl Input {
             Input::Locate => "cargo xtask oracle locate",
             Input::Heights => "cargo xtask oracle heights",
             Input::Blocks | Input::BlocksNoCarvers => "cargo xtask oracle blocks",
+            Input::Features => "cargo xtask oracle features",
         }
     }
 }
@@ -160,6 +164,11 @@ const TESTS: &[(&str, &str, &[Input])] = &[
         "spyglass-feature",
         "every_dimension_sorts",
         &[Input::Bundle],
+    ),
+    (
+        "spyglass-feature",
+        "tries_match_the_game",
+        &[Input::Features, Input::Bundle],
     ),
     (
         "spyglass",

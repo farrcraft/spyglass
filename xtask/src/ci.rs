@@ -51,17 +51,19 @@ enum Output {
     Spawn,
     Heights,
     Blocks,
+    Features,
     Locate,
 }
 
 impl Output {
-    const ALL: [Output; 7] = [
+    const ALL: [Output; 8] = [
         Output::Probe,
         Output::Biomes,
         Output::Structures,
         Output::Spawn,
         Output::Heights,
         Output::Blocks,
+        Output::Features,
         Output::Locate,
     ];
 
@@ -74,6 +76,7 @@ impl Output {
             Output::Spawn => Input::Spawn,
             Output::Heights => Input::Heights,
             Output::Blocks => Input::BlocksNoCarvers,
+            Output::Features => Input::Features,
             Output::Locate => Input::Locate,
         }
     }
@@ -161,6 +164,7 @@ pub fn run(args: &Ci) -> Result<()> {
                     Output::Blocks => {
                         oracle::blocks(&mut harness, args.threads, oracle::GOLDEN_SEEDS)?;
                     }
+                    Output::Features => harness.features(args.threads, oracle::GOLDEN_SEEDS)?,
                     Output::Locate => {}
                 }
             }

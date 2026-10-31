@@ -156,6 +156,7 @@ fn print_text(
     for (n, m) in outcome.matches.iter().enumerate() {
         let what = match &m.target {
             Some(Feature::Structure(s)) => s.structures.join(" or "),
+            Some(Feature::Placed(f)) => f.feature.clone(),
             Some(Feature::Biome { biome, .. }) => biome.biome.clone(),
             _ => "point".to_string(),
         };

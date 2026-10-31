@@ -2,6 +2,7 @@
 //! (`docs/specs/locate.md#features`, `docs/specs/features.md`).
 
 use std::collections::HashMap;
+use std::ops::ControlFlow;
 
 use spyglass_biome::BiomeId;
 use spyglass_blocks::Chunk;
@@ -202,7 +203,7 @@ pub enum Neighbours {
 }
 
 /// What a feature query works out besides where features are.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct FeatureOptions {
     /// Whether each answer holds whatever the neighbours do: about half a chunk's time.
     pub neighbours: bool,
@@ -223,6 +224,11 @@ pub struct FeatureLocate {
     /// Whether it ends at a certain one.
     pub complete: bool,
 }
+
+/// Each chunk's features, by the placed features and options asked for: what one seed's
+/// queries share, so a chunk is placed once however many ask for it.
+#[derive(Default)]
+pub(crate) struct Placings(HashMap<(Vec<PlacedRef>, FeatureOptions, [i32; 2]), Vec<FoundFeature>>);
 
 /// What a query keeps between chunks: carved chunks, stored biomes and the terrain in
 /// outline.
@@ -259,15 +265,67 @@ impl<'w> Session<'w> {
         max: [i32; 2],
         options: FeatureOptions,
     ) -> Result<Vec<FoundFeature>> {
-        self.check_world(query.world, &query.argument)?;
-        let mut cache = Cache::new(self.chunks()?, options);
         let mut out = Vec::new();
+        let placings = &mut Placings::default();
+        self.each_feature(
+            query,
+            min,
+            max,
+            |_| true,
+            options,
+            placings,
+            |f| {
+                out.push(f);
+                ControlFlow::Continue(())
+            },
+        )?;
+        Ok(out)
+    }
+
+    /// [`features_in`](Self::features_in) over the chunks `wanted` keeps, each feature handed
+    /// to `visit` as it's found, until it breaks. Chunks already in `placings` aren't placed
+    /// again. Keeps the carved chunks of three rows at a time.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn each_feature(
+        &self,
+        query: &FeatureQuery,
+        min: [i32; 2],
+        max: [i32; 2],
+        wanted: impl Fn([i32; 2]) -> bool,
+        options: FeatureOptions,
+        placings: &mut Placings,
+        mut visit: impl FnMut(FoundFeature) -> ControlFlow<()>,
+    ) -> Result<()> {
+        self.check_world(query.world, &query.argument)?;
+        let mut cache = None;
         for cz in min[1]..=max[1] {
-            for cx in min[0]..=max[0] {
-                out.extend(self.chunk_features(query, [cx, cz], options, &mut cache)?);
+            // The rows before this one's neighbours aren't read again.
+            if let Some(Cache { carved, biomes, .. }) = &mut cache {
+                carved.retain(|c, _| c[1] >= cz - 1);
+                biomes.retain(|c, _| c[1] >= cz - 1);
+            }
+            for cx in (min[0]..=max[0]).filter(|&cx| wanted([cx, cz])) {
+                let key = (query.targets.clone(), options, [cx, cz]);
+                let found = match placings.0.get(&key) {
+                    Some(found) => found.clone(),
+                    None => {
+                        if cache.is_none() {
+                            cache = Some(Cache::new(self.chunks()?, options));
+                        }
+                        let cache = cache.as_mut().expect("made above");
+                        let found = self.chunk_features(query, [cx, cz], options, cache)?;
+                        placings.0.insert(key, found.clone());
+                        found
+                    }
+                };
+                for f in found {
+                    if visit(f).is_break() {
+                        return Ok(());
+                    }
+                }
             }
         }
-        Ok(out)
+        Ok(())
     }
 
     /// The feature `query` names nearest to `from`, horizontally, within `radius` chunks:

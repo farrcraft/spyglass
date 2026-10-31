@@ -27,8 +27,8 @@ Features as answers everywhere structures are: in an area, nearest, in `--json`,
 - [x] **CLI:** `locate feature`, `features`, cli-json.md.
 - [x] **Viewer:** icons, layers, Locate tab, view text names ([user-data.md](../specs/user-data.md)). Done: a Features section in the Layers tab (dungeons, geodes, wells, fossils, lava lakes), one job per tile at 1:1 and 1:2, diamonds with tooltips, and image export. Then **Nearest feature** in the map's menu (each kind's placed features within 8 chunks, the nearest certain one and any likely ones nearer), and marking features done as plain places (user-data.md). And `ft` in the view text, within format 1.
 - [x] **Render:** feature markers in render.md, with tiling tests. `Layers::features` at scales up to 2, `Session::render_with` so a front end finds them once, `render --features`.
-- [ ] **Search:** feature targets and conditions in both searches, pairs within a distance, and filtering on tries.
-- [ ] **Oracle:** an ignored test that a seed search's two-dungeon seeds have both dungeons in the game's decoration.
+- [x] **Search:** feature targets and conditions in both searches, pairs within a distance ([ADR 0057](../adr/0057-features-in-the-search-language.md)). Done: `feature F` counts, `cluster N feature F` (apart in 3D) and `find feature F`, places at most 1,024 blocks a side, checked last, the fast path stopping once a required one is decided, and each chunk placed once an evaluation. Filtering on tries was dropped (see the notes).
+- [x] **Oracle:** an ignored test that a seed search's two-dungeon seeds have both dungeons in the game's decoration. `two_dungeon_seeds_are_the_game_s` searches seeds 0 to 127 in certain mode; in 26.3 it reports seed 56, whose two deep dungeons (28 −27 38 and 23 −21 51) the game places. It names the seeds whose feature files are missing (`cargo xtask oracle features --seed 56`).
 - [ ] **Cost:** bench lines for a tile, a nearest query and the search's seeds per second. Check the viewer by eye with `run-viewer`.
 - [ ] **Docs:** locate.md, search.md, render.md, getting-started, the changelog.
 - [ ] `cargo xtask check` and `cargo xtask oracle-test`. Complete the plan, and the milestone.
@@ -41,10 +41,15 @@ Features as answers everywhere structures are: in an area, nearest, in `--json`,
 
 ## Durable outputs
 
-- [ ] locate.md, search.md, render.md, cli-json.md and user-data.md: features.
+- [ ] locate.md, search.md, render.md, cli-json.md and user-data.md: features. search.md and cli-json.md done.
 - [ ] getting-started: feature commands and layers.
 
 ## Notes
+
+- 2026-10-31: **Features in the search** ([ADR 0057](../adr/0057-features-in-the-search-language.md)).
+  - Filtering pairs on tries doesn't work for dungeons: after a dungeon's first try the terrain doesn't rule out, its later tries aren't exact (their positions depend on what it drew), so a kept chunk could hold a pair anywhere. The search places what `features_in` places (chunks the tries reach and the terrain doesn't rule out), checks features last, and stops a required constraint once decided.
+  - Cluster distance between features is 3D. In 2D, 9 of seeds 0 to 63 have two dungeons within 16 blocks within 96 of the spawn, most tens of blocks apart vertically; in 3D, 1 (seed 56, certain).
+  - Speed, measured with the machine loaded by another build: about 50 to 110 ms a chunk on one thread, 6 s a seed for the two-dungeon query in parallel. To measure again on a quiet machine for the bench.
 
 - 2026-10-31: **Dungeons at 1:4 aren't within reach; the viewer draws them up close.** At 4 blocks a pixel a full-HD screen is about 130,000 chunks. Measured on 26.3's golden squares (512 chunks):
   - Chunk generation was the cost, and is now 3 to 5 times faster with the same blocks (the game comparisons pass in every version). A chunk's terrain is one volume instead of 256 columns, ore veins share their cells' corners (they were 38 ms of a chunk), and carvers ask the aquifer only where they carve. A 26.3 carved chunk went from about 80 ms to 17 to 30 ms, a 26.4 one from 50 ms to 20; 26.2's is unchanged at about 100 ms.

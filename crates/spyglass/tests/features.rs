@@ -106,3 +106,89 @@ fn features_in_are_the_game_s() {
     );
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+/// The seeds a search for two dungeons near the spawn reports, in certain mode, have both
+/// dungeons in the game's decoration. The spawn is kept within 32 blocks of the origin so every
+/// dungeon counted is in the golden square, chunks −8 to 7.
+#[test]
+#[ignore = "needs a bundle and feature golden files for the seeds it reports: cargo xtask oracle features --seed S"]
+fn two_dungeon_seeds_are_the_game_s() {
+    let version = spyglass_oracle::version();
+    let world = World::open(spyglass_oracle::bundle_dir())
+        .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {version}"));
+    let query = world
+        .search_query(
+            "require spawn within 32 of 0,0\n\
+             require cluster 2 feature minecraft:monster_room within 16 of each other within 95 of spawn",
+        )
+        .unwrap();
+    let start = std::time::Instant::now();
+    let options = spyglass::SearchOptions {
+        source: spyglass::SeedSource::Range {
+            first: 0,
+            last: 127,
+        },
+        top: 128,
+        certain: true,
+        ..Default::default()
+    };
+    let outcome = world
+        .search(&query, &options, |_| std::ops::ControlFlow::Continue(()))
+        .unwrap();
+    println!(
+        "{} of 128 seeds in {:.0} s: {:?}",
+        outcome.hits.len(),
+        start.elapsed().as_secs_f64(),
+        outcome.hits.iter().map(|h| h.seed).collect::<Vec<_>>()
+    );
+    assert!(
+        !outcome.hits.is_empty(),
+        "no seed in 0..=127 has two dungeons"
+    );
+    let files = spyglass_oracle::features::files();
+    let mut missing = Vec::new();
+    let mut failures = Vec::new();
+    for hit in &outcome.hits {
+        let name = format!("{}.json", hit.seed);
+        let Some(path) = files.iter().find(|p| {
+            p.to_string_lossy().contains("overworld") && p.file_name().unwrap() == name.as_str()
+        }) else {
+            missing.push(hit.seed.to_string());
+            continue;
+        };
+        let file = FeatureFile::read(path).unwrap();
+        let placed: HashSet<[i32; 3]> = file
+            .chunks
+            .iter()
+            .flat_map(|c| &c.tries)
+            .filter(|t| t.placed && t.feature.starts_with("minecraft:monster_room"))
+            .map(|t| t.pos)
+            .collect();
+        let pair = &hit.evaluation.constraints[1].features;
+        assert_eq!(pair.len(), 2, "seed {}", hit.seed);
+        for f in pair {
+            let spyglass::Feature::Placed(f) = f else {
+                panic!("seed {}: {f:?}", hit.seed);
+            };
+            assert!(f.certain, "seed {}: {f:?}", hit.seed);
+            if !placed.contains(&f.position) {
+                failures.push(format!(
+                    "seed {}: the game has no dungeon at {:?}",
+                    hit.seed, f.position
+                ));
+            } else {
+                println!(
+                    "seed {}: the game's {} at {:?}",
+                    hit.seed, f.feature, f.position
+                );
+            }
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "no feature files for seeds {}: run cargo xtask oracle features --seed {}",
+        missing.join(", "),
+        missing.join(" --seed ")
+    );
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}

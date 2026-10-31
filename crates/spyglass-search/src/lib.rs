@@ -17,8 +17,8 @@ pub use parse::ParseError;
 pub use prefilter::{Named, Prefilter, SPAWN_REACH};
 pub use query::{
     Anchor, Constraint, Count, DEFAULT_APART, DEFAULT_STEP, DEFAULT_Y, Find, Importance, Kind,
-    MAX_COORDINATE, MAX_HEIGHT, MAX_HEIGHT_SAMPLES, MAX_PLACE_SIDE, MAX_SAMPLES, Place, Query,
-    Region, Sampling, Target,
+    MAX_COORDINATE, MAX_FEATURE_SIDE, MAX_HEIGHT, MAX_HEIGHT_SAMPLES, MAX_PLACE_SIDE, MAX_SAMPLES,
+    Place, Query, Region, Sampling, Target,
 };
 pub use run::{
     Checked, Hit, Progress, RunOptions, SeedSource, Stop, Throttle, map_prefix,

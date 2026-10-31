@@ -1,15 +1,17 @@
 //! Clusters: the largest group of points that are every two close together
 //! (`docs/specs/search.md#outcomes`).
 
-/// `dx² + dz²` in 64 bits.
-pub fn distance_sqr(a: [i32; 2], b: [i32; 2]) -> u64 {
-    let d = |i: usize| i64::from(a[i]) - i64::from(b[i]);
-    (d(0) * d(0) + d(1) * d(1)).unsigned_abs()
+/// `dx² + dz²` (or `dx² + dy² + dz²`, for points with a height) in 64 bits.
+pub fn distance_sqr<const N: usize>(a: [i32; N], b: [i32; N]) -> u64 {
+    (0..N)
+        .map(|i| (i64::from(a[i]) - i64::from(b[i])).pow(2))
+        .sum::<i64>()
+        .unsigned_abs()
 }
 
 /// The largest group of `points` (up to `cap` members) every two of which are at most `apart`
 /// blocks apart, as indices: the first such group in index order.
-pub fn largest_group(points: &[[i32; 2]], apart: u32, cap: usize) -> Vec<usize> {
+pub fn largest_group<const N: usize>(points: &[[i32; N]], apart: u32, cap: usize) -> Vec<usize> {
     let limit = u64::from(apart).pow(2);
     let near = |a: usize, b: usize| distance_sqr(points[a], points[b]) <= limit;
     let mut best = Vec::new();
@@ -58,13 +60,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn groups_in_three_dimensions() {
+        let pts = [[0, 0, 0], [3, 60, 4], [3, -4, 4], [0, 10, 0]];
+        assert_eq!(distance_sqr(pts[0], pts[2]), 41);
+        // Close in x and z, but not in y.
+        assert_eq!(largest_group(&pts, 10, 64), [0, 2]);
+        assert_eq!(largest_group(&pts, 15, 64), [0, 2, 3]);
+        let far = [
+            [-30_000_000, -64, -30_000_000],
+            [30_000_000, 319, 30_000_000],
+        ];
+        assert_eq!(
+            distance_sqr(far[0], far[1]),
+            2 * 60_000_000_u64.pow(2) + 383 * 383
+        );
+    }
+
+    #[test]
     fn groups_are_the_largest_close_set() {
         let pts = [[0, 0], [1000, 0], [100, 0], [1050, 0], [1100, 0], [50, 80]];
         // [0,0], [100,0] and [50,80] are 100, 94 and 94 apart.
         assert_eq!(largest_group(&pts, 100, 64), [0, 2, 5]);
         assert_eq!(largest_group(&pts, 100, 2), [0, 2]);
         assert_eq!(largest_group(&pts, 10, 64).len(), 1);
-        assert!(largest_group(&[], 10, 2).is_empty());
+        assert!(largest_group::<2>(&[], 10, 2).is_empty());
         assert_eq!(largest_group(&pts[1..5], 100, 64), [0, 2, 3]);
         assert_eq!(largest_group(&pts[1..5], 99, 64).len(), 2);
     }

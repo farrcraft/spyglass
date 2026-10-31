@@ -23,6 +23,9 @@ pub const MAX_HEIGHT_SAMPLES: u64 = 1 << 14;
 pub const MAX_HEIGHT: i32 = 4096;
 /// How far apart a `find` query's biome and point matches are unless it says `apart`.
 pub const DEFAULT_APART: u32 = 256;
+/// The most blocks a feature count's place, or a `find` line's feature place, may span on each
+/// side: placing features takes tens of milliseconds a chunk.
+pub const MAX_FEATURE_SIDE: u32 = 1024;
 
 /// A parsed query: its `find` line, if any, and its constraints in order.
 #[derive(Debug, Clone)]
@@ -112,6 +115,9 @@ pub enum Target {
     Structure(String),
     /// `biome B`: each grid sample whose biome matches. A full biome id, or `#` and a tag.
     Biome(String),
+    /// `feature F`: each feature placed, or likely placed. A full placed or configured feature
+    /// id.
+    Feature(String),
     /// `point`: each grid point.
     Point,
 }
@@ -121,7 +127,7 @@ impl Target {
     /// grid targets, so one biome patch isn't a match per sample.
     pub fn default_apart(&self) -> u32 {
         match self {
-            Target::Structure(_) => 0,
+            Target::Structure(_) | Target::Feature(_) => 0,
             Target::Biome(_) | Target::Point => DEFAULT_APART,
         }
     }
@@ -177,6 +183,26 @@ pub enum Kind {
         size: u32,
         /// A full structure id, or `#` and a full tag id.
         structure: String,
+        /// D: the most any two may be apart.
+        apart: u32,
+        /// Where all of them are.
+        place: Place,
+    },
+    /// `[count] feature FEATURE place`: features placed, or likely placed.
+    Features {
+        /// How many.
+        count: Count,
+        /// A full placed or configured feature id.
+        feature: String,
+        /// Where.
+        place: Place,
+    },
+    /// `cluster N feature FEATURE within D of each other place`.
+    FeatureCluster {
+        /// N, 2 to 64.
+        size: u32,
+        /// A full placed or configured feature id.
+        feature: String,
         /// D: the most any two may be apart.
         apart: u32,
         /// Where all of them are.
@@ -305,6 +331,14 @@ impl Default for Sampling {
 }
 
 impl Place {
+    /// Whether the place's bounding box is at most [`MAX_FEATURE_SIDE`] blocks on each side.
+    pub fn fits_features(&self) -> bool {
+        match *self {
+            Place::Within { radius, .. } => 2 * u64::from(radius) < u64::from(MAX_FEATURE_SIDE),
+            Place::Box { min, max } => (0..2).all(|i| max[i].abs_diff(min[i]) < MAX_FEATURE_SIDE),
+        }
+    }
+
     /// How many grid points at spacing `step` the place's bounding box holds: what
     /// [`MAX_SAMPLES`] limits.
     pub fn grid_bound(&self, step: u32) -> u64 {
@@ -357,6 +391,20 @@ impl fmt::Display for Kind {
                 f,
                 "cluster {size} {structure} within {apart} of each other {place}"
             ),
+            Kind::Features {
+                count,
+                feature,
+                place,
+            } => write!(f, "{count}feature {feature} {place}"),
+            Kind::FeatureCluster {
+                size,
+                feature,
+                apart,
+                place,
+            } => write!(
+                f,
+                "cluster {size} feature {feature} within {apart} of each other {place}"
+            ),
             Kind::Slime { count, region } => write!(f, "{count}slime {region}"),
             Kind::Biome {
                 present,
@@ -392,6 +440,7 @@ impl fmt::Display for Find {
         match &self.target {
             Target::Structure(s) => write!(f, "find {s} {}", self.place)?,
             Target::Biome(b) => write!(f, "find biome {b} {}{}", self.place, self.sampling)?,
+            Target::Feature(t) => write!(f, "find feature {t} {}", self.place)?,
             Target::Point => write!(f, "find point {}{}", self.place, self.sampling)?,
         }
         if self.apart != self.target.default_apart() {

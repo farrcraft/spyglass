@@ -3,8 +3,9 @@
 use spyglass_data::dimension::Dimension;
 
 use crate::query::{
-    Anchor, Constraint, Count, DEFAULT_STEP, Find, Importance, Kind, MAX_COORDINATE, MAX_HEIGHT,
-    MAX_HEIGHT_SAMPLES, MAX_PLACE_SIDE, MAX_SAMPLES, Place, Region, Sampling, Target, keyword,
+    Anchor, Constraint, Count, DEFAULT_STEP, Find, Importance, Kind, MAX_COORDINATE,
+    MAX_FEATURE_SIDE, MAX_HEIGHT, MAX_HEIGHT_SAMPLES, MAX_PLACE_SIDE, MAX_SAMPLES, Place, Region,
+    Sampling, Target, keyword,
 };
 
 /// Why a query's text didn't parse, and where.
@@ -19,8 +20,9 @@ pub struct ParseError {
     pub message: String,
 }
 
-const KEYWORDS: [&str; 27] = [
+const KEYWORDS: [&str; 28] = [
     "find",
+    "feature",
     "here",
     "apart",
     "point",
@@ -218,6 +220,8 @@ impl<'a> Parser<'_, 'a> {
         self.keyword("find")?;
         let target = if self.eat("biome") {
             Target::Biome(self.biome()?)
+        } else if self.eat("feature") {
+            Target::Feature(self.id("a feature")?)
         } else if self.eat("point") {
             Target::Point
         } else {
@@ -229,6 +233,7 @@ impl<'a> Parser<'_, 'a> {
                 .tokens
                 .get(self.next + 2)
                 .is_some_and(|t| t.text == "of");
+        let start = self.peek();
         let place = if origin {
             self.next += 1;
             Place::Within {
@@ -242,8 +247,11 @@ impl<'a> Parser<'_, 'a> {
             self.here = here;
             place?
         };
+        if matches!(target, Target::Feature(_)) && !place.fits_features() {
+            return Err(self.too_wide(start));
+        }
         let sampling = match target {
-            Target::Structure(_) => Sampling::default(),
+            Target::Structure(_) | Target::Feature(_) => Sampling::default(),
             Target::Biome(_) | Target::Point => self.sampling(&place)?,
         };
         let apart = if self.eat("apart") {
@@ -305,13 +313,31 @@ impl<'a> Parser<'_, 'a> {
             "cluster" => {
                 self.next += 1;
                 let size = self.number("a cluster size", 2, 64)?;
-                let structure = self.structure()?;
+                let feature = self.eat("feature");
+                let target = if feature {
+                    self.id("a feature")?
+                } else {
+                    self.structure()?
+                };
                 self.keyword("within")?;
                 let apart = self.distance()?;
                 for word in ["of", "each", "other"] {
                     self.keyword(word)?;
                 }
-                let place = self.place(true)?;
+                let place = if feature {
+                    self.feature_place()?
+                } else {
+                    self.place(true)?
+                };
+                if feature {
+                    return Ok(Kind::FeatureCluster {
+                        size,
+                        feature: target,
+                        apart,
+                        place,
+                    });
+                }
+                let structure = target;
                 Ok(Kind::Cluster {
                     size,
                     structure,
@@ -372,6 +398,15 @@ impl<'a> Parser<'_, 'a> {
                 if self.eat("slime") {
                     let region = self.region()?;
                     return Ok(Kind::Slime { count, region });
+                }
+                if self.eat("feature") {
+                    let feature = self.id("a feature")?;
+                    let place = self.feature_place()?;
+                    return Ok(Kind::Features {
+                        count,
+                        feature,
+                        place,
+                    });
                 }
                 let structure = self.structure()?;
                 let region = self.region()?;
@@ -507,6 +542,30 @@ impl<'a> Parser<'_, 'a> {
             });
         }
         Ok(sampling)
+    }
+
+    /// The place of a feature count or cluster, which is at most [`MAX_FEATURE_SIDE`] blocks on
+    /// a side.
+    fn feature_place(&mut self) -> Parsed<Place> {
+        let start = self.peek();
+        let place = self.place(true)?;
+        if place.fits_features() {
+            Ok(place)
+        } else {
+            Err(self.too_wide(start))
+        }
+    }
+
+    /// A feature place too wide to place, starting at `start`.
+    fn too_wide(&self, start: Option<Token<'_>>) -> ParseError {
+        let message = format!(
+            "features are placed over at most {MAX_FEATURE_SIDE} blocks on a side: use a smaller \
+             place"
+        );
+        match start {
+            Some(t) => self.error_at(t, message),
+            None => self.error(message),
+        }
     }
 
     /// `[step S]` for a terrain condition, checking the grid's size.
@@ -936,6 +995,71 @@ mod tests {
     }
 
     #[test]
+    fn features() {
+        let q = Query::parse(
+            "find feature monster_room within 256\n\
+             require cluster 2 feature minecraft:monster_room within 16 of each other within 100 of spawn\n\
+             prefer no feature desert_well in 0,0 to 1023,1023 weight 3\n\
+             require 2 feature monster_room_deep within 32 of here",
+        )
+        .unwrap();
+        assert_eq!(
+            q.find().unwrap().target,
+            Target::Feature("minecraft:monster_room".to_string())
+        );
+        assert_eq!(
+            q.constraints()[0].kind,
+            Kind::FeatureCluster {
+                size: 2,
+                feature: "minecraft:monster_room".to_string(),
+                apart: 16,
+                place: Place::Within {
+                    radius: 100,
+                    anchor: Anchor::Spawn
+                },
+            }
+        );
+        assert_eq!(
+            q.constraints()[1].kind,
+            Kind::Features {
+                count: Count::No,
+                feature: "minecraft:desert_well".to_string(),
+                place: Place::Box {
+                    min: [0, 0],
+                    max: [1023, 1023]
+                },
+            }
+        );
+        assert_eq!(
+            q.to_string(),
+            "find feature minecraft:monster_room within 256\n\
+             require cluster 2 feature minecraft:monster_room within 16 of each other within 100 of spawn\n\
+             prefer no feature minecraft:desert_well in 0,0 to 1023,1023 weight 3\n\
+             require 2 feature minecraft:monster_room_deep within 32 of here\n"
+        );
+        // Places are at most 1,024 blocks on a side, and features have no structure anchors.
+        assert!(Query::parse("require feature monster_room within 511 of 0,0").is_ok());
+        for (text, column) in [
+            ("require feature monster_room within 512 of 0,0", 30),
+            ("require feature monster_room in 0,0 to 1024,5", 30),
+            ("find feature lake_lava_surface within 600", 32),
+            (
+                "require cluster 2 feature monster_room within 9 of each other within 600 of spawn",
+                63,
+            ),
+        ] {
+            let e = error(text);
+            assert_eq!(e.column, column, "{text}: {e}");
+            assert!(e.message.contains("1024"), "{text}: {e}");
+        }
+        assert_eq!(
+            error("require feature monster_room within 9 of village within 9 of spawn").column,
+            42
+        );
+        assert_eq!(error("require feature within 9 of spawn").column, 17);
+    }
+
+    #[test]
     fn biome_tags_and_terrain() {
         let c = parse(
             "require biome #required_ocean_monument_surrounding covers 100% within 128 of 0,0\n\
@@ -1025,7 +1149,7 @@ mod tests {
             assert_eq!(again.to_string(), canonical);
         }
         let query = Query::parse(&examples[0]).unwrap();
-        assert_eq!(query.constraints().len(), 10);
+        assert_eq!(query.constraints().len(), 11);
         assert_eq!(query.lines()[0], 2);
         let canonical = query.to_string();
         assert!(canonical.contains("prefer 3 #minecraft:village within 400 of spawn weight 2\n"));
@@ -1140,6 +1264,8 @@ mod tests {
             "height",
             "flat",
             "#is_ocean",
+            "feature",
+            "monster_room",
         ];
         let mut state = 0x2545_f491_u32;
         let mut next = |n: usize| {

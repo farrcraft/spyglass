@@ -8,8 +8,10 @@ use spyglass_search::{Anchor, Checked, Place, distance_sqr, map_prefix_throttled
 
 use super::evaluate::{Area, Here, Sessions, check_at, evaluate_at, lookup, sample, starts_in};
 use super::{Looked, SearchQuery, SearchStop, SearchThrottle, convert};
+use crate::features::Placings;
 use crate::{
-    Dimension, Error, Evaluation, Feature, GameSession, Outcome, Result, Session, StructureStart,
+    Dimension, Error, Evaluation, Feature, FeatureOptions, GameSession, Outcome, Result, Session,
+    StructureStart,
 };
 
 /// The most targets a `find` query may have.
@@ -61,14 +63,15 @@ pub struct FindMatch {
     /// Where `here` was: the start's or the grid point's block `[x, z]`, in the target's
     /// dimension.
     pub position: [i32; 2],
-    /// What's there: the structure start, or the biome sample. `None` for a point.
+    /// What's there: the structure start, the feature, or the biome sample. `None` for a
+    /// point.
     pub target: Option<Feature>,
     /// Its distance from the find place's centre, `isqrt(dx² + dz²)`.
     pub distance: u32,
     /// Its score: the preferred constraints' sum, in the case [`FindOptions::certain`] picks.
     pub score: u64,
     /// Every constraint's result with `here` at this target. Its verdict is possibly met if the
-    /// target itself is uncertain (a candidate start, or a tied biome sample).
+    /// target itself is uncertain (a candidate start or feature, or a tied biome sample).
     pub evaluation: Evaluation,
 }
 
@@ -303,6 +306,31 @@ fn enumerate(
                 })
                 .collect()
         }
+        Looked::Feature(feature) => {
+            let (min, max) = area.bounds();
+            let mut found = Vec::new();
+            session.each_feature(
+                feature,
+                min.map(|v| v >> 4),
+                max.map(|v| v >> 4),
+                |chunk| area.touches_chunk(chunk),
+                FeatureOptions::default(),
+                &mut Placings::default(),
+                |f| {
+                    let position = [f.position[0], f.position[2]];
+                    if area.distance(position).is_some() {
+                        found.push(Target {
+                            position,
+                            distance_sqr: distance_sqr(centre, position),
+                            certain: f.certain,
+                            feature: Some(Feature::Placed(f)),
+                        });
+                    }
+                    ControlFlow::Continue(())
+                },
+            )?;
+            found
+        }
         Looked::Point => area
             .grid(find.sampling.step)
             .into_iter()
@@ -337,10 +365,15 @@ fn judge<'w>(
         Some(Feature::Structure(s)) => Some((dimension, s.set.clone(), s.chunk)),
         _ => None,
     };
+    let feature = match &target.feature {
+        Some(Feature::Placed(f)) => Some((dimension, f.feature.clone(), f.position)),
+        _ => None,
+    };
     let here = Here {
         dimension,
         position: target.position,
         start,
+        feature,
     };
     let checked = check_at(
         sessions,

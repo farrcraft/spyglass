@@ -342,9 +342,10 @@ pub struct Match {
     pub place: Option<userdata::Place>,
 }
 
-/// The done key of a structure start or biome a search found.
+/// The done key of a structure start, feature or biome a search found.
 fn place_of(feature: &Feature) -> Option<userdata::Place> {
     match feature {
+        Feature::Placed(f) => Some(crate::locate::feature_place(f)),
         Feature::Structure(s) => Some(userdata::Place {
             kind: Kind::Structure,
             id: s.set.clone(),
@@ -377,6 +378,7 @@ pub fn matches(query: &SearchQuery, evaluation: &Evaluation) -> Vec<Match> {
         for feature in &result.features {
             let (what, certain) = match feature {
                 Feature::Structure(s) => (s.structures.join(" or "), s.certain),
+                Feature::Placed(f) => (f.feature.clone(), f.certain),
                 Feature::SlimeChunk(_) => ("Slime chunk".to_string(), true),
                 Feature::Biome { biome, certain, .. } => (biome.biome.clone(), *certain),
                 Feature::Spawn(s) => ("World spawn".to_string(), !s.platform_dependent),
@@ -400,6 +402,7 @@ pub fn matches(query: &SearchQuery, evaluation: &Evaluation) -> Vec<Match> {
 pub fn find_matches(query: &SearchQuery, dimension: Dimension, m: &FindMatch) -> Vec<Match> {
     let (what, certain) = match &m.target {
         Some(Feature::Structure(s)) => (s.structures.join(" or "), s.certain),
+        Some(Feature::Placed(f)) => (f.feature.clone(), f.certain),
         Some(Feature::Biome { biome, certain, .. }) => (biome.biome.clone(), *certain),
         _ => ("Here".to_string(), true),
     };
@@ -450,6 +453,8 @@ fn place(kind: &ConstraintKind) -> Place {
             }
         }
         ConstraintKind::Cluster { place, .. }
+        | ConstraintKind::Features { place, .. }
+        | ConstraintKind::FeatureCluster { place, .. }
         | ConstraintKind::Biome { place, .. }
         | ConstraintKind::Coverage { place, .. }
         | ConstraintKind::Spawn { place }

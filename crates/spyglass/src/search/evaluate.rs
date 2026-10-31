@@ -1,16 +1,18 @@
 //! Judging one seed against a query: the plain implementation, every constraint in full
 //! (`docs/specs/search.md`).
 
-use std::cell::OnceCell;
+use std::cell::{OnceCell, RefCell};
+use std::ops::ControlFlow;
 
 use spyglass_search::{
     Anchor, Checked, Count, Importance, Kind, Place, Region, Sampling, distance_sqr, largest_group,
 };
 
 use super::{Resolved, SearchQuery, Target, convert};
+use crate::features::Placings;
 use crate::{
-    BiomeAt, BiomeQuery, Dimension, Error, GameSession, Heightmap, Result, Session, SpawnOrigin,
-    StructureQuery, StructureStart,
+    BiomeAt, BiomeQuery, Dimension, Error, FeatureOptions, FeatureQuery, FoundFeature, GameSession,
+    Heightmap, Result, Session, SpawnOrigin, StructureQuery, StructureStart,
 };
 
 /// Whether a constraint, or a seed, meets a query (`docs/specs/search.md#outcomes`).
@@ -72,8 +74,8 @@ pub struct ConstraintResult {
     pub best: u32,
     /// Its satisfaction in the worst case.
     pub worst: u32,
-    /// What it matched, for showing: structure starts and slime chunks nearest first, a
-    /// cluster's largest group, the nearest matching biome sample, the spawn. Empty for
+    /// What it matched, for showing: structure starts, features and slime chunks nearest
+    /// first, a cluster's largest group, the nearest matching biome sample, the spawn. Empty for
     /// coverage.
     pub features: Vec<Feature>,
 }
@@ -84,6 +86,8 @@ pub struct ConstraintResult {
 pub enum Feature {
     /// A structure start, or a chunk where one may be.
     Structure(StructureStart),
+    /// A feature that placed, or likely placed: a candidate isn't certain.
+    Placed(FoundFeature),
     /// A slime chunk.
     SlimeChunk([i32; 2]),
     /// A biome sample.
@@ -100,12 +104,13 @@ pub enum Feature {
 }
 
 impl Feature {
-    /// Where the feature is on a map, as block `[x, z]`: a structure's or a biome sample's
-    /// position, a slime chunk's centre, or the spawn's map block
+    /// Where the feature is on a map, as block `[x, z]`: a structure's, a placed feature's or a
+    /// biome sample's position, a slime chunk's centre, or the spawn's map block
     /// (`docs/specs/search.md#positions-and-regions`).
     pub fn map_block(&self) -> [i32; 2] {
         match self {
             Feature::Structure(s) => [s.position[0], s.position[2]],
+            Feature::Placed(f) => [f.position[0], f.position[2]],
             Feature::SlimeChunk(chunk) => chunk.map(|c| c.wrapping_mul(16).wrapping_add(8)),
             Feature::Biome { position, .. } => [position[0], position[2]],
             Feature::Spawn(spawn) => spawn.map_block(),
@@ -212,6 +217,9 @@ pub(crate) struct Here {
     pub position: [i32; 2],
     /// A structure target's dimension, set and chunk: a start isn't counted around itself.
     pub start: Option<(Dimension, String, [i32; 2])>,
+    /// A feature target's dimension, placed feature and position: it isn't counted around
+    /// itself either.
+    pub feature: Option<(Dimension, String, [i32; 3])>,
 }
 
 /// One evaluation's view of a seed's sessions: the spawn origin is found once, when first
@@ -224,6 +232,8 @@ struct Judge<'a, 'w> {
     confirm: bool,
     /// The target `here` is, in a `find` query.
     here: Option<&'a Here>,
+    /// The chunks placed so far, which the constraints share.
+    placings: RefCell<Placings>,
 }
 
 impl<'a, 'w> Judge<'a, 'w> {
@@ -233,6 +243,7 @@ impl<'a, 'w> Judge<'a, 'w> {
             spawn: OnceCell::new(),
             confirm,
             here,
+            placings: RefCell::default(),
         }
     }
 
@@ -384,13 +395,7 @@ fn check_with<'w>(
         if constraints[i].importance != Importance::Required {
             continue;
         }
-        let result = judge.constraint(&constraints[i].kind, &query.resolved[i])?;
-        let kept = match result.outcome {
-            Outcome::Met => true,
-            Outcome::PossiblyMet => !certain,
-            Outcome::Failed => false,
-        };
-        if !kept {
+        if !judge.kept(&constraints[i].kind, &query.resolved[i], certain)? {
             return Ok(Checked::Failed);
         }
     }
@@ -455,6 +460,18 @@ impl Area {
             Area::Box { min, max } => {
                 (min[0] <= p[0] && p[0] <= max[0] && min[1] <= p[1] && p[1] <= max[1]).then_some(0)
             }
+        }
+    }
+
+    /// Whether any block of chunk `[cx, cz]` is in the place.
+    pub(super) fn touches_chunk(self, [cx, cz]: [i32; 2]) -> bool {
+        let (lo, hi) = ([cx * 16, cz * 16], [cx * 16 + 15, cz * 16 + 15]);
+        match self {
+            Area::Disc { centre, .. } => {
+                let nearest = [0, 1].map(|i| centre[i].clamp(lo[i], hi[i]));
+                self.distance(nearest).is_some()
+            }
+            Area::Box { min, max } => (0..2).all(|i| lo[i] <= max[i] && min[i] <= hi[i]),
         }
     }
 
@@ -666,6 +683,62 @@ impl<'a, 'w> Judge<'a, 'w> {
                 }
                 Judged { features, ..judged }
             }
+            (Kind::Features { count, place, .. }, Some(Target::Feature(target))) => {
+                let area = self.area(place, dimension)?;
+                let mut found = Vec::new();
+                self.features(session, target, place, area, dimension, |f| {
+                    found.push(f);
+                    ControlFlow::Continue(())
+                })?;
+                let candidates: Vec<Candidate> = found
+                    .iter()
+                    .map(|f| Candidate {
+                        position: [f.position[0], f.position[2]],
+                        certain: f.certain,
+                        start: None,
+                    })
+                    .collect();
+                let (matched, judged) = count_matches(*count, &Within::Area(area), &candidates);
+                let features = matched
+                    .iter()
+                    .map(|m| Feature::Placed(found[m.index].clone()))
+                    .collect();
+                Judged { features, ..judged }
+            }
+            (
+                Kind::FeatureCluster {
+                    size, apart, place, ..
+                },
+                Some(Target::Feature(target)),
+            ) => {
+                let area = self.area(place, dimension)?;
+                let mut found = Vec::new();
+                self.features(session, target, place, area, dimension, |f| {
+                    found.push(f);
+                    ControlFlow::Continue(())
+                })?;
+                // Features are apart in three dimensions: a farm needs its spawners close.
+                let all: Vec<[i32; 3]> = found.iter().map(|f| f.position).collect();
+                let certain: Vec<[i32; 3]> = found
+                    .iter()
+                    .filter(|f| f.certain)
+                    .map(|f| f.position)
+                    .collect();
+                let cap = *size as usize;
+                let group = largest_group(&all, *apart, cap);
+                let worst = largest_group(&certain, *apart, cap).len();
+                let share = |g: usize| (1000 * g / cap) as u32; // g is at most cap
+                Judged {
+                    best: group.len() >= cap,
+                    worst: worst >= cap,
+                    best_sat: share(group.len()),
+                    worst_sat: share(worst),
+                    features: group
+                        .iter()
+                        .map(|&i| Feature::Placed(found[i].clone()))
+                        .collect(),
+                }
+            }
             (Kind::Slime { count, region }, None) => {
                 let within = self.within(region, resolved.anchor.as_ref(), dimension)?;
                 let chunks = within
@@ -804,6 +877,128 @@ impl<'a, 'w> Judge<'a, 'w> {
         };
         let spawn_uncertain = uses_spawn(kind) && self.spawn()?.platform_dependent;
         Ok(judged.result(dimension, spawn_uncertain))
+    }
+
+    /// Whether a search keeps a seed past required constraint `kind`: met, or possibly met
+    /// unless `certain`. [`constraint`](Self::constraint)'s answer, but a feature count or
+    /// cluster stops placing chunks once it's decided.
+    fn kept(&self, kind: &Kind, resolved: &Resolved, certain: bool) -> Result<bool> {
+        let dimension = resolved.dimension;
+        let feature = match (kind, &resolved.target) {
+            (
+                Kind::Features { place, .. } | Kind::FeatureCluster { place, .. },
+                Some(Target::Feature(f)),
+            ) => Some((place, f)),
+            _ => None,
+        };
+        let Some((place, target)) = feature else {
+            return Ok(match self.constraint(kind, resolved)?.outcome {
+                Outcome::Met => true,
+                Outcome::PossiblyMet => !certain,
+                Outcome::Failed => false,
+            });
+        };
+        // A spawn that may differ by platform makes it possibly met, whatever's placed.
+        if uses_spawn(kind) && self.spawn()?.platform_dependent {
+            return Ok(!certain);
+        }
+        let session = self.session(dimension)?;
+        let area = self.area(place, dimension)?;
+        // Certain mode keeps the worst case, which counts only certain features towards "at
+        // least" and every feature against "no"; otherwise the best case.
+        let mut counted: Vec<[i32; 3]> = Vec::new();
+        let mut decided = None;
+        self.features(session, target, place, area, dimension, |f| {
+            let p = f.position;
+            match kind {
+                Kind::Features {
+                    count: Count::AtLeast(n),
+                    ..
+                } => {
+                    if !certain || f.certain {
+                        counted.push(p);
+                    }
+                    if counted.len() >= *n as usize {
+                        decided = Some(true);
+                    }
+                }
+                Kind::Features {
+                    count: Count::No, ..
+                } => {
+                    if certain || f.certain {
+                        decided = Some(false);
+                    }
+                }
+                Kind::FeatureCluster { size, apart, .. } => {
+                    if !certain || f.certain {
+                        // A new group has the new feature in it, and only features near it.
+                        let limit = u64::from(*apart).pow(2);
+                        let mut near: Vec<[i32; 3]> = counted
+                            .iter()
+                            .copied()
+                            .filter(|&q| distance_sqr(p, q) <= limit)
+                            .collect();
+                        near.push(p);
+                        counted.push(p);
+                        let cap = *size as usize;
+                        if largest_group(&near, *apart, cap).len() >= cap {
+                            decided = Some(true);
+                        }
+                    }
+                }
+                _ => unreachable!("matched above"),
+            }
+            if decided.is_some() {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
+        })?;
+        // Every feature placed and nothing decided: "no" holds, "at least" and clusters don't.
+        Ok(decided.unwrap_or(matches!(
+            kind,
+            Kind::Features {
+                count: Count::No,
+                ..
+            }
+        )))
+    }
+
+    /// The features of `query` in `area` (`place` in `dimension`), chunk by chunk, each handed
+    /// to `visit` until it breaks. A `find` query's feature target isn't one of them when the
+    /// place is around it. Unlikely candidates are left out (`docs/specs/search.md#features`).
+    fn features(
+        &self,
+        session: &Session<'_>,
+        query: &FeatureQuery,
+        place: &Place,
+        area: Area,
+        dimension: Dimension,
+        mut visit: impl FnMut(FoundFeature) -> ControlFlow<()>,
+    ) -> Result<()> {
+        let (min, max) = area.bounds();
+        let own = self
+            .here
+            .and_then(|h| h.feature.as_ref())
+            .filter(|_| around_here(place));
+        session.each_feature(
+            query,
+            min.map(|v| v >> 4),
+            max.map(|v| v >> 4),
+            |chunk| area.touches_chunk(chunk),
+            FeatureOptions::default(),
+            &mut self.placings.borrow_mut(),
+            |f| {
+                if area.distance([f.position[0], f.position[2]]).is_none()
+                    || own.is_some_and(|(d, id, pos)| {
+                        *d == dimension && *id == f.feature && *pos == f.position
+                    })
+                {
+                    return ControlFlow::Continue(());
+                }
+                visit(f)
+            },
+        )
     }
 
     /// A region in `dimension` with its anchors found: a structure anchor's starts in their
@@ -1075,6 +1270,8 @@ pub(super) fn uses_spawn(kind: &Kind) -> bool {
     match kind {
         Kind::Structures { region: r, .. } | Kind::Slime { region: r, .. } => region(r),
         Kind::Cluster { place: p, .. }
+        | Kind::Features { place: p, .. }
+        | Kind::FeatureCluster { place: p, .. }
         | Kind::Biome { place: p, .. }
         | Kind::Coverage { place: p, .. }
         | Kind::Height { place: p, .. }

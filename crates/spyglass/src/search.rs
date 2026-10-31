@@ -21,7 +21,7 @@ pub use spyglass_search::{
     Throttle as SearchThrottle,
 };
 
-use crate::{BiomeQuery, Dimension, Error, Game, Result, StructureQuery, World};
+use crate::{BiomeQuery, Dimension, Error, FeatureQuery, Game, Result, StructureQuery, World};
 
 /// A search query parsed and resolved by [`World::search_query`] or [`Game::search_query`].
 /// Its `Display` is the canonical text.
@@ -52,6 +52,7 @@ pub(crate) struct Found {
 pub(crate) enum Looked {
     Structure(StructureQuery),
     Biome(BiomeQuery),
+    Feature(FeatureQuery),
     Point,
 }
 
@@ -60,8 +61,8 @@ pub(crate) enum Looked {
 struct Resolved {
     /// The dimension it counts in, whose coordinates its places are in.
     dimension: Dimension,
-    /// What's counted: a structure for structure counts and clusters, a biome for biome
-    /// constraints.
+    /// What's counted: a structure for structure counts and clusters, a feature for feature
+    /// counts and clusters, a biome for biome constraints.
     target: Option<Target>,
     /// The structure of a structure anchor, and the dimension its starts are in.
     anchor: Option<(Dimension, StructureQuery)>,
@@ -71,6 +72,7 @@ struct Resolved {
 enum Target {
     Structure(StructureQuery),
     Biome(BiomeQuery),
+    Feature(FeatureQuery),
 }
 
 impl SearchQuery {
@@ -126,6 +128,8 @@ enum Subject<'q> {
     Structure(&'q str),
     /// A biome id.
     Biome(&'q str),
+    /// A placed or configured feature id.
+    Feature(&'q str),
     /// Something only the Overworld has, described for errors.
     Overworld(&'static str),
     /// Terrain heights: the Overworld's unless written, and not under a ceiling.
@@ -154,7 +158,8 @@ impl<'a> Scope<'a> {
     }
 
     /// Whether `world` places `subject`: some of a structure or tag's structures can start
-    /// there, its biome source has the biome, or it's the Overworld.
+    /// there, its biome source has the biome, spyglass places the feature there, or it's the
+    /// Overworld.
     fn places(world: &World, subject: Subject<'_>) -> Result<bool> {
         Ok(match subject {
             Subject::Structure(s) => {
@@ -166,6 +171,11 @@ impl<'a> Scope<'a> {
                     .any(|&t| !structures[t].biomes.is_empty())
             }
             Subject::Biome(b) => world.biome_query(b)?.possible(),
+            Subject::Feature(f) => match world.feature_query(f) {
+                Ok(_) => true,
+                Err(Error::NotPlaced(_) | Error::Unknown { .. }) => false,
+                Err(e) => return Err(e),
+            },
             Subject::Overworld(_) => world.dimension_kind() == Dimension::Overworld,
             Subject::Terrain => !world.has_ceiling(),
         })
@@ -254,6 +264,7 @@ fn resolve(scope: Scope<'_>, text: &str) -> Result<SearchQuery> {
             let subject = match &find.target {
                 FindTarget::Structure(s) => Subject::Structure(s),
                 FindTarget::Biome(b) => Subject::Biome(b),
+                FindTarget::Feature(f) => Subject::Feature(f),
                 FindTarget::Point => Subject::Terrain,
             };
             // A point target is the Overworld's in a game, like terrain, but may be under a
@@ -292,6 +303,7 @@ fn resolve(scope: Scope<'_>, text: &str) -> Result<SearchQuery> {
                     })?;
                     Looked::Biome(world.biome_query(b).map_err(at_line)?)
                 }
+                FindTarget::Feature(f) => Looked::Feature(world.feature_query(f).map_err(at_line)?),
                 FindTarget::Point => Looked::Point,
             };
             Some(Found { dimension, target })
@@ -318,6 +330,9 @@ fn resolve(scope: Scope<'_>, text: &str) -> Result<SearchQuery> {
                 Subject::Structure(structure)
             }
             Kind::Biome { biome, .. } | Kind::Coverage { biome, .. } => Subject::Biome(biome),
+            Kind::Features { feature, .. } | Kind::FeatureCluster { feature, .. } => {
+                Subject::Feature(feature)
+            }
             Kind::Slime { .. } => Subject::Overworld("slime chunks are"),
             Kind::Spawn { .. } => Subject::Overworld("the spawn is"),
             Kind::Height { .. } | Kind::Flat { .. } => Subject::Terrain,
@@ -337,6 +352,7 @@ fn resolve(scope: Scope<'_>, text: &str) -> Result<SearchQuery> {
             return Err(message(match subject {
                 Subject::Structure(s) => format!("{s} isn't placed in {}", dimension.name()),
                 Subject::Biome(b) => format!("{} has no {b}", dimension.name()),
+                Subject::Feature(f) => format!("{f} isn't placed in {}", dimension.name()),
                 Subject::Overworld(_) | Subject::Terrain => unreachable!("checked below"),
             }));
         }
@@ -406,6 +422,8 @@ fn resolve(scope: Scope<'_>, text: &str) -> Result<SearchQuery> {
                 }
             },
             Kind::Cluster { place, .. }
+            | Kind::Features { place, .. }
+            | Kind::FeatureCluster { place, .. }
             | Kind::Biome { place, .. }
             | Kind::Coverage { place, .. }
             | Kind::Spawn { place }
@@ -429,6 +447,9 @@ fn resolve(scope: Scope<'_>, text: &str) -> Result<SearchQuery> {
                 check_y(here, dimension, sampling.y).map_err(message)?;
                 Some(Target::Biome(here.biome_query(biome).map_err(at_line)?))
             }
+            Kind::Features { feature, .. } | Kind::FeatureCluster { feature, .. } => Some(
+                Target::Feature(here.feature_query(feature).map_err(at_line)?),
+            ),
             Kind::Slime { .. } | Kind::Spawn { .. } | Kind::Height { .. } | Kind::Flat { .. } => {
                 None
             }
@@ -534,8 +555,9 @@ fn check_y(world: &World, dimension: Dimension, y: i32) -> std::result::Result<(
 
 /// A rough rank of how long a constraint takes to check, for ordering checks cheapest first:
 /// structures and slime chunks, then those that need the spawn (about 1 ms), the spawn itself,
-/// biome grids by size, anything on concentric rings (strongholds, about 1 s), and last
-/// terrain conditions by size (a few milliseconds a column).
+/// biome grids by size, anything on concentric rings (strongholds, about 1 s), terrain
+/// conditions by size (a few milliseconds a column), and last features by size (tens of
+/// milliseconds a chunk).
 fn cost(scope: Scope<'_>, kind: &Kind, resolved: &Resolved) -> Result<(u8, u64)> {
     let rings = |d: Dimension, q: &StructureQuery| -> Result<bool> {
         Ok(scope.world(d)?.sets.sets().iter().any(|s| {
@@ -553,6 +575,9 @@ fn cost(scope: Scope<'_>, kind: &Kind, resolved: &Resolved) -> Result<(u8, u64)>
         None => false,
     };
     Ok(match kind {
+        Kind::Features { place, .. } | Kind::FeatureCluster { place, .. } => {
+            (6, place.grid_bound(16))
+        }
         Kind::Height { place, step, .. } | Kind::Flat { place, step, .. } => {
             (5, place.grid_bound(*step))
         }

@@ -546,6 +546,7 @@ pub struct ConstraintAnswer<'a> {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum FeatureAnswer<'a> {
     Structure(StructureMark<'a>),
+    Feature(FeatureHit<'a>),
     SlimeChunk {
         chunk: [i32; 2],
     },

@@ -186,11 +186,11 @@ pub fn read(bytes: &[u8]) -> Result<(String, Tag), NbtError> {
 
 /// [`read`], with an error if the tree would take more than `memory` bytes.
 fn read_within(bytes: &[u8], memory: u64) -> Result<(String, Tag), NbtError> {
-    let mut r = Reader::new(bytes, memory);
-    let id = r.u8()?;
-    let name = r.string()?;
-    let tag = r.payload(id, 0)?;
-    r.finish()?;
+    let mut reader = Reader::new(bytes, memory);
+    let id = reader.u8()?;
+    let name = reader.string()?;
+    let tag = reader.payload(id, 0)?;
+    reader.finish()?;
     Ok((name, tag))
 }
 
@@ -199,33 +199,34 @@ fn read_within(bytes: &[u8], memory: u64) -> Result<(String, Tag), NbtError> {
 /// checked as [`read`] checks it, except that strings other than names aren't decoded.
 pub fn read_root_int(bytes: &[u8], name: &str) -> Result<Option<i32>, NbtError> {
     // Skipping builds nothing, so needs no memory limit.
-    let mut r = Reader::new(bytes, u64::MAX);
-    let id = r.u8()?;
-    r.skip_string()?;
+    let mut reader = Reader::new(bytes, u64::MAX);
+    let id = reader.u8()?;
+    reader.skip_string()?;
     let mut found = None;
+    // 10 is TAG_Compound, 0 TAG_End and 3 TAG_Int.
     if id == 10 {
         loop {
-            let child = r.u8()?;
+            let child = reader.u8()?;
             if child == 0 {
                 break;
             }
-            let (child_name, segment) = r.name()?;
-            r.path.push(segment);
+            let (child_name, segment) = reader.name()?;
+            reader.path.push(segment);
             if child_name != name {
-                r.skip(child, 1)?;
+                reader.skip(child, 1)?;
             } else if child == 3 {
-                found = Some(r.i32()?);
+                found = Some(reader.i32()?);
             } else {
                 // A repeated name keeps the last value, as in a compound.
                 found = None;
-                r.skip(child, 1)?;
+                reader.skip(child, 1)?;
             }
-            r.path.pop();
+            reader.path.pop();
         }
     } else {
-        r.skip(id, 0)?;
+        reader.skip(id, 0)?;
     }
-    r.finish()?;
+    reader.finish()?;
     Ok(found)
 }
 
@@ -233,16 +234,23 @@ pub fn read_root_int(bytes: &[u8], name: &str) -> Result<Option<i32>, NbtError> 
 /// raw bytes in the input, or a list index. Paths are only rendered as text for errors.
 #[derive(Clone, Copy)]
 enum Segment {
+    /// A name, as the start and end of its bytes in the input.
     Name(usize, usize),
+    /// A list index.
     Index(usize),
 }
 
+/// Reads tags from bytes, keeping the path to the current tag for errors.
 struct Reader<'b> {
+    /// The whole input.
     bytes: &'b [u8],
+    /// The next byte to read.
     pos: usize,
+    /// The path to the tag being read, outermost first.
     path: Vec<Segment>,
-    /// The memory the tree may take, and what's left of it.
+    /// The memory the tree may take.
     memory: u64,
+    /// What's left of [`memory`](Self::memory).
     memory_left: u64,
 }
 
@@ -288,15 +296,20 @@ impl<'b> Reader<'b> {
         }
     }
 
+    /// Checks the root tag was the end of the input.
     fn finish(&self) -> Result<(), NbtError> {
         match self.bytes.len() - self.pos {
             0 => Ok(()),
-            n => Err(NbtError::Trailing(n)),
+            left => Err(NbtError::Trailing(left)),
         }
     }
 
-    fn take(&mut self, n: usize) -> Result<&'b [u8], NbtError> {
-        let end = self.pos.checked_add(n).filter(|&e| e <= self.bytes.len());
+    /// The next `count` bytes.
+    fn take(&mut self, count: usize) -> Result<&'b [u8], NbtError> {
+        let end = self
+            .pos
+            .checked_add(count)
+            .filter(|&e| e <= self.bytes.len());
         let end = end.ok_or_else(|| NbtError::Truncated { path: self.path() })?;
         let out = &self.bytes[self.pos..end];
         self.pos = end;
@@ -348,14 +361,14 @@ impl<'b> Reader<'b> {
         Ok((text, Segment::Name(self.pos - bytes.len(), self.pos)))
     }
 
-    /// `NbtAccounter.pushDepth`, which only lists and compounds call: a tag of type `id` inside
-    /// `depth` of them may be one more only if `depth` is under the limit.
     /// [`name`](Self::name)'s segment, with the name checked but not kept.
     #[inline(never)]
     fn skip_name(&mut self) -> Result<Segment, NbtError> {
         self.name().map(|(_, segment)| segment)
     }
 
+    /// `NbtAccounter.pushDepth`, which only lists and compounds call: a tag of type `id` inside
+    /// `depth` of them may be one more only if `depth` is under the limit.
     fn check_depth(&self, id: u8, depth: usize) -> Result<(), NbtError> {
         if matches!(id, 9 | 10) && depth >= MAX_DEPTH {
             return Err(NbtError::TooDeep { path: self.path() });
@@ -536,16 +549,17 @@ fn decode_modified_utf8(bytes: &[u8]) -> Option<Vec<u16>> {
     let mut units = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
-        let b = bytes[i];
-        let cont = |j: usize| match bytes.get(j) {
+        let lead = bytes[i];
+        // The low six bits of the continuation byte at `j`, which must be `10xxxxxx`.
+        let continuation = |j: usize| match bytes.get(j) {
             Some(&c) if c & 0xC0 == 0x80 => Some(u16::from(c & 0x3F)),
             _ => None,
         };
-        let (unit, width) = match b {
-            0x00..=0x7F => (u16::from(b), 1),
-            0xC0..=0xDF => (u16::from(b & 0x1F) << 6 | cont(i + 1)?, 2),
+        let (unit, width) = match lead {
+            0x00..=0x7F => (u16::from(lead), 1),
+            0xC0..=0xDF => (u16::from(lead & 0x1F) << 6 | continuation(i + 1)?, 2),
             0xE0..=0xEF => (
-                u16::from(b & 0x0F) << 12 | cont(i + 1)? << 6 | cont(i + 2)?,
+                u16::from(lead & 0x0F) << 12 | continuation(i + 1)? << 6 | continuation(i + 2)?,
                 3,
             ),
             _ => return None,
@@ -618,9 +632,11 @@ pub fn write_compressed(name: &str, root: &Tag) -> Vec<u8> {
     encoder.finish().expect("writing to a Vec doesn't fail")
 }
 
-fn write_string(s: &str, out: &mut Vec<u8>) {
-    let mut bytes = Vec::with_capacity(s.len());
-    for unit in s.encode_utf16() {
+/// `DataOutput.writeUTF`: a `u16` byte length, then each UTF-16 unit in one to three bytes,
+/// with U+0000 as `C0 80`.
+fn write_string(text: &str, out: &mut Vec<u8>) {
+    let mut bytes = Vec::with_capacity(text.len());
+    for unit in text.encode_utf16() {
         match unit {
             0x0001..=0x007F => bytes.push(unit as u8),
             0x0000 | 0x0080..=0x07FF => {

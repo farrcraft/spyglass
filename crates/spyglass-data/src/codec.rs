@@ -100,7 +100,9 @@ pub fn full_id(id: &str) -> String {
 /// A position in the JSON being loaded: the resource and the path into it, for errors.
 #[derive(Debug, Clone)]
 pub struct At<'a> {
+    /// The resource's id.
     resource: &'a str,
+    /// The JSON path into it, e.g. `points[2].value`; empty at the root.
     path: String,
 }
 
@@ -187,9 +189,9 @@ pub fn int(json: &Value, at: &At<'_>) -> LoadResult<i32> {
 
 /// `Codec.intRange(min, max)`.
 pub fn int_in(json: &Value, min: i32, max: i32, at: &At<'_>) -> LoadResult<i32> {
-    let v = int(json, at)?;
-    if (min..=max).contains(&v) {
-        Ok(v)
+    let value = int(json, at)?;
+    if (min..=max).contains(&value) {
+        Ok(value)
     } else {
         Err(at.error(out_of_range(json, min, max)))
     }
@@ -233,11 +235,11 @@ pub fn f64_of(value: &Value) -> Option<f64> {
 /// `new BigDecimal(text).intValue()` (truncated toward zero, then the low 32 bits).
 pub fn int_of(value: &Value) -> Option<i32> {
     let text = text(value)?;
-    if let Ok(i) = text.parse::<i32>() {
-        return Some(i);
+    if let Ok(int) = text.parse::<i32>() {
+        return Some(int);
     }
-    if let Ok(l) = text.parse::<i64>() {
-        return Some(l as i32);
+    if let Ok(long) = text.parse::<i64>() {
+        return Some(long as i32);
     }
     big_decimal_int_value(&text)
 }
@@ -283,6 +285,7 @@ fn big_decimal_int_value(text: &str) -> Option<i32> {
     Some(low as i32)
 }
 
+/// A number's text as written, which `arbitrary_precision` keeps; `None` for other values.
 fn text(value: &Value) -> Option<String> {
     value.as_number().map(Number::to_string)
 }

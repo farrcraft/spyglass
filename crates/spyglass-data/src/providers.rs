@@ -80,7 +80,9 @@ pub enum HeightProvider {
 /// `WeightedList`: entries with non-negative weights, at least one of them positive.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Weighted<T> {
+    /// Each value and its weight, in file order, which the pick walks.
     entries: Vec<(T, i32)>,
+    /// The weights' sum: positive, and no more than `i32::MAX`.
     total: i32,
 }
 
@@ -88,10 +90,10 @@ impl<T> Weighted<T> {
     /// `getRandomOrThrow`: `nextInt(totalWeight)`, then the entry whose cumulative weight passes
     /// it (both the game's flat and compact selectors pick the same).
     pub fn pick(&self, random: &mut impl RandomSource) -> &T {
-        let mut r = random.next_int_bounded(self.total);
+        let mut draw = random.next_int_bounded(self.total);
         for (value, weight) in &self.entries {
-            r -= weight;
-            if r < 0 {
+            draw -= weight;
+            if draw < 0 {
                 return value;
             }
         }
@@ -158,10 +160,11 @@ impl IntProvider {
                 let inner = random.next_int_bounded(max.wrapping_sub(*min).wrapping_add(1));
                 min.wrapping_add(random.next_int_bounded(inner.wrapping_add(1)))
             }
+            // Each draw bounds the next, so small offsets are likelier: more so for "very".
             IntProvider::VeryBiasedToBottom(min, max) => {
-                let a = random.next_int_bounded(max.wrapping_sub(*min).wrapping_add(1));
-                let b = random.next_int_bounded(a.wrapping_add(1));
-                min.wrapping_add(random.next_int_bounded(b.wrapping_add(1)))
+                let outer = random.next_int_bounded(max.wrapping_sub(*min).wrapping_add(1));
+                let middle = random.next_int_bounded(outer.wrapping_add(1));
+                min.wrapping_add(random.next_int_bounded(middle.wrapping_add(1)))
             }
             IntProvider::Clamped(source, min, max) => source.sample(random).max(*min).min(*max),
             IntProvider::ClampedNormal {
@@ -170,11 +173,14 @@ impl IntProvider {
                 min,
                 max,
             } => clamp_f32(normal(random, *mean, *deviation), *min as f32, *max as f32) as i32,
+            // The sum of two uniform draws, one as wide as the range less a side and one as wide
+            // as a side, is flat in the middle (the plateau) and slopes at each side. A plateau
+            // of 0 symmetric about 0 is a case of its own in the game: one draw less another.
             IntProvider::Trapezoid(min, max, plateau) => {
                 if *plateau == 0 && *max == min.wrapping_neg() {
                     let bound = max.wrapping_add(1);
-                    let a = random.next_int_bounded(bound);
-                    return a.wrapping_sub(random.next_int_bounded(bound));
+                    let first = random.next_int_bounded(bound);
+                    return first.wrapping_sub(random.next_int_bounded(bound));
                 }
                 let range = max.wrapping_sub(*min);
                 if *plateau == range {
@@ -182,8 +188,8 @@ impl IntProvider {
                 }
                 let side = range.wrapping_sub(*plateau) / 2;
                 let rest = range.wrapping_sub(side);
-                let a = between_inclusive(random, 0, rest);
-                min.wrapping_add(a)
+                let first = between_inclusive(random, 0, rest);
+                min.wrapping_add(first)
                     .wrapping_add(between_inclusive(random, 0, side))
             }
             IntProvider::WeightedList(list) => list.pick(random).sample(random),
@@ -223,8 +229,8 @@ impl IntProvider {
         if !json.is_object() {
             return Ok(IntProvider::Constant(int(json, at)?));
         }
-        let o = object(json, at)?;
-        let int_field = |name: &'static str| int(field(o, name, at)?, &at.child(name));
+        let obj = object(json, at)?;
+        let int_field = |name: &'static str| int(field(obj, name, at)?, &at.child(name));
         let range = || -> LoadResult<(i32, i32)> {
             let (min, max) = (int_field("min_inclusive")?, int_field("max_inclusive")?);
             if max < min {
@@ -232,7 +238,7 @@ impl IntProvider {
             }
             Ok((min, max))
         };
-        Ok(match type_of(o, at)?.as_str() {
+        Ok(match type_of(obj, at)?.as_str() {
             "minecraft:constant" => IntProvider::Constant(int_field("value")?),
             "minecraft:uniform" => {
                 let (min, max) = range()?;
@@ -247,12 +253,13 @@ impl IntProvider {
                 IntProvider::VeryBiasedToBottom(min, max)
             }
             "minecraft:clamped" => {
-                let source = IntProvider::parse(field(o, "source", at)?, &at.child("source"))?;
+                let source = IntProvider::parse(field(obj, "source", at)?, &at.child("source"))?;
                 let (min, max) = range()?;
                 IntProvider::Clamped(Box::new(source), min, max)
             }
             "minecraft:clamped_normal" => {
-                let float_field = |name: &'static str| float(field(o, name, at)?, &at.child(name));
+                let float_field =
+                    |name: &'static str| float(field(obj, name, at)?, &at.child(name));
                 let (mean, deviation) = (float_field("mean")?, float_field("deviation")?);
                 let (min, max) = range()?;
                 IntProvider::ClampedNormal {
@@ -276,7 +283,7 @@ impl IntProvider {
                 IntProvider::Trapezoid(min, max, plateau)
             }
             "minecraft:weighted_list" => {
-                IntProvider::WeightedList(weighted(o, at, IntProvider::parse)?)
+                IntProvider::WeightedList(weighted(obj, at, IntProvider::parse)?)
             }
             kind => return Err(unsupported(at, "int provider type", kind)),
         })
@@ -299,8 +306,8 @@ impl FloatProvider {
                 let range = max - min;
                 let side = (range - plateau) / 2.0;
                 let rest = range - side;
-                let a = random.next_float() * rest;
-                min + a + random.next_float() * side
+                let first = random.next_float() * rest;
+                min + first + random.next_float() * side
             }
         }
     }
@@ -330,9 +337,9 @@ impl FloatProvider {
         if !json.is_object() {
             return Ok(FloatProvider::Constant(float(json, at)?));
         }
-        let o = object(json, at)?;
-        let float_field = |name: &'static str| float(field(o, name, at)?, &at.child(name));
-        Ok(match type_of(o, at)?.as_str() {
+        let obj = object(json, at)?;
+        let float_field = |name: &'static str| float(field(obj, name, at)?, &at.child(name));
+        Ok(match type_of(obj, at)?.as_str() {
             "minecraft:constant" => FloatProvider::Constant(float_field("value")?),
             "minecraft:uniform" => {
                 let (min, max) = (float_field("min_inclusive")?, float_field("max_exclusive")?);
@@ -382,16 +389,16 @@ impl FloatProvider {
         max: Option<f32>,
         at: &At<'_>,
     ) -> LoadResult<FloatProvider> {
-        let p = Self::parse(json, at)?;
+        let provider = Self::parse(json, at)?;
         // fcmpg/ifge, fcmpl/ifle: NaN passes both.
-        if p.min() < min || max.is_some_and(|max| p.max() > max) {
+        if provider.min() < min || max.is_some_and(|max| provider.max() > max) {
             return Err(at.error(LoadErrorKind::OutOfRange {
-                value: format!("[{}, {}]", p.min(), p.max()),
+                value: format!("[{}, {}]", provider.min(), provider.max()),
                 min: min.to_string(),
                 max: max.map_or("∞".to_string(), |m| m.to_string()),
             }));
         }
-        Ok(p)
+        Ok(provider)
     }
 }
 
@@ -415,9 +422,10 @@ impl HeightProvider {
                 if span <= 0 {
                     return lo;
                 }
-                let a = random.next_int_bounded(span);
+                // The first draw bounds the second, so low heights are likelier.
+                let bound = random.next_int_bounded(span);
                 random
-                    .next_int_bounded(a.wrapping_add(*inner))
+                    .next_int_bounded(bound.wrapping_add(*inner))
                     .wrapping_add(lo)
             }
             HeightProvider::VeryBiasedToBottom(lo, hi, inner) => {
@@ -425,9 +433,10 @@ impl HeightProvider {
                 if hi.wrapping_sub(lo).wrapping_sub(*inner).wrapping_add(1) <= 0 {
                     return lo;
                 }
-                let a = next_int(random, lo.wrapping_add(*inner), hi);
-                let b = next_int(random, lo, a.wrapping_sub(1));
-                next_int(random, lo, b.wrapping_sub(1).wrapping_add(*inner))
+                // Three draws, each below the last, so low heights are likelier still.
+                let upper = next_int(random, lo.wrapping_add(*inner), hi);
+                let middle = next_int(random, lo, upper.wrapping_sub(1));
+                next_int(random, lo, middle.wrapping_sub(1).wrapping_add(*inner))
             }
             HeightProvider::Trapezoid(lo, hi, plateau) => {
                 let (lo, hi) = (resolve(lo), resolve(hi));
@@ -440,8 +449,8 @@ impl HeightProvider {
                 }
                 let side = range.wrapping_sub(*plateau) / 2;
                 let rest = range.wrapping_sub(side);
-                let a = between_inclusive(random, 0, rest);
-                lo.wrapping_add(a)
+                let first = between_inclusive(random, 0, rest);
+                lo.wrapping_add(first)
                     .wrapping_add(between_inclusive(random, 0, side))
             }
             HeightProvider::WeightedList(list) => list.pick(random).sample(random, anchors),
@@ -465,23 +474,25 @@ impl HeightProvider {
             HeightProvider::WeightedList(list) => list
                 .entries()
                 .map(|p| p.range(anchors))
-                .fold((i32::MAX, i32::MIN), |(a, b), (c, d)| (a.min(c), b.max(d))),
+                .fold((i32::MAX, i32::MIN), |(lo, hi), (entry_lo, entry_hi)| {
+                    (lo.min(entry_lo), hi.max(entry_hi))
+                }),
         }
     }
 
     /// `HeightProvider.CODEC`: a bare anchor, or a provider by `type`.
     pub fn parse(json: &Value, at: &At<'_>) -> LoadResult<HeightProvider> {
-        let o = object(json, at)?;
-        if !o.contains_key("type") {
+        let obj = object(json, at)?;
+        if !obj.contains_key("type") {
             return Ok(HeightProvider::Constant(VerticalAnchor::parse(json, at)?));
         }
         let anchor =
-            |name: &'static str| VerticalAnchor::parse(field(o, name, at)?, &at.child(name));
-        let optional = |name: &'static str, default: i32| match o.get(name) {
+            |name: &'static str| VerticalAnchor::parse(field(obj, name, at)?, &at.child(name));
+        let optional = |name: &'static str, default: i32| match obj.get(name) {
             None => Ok(default),
             Some(v) => int(v, &at.child(name)),
         };
-        Ok(match type_of(o, at)?.as_str() {
+        Ok(match type_of(obj, at)?.as_str() {
             "minecraft:constant" => HeightProvider::Constant(anchor("value")?),
             "minecraft:uniform" => {
                 HeightProvider::Uniform(anchor("min_inclusive")?, anchor("max_inclusive")?)
@@ -496,7 +507,7 @@ impl HeightProvider {
                         max: i32::MAX.to_string(),
                     }));
                 }
-                if type_of(o, at)? == "minecraft:biased_to_bottom" {
+                if type_of(obj, at)? == "minecraft:biased_to_bottom" {
                     HeightProvider::BiasedToBottom(lo, hi, inner)
                 } else {
                     HeightProvider::VeryBiasedToBottom(lo, hi, inner)
@@ -508,7 +519,7 @@ impl HeightProvider {
                 optional("plateau", 0)?,
             ),
             "minecraft:weighted_list" => {
-                HeightProvider::WeightedList(weighted(o, at, HeightProvider::parse)?)
+                HeightProvider::WeightedList(weighted(obj, at, HeightProvider::parse)?)
             }
             kind => return Err(unsupported(at, "height provider type", kind)),
         })
@@ -516,13 +527,14 @@ impl HeightProvider {
 }
 
 /// A map's `type`, as a full id.
-fn type_of(o: &Map<String, Value>, at: &At<'_>) -> LoadResult<String> {
-    field(o, "type", at)?
+fn type_of(obj: &Map<String, Value>, at: &At<'_>) -> LoadResult<String> {
+    field(obj, "type", at)?
         .as_str()
         .map(full_id)
         .ok_or_else(|| at.child("type").error(LoadErrorKind::Shape("a type id")))
 }
 
+/// An unsupported `type`, at the `type` field.
 fn unsupported(at: &At<'_>, what: &'static str, kind: &str) -> crate::codec::LoadError {
     at.child("type").error(LoadErrorKind::Unsupported {
         what,
@@ -533,12 +545,12 @@ fn unsupported(at: &At<'_>, what: &'static str, kind: &str) -> crate::codec::Loa
 /// `WeightedList.nonEmptyCodec`: `distribution`, a list of `{data, weight}` with weights at
 /// least 0, at least one of them positive.
 fn weighted<T>(
-    o: &Map<String, Value>,
+    obj: &Map<String, Value>,
     at: &At<'_>,
     parse: impl Fn(&Value, &At<'_>) -> LoadResult<T>,
 ) -> LoadResult<Weighted<T>> {
     let at = at.child("distribution");
-    let list = o
+    let list = obj
         .get("distribution")
         .ok_or_else(|| at.error(LoadErrorKind::Missing("distribution")))?
         .as_array()
@@ -547,9 +559,9 @@ fn weighted<T>(
     let mut total: i32 = 0;
     for (i, entry) in list.iter().enumerate() {
         let at = at.child(&i.to_string());
-        let e = object(entry, &at)?;
-        let value = parse(field(e, "data", &at)?, &at.child("data"))?;
-        let weight = int(field(e, "weight", &at)?, &at.child("weight"))?;
+        let entry = object(entry, &at)?;
+        let value = parse(field(entry, "data", &at)?, &at.child("data"))?;
+        let weight = int(field(entry, "weight", &at)?, &at.child("weight"))?;
         if weight < 0 {
             return Err(at.child("weight").error(LoadErrorKind::OutOfRange {
                 value: weight.to_string(),

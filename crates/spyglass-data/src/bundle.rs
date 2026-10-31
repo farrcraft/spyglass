@@ -108,6 +108,7 @@ impl Manifest {
     }
 }
 
+/// Wraps an I/O error with the file it happened on.
 fn io_err(path: &Path) -> impl FnOnce(io::Error) -> BundleError + '_ {
     move |source| BundleError::Io {
         path: path.to_path_buf(),
@@ -181,11 +182,11 @@ pub fn sha1_hex(mut reader: impl Read) -> io::Result<String> {
     let mut hasher = Sha1::new();
     let mut buf = vec![0; 1 << 16];
     loop {
-        let n = reader.read(&mut buf)?;
-        if n == 0 {
+        let read = reader.read(&mut buf)?;
+        if read == 0 {
             break;
         }
-        hasher.update(&buf[..n]);
+        hasher.update(&buf[..read]);
     }
     Ok(hasher
         .finalize()
@@ -198,7 +199,9 @@ pub fn sha1_hex(mut reader: impl Read) -> io::Result<String> {
 /// but doesn't rehash the files; [`verify`] does that.
 #[derive(Debug, Clone)]
 pub struct Bundle {
+    /// The bundle's root directory.
     dir: PathBuf,
+    /// Its `bundle.json`, which lists every file that may be read.
     manifest: Manifest,
     /// Whether the manifest lists structure templates; older bundles have none.
     has_templates: bool,
@@ -236,9 +239,9 @@ impl Bundle {
     /// `minecraft`, as `Identifier.parse` reads it.
     pub fn resource_path(registry: &str, id: &str) -> Result<String, BundleError> {
         let (namespace, path) = id.split_once(':').unwrap_or(("minecraft", id));
-        let valid = |s: &str, extra: &[char]| {
-            !s.is_empty()
-                && s.chars().all(|c| {
+        let valid = |part: &str, extra: &[char]| {
+            !part.is_empty()
+                && part.chars().all(|c| {
                     c.is_ascii_lowercase()
                         || c.is_ascii_digit()
                         || "_-.".contains(c)

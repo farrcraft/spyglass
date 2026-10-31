@@ -1,7 +1,7 @@
 # 20. Loot
 
 - Status: Planned
-- Depends on: [07](completed/07-terrain-and-validity.md), [19](19-features.md)
+- Depends on: [07](completed/07-terrain-and-validity.md), [19](completed/19-features.md)
 - Plans: none yet
 
 ## Goal
@@ -10,7 +10,7 @@ What's in the chests: the loot of a structure's or feature's containers, exactly
 
 ## Scope
 
-- **Containers:** where each chest, barrel and other loot container is placed, with its loot table and loot seed. This covers structure pieces (from jigsaw and the other piece generators [07](completed/07-terrain-and-validity.md) assembled) and features (dungeons, from [19](19-features.md)).
+- **Containers:** where each chest, barrel and other loot container is placed, with its loot table and loot seed. This covers structure pieces (from jigsaw and the other piece generators [07](completed/07-terrain-and-validity.md) assembled) and features (dungeons, from [19](completed/19-features.md)).
 - **Loot tables:** pools, rolls, entries, conditions and functions (enchanting, set count, and the rest vanilla uses), as data from the bundle with the algorithms in code.
 - **Queries:** a container's contents, containers in an area holding an item, and the nearest such container, in the API and as `spyglass loot` with `--json`.
 - **The viewer:** a container's contents when its structure is selected, and an item highlight layer ("chests with an enchanted golden apple").

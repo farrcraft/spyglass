@@ -164,7 +164,7 @@ pub fn run(args: &Ci) -> Result<()> {
                     Output::Blocks => {
                         oracle::blocks(&mut harness, args.threads, oracle::GOLDEN_SEEDS)?;
                     }
-                    Output::Features => harness.features(args.threads, oracle::GOLDEN_SEEDS)?,
+                    Output::Features => harness.features(args.threads, &oracle::feature_seeds())?,
                     Output::Locate => {}
                 }
             }

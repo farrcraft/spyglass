@@ -1,7 +1,7 @@
 # m19. Placing features, certain or not
 
 - Status: Completed
-- Milestone: [19. Features](../../roadmap/19-features.md)
+- Milestone: [19. Features](../../roadmap/completed/19-features.md)
 - Started: 2026-10-30
 - Completed: 2026-10-30
 

@@ -1149,7 +1149,7 @@ mod tests {
             assert_eq!(again.to_string(), canonical);
         }
         let query = Query::parse(&examples[0]).unwrap();
-        assert_eq!(query.constraints().len(), 11);
+        assert_eq!(query.constraints().len(), 10);
         assert_eq!(query.lines()[0], 2);
         let canonical = query.to_string();
         assert!(canonical.contains("prefer 3 #minecraft:village within 400 of spawn weight 2\n"));

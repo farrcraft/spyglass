@@ -6,10 +6,6 @@ Code must not reference plans. Anything durable a plan produces belongs in a spe
 
 ## Active
 
-For [19. Features](../roadmap/19-features.md), in order:
-
-- [m19-decoration](completed/m19-decoration.md) (completed): where features try to place, and the oracle's feature golden files.
-- [m19-placing](completed/m19-placing.md) (completed): whether each try places, its blocks, and certainty.
-- [m19-queries](m19-queries.md) (in progress): features in the API, the CLI, the viewer and search.
+None: no milestone is in progress. The next is [20](../roadmap/20-loot.md).
 
 The follow-ups of milestones 08 and 11 ([roadmap](../roadmap/README.md#follow-ups)) need no plan of their own.

@@ -83,10 +83,17 @@ prefer 6 slime within 64 of spawn
 prefer #minecraft:village within 300 of minecraft:ancient_city within 3000 of spawn
 prefer spawn within 200 of 0,0
 prefer biome minecraft:plains within 0 of spawn
-prefer cluster 2 feature minecraft:monster_room within 16 of each other within 96 of spawn
 ```
 
-The line before the last asks for the spawn to be in plains: a disc of radius 0 holds only its centre. The last asks for two dungeons whose spawners are at most 16 blocks apart, near the spawn.
+The last line asks for the spawn to be in plains: a disc of radius 0 holds only its centre.
+
+Features are counted as structures are ([below](#outcomes), [ADR 0057](../adr/0057-features-in-the-search-language.md)):
+
+```text
+# Two dungeons whose spawners are at most 16 blocks apart, near the spawn.
+require cluster 2 feature minecraft:monster_room within 16 of each other within 96 of spawn
+prefer 3 feature minecraft:monster_room within 96 of spawn
+```
 
 ## Dimensions
 

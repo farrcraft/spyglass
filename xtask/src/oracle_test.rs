@@ -280,6 +280,31 @@ const TESTS: &[(&str, &str, &[Input])] = &[
         "search::tests::the_fast_path_agrees_across_dimensions_on_the_real_game",
         &[Input::Bundle],
     ),
+    (
+        "spyglass",
+        "features_in_are_the_game_s",
+        &[Input::Features, Input::Bundle],
+    ),
+    (
+        "spyglass",
+        "two_dungeon_seeds_are_the_game_s",
+        &[Input::Features, Input::Bundle],
+    ),
+    (
+        "spyglass",
+        "feature_constraints_count_features_in",
+        &[Input::Bundle],
+    ),
+    (
+        "spyglass",
+        "the_fast_path_agrees_with_evaluate_for_features",
+        &[Input::Bundle],
+    ),
+    (
+        "spyglass",
+        "find_feature_targets_skip_themselves",
+        &[Input::Bundle],
+    ),
     ("spyglass", "each_dimension_opens", &[Input::Bundle]),
     ("spyglass", "a_game_spans_the_dimensions", &[Input::Bundle]),
     (

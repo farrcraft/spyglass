@@ -20,7 +20,7 @@ Find places in one seed, not only seeds: "double witch huts that share an AFK sp
 
 Not in scope:
 
-- Features as targets or conditions (dungeons, geodes and the rest). They join the language when [19](../19-features.md) delivers them.
+- Features as targets or conditions (dungeons, geodes and the rest). They join the language when [19](19-features.md) delivers them.
 - Searching across seeds and within them in one query.
 
 ## Exit criteria

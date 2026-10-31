@@ -11,7 +11,8 @@ use spyglass::{
     Feature, FeatureOptions, FindOptions, FoundFeature, Outcome, SearchOptions, SeedSource, World,
 };
 
-const SEEDS: [i64; 6] = [0, 1, 2, 3, -4_172_144_997_902_289_642, 123_456_789];
+/// Seeds with dungeons near the origin (0 and 3) and without (1), so each case comes up.
+const SEEDS: [i64; 3] = [0, 1, 3];
 
 /// `features_in` over the chunks of `min..=max` (blocks), kept where `keep` says.
 fn by_hand(

@@ -1,7 +1,7 @@
 # m19. Decoration: where features try to place
 
 - Status: Completed
-- Milestone: [19. Features](../../roadmap/19-features.md)
+- Milestone: [19. Features](../../roadmap/completed/19-features.md)
 - Started: 2026-10-30
 - Completed: 2026-10-30
 
@@ -36,7 +36,7 @@ Mineshafts, buried treasure, trail ruins and trial chambers place their pieces a
 - `FeatureSettings`: a dimension's placed and configured features, its steps and global order. Every placed feature is loaded by id. Only the targets and their modifiers are loaded as types. 26.3 keeps configured features in `worldgen/feature` with their config flattened, and 26.2 in `worldgen/configured_feature`.
 - `Decorator::tries(chunk)`: for one seed, each target feature's tries in the chunk, in decoration order, each with its placed feature, step, index and position.
 
-The API (`Session::feature_tries`) and the CLI come with [m19-queries](../m19-queries.md), unless the oracle tests want them sooner.
+The API (`Session::feature_tries`) and the CLI come with [m19-queries](m19-queries.md), unless the oracle tests want them sooner.
 
 **Modifiers that read blocks.** `heightmap` (`MOTION_BLOCKING`), `block_predicate_filter`, `environment_scan` and `surface_relative_threshold_filter` read the chunk as decoration finds it. A try after one is marked not exact here, with the position where the modifier was reached: computing it needs the heightmaps and block predicates that placing needs anyway, so it's [m19-placing](m19-placing.md)'s (see the notes). Each try also says whether it follows a try of its feature whose draws aren't known. The golden comparison expects exact positions for the rest, and counts the others apart.
 

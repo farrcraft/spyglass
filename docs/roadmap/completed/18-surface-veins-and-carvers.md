@@ -6,7 +6,7 @@
 
 ## Goal
 
-The blocks of a chunk before features: the material rule (surface rules), ore veins, the noise caves already in the density graph, and the carvers that cut caves and ravines afterwards. Each is exact and checked against the game, and each can be drawn as a map layer at a chosen height. This is what features ([19](../19-features.md)) stand on: dungeons check for air and solid blocks, and wells and fossils check the surface, so they can't be placed exactly without it.
+The blocks of a chunk before features: the material rule (surface rules), ore veins, the noise caves already in the density graph, and the carvers that cut caves and ravines afterwards. Each is exact and checked against the game, and each can be drawn as a map layer at a chosen height. This is what features ([19](19-features.md)) stand on: dungeons check for air and solid blocks, and wells and fossils check the surface, so they can't be placed exactly without it.
 
 ## Scope
 

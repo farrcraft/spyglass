@@ -79,14 +79,15 @@ pub enum OracleCmd {
         seeds: Vec<String>,
     },
     /// Write feature golden files (each chunk decorated on its own, with every call to a target
-    /// feature) for the golden seeds and dimensions into `oracle-out/<version>/features/`.
+    /// feature) for the golden seeds and seed 56, in every dimension, into
+    /// `oracle-out/<version>/features/`.
     Features {
         #[command(flatten)]
         common: Common,
         /// Parallel chunks. Defaults to the number of CPUs.
         #[arg(long)]
         threads: Option<usize>,
-        /// Only these seeds, instead of the golden ones.
+        /// Only these seeds, instead of the golden ones and seed 56.
         #[arg(long = "seed")]
         seeds: Vec<String>,
     },
@@ -177,6 +178,15 @@ pub(crate) const GOLDEN_SEEDS: &[&str] = &[
     "-8228862705229265597",
     "-1918002950002395028",
 ];
+
+/// The seeds feature golden files are written for: the golden seeds, and a seed whose two
+/// dungeons near the spawn a seed search finds in every supported version, for the test that
+/// checks them against the game (`docs/specs/oracle.md#feature-golden-files`).
+pub(crate) fn feature_seeds() -> Vec<&'static str> {
+    let mut seeds = GOLDEN_SEEDS.to_vec();
+    seeds.push("56");
+    seeds
+}
 
 /// Golden regions per seed: name, minimum block x and z, and size in blocks.
 const GOLDEN_REGIONS: &[(&str, i32, i32, i32)] = &[
@@ -281,7 +291,7 @@ pub fn run(cmd: OracleCmd) -> Result<()> {
         } => {
             let harness = build(&common)?;
             let seeds: Vec<&str> = if seeds.is_empty() {
-                GOLDEN_SEEDS.to_vec()
+                feature_seeds()
             } else {
                 seeds.iter().map(String::as_str).collect()
             };
@@ -462,7 +472,7 @@ fn golden(common: &Common, threads: Option<usize>) -> Result<()> {
     harness.spawn()?;
     harness.heights(threads, GOLDEN_SEEDS)?;
     blocks(&mut harness, threads, GOLDEN_SEEDS)?;
-    harness.features(threads, GOLDEN_SEEDS)?;
+    harness.features(threads, &feature_seeds())?;
     harness.golden_biomes(threads)?;
     println!(
         "golden files in {}",

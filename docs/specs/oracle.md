@@ -31,7 +31,7 @@ CI runs the Rust crates against these for a fixed set of seeds per supported ver
 | `spawn`                                                         | Write the [spawn golden files](#spawn-golden-files) for the golden seeds and dimensions.                                                |
 | `heights [--threads N]`                                         | Write the [height golden files](#height-golden-files) for the golden seeds and dimensions.                                              |
 | `blocks [--threads N] [--seed S]…`                              | Write the [block golden files](#block-golden-files), with and without carvers, for the golden seeds (or those given).                   |
-| `features [--threads N] [--seed S]…`                            | Write the [feature golden files](#feature-golden-files) for the golden seeds (or those given).                                          |
+| `features [--threads N] [--seed S]…`                            | Write the [feature golden files](#feature-golden-files) for the golden seeds and seed 56 (or those given).                              |
 | `column <seed> <x> <z> [--dimension]`                           | Print a generated chunk's column beside `getBaseColumn`'s, marking where they differ. For debugging.                                    |
 | `locate`                                                        | Ask a real dedicated server `/locate` questions ([below](#locate-answers)). Not part of `golden`.                                       |
 | `test-pack`                                                     | Write probe and structure files with the [test pack](#the-test-pack) loaded, into `oracle-out/<version>+testpack/`.                     |
@@ -348,7 +348,7 @@ The blocks of whole chunks as generation leaves them before features, with no st
 
 ## Feature golden files
 
-Each chunk decorated on its own, and every call decoration makes to a target feature: where, and whether it placed. One UTF-8 JSON file per seed and dimension, `oracle-out/<version>/features/<dimension path>/<seed>.json`.
+Each chunk decorated on its own, and every call decoration makes to a target feature: where, and whether it placed. One UTF-8 JSON file per seed and dimension, `oracle-out/<version>/features/<dimension path>/<seed>.json`, for the golden seeds and seed 56: a seed search for two dungeons near the spawn finds seed 56's in every supported version, and a test checks them against these files ([search.md](search.md#testing)).
 
 ```json
 {

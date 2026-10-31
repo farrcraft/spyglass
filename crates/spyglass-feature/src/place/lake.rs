@@ -15,11 +15,17 @@ use crate::region::Region;
 /// A lake's configuration.
 #[derive(Debug, Clone)]
 pub struct Lake {
+    /// What fills the lower half (lava in vanilla).
     fluid: State,
+    /// What walls the lake where its edge is solid (stone in vanilla).
     barrier: State,
+    /// What every edge block must be, or the lake declines.
     can_place: BlockPredicate,
+    /// Which of the lake's blocks are carved to fluid or air.
     replace_with_air_or_fluid: BlockPredicate,
+    /// Which solid edge blocks become the barrier.
     replace_with_barrier: BlockPredicate,
+    /// What fills the upper half.
     cave_air: State,
 }
 
@@ -57,6 +63,12 @@ impl Lake {
     }
 
     /// `LakeFeature.place`: whether it placed.
+    ///
+    /// The lake is drawn in a 16 × 16 × 8 box as the union of a few random ellipsoids, kept a
+    /// block in from the box's sides. Its lower half (y below 4) is fluid and its upper half air,
+    /// so the fluid sits in a pit with a hollow above it. The blocks just outside it, its edge,
+    /// are checked first, so a lake never opens into air below its surface or into liquid
+    /// above it, then walled with the barrier.
     pub fn place(
         &self,
         region: &mut Region<'_>,
@@ -66,31 +78,40 @@ impl Lake {
         if origin[1] <= region.min_y() + 4 {
             return false;
         }
-        let [ox, oy, oz] = [
+        // The box's least corner.
+        let [corner_x, corner_y, corner_z] = [
             origin[0].wrapping_sub(8),
             origin[1].wrapping_sub(4),
             origin[2].wrapping_sub(8),
         ];
-        let at =
-            |x: i32, y: i32, z: i32| [ox.wrapping_add(x), oy.wrapping_add(y), oz.wrapping_add(z)];
-        let mut grid = [false; 2048];
+        let at = |x: i32, y: i32, z: i32| {
+            [
+                corner_x.wrapping_add(x),
+                corner_y.wrapping_add(y),
+                corner_z.wrapping_add(z),
+            ]
+        };
+        // Which of the box's cells are in the lake (see `index`).
+        let mut in_lake = [false; 2048];
         let blobs = random.next_int_bounded(4) + 4;
         for _ in 0..blobs {
-            let xr = random.next_double() * 6.0 + 3.0;
-            let yr = random.next_double() * 4.0 + 2.0;
-            let zr = random.next_double() * 6.0 + 3.0;
-            let cx = random.next_double() * (16.0 - xr - 2.0) + 1.0 + xr / 2.0;
-            let cy = random.next_double() * (8.0 - yr - 4.0) + 2.0 + yr / 2.0;
-            let cz = random.next_double() * (16.0 - zr - 2.0) + 1.0 + zr / 2.0;
+            // Each blob's size on each axis, a diameter (the game's xr, yr and zr), then its
+            // centre, placed so the whole blob fits inside the box with room to spare.
+            let size_x = random.next_double() * 6.0 + 3.0;
+            let size_y = random.next_double() * 4.0 + 2.0;
+            let size_z = random.next_double() * 6.0 + 3.0;
+            let centre_x = random.next_double() * (16.0 - size_x - 2.0) + 1.0 + size_x / 2.0;
+            let centre_y = random.next_double() * (8.0 - size_y - 4.0) + 2.0 + size_y / 2.0;
+            let centre_z = random.next_double() * (16.0 - size_z - 2.0) + 1.0 + size_z / 2.0;
             for x in 1..15 {
                 for z in 1..15 {
                     for y in 1..7 {
-                        let dx = (f64::from(x) - cx) / (xr / 2.0);
-                        let dy = (f64::from(y) - cy) / (yr / 2.0);
-                        let dz = (f64::from(z) - cz) / (zr / 2.0);
-                        let d = dx * dx + dy * dy + dz * dz;
-                        if d < 1.0 {
-                            grid[index(x, y, z)] = true;
+                        let dx = (f64::from(x) - centre_x) / (size_x / 2.0);
+                        let dy = (f64::from(y) - centre_y) / (size_y / 2.0);
+                        let dz = (f64::from(z) - centre_z) / (size_z / 2.0);
+                        let distance_sq = dx * dx + dy * dy + dz * dz;
+                        if distance_sq < 1.0 {
+                            in_lake[index(x, y, z)] = true;
                         }
                     }
                 }
@@ -101,16 +122,18 @@ impl Lake {
         for x in 0..16 {
             for z in 0..16 {
                 for y in 0..8 {
-                    if !is_edge(&grid, x, y, z) {
+                    if !is_edge(&in_lake, x, y, z) {
                         continue;
                     }
                     let pos = at(x, y, z);
-                    let s = region.get(pos);
-                    let b = blocks.behaviour(s);
-                    if y >= 4 && b.liquid {
+                    let state = region.get(pos);
+                    let behaviour = blocks.behaviour(state);
+                    // Liquid beside the air above the surface would flow in.
+                    if y >= 4 && behaviour.liquid {
                         return false;
                     }
-                    if y < 4 && !b.solid && s != self.fluid {
+                    // So would the fluid itself, into an open side below the surface.
+                    if y < 4 && !behaviour.solid && state != self.fluid {
                         return false;
                     }
                     if !self.can_place.test(region, pos) {
@@ -122,7 +145,7 @@ impl Lake {
         for x in 0..16 {
             for z in 0..16 {
                 for y in 0..8 {
-                    if !grid[index(x, y, z)] {
+                    if !in_lake[index(x, y, z)] {
                         continue;
                     }
                     let pos = at(x, y, z);
@@ -138,12 +161,15 @@ impl Lake {
                 for z in 0..16 {
                     for y in 0..8 {
                         // The draw comes before the block is read, for edges at y 4 and up.
-                        if !is_edge(&grid, x, y, z) || (y >= 4 && random.next_int_bounded(2) == 0) {
+                        if !is_edge(&in_lake, x, y, z)
+                            || (y >= 4 && random.next_int_bounded(2) == 0)
+                        {
                             continue;
                         }
                         let pos = at(x, y, z);
-                        let s = region.get(pos);
-                        if blocks.behaviour(s).solid && self.replace_with_barrier.test(region, pos)
+                        let state = region.get(pos);
+                        if blocks.behaviour(state).solid
+                            && self.replace_with_barrier.test(region, pos)
                         {
                             region.set(pos, self.barrier);
                         }
@@ -156,17 +182,18 @@ impl Lake {
     }
 }
 
+/// A cell's place in the lake's grid: x, then z, then y, as the game's.
 fn index(x: i32, y: i32, z: i32) -> usize {
     ((x * 16 + z) * 8 + y) as usize
 }
 
 /// Not in the lake, with a face neighbour that is, tested in the game's order.
-fn is_edge(g: &[bool; 2048], x: i32, y: i32, z: i32) -> bool {
-    !g[index(x, y, z)]
-        && ((x < 15 && g[index(x + 1, y, z)])
-            || (x > 0 && g[index(x - 1, y, z)])
-            || (z < 15 && g[index(x, y, z + 1)])
-            || (z > 0 && g[index(x, y, z - 1)])
-            || (y < 7 && g[index(x, y + 1, z)])
-            || (y > 0 && g[index(x, y - 1, z)]))
+fn is_edge(in_lake: &[bool; 2048], x: i32, y: i32, z: i32) -> bool {
+    !in_lake[index(x, y, z)]
+        && ((x < 15 && in_lake[index(x + 1, y, z)])
+            || (x > 0 && in_lake[index(x - 1, y, z)])
+            || (z < 15 && in_lake[index(x, y, z + 1)])
+            || (z > 0 && in_lake[index(x, y, z - 1)])
+            || (y < 7 && in_lake[index(x, y + 1, z)])
+            || (y > 0 && in_lake[index(x, y - 1, z)]))
 }

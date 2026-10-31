@@ -13,10 +13,15 @@ use crate::region::Region;
 /// A fossil's configuration, with its templates loaded.
 #[derive(Debug, Clone)]
 pub struct Fossil {
+    /// The bone templates, one picked at random.
     fossils: Vec<Template>,
+    /// The ore templates, each placed over the fossil of the same index.
     overlays: Vec<Template>,
+    /// What the bones go through (in vanilla, rot and protected blocks).
     fossil_processors: Vec<Processor>,
+    /// What the ore goes through.
     overlay_processors: Vec<Processor>,
+    /// How many of the box's eight corners may be air, water or lava before it declines.
     max_empty_corners: i32,
 }
 
@@ -67,6 +72,9 @@ impl Fossil {
     }
 
     /// `FossilFeature.place`: whether it placed.
+    ///
+    /// The fossil is buried 15 to 24 blocks below the lowest ocean floor under its footprint, and
+    /// declines if too many corners of its box are open, so it's mostly in solid ground.
     pub fn place(
         &self,
         region: &mut Region<'_>,
@@ -78,39 +86,39 @@ impl Fossil {
         let index = random.next_int_bounded(self.fossils.len() as i32) as usize;
         let (fossil, overlay) = (&self.fossils[index], &self.overlays[index]);
         let size = fossil.rotated_size(rotation);
-        // -R / 2, truncating.
+        // Centred on the origin: the game's `-size / 2`, truncating towards zero.
         let corner = [
             origin[0].wrapping_add(size[0].wrapping_neg() / 2),
             origin[1],
             origin[2].wrapping_add(size[2].wrapping_neg() / 2),
         ];
-        let mut min_h = origin[1];
+        let mut lowest_floor = origin[1];
         for x in 0..size[0] {
             for z in 0..size[2] {
-                let h = region.height(
+                let floor = region.height(
                     Heightmap::OceanFloorWg,
                     corner[0].wrapping_add(x),
                     corner[2].wrapping_add(z),
                 );
-                min_h = min_h.min(h);
+                lowest_floor = lowest_floor.min(floor);
             }
         }
-        let y = (min_h - 15 - random.next_int_bounded(10)).max(region.min_y() + 10);
+        let y = (lowest_floor - 15 - random.next_int_bounded(10)).max(region.min_y() + 10);
         let zero = fossil.zero([corner[0], y, corner[2]], rotation);
         let (lo, hi) = fossil.bounding_box(zero, rotation);
-        let mut empty = 0;
+        let mut empty_corners = 0;
         for x in [lo[0], hi[0]] {
             for y in [lo[1], hi[1]] {
                 for z in [lo[2], hi[2]] {
-                    let s = region.get([x, y, z]);
-                    let id = blocks.palette().block_id(s);
-                    if blocks.is_air(s) || id == "minecraft:lava" || id == "minecraft:water" {
-                        empty += 1;
+                    let state = region.get([x, y, z]);
+                    let id = blocks.palette().block_id(state);
+                    if blocks.is_air(state) || id == "minecraft:lava" || id == "minecraft:water" {
+                        empty_corners += 1;
                     }
                 }
             }
         }
-        if empty > self.max_empty_corners {
+        if empty_corners > self.max_empty_corners {
             return false;
         }
         place_in_world(

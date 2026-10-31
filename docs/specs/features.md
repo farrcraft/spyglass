@@ -100,7 +100,7 @@ None draws from the random.
 
 `LakeFeature` with lava (`lake_lava`), the same in every version. Nothing, and no draws, if the origin's y is at most `min y + 4`. Otherwise the lake is a 16 × 16 × 8 box from `origin − (8, 4, 8)`:
 
-1. `nextInt(4) + 4` blobs of six `nextDouble`s each: radii `xr = r·6 + 3`, `yr = r·4 + 2`, `zr = r·6 + 3`, then centres `r·(16 − xr − 2) + 1 + xr/2`, `r·(8 − yr − 4) + 2 + yr/2`, and z as x, in `double`, left to right. Cells with x and z from 1 to 14 and y from 1 to 6 are in the lake where `((x − cx)/(xr/2))² + ((y − cy)/(yr/2))² + ((z − cz)/(zr/2))² < 1`.
+1. `nextInt(4) + 4` blobs of six `nextDouble`s each: sizes (diameters) `xr = r·6 + 3`, `yr = r·4 + 2`, `zr = r·6 + 3`, then centres `r·(16 − xr − 2) + 1 + xr/2`, `r·(8 − yr − 4) + 2 + yr/2`, and z as x, in `double`, left to right. Cells with x and z from 1 to 14 and y from 1 to 6 are in the lake where `((x − cx)/(xr/2))² + ((y − cy)/(yr/2))² + ((z − cz)/(zr/2))² < 1`.
 2. An **edge** is a cell outside the lake with a face neighbour in it. Before anything is written, every edge is checked, x, z, y in order: liquid at y ≥ 4 declines; at y < 4, a block that's neither solid nor the lake's fluid state declines; and `can_place_feature` must hold.
 3. Lake cells that `can_replace_with_air_or_fluid` allows become cave air at y ≥ 4 and the fluid below.
 4. If the barrier isn't air, each edge at y < 4, and each at y ≥ 4 for which `nextInt(2)` isn't 0 (drawn before the block is read), becomes the barrier if it's solid and `can_replace_with_barrier` holds.

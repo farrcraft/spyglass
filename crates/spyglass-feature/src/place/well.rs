@@ -38,6 +38,12 @@ impl DesertWell {
     }
 
     /// `DesertWellFeature.place` at the heightmap's position: whether it placed.
+    ///
+    /// The well sits on sand, where no column of its 5 × 5 footprint is hollow two deep: a
+    /// sandstone base three deep with a cross of water in its top and sand under that, a rim with
+    /// slabs at the middle of each side, four pillars, and a roof of slabs round a sandstone
+    /// centre. Two suspicious sand blocks are buried under the water, one a block down and one
+    /// two.
     pub fn place(
         &self,
         region: &mut Region<'_>,
@@ -69,13 +75,13 @@ impl DesertWell {
             }
         }
         region.set(pos, self.water);
-        for d in HORIZONTAL {
-            region.set(add(pos, d), self.water);
+        for step in HORIZONTAL {
+            region.set(add(pos, step), self.water);
         }
         let below = add(pos, [0, -1, 0]);
         region.set(below, self.sand);
-        for d in HORIZONTAL {
-            region.set(add(below, d), self.sand);
+        for step in HORIZONTAL {
+            region.set(add(below, step), self.sand);
         }
         for x in -2..=2 {
             for z in -2..=2 {
@@ -84,29 +90,29 @@ impl DesertWell {
                 }
             }
         }
-        for d in [[2, 1, 0], [-2, 1, 0], [0, 1, 2], [0, 1, -2]] {
-            region.set(add(pos, d), self.slab);
+        for step in [[2, 1, 0], [-2, 1, 0], [0, 1, 2], [0, 1, -2]] {
+            region.set(add(pos, step), self.slab);
         }
         for x in -1..=1 {
             for z in -1..=1 {
-                let s = if x == 0 && z == 0 {
+                let block = if x == 0 && z == 0 {
                     self.sandstone
                 } else {
                     self.slab
                 };
-                region.set(add(pos, [x, 4, z]), s);
+                region.set(add(pos, [x, 4, z]), block);
             }
         }
         for y in 1..=3 {
-            for d in [[-1, y, -1], [-1, y, 1], [1, y, -1], [1, y, 1]] {
-                region.set(add(pos, d), self.sandstone);
+            for step in [[-1, y, -1], [-1, y, 1], [1, y, -1], [1, y, 1]] {
+                region.set(add(pos, step), self.sandstone);
             }
         }
         // The centre, east, south, west, north; the loot seed is the position's.
         let cells = [[0, 0, 0], [1, 0, 0], [0, 0, 1], [-1, 0, 0], [0, 0, -1]];
         for depth in [1, 2] {
-            let c = cells[random.next_int_bounded(5) as usize];
-            region.set(add(pos, [c[0], -depth, c[2]]), self.suspicious_sand);
+            let cell = cells[random.next_int_bounded(5) as usize];
+            region.set(add(pos, [cell[0], -depth, cell[2]]), self.suspicious_sand);
         }
         true
     }
@@ -123,29 +129,30 @@ enum Child {
 
 impl Child {
     fn parse(json: &Value, at: &At<'_>) -> Result<Child, LoadError> {
-        let o = object(json, at)?;
-        let kind = field(o, "type", at)?
+        let fields = object(json, at)?;
+        let kind = field(fields, "type", at)?
             .as_str()
             .map(full_id)
             .unwrap_or_default();
         Ok(match kind.as_str() {
             "minecraft:offset" => {
-                let axis = |k: &'static str| IntProvider::parse(field(o, k, at)?, &at.child(k));
+                let axis =
+                    |k: &'static str| IntProvider::parse(field(fields, k, at)?, &at.child(k));
                 Child::Offset([axis("x")?, axis("y")?, axis("z")?])
             }
             "minecraft:randomly_selected" => {
-                let p_at = at.child("placements");
-                let Value::Array(items) = field(o, "placements", at)? else {
-                    return Err(p_at.error(LoadErrorKind::Shape("a list of modifiers")));
+                let placements_at = at.child("placements");
+                let Value::Array(items) = field(fields, "placements", at)? else {
+                    return Err(placements_at.error(LoadErrorKind::Shape("a list of modifiers")));
                 };
                 if items.is_empty() {
-                    return Err(p_at.error(LoadErrorKind::Invalid("no placements")));
+                    return Err(placements_at.error(LoadErrorKind::Invalid("no placements")));
                 }
                 Child::RandomlySelected(
                     items
                         .iter()
                         .enumerate()
-                        .map(|(i, m)| Child::parse(m, &p_at.child(&i.to_string())))
+                        .map(|(i, m)| Child::parse(m, &placements_at.child(&i.to_string())))
                         .collect::<Result<_, _>>()?,
                 )
             }
@@ -175,6 +182,7 @@ impl Child {
 /// A `template` feature: a weighted template, a random rotation, its processors.
 #[derive(Debug, Clone)]
 struct TemplateFeature {
+    /// Each template, its weight and the rotations it can take.
     entries: Vec<(Template, i32, Vec<Rotation>)>,
     processors: Vec<Processor>,
 }
@@ -186,16 +194,16 @@ impl TemplateFeature {
         resources: &dyn Resources,
         blocks: &mut Blocks,
     ) -> Result<TemplateFeature, LoadError> {
-        let t_at = at.child("templates");
+        let templates_at = at.child("templates");
         let Value::Array(items) = field(o, "templates", at)? else {
-            return Err(t_at.error(LoadErrorKind::Shape("a weighted list of templates")));
+            return Err(templates_at.error(LoadErrorKind::Shape("a weighted list of templates")));
         };
         let mut entries = Vec::new();
         for (i, item) in items.iter().enumerate() {
-            let at = t_at.child(&i.to_string());
-            let e = object(item, &at)?;
-            let weight = int(field(e, "weight", &at)?, &at.child("weight"))?;
-            let data = object(field(e, "data", &at)?, &at.child("data"))?;
+            let at = templates_at.child(&i.to_string());
+            let entry = object(item, &at)?;
+            let weight = int(field(entry, "weight", &at)?, &at.child("weight"))?;
+            let data = object(field(entry, "data", &at)?, &at.child("data"))?;
             let id = field(data, "id", &at.child("data"))?
                 .as_str()
                 .map(full_id)
@@ -212,7 +220,7 @@ impl TemplateFeature {
             entries.push((Template::load(resources, blocks, &id)?, weight, rotations));
         }
         if entries.is_empty() {
-            return Err(t_at.error(LoadErrorKind::Invalid("no templates")));
+            return Err(templates_at.error(LoadErrorKind::Invalid("no templates")));
         }
         let processors = match o.get("processors") {
             None => Vec::new(),
@@ -248,13 +256,13 @@ impl TemplateFeature {
         // each turned by the rotation.
         let west = rotation.transform([-1, 0, 0]);
         let north = rotation.transform([0, 0, -1]);
-        let (hx, hz) = (template.size[0] / 2, template.size[2] / 2);
+        let (half_x, half_z) = (template.size[0] / 2, template.size[2] / 2);
         let corner = add(
             origin,
             [
-                west[0] * hx + north[0] * hz,
+                west[0] * half_x + north[0] * half_z,
                 0,
-                west[2] * hx + north[2] * hz,
+                west[2] * half_x + north[2] * half_z,
             ],
         );
         place_in_world(region, template, corner, rotation, &self.processors, random)
@@ -276,15 +284,15 @@ impl Overlay {
         resources: &dyn Resources,
         blocks: &mut Blocks,
     ) -> Result<Overlay, LoadError> {
-        let f_at = at.child("features");
+        let features_at = at.child("features");
         let Value::Array(items) = field(o, "features", at)? else {
-            return Err(f_at.error(LoadErrorKind::Shape("a list of placed features")));
+            return Err(features_at.error(LoadErrorKind::Shape("a list of placed features")));
         };
         let mut children = Vec::new();
         for (i, item) in items.iter().enumerate() {
-            let at = f_at.child(&i.to_string());
-            let p = object(item, &at)?;
-            let modifiers = match p.get("placement") {
+            let at = features_at.child(&i.to_string());
+            let placed = object(item, &at)?;
+            let modifiers = match placed.get("placement") {
                 None => Vec::new(),
                 Some(Value::Array(ms)) => ms
                     .iter()
@@ -295,21 +303,21 @@ impl Overlay {
                     return Err(at.child("placement").error(LoadErrorKind::Shape("a list")));
                 }
             };
-            let f_at = at.child("feature");
-            let feature = object(field(p, "feature", &at)?, &f_at)?;
-            let kind = field(feature, "type", &f_at)?
+            let feature_at = at.child("feature");
+            let feature = object(field(placed, "feature", &at)?, &feature_at)?;
+            let kind = field(feature, "type", &feature_at)?
                 .as_str()
                 .map(full_id)
                 .unwrap_or_default();
             if kind != "minecraft:template" {
-                return Err(f_at.error(LoadErrorKind::Unsupported {
+                return Err(feature_at.error(LoadErrorKind::Unsupported {
                     what: "feature in an overlay",
                     name: kind,
                 }));
             }
             children.push((
                 modifiers,
-                TemplateFeature::load(feature, &f_at, resources, blocks)?,
+                TemplateFeature::load(feature, &feature_at, resources, blocks)?,
             ));
         }
         Ok(Overlay { children })
@@ -325,8 +333,8 @@ impl Overlay {
         let mut any = false;
         for (modifiers, feature) in &self.children {
             let mut pos = origin;
-            for m in modifiers {
-                pos = m.apply(random, pos);
+            for modifier in modifiers {
+                pos = modifier.apply(random, pos);
             }
             any |= feature.place(region, random, pos);
         }

@@ -22,23 +22,37 @@ pub struct LargeDripstone {
     base: State,
     /// The base block's id, which `isBase` tests by block.
     base_id: String,
+    /// What the ceiling and floor may be, with the base block and lava.
     replaceable: Tag,
+    /// What stops a column once it's placed a block (`base_stone_overworld`).
     base_stone: Tag,
+    /// How far up and down the origin looks for the ceiling and floor.
     floor_to_ceiling_search_range: i32,
+    /// Each column's radius, before the cave's height limits it.
     column_radius: IntProvider,
+    /// How tall a column is for its radius: larger is taller.
     height_scale: FloatProvider,
+    /// The largest radius as a share of the cave's height.
     max_column_radius_to_cave_height_ratio: f32,
+    /// How flat the stalactite's tip is: larger is blunter.
     stalactite_bluntness: FloatProvider,
+    /// How flat the stalagmite's tip is: larger is blunter.
     stalagmite_bluntness: FloatProvider,
+    /// How far the wind leans the pair per block from the origin's y.
     wind_speed: FloatProvider,
+    /// The least radius, of both, for the wind to blow.
     min_radius_for_wind: i32,
+    /// The least bluntness, of both, for the wind to blow.
     min_bluntness_for_wind: f32,
+    /// Which `Mth.sin` and `Mth.cos` the version uses.
     trig: Trig,
 }
 
 /// One of the pair (`LargeDripstoneFeature.LargeDripstone`).
 struct Speleothem {
+    /// Where its base is, on the ceiling or floor.
     root: [i32; 3],
+    /// A stalagmite, growing up from the floor; else a stalactite, hanging down.
     pointing_up: bool,
     radius: i32,
     bluntness: f64,
@@ -50,21 +64,22 @@ struct Wind {
     origin_y: i32,
     /// `windSpeed`'s x and z, or `None` for `noWind()`.
     speed: Option<(f64, f64)>,
+    /// The furthest it pushes a block, on each of x and z.
     max_offset: i32,
 }
 
 impl Wind {
     /// `WindOffsetter.offset`.
     fn offset(&self, pos @ [x, y, z]: [i32; 3]) -> [i32; 3] {
-        let Some((sx, sz)) = self.speed else {
+        let Some((speed_x, speed_z)) = self.speed else {
             return pos;
         };
-        let d = f64::from(self.origin_y.wrapping_sub(y));
+        let below_origin = f64::from(self.origin_y.wrapping_sub(y));
         let clamp = |v: f64| floor(v).max(-self.max_offset).min(self.max_offset);
         [
-            x.wrapping_add(clamp(sx * d)),
+            x.wrapping_add(clamp(speed_x * below_origin)),
             y,
-            z.wrapping_add(clamp(sz * d)),
+            z.wrapping_add(clamp(speed_z * below_origin)),
         ]
     }
 }
@@ -110,21 +125,21 @@ impl LargeDripstone {
         // `baseBlock.getBlock()`: the state's block is what counts, placed in its default state.
         let base_id = match o.get("base_block") {
             Some(json) => {
-                let s = blocks.parse_state(json, &at.child("base_block"))?;
-                blocks.palette().block_id(s).to_string()
+                let state = blocks.parse_state(json, &at.child("base_block"))?;
+                blocks.palette().block_id(state).to_string()
             }
             None => "minecraft:dripstone_block".to_string(),
         };
         let base = blocks.state(&base_id)?;
         let replaceable = {
-            let s = field(o, "replaceable_blocks", at)?
+            let tag = field(o, "replaceable_blocks", at)?
                 .as_str()
                 .and_then(|s| s.strip_prefix('#'))
                 .ok_or_else(|| {
                     at.child("replaceable_blocks")
                         .error(LoadErrorKind::Shape("a #tag"))
                 })?;
-            blocks.tag(resources, &full_id(s))?
+            blocks.tag(resources, &full_id(tag))?
         };
         let int_provider =
             |key: &'static str| IntProvider::parse(field(o, key, at)?, &at.child(key));
@@ -165,6 +180,12 @@ impl LargeDripstone {
     }
 
     /// `LargeDripstoneFeature.place`: whether it placed.
+    ///
+    /// From an origin in an open cave, it finds the ceiling above and the floor below, and grows
+    /// a stalactite down from one and a stalagmite up from the other, both of one radius (a
+    /// share of the cave's height at most). Each is a cone of columns, tallest at its centre (see
+    /// `speleothem_height`). Where both are wide and blunt enough, a wind leans both the same
+    /// way, more the further a block is from the origin's y.
     pub fn place(
         &self,
         region: &mut Region<'_>,
@@ -256,116 +277,125 @@ impl LargeDripstone {
             pos[1] = pos[1].wrapping_add(dy);
             i += 1;
         }
-        let s = region.get(pos);
+        let state = region.get(pos);
         let blocks = region.blocks();
-        let id = blocks.palette().block_id(s);
+        let id = blocks.palette().block_id(state);
         // SpeleothemUtils.isBaseOrLava.
-        (id == self.base_id || blocks.is(s, self.replaceable) || id == "minecraft:lava")
+        (id == self.base_id || blocks.is(state, self.replaceable) || id == "minecraft:lava")
             .then_some(pos[1])
     }
 
     /// `SpeleothemUtils.isEmptyOrWater`.
     fn empty_or_water(&self, region: &mut Region<'_>, pos: [i32; 3]) -> bool {
-        let s = region.get(pos);
+        let state = region.get(pos);
         let blocks = region.blocks();
-        blocks.is_air(s) || blocks.palette().block_id(s) == "minecraft:water"
+        blocks.is_air(state) || blocks.palette().block_id(state) == "minecraft:water"
     }
 
     /// `SpeleothemUtils.isEmptyOrWaterOrLava`.
     fn empty_or_fluid(&self, region: &mut Region<'_>, pos: [i32; 3]) -> bool {
-        let s = region.get(pos);
+        let state = region.get(pos);
         let blocks = region.blocks();
-        blocks.is_air(s) || {
-            let id = blocks.palette().block_id(s);
+        blocks.is_air(state) || {
+            let id = blocks.palette().block_id(state);
             id == "minecraft:water" || id == "minecraft:lava"
         }
     }
 
-    /// `SpeleothemUtils.isCircleMostlyEmbeddedInStone`.
+    /// `SpeleothemUtils.isCircleMostlyEmbeddedInStone`: the block and points around a circle of
+    /// `radius` all solid, so a base there is held in stone.
     fn embedded(&self, region: &mut Region<'_>, [x, y, z]: [i32; 3], radius: i32) -> bool {
         if self.empty_or_fluid(region, [x, y, z]) {
             return false;
         }
+        // Points about 6 blocks apart around the circle (the step is in radians), so about one
+        // per block of radius: a sparse test, hence "mostly".
         let step = 6.0_f32 / radius as f32;
-        let mut f = 0.0_f32;
-        while f < 6.283_185_5_f32 {
-            let dx = (self.trig.cos(f64::from(f)) * radius as f32) as i32;
-            let dz = (self.trig.sin(f64::from(f)) * radius as f32) as i32;
+        let mut angle = 0.0_f32;
+        while angle < 6.283_185_5_f32 {
+            let dx = (self.trig.cos(f64::from(angle)) * radius as f32) as i32;
+            let dz = (self.trig.sin(f64::from(angle)) * radius as f32) as i32;
             if self.empty_or_fluid(region, [x.wrapping_add(dx), y, z.wrapping_add(dz)]) {
                 return false;
             }
-            f += step;
+            angle += step;
         }
         true
     }
 
     /// `moveBackUntilBaseIsInsideStoneAndShrinkRadiusIfNecessary`: whether it found a root.
-    fn move_back(&self, region: &mut Region<'_>, s: &mut Speleothem, wind: &Wind) -> bool {
-        while s.radius > 1 {
-            let mut pos = s.root;
-            let n = s.height().min(10);
-            for _ in 0..n {
+    ///
+    /// The root steps back into the ceiling or floor, up to 10 blocks, until its circle is in
+    /// stone; failing that, the radius halves and it tries again from where it started.
+    fn move_back(&self, region: &mut Region<'_>, speleothem: &mut Speleothem, wind: &Wind) -> bool {
+        while speleothem.radius > 1 {
+            let mut pos = speleothem.root;
+            let tries = speleothem.height().min(10);
+            for _ in 0..tries {
                 let state = region.get(pos);
                 if region.blocks().palette().block_id(state) == "minecraft:lava" {
                     return false;
                 }
-                if self.embedded(region, wind.offset(pos), s.radius) {
-                    s.root = pos;
+                if self.embedded(region, wind.offset(pos), speleothem.radius) {
+                    speleothem.root = pos;
                     return true;
                 }
-                pos[1] = pos[1].wrapping_add(if s.pointing_up { -1 } else { 1 });
+                pos[1] = pos[1].wrapping_add(if speleothem.pointing_up { -1 } else { 1 });
             }
-            s.radius /= 2;
+            speleothem.radius /= 2;
         }
         false
     }
 
-    /// `LargeDripstone.placeBlocks`.
+    /// `LargeDripstone.placeBlocks`: a column at each block within the radius, as tall as
+    /// [`Speleothem::height_at`] its distance from the centre, a fifth of them cut a little
+    /// short. A column fills only air and fluid, and stops at base stone once it's started.
     fn place_blocks(
         &self,
         region: &mut Region<'_>,
         random: &mut WorldgenRandom,
-        s: &Speleothem,
+        speleothem: &Speleothem,
         wind: &Wind,
     ) {
-        let r = s.radius;
-        let step = if s.pointing_up { 1 } else { -1 };
-        for dx in -r..=r {
-            for dz in -r..=r {
+        let radius = speleothem.radius;
+        let step = if speleothem.pointing_up { 1 } else { -1 };
+        for dx in -radius..=radius {
+            for dz in -radius..=radius {
                 // Mth.sqrt(float).
-                let d = f64::from((dx * dx + dz * dz) as f32).sqrt() as f32;
-                if d > r as f32 {
+                let from_centre = f64::from((dx * dx + dz * dz) as f32).sqrt() as f32;
+                if from_centre > radius as f32 {
                     continue;
                 }
-                let mut h = s.height_at(d);
-                if h <= 0 {
+                let mut height = speleothem.height_at(from_centre);
+                if height <= 0 {
                     continue;
                 }
                 if f64::from(random.next_float()) < 0.2 {
                     // Mth.randomBetween(random, 0.8, 1).
-                    h = (h as f32 * (random.next_float() * (1.0_f32 - 0.8_f32) + 0.8_f32)) as i32;
+                    height = (height as f32 * (random.next_float() * (1.0_f32 - 0.8_f32) + 0.8_f32))
+                        as i32;
                 }
                 let mut pos = [
-                    s.root[0].wrapping_add(dx),
-                    s.root[1],
-                    s.root[2].wrapping_add(dz),
+                    speleothem.root[0].wrapping_add(dx),
+                    speleothem.root[1],
+                    speleothem.root[2].wrapping_add(dz),
                 ];
                 let mut placed = false;
-                let max_y = if s.pointing_up {
+                let max_y = if speleothem.pointing_up {
                     region.height(Heightmap::WorldSurfaceWg, pos[0], pos[2])
                 } else {
                     i32::MAX
                 };
-                for _ in 0..h {
+                for _ in 0..height {
                     if pos[1] >= max_y {
                         break;
                     }
-                    let p = wind.offset(pos);
-                    if self.empty_or_fluid(region, p) {
+                    let blown = wind.offset(pos);
+                    if self.empty_or_fluid(region, blown) {
                         placed = true;
-                        region.set(p, self.base);
+                        region.set(blown, self.base);
                     } else if placed {
-                        let state = region.get(p);
+                        let state = region.get(blown);
                         if region.blocks().is(state, self.base_stone) {
                             break;
                         }
@@ -383,10 +413,10 @@ impl Speleothem {
         self.height_at(0.0)
     }
 
-    /// `getHeightAtRadius`.
-    fn height_at(&self, d: f32) -> i32 {
+    /// `getHeightAtRadius`: the column's height at `from_centre` blocks from the centre.
+    fn height_at(&self, from_centre: f32) -> i32 {
         speleothem_height(
-            f64::from(d),
+            f64::from(from_centre),
             f64::from(self.radius),
             self.scale,
             self.bluntness,
@@ -399,7 +429,12 @@ impl Speleothem {
     }
 }
 
-/// `SpeleothemUtils.getSpeleothemHeight`.
+/// `SpeleothemUtils.getSpeleothemHeight`: a column's height by its distance from the centre.
+///
+/// The curve, in `x = distance / radius · 0.384`, is `¾x^(4/3) − x^(2/3) − ⅓ ln x`: large near
+/// the centre, where `ln x` goes to minus infinity, and falling to 0 at the radius, so the
+/// columns make a point. Distances within `bluntness` are taken as `bluntness`, which cuts the
+/// point off flat.
 fn speleothem_height(from_center: f64, radius: f64, scale: f64, bluntness: f64) -> f64 {
     let from_center = if from_center < bluntness {
         bluntness

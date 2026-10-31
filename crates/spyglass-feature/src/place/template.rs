@@ -90,7 +90,7 @@ impl Template {
     ) -> Result<Template, LoadError> {
         let at = At::root(id);
         let bytes = match resources.structure_template(id) {
-            Ok(b) => b,
+            Ok(bytes) => bytes,
             Err(BundleError::NotFound(_)) => {
                 return Ok(Template {
                     size: [0; 3],
@@ -125,10 +125,10 @@ impl Template {
                 )?);
             }
             let mut blocks_of = Vec::new();
-            for (i, b) in list.iter().enumerate() {
+            for (i, block) in list.iter().enumerate() {
                 let at = at.child("blocks").child(&i.to_string());
-                let pos = int3(b.get("pos"), &at.child("pos"))?;
-                let state = b.get("state").and_then(Tag::as_int).unwrap_or(0);
+                let pos = int3(block.get("pos"), &at.child("pos"))?;
+                let state = block.get("state").and_then(Tag::as_int).unwrap_or(0);
                 let states = usize::try_from(state)
                     .ok()
                     .and_then(|s| states.get(s))
@@ -139,7 +139,7 @@ impl Template {
                 blocks_of.push(TemplateBlock {
                     pos,
                     states: *states,
-                    nbt: b.get("nbt").is_some(),
+                    nbt: block.get("nbt").is_some(),
                 });
             }
             blocks_of.sort_by_key(|b| (b.nbt, b.pos[1], b.pos[0], b.pos[2]));
@@ -160,26 +160,28 @@ impl Template {
         }
     }
 
-    /// `getZeroPositionWithTransform(corner, NONE, rotation)`.
+    /// `getZeroPositionWithTransform(corner, NONE, rotation)`: where the template's own origin
+    /// goes for its rotated box's least corner to be at `corner`.
     pub fn zero(&self, [cx, cy, cz]: [i32; 3], rotation: Rotation) -> [i32; 3] {
-        let (sx, sz) = (self.size[0] - 1, self.size[2] - 1);
+        // The template's last x and z, which a turn moves to the negative side.
+        let (last_x, last_z) = (self.size[0] - 1, self.size[2] - 1);
         match rotation {
             Rotation::None => [cx, cy, cz],
-            Rotation::Clockwise90 => [cx.wrapping_add(sz), cy, cz],
-            Rotation::Clockwise180 => [cx.wrapping_add(sx), cy, cz.wrapping_add(sz)],
-            Rotation::Counterclockwise90 => [cx, cy, cz.wrapping_add(sx)],
+            Rotation::Clockwise90 => [cx.wrapping_add(last_z), cy, cz],
+            Rotation::Clockwise180 => [cx.wrapping_add(last_x), cy, cz.wrapping_add(last_z)],
+            Rotation::Counterclockwise90 => [cx, cy, cz.wrapping_add(last_x)],
         }
     }
 
     /// `getBoundingBox(settings, zero)`: the min and max corners of the rotated box at `zero`.
     pub fn bounding_box(&self, zero: [i32; 3], rotation: Rotation) -> ([i32; 3], [i32; 3]) {
-        let a = rotation.transform([0; 3]);
-        let b = rotation.transform(self.size.map(|s| s - 1));
+        let first = rotation.transform([0; 3]);
+        let last = rotation.transform(self.size.map(|s| s - 1));
         let mut min = [0; 3];
         let mut max = [0; 3];
         for i in 0..3 {
-            min[i] = a[i].min(b[i]).wrapping_add(zero[i]);
-            max[i] = a[i].max(b[i]).wrapping_add(zero[i]);
+            min[i] = first[i].min(last[i]).wrapping_add(zero[i]);
+            max[i] = first[i].max(last[i]).wrapping_add(zero[i]);
         }
         (min, max)
     }
@@ -194,12 +196,12 @@ fn rotated_states(blocks: &mut Blocks, entry: &Tag, at: &At<'_>) -> Result<[Stat
         .map(full_id)
         .ok_or_else(|| at.error(LoadErrorKind::Missing("id")))?;
     let mut properties = Map::new();
-    if let Some(c) = entry
+    if let Some(compound) = entry
         .get("properties")
         .or_else(|| entry.get("Properties"))
         .and_then(Tag::as_compound)
     {
-        for (k, v) in c {
+        for (k, v) in compound {
             let v = v
                 .as_str()
                 .ok_or_else(|| at.child(k).error(LoadErrorKind::Shape("a property value")))?;
@@ -213,7 +215,7 @@ fn rotated_states(blocks: &mut Blocks, entry: &Tag, at: &At<'_>) -> Result<[Stat
         }));
     }
     let mut out = [0; 4];
-    for (r, rotation) in Rotation::ALL.iter().enumerate() {
+    for (index, rotation) in Rotation::ALL.iter().enumerate() {
         let mut props = properties.clone();
         if let Some(Value::String(axis)) = props.get("axis") {
             let quarter = matches!(
@@ -229,18 +231,19 @@ fn rotated_states(blocks: &mut Blocks, entry: &Tag, at: &At<'_>) -> Result<[Stat
             props.insert("axis".into(), Value::from(axis));
         }
         if let Some(Value::String(facing)) = props.get("facing") {
-            const H: [&str; 4] = ["north", "east", "south", "west"];
-            if let Some(i) = H.iter().position(|h| h == facing) {
+            const HORIZONTAL: [&str; 4] = ["north", "east", "south", "west"];
+            if let Some(i) = HORIZONTAL.iter().position(|h| h == facing) {
                 let turn = match rotation {
                     Rotation::None => 0,
                     Rotation::Clockwise90 => 1,
                     Rotation::Clockwise180 => 2,
                     Rotation::Counterclockwise90 => 3,
                 };
-                props.insert("facing".into(), Value::from(H[(i + turn) % 4]));
+                props.insert("facing".into(), Value::from(HORIZONTAL[(i + turn) % 4]));
             }
         }
-        out[r] = blocks.parse_state(&serde_json::json!({"Name": id, "Properties": props}), at)?;
+        out[index] =
+            blocks.parse_state(&serde_json::json!({"Name": id, "Properties": props}), at)?;
     }
     Ok(out)
 }
@@ -319,17 +322,17 @@ impl Processor {
                 Processor::Protected(blocks.tag(resources, &full_id(tag))?)
             }
             "minecraft:rule" => {
-                let r_at = at.child("rules");
+                let rules_at = at.child("rules");
                 let Value::Array(rules) = field(o, "rules", at)? else {
-                    return Err(r_at.error(LoadErrorKind::Shape("a list of rules")));
+                    return Err(rules_at.error(LoadErrorKind::Shape("a list of rules")));
                 };
                 let mut out = Vec::new();
                 for (i, rule) in rules.iter().enumerate() {
-                    let at = r_at.child(&i.to_string());
-                    let r = object(rule, &at)?;
+                    let at = rules_at.child(&i.to_string());
+                    let rule = object(rule, &at)?;
                     let kind_of = |key: &'static str| -> Result<String, LoadError> {
-                        let p = object(field(r, key, &at)?, &at.child(key))?;
-                        Ok(field(p, "predicate_type", &at.child(key))?
+                        let predicate = object(field(rule, key, &at)?, &at.child(key))?;
+                        Ok(field(predicate, "predicate_type", &at.child(key))?
                             .as_str()
                             .map(full_id)
                             .unwrap_or_default())
@@ -337,7 +340,7 @@ impl Processor {
                     let always = |k: &str| k == "minecraft:always_true";
                     if kind_of("input_predicate")? != "minecraft:block_match"
                         || !always(&kind_of("location_predicate")?)
-                        || (r.contains_key("position_predicate")
+                        || (rule.contains_key("position_predicate")
                             && !always(&kind_of("position_predicate")?))
                     {
                         return Err(at.error(LoadErrorKind::Unsupported {
@@ -346,15 +349,17 @@ impl Processor {
                         }));
                     }
                     let input = object(
-                        field(r, "input_predicate", &at)?,
+                        field(rule, "input_predicate", &at)?,
                         &at.child("input_predicate"),
                     )?;
                     let block = field(input, "block", &at.child("input_predicate"))?
                         .as_str()
                         .map(full_id)
                         .unwrap_or_default();
-                    let output = blocks
-                        .parse_state(field(r, "output_state", &at)?, &at.child("output_state"))?;
+                    let output = blocks.parse_state(
+                        field(rule, "output_state", &at)?,
+                        &at.child("output_state"),
+                    )?;
                     out.push((block, output));
                 }
                 Processor::Rule(out)
@@ -388,39 +393,43 @@ pub fn place_in_world(
     }
     let palette =
         &template.palettes[random.next_int_bounded(template.palettes.len() as i32) as usize];
-    let r = Rotation::ALL
+    let rotation_index = Rotation::ALL
         .iter()
         .position(|&x| x == rotation)
         .unwrap_or(0);
     let blocks = region.blocks();
     let mut placed: Vec<([i32; 3], State)> = Vec::with_capacity(palette.len());
-    for b in palette {
-        let t = rotation.transform(b.pos);
-        let wp = [
-            zero[0].wrapping_add(t[0]),
-            zero[1].wrapping_add(t[1]),
-            zero[2].wrapping_add(t[2]),
+    for block in palette {
+        let offset = rotation.transform(block.pos);
+        let world_pos = [
+            zero[0].wrapping_add(offset[0]),
+            zero[1].wrapping_add(offset[1]),
+            zero[2].wrapping_add(offset[2]),
         ];
         // Processors test the unrotated state; the rotated one is written.
-        let mut state = Some(b.states[r]);
-        for p in processors {
-            let Some(s) = state else { break };
-            state = match p {
-                Processor::BlockRot(integrity) => (random.next_float() <= *integrity).then_some(s),
-                Processor::Protected(tag) => (!blocks.is(region.get(wp), *tag)).then_some(s),
+        let mut state = Some(block.states[rotation_index]);
+        for processor in processors {
+            let Some(kept) = state else { break };
+            state = match processor {
+                Processor::BlockRot(integrity) => {
+                    (random.next_float() <= *integrity).then_some(kept)
+                }
+                Processor::Protected(tag) => {
+                    (!blocks.is(region.get(world_pos), *tag)).then_some(kept)
+                }
                 Processor::Rule(rules) => {
-                    let id = blocks.palette().block_id(b.states[0]);
+                    let id = blocks.palette().block_id(block.states[0]);
                     Some(
                         rules
                             .iter()
                             .find(|(input, _)| input == id)
-                            .map_or(s, |(_, out)| *out),
+                            .map_or(kept, |(_, out)| *out),
                     )
                 }
             };
         }
-        if let Some(s) = state {
-            placed.push((wp, s));
+        if let Some(state) = state {
+            placed.push((world_pos, state));
         }
     }
     if placed.is_empty() {
@@ -429,31 +438,31 @@ pub fn place_in_world(
     // Waterlogging (`APPLY_WATERLOGGING`) isn't ported: a block that can hold water, placed
     // where water was or beside a source the template didn't place, is in doubt.
     let mut waterlog = false;
-    for &(p, s) in &placed {
-        if blocks.waterloggable(s) && blocks.behaviour(region.get(p)).fluid.is_some() {
+    for &(pos, state) in &placed {
+        if blocks.waterloggable(state) && blocks.behaviour(region.get(pos)).fluid.is_some() {
             waterlog = true;
         }
     }
-    for &(p, s) in &placed {
-        region.set(p, s);
+    for &(pos, state) in &placed {
+        region.set(pos, state);
     }
     let sources: HashSet<[i32; 3]> = placed
         .iter()
-        .filter(|(_, s)| blocks.behaviour(*s).fluid.is_some_and(|f| f.source))
-        .map(|(p, _)| *p)
+        .filter(|(_, state)| blocks.behaviour(*state).fluid.is_some_and(|f| f.source))
+        .map(|(pos, _)| *pos)
         .collect();
-    for &(p, s) in &placed {
-        if !blocks.waterloggable(s) {
+    for &(pos, state) in &placed {
+        if !blocks.waterloggable(state) {
             continue;
         }
-        for d in [[0, 1, 0], [0, 0, -1], [1, 0, 0], [0, 0, 1], [-1, 0, 0]] {
-            let q = [
-                p[0].wrapping_add(d[0]),
-                p[1].wrapping_add(d[1]),
-                p[2].wrapping_add(d[2]),
+        for step in [[0, 1, 0], [0, 0, -1], [1, 0, 0], [0, 0, 1], [-1, 0, 0]] {
+            let neighbour = [
+                pos[0].wrapping_add(step[0]),
+                pos[1].wrapping_add(step[1]),
+                pos[2].wrapping_add(step[2]),
             ];
-            let fluid = blocks.behaviour(region.get(q)).fluid;
-            if fluid.is_some_and(|f| f.source) && !sources.contains(&q) {
+            let fluid = blocks.behaviour(region.get(neighbour)).fluid;
+            if fluid.is_some_and(|f| f.source) && !sources.contains(&neighbour) {
                 waterlog = true;
             }
         }
@@ -462,9 +471,9 @@ pub fn place_in_world(
         region.doubt(Doubt::Waterlogging);
     }
     // updateShapeAtEdge: each placed block's neighbours outside the template are told.
-    let set: HashSet<[i32; 3]> = placed.iter().map(|(p, _)| *p).collect();
-    for &(p, _) in &placed {
-        for d in [
+    let in_template: HashSet<[i32; 3]> = placed.iter().map(|(pos, _)| *pos).collect();
+    for &(pos, _) in &placed {
+        for step in [
             [0, -1, 0],
             [0, 1, 0],
             [0, 0, -1],
@@ -472,17 +481,17 @@ pub fn place_in_world(
             [-1, 0, 0],
             [1, 0, 0],
         ] {
-            let q = [
-                p[0].wrapping_add(d[0]),
-                p[1].wrapping_add(d[1]),
-                p[2].wrapping_add(d[2]),
+            let neighbour = [
+                pos[0].wrapping_add(step[0]),
+                pos[1].wrapping_add(step[1]),
+                pos[2].wrapping_add(step[2]),
             ];
-            if set.contains(&q) || region.outside_build_height(q[1]) {
+            if in_template.contains(&neighbour) || region.outside_build_height(neighbour[1]) {
                 continue;
             }
-            let b = blocks.behaviour(region.get(q));
+            let behaviour = blocks.behaviour(region.get(neighbour));
             // A fluid's update only schedules a tick.
-            if b.updates_shape && !b.liquid {
+            if behaviour.updates_shape && !behaviour.liquid {
                 region.doubt(Doubt::ShapeUpdate);
             }
         }

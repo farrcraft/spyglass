@@ -6,6 +6,12 @@ Changes go under **Unreleased** as they're made. `cargo xtask release` turns tha
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-01
+
+### Game versions
+
+Checked against the game for 26.2, 26.3, 26.4-snapshot-5, 26.4-snapshot-6.
+
 ### Added
 
 - **Features:** dungeons, amethyst geodes, desert wells, fossils and lava lakes, placed as the game decorates a chunk and checked against the game in every supported version. `spyglass locate feature minecraft:monster_room` finds the nearest, `spyglass features` lists them in a region, with `--json`; `World::feature_query`, `Session::features_in` and `Session::nearest_feature` in the library. Maps mark them up close (1 or 2 blocks per pixel): `spyglass render --features minecraft:monster_room`, `Layers::features`, a **Features** section in the viewer's Layers tab, with a diamond per feature, filled when certain, and **Nearest feature** in the map's menu. Features can be marked done ([render.md](docs/specs/render.md#layers)). Each answer is certain or a candidate with its reason, and says whether neighbouring chunks decorated first could change it ([locate.md](docs/specs/locate.md#features), [ADR 0056](docs/adr/0056-two-certainties-on-its-own-and-whatever-the-neighbours.md)).
@@ -70,5 +76,6 @@ The first release.
 - A warning for a game version this build wasn't checked against. Its answers may differ from the game's ([bundle-format.md](docs/specs/bundle-format.md#checked-versions)).
 - `--version` names the build and the game versions it was checked against.
 
-[Unreleased]: https://github.com/farrcraft/spyglass/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/farrcraft/spyglass/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/farrcraft/spyglass/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/farrcraft/spyglass/releases/tag/v0.1.0

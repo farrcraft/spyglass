@@ -3617,7 +3617,7 @@ dependencies = [
 
 [[package]]
 name = "spyglass"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "png 0.18.1",
  "serde_json",
@@ -3636,7 +3636,7 @@ dependencies = [
 
 [[package]]
 name = "spyglass-biome"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde_json",
  "spyglass-data",
@@ -3648,7 +3648,7 @@ dependencies = [
 
 [[package]]
 name = "spyglass-blocks"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "rayon",
  "serde_json",
@@ -3664,7 +3664,7 @@ dependencies = [
 
 [[package]]
 name = "spyglass-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -3679,7 +3679,7 @@ dependencies = [
 
 [[package]]
 name = "spyglass-data"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "directories",
  "flate2",
@@ -3693,7 +3693,7 @@ dependencies = [
 
 [[package]]
 name = "spyglass-density"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde_json",
  "spyglass-data",
@@ -3705,7 +3705,7 @@ dependencies = [
 
 [[package]]
 name = "spyglass-extract"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -3721,7 +3721,7 @@ dependencies = [
 
 [[package]]
 name = "spyglass-feature"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "rayon",
  "serde_json",
@@ -3738,7 +3738,7 @@ dependencies = [
 
 [[package]]
 name = "spyglass-noise"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde_json",
  "spyglass-oracle",
@@ -3748,7 +3748,7 @@ dependencies = [
 
 [[package]]
 name = "spyglass-oracle"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3759,7 +3759,7 @@ dependencies = [
 
 [[package]]
 name = "spyglass-rng"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "md-5",
  "spyglass-oracle",
@@ -3767,7 +3767,7 @@ dependencies = [
 
 [[package]]
 name = "spyglass-search"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "rayon",
  "spyglass-data",
@@ -3777,7 +3777,7 @@ dependencies = [
 
 [[package]]
 name = "spyglass-structure"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "rayon",
  "serde_json",
@@ -3792,7 +3792,7 @@ dependencies = [
 
 [[package]]
 name = "spyglass-terrain"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "rayon",
  "serde_json",
@@ -3805,7 +3805,7 @@ dependencies = [
 
 [[package]]
 name = "spyglass-viewer"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "eframe",
  "egui_extras",
@@ -3820,7 +3820,7 @@ dependencies = [
 
 [[package]]
 name = "spyglass-world"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "directories",
  "flate2",
@@ -5146,7 +5146,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "xtask"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",

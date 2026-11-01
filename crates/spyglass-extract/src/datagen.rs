@@ -112,14 +112,16 @@ pub fn run_block_report(
 
 /// A command running `java`.
 fn java_command(java: &Path) -> Command {
-    let mut command = Command::new(java);
+    let command = Command::new(java);
     #[cfg(windows)]
-    {
+    let command = {
         // No console window of its own: the viewer has none for it to share (ADR 0042).
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let mut command = command;
         command.creation_flags(CREATE_NO_WINDOW);
-    }
+        command
+    };
     command
 }
 

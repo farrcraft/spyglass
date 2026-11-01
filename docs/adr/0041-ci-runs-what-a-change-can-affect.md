@@ -3,6 +3,7 @@
 - Status: Accepted
 - Date: 2026-10-28
 - Amends: point 4 of [0028](0028-supported-versions-and-ci.md), what runs on a pull request and how a version's job is split
+- See also: [0058](0058-oracle-ci-planned-by-cost.md), which amends point 3
 
 ## Context
 

@@ -62,7 +62,9 @@ The Rust tests that compare spyglass with these files are `#[ignore]`d, since th
 3. runs `oracle test-pack` if [the test pack](#the-test-pack) loads in the version;
 4. runs `oracle-test` for `<id>`, then for `<id>+testpack` if step 3 ran.
 
-Unlike a plain `oracle-test`, a comparison that can't run because an input the job just made is missing is an error, not a skip, and so is a version with no comparison at all. A skip would hide a broken step. The tests pinned to another version are still left out. The workflow, `.github/workflows/ci.yml`, calls only this command and `cargo xtask check`.
+CI divides a version's work between jobs with `--units`, a comma-separated list of what to make: `probe`, `biomes`, `structures`, `spawn`, `locate`, `bundle`, or `heights`, `blocks` or `features` for one seed (`features:56`). `bundle` stands for the tests that read only the bundle, and the test pack. A job runs the comparisons whose oracle inputs it made all of; one that reads a per-seed output compares the seeds the job made. A bundle-only test runs in the job with `bundle`. Without `--units`, the job does everything. `cargo xtask ci-plan` picks each job's units from estimated minutes per unit, so each job fits its hour, and prints them as the workflow's matrix ([ADR 0058](../adr/0058-oracle-ci-planned-by-cost.md)). Each unit's actual time is printed as a `ci: ... took` line, to compare with the estimates.
+
+Unlike a plain `oracle-test`, a comparison that can't run because an input the job just made is missing is an error, not a skip, and so is a version with no comparison at all. A skip would hide a broken step. The tests pinned to another version are still left out. The workflow, `.github/workflows/ci.yml`, calls only this command, `cargo xtask ci-plan`, `cargo xtask ci-scope` and `cargo xtask check`.
 
 ### What the harness does
 

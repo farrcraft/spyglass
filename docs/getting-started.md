@@ -146,6 +146,7 @@ Project-level commands live in the `xtask` crate and run as `cargo xtask <comman
 | `cargo xtask bench`         | Times the public API's main operations (`dist` build).                                                                    |
 | `cargo xtask check`         | Every check in the pre-commit config, on all files.                                                                       |
 | `cargo xtask ci`            | One game version's CI job, from extraction to comparison.                                                                 |
+| `cargo xtask ci-plan`       | CI's oracle jobs, planned from estimated costs ([ADR 0058](adr/0058-oracle-ci-planned-by-cost.md)).                       |
 | `cargo xtask ci-scope`      | Which CI jobs a pull request needs, from the files it changes ([ADR 0041](adr/0041-ci-runs-what-a-change-can-affect.md)). |
 | `cargo xtask dist`          | Builds one target's release archive into `target/archives/` ([ADR 0038](adr/0038-how-release-archives-are-built.md)).     |
 | `cargo xtask doctor`        | Reports whether this machine is ready.                                                                                    |

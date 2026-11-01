@@ -46,6 +46,7 @@ const ORACLE_FILES: &[&str] = &[
     ".github/workflows/ci.yml",
     "xtask/Cargo.toml",
     "xtask/src/ci.rs",
+    "xtask/src/ci_plan.rs",
     "xtask/src/locate.rs",
     "xtask/src/oracle.rs",
     "xtask/src/oracle_test.rs",
@@ -106,19 +107,27 @@ fn scope(files: &[&str]) -> Scope {
     }
 }
 
-/// Prints the jobs the changes since `args.base` need.
-pub fn run(args: &CiScope) -> Result<()> {
+/// The files changed since `base`, as paths from the repo root.
+pub(crate) fn changed_files(base: &str) -> Result<Vec<String>> {
     let out = command("git")
-        .args(["diff", "--name-only", &format!("{}...HEAD", args.base)])
+        .args(["diff", "--name-only", &format!("{base}...HEAD")])
         .output()?;
     ensure!(
         out.status.success(),
-        "git diff against {} failed: {}",
-        args.base,
+        "git diff against {base} failed: {}",
         String::from_utf8_lossy(&out.stderr).trim()
     );
-    let text = String::from_utf8_lossy(&out.stdout);
-    let files: Vec<&str> = text.lines().filter(|l| !l.is_empty()).collect();
+    Ok(String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(String::from)
+        .collect())
+}
+
+/// Prints the jobs the changes since `args.base` need.
+pub fn run(args: &CiScope) -> Result<()> {
+    let files = changed_files(&args.base)?;
+    let files: Vec<&str> = files.iter().map(String::as_str).collect();
     let scope = scope(&files);
     eprintln!("{} files changed: {scope:?}", files.len());
     println!(

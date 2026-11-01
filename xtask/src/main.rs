@@ -9,6 +9,7 @@ use clap::{Parser, Subcommand};
 use spyglass_extract::{java, manifest};
 
 mod ci;
+mod ci_plan;
 mod ci_scope;
 mod code_diff;
 mod dist;
@@ -43,6 +44,9 @@ enum Cmd {
     /// Run one game version's CI job: extract its bundle, regenerate every oracle output
     /// (goldens, locate and, where it loads, the test pack), and run every comparison.
     Ci(ci::Ci),
+    /// Print CI's oracle jobs, planned from estimated costs to fit the hour, as the matrix line
+    /// for $GITHUB_OUTPUT (docs/adr/0058-oracle-ci-planned-by-cost.md).
+    CiPlan(ci_plan::CiPlan),
     /// Print which CI jobs a pull request needs, from the files it changes, as lines for
     /// $GITHUB_OUTPUT.
     CiScope(ci_scope::CiScope),
@@ -117,6 +121,7 @@ fn main() -> ExitCode {
         Cmd::Bench { bundle } => bench(bundle.as_deref()),
         Cmd::Check => check(),
         Cmd::Ci(args) => ci::run(&args),
+        Cmd::CiPlan(args) => ci_plan::run(&args),
         Cmd::CiScope(args) => ci_scope::run(&args),
         Cmd::Dist(args) => dist::run(&args),
         Cmd::Doctor { game_version, java } => doctor(&game_version, java.as_deref()),

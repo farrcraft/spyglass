@@ -17,7 +17,7 @@ If there's no per-user folder (no home directory), it's `bundles` in the working
 
 ## Checked versions
 
-Each build of spyglass lists the game versions its answers were compared with the game's for: `spyglass_data::versions::CHECKED`, one entry per job in CI's oracle matrix ([ADR 0028](../adr/0028-supported-versions-and-ci.md)). A test keeps the list equal to the matrix in `.github/workflows/ci.yml`.
+Each build of spyglass lists the game versions its answers were compared with the game's for: `spyglass_data::versions::CHECKED`, the versions CI plans its oracle jobs from ([ADR 0028](../adr/0028-supported-versions-and-ci.md), [ADR 0058](../adr/0058-oracle-ci-planned-by-cost.md)).
 
 A bundle for any other version loads and answers as usual, with a warning ([ADR 0039](../adr/0039-where-installed-binaries-find-bundles.md)). `World`, `Game` and `BundleInfo` give it as `unchecked_version()`, which is `None` for a checked version. A data version newer than every checked one says a newer spyglass may support it; one that's older or falls between them says only that it wasn't checked. The front ends show it:
 

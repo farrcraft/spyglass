@@ -38,6 +38,8 @@ pub(crate) enum Input {
     BlocksNoCarvers,
     /// The feature files.
     Features,
+    /// The Overworld feature file of `oracle::DUNGEON_SEED`, which a test needs in particular.
+    DungeonSeed,
 }
 
 impl Input {
@@ -64,6 +66,15 @@ impl Input {
             Input::Heights => "heights",
             Input::Blocks => "blocks",
             Input::Features => "features",
+            Input::DungeonSeed => {
+                return root
+                    .join("oracle-out")
+                    .join(version)
+                    .join("features")
+                    .join("overworld")
+                    .join(format!("{}.json", crate::oracle::DUNGEON_SEED))
+                    .is_file();
+            }
             Input::BlocksNoCarvers => {
                 return root
                     .join("oracle-out")
@@ -86,7 +97,7 @@ impl Input {
             Input::Locate => "cargo xtask oracle locate",
             Input::Heights => "cargo xtask oracle heights",
             Input::Blocks | Input::BlocksNoCarvers => "cargo xtask oracle blocks",
-            Input::Features => "cargo xtask oracle features",
+            Input::Features | Input::DungeonSeed => "cargo xtask oracle features",
         }
     }
 }
@@ -96,7 +107,7 @@ pub(crate) type Keep<'a> = &'a dyn Fn(&[Input]) -> bool;
 
 /// Every ignored test that checks against the game or a bundle: package, test name, inputs.
 /// Tests that read this machine's saves or download the server jar aren't here.
-const TESTS: &[(&str, &str, &[Input])] = &[
+pub(crate) const TESTS: &[(&str, &str, &[Input])] = &[
     (
         "spyglass-rng",
         "every_random_source_value_matches_the_game",
@@ -295,7 +306,7 @@ const TESTS: &[(&str, &str, &[Input])] = &[
     (
         "spyglass",
         "two_dungeon_seeds_are_the_game_s",
-        &[Input::Features, Input::Bundle],
+        &[Input::Features, Input::DungeonSeed, Input::Bundle],
     ),
     (
         "spyglass",

@@ -104,9 +104,8 @@ pub struct Checked {
     pub data_version: u32,
 }
 
-/// Every version CI checks this build against, oldest first. It changes in the same commit as
-/// the matrix in `.github/workflows/ci.yml`, which a test checks. Other versions still load, with
-/// a warning (ADR 0039).
+/// Every version CI checks this build against, oldest first: CI plans its oracle jobs from this
+/// list (ADR 0058). Other versions still load, with a warning (ADR 0039).
 pub const CHECKED: &[Checked] = &[
     Checked {
         id: "26.2",
@@ -242,29 +241,6 @@ mod tests {
         assert_eq!(Checking::of(100), Checking::Unchecked);
         assert!(is_checked_id("26.3") && !is_checked_id("26.1"));
         assert!(CHECKED.is_sorted_by_key(|c| c.data_version));
-    }
-
-    /// CHECKED names the versions in CI's oracle matrix, no more and no fewer.
-    #[test]
-    fn checked_is_the_ci_matrix() {
-        let ci =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.github/workflows/ci.yml");
-        let ci = std::fs::read_to_string(&ci).unwrap();
-        let mut ids: Vec<&str> = ci
-            .lines()
-            .skip_while(|line| line.trim() != "version:")
-            .skip(1)
-            .map_while(|line| line.trim().strip_prefix("- "))
-            .map(|id| id.trim_matches('"'))
-            .collect();
-        assert!(!ids.is_empty(), "no oracle matrix in ci.yml");
-        let mut checked: Vec<&str> = CHECKED.iter().map(|c| c.id).collect();
-        ids.sort_unstable();
-        checked.sort_unstable();
-        assert_eq!(
-            checked, ids,
-            "versions::CHECKED and ci.yml's oracle matrix differ"
-        );
     }
 
     #[test]

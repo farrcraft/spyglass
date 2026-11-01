@@ -179,12 +179,14 @@ pub(crate) const GOLDEN_SEEDS: &[&str] = &[
     "-1918002950002395028",
 ];
 
-/// The seeds feature golden files are written for: the golden seeds, and a seed whose two
-/// dungeons near the spawn a seed search finds in every supported version, for the test that
-/// checks them against the game (`docs/specs/oracle.md#feature-golden-files`).
+/// A seed whose two dungeons near the spawn a seed search finds in every supported version, for
+/// the test that checks them against the game (`docs/specs/oracle.md#feature-golden-files`).
+pub(crate) const DUNGEON_SEED: &str = "56";
+
+/// The seeds feature golden files are written for: the golden seeds and [`DUNGEON_SEED`].
 pub(crate) fn feature_seeds() -> Vec<&'static str> {
     let mut seeds = GOLDEN_SEEDS.to_vec();
-    seeds.push("56");
+    seeds.push(DUNGEON_SEED);
     seeds
 }
 
@@ -485,18 +487,6 @@ fn golden(common: &Common, threads: Option<usize>) -> Result<()> {
             .display()
     );
     Ok(())
-}
-
-/// Shard `shard` of `of` of the golden seeds, every `of`th from the `shard`th. CI splits a
-/// version's heights between jobs this way where they're slow.
-pub(crate) fn golden_seed_shard(shard: usize, of: usize) -> Vec<&'static str> {
-    GOLDEN_SEEDS
-        .iter()
-        .copied()
-        .enumerate()
-        .filter(|(i, _)| i % of == shard - 1)
-        .map(|(_, seed)| seed)
-        .collect()
 }
 
 /// One job per golden dimension, seed and region, writing under `biomes/<dimension>/<seed>/`.
@@ -862,9 +852,9 @@ fn adapter(data_version: u32) -> Result<PathBuf> {
     }
 }
 
-/// An adapter's Java files with its bases' (ADR 0029): an `extends` file names the base adapter's
-/// directory, and a file in the adapter replaces the base's file of the same relative path.
-fn adapter_sources(adapter: &Path) -> Result<Vec<PathBuf>> {
+/// An adapter and its bases, nearest first (ADR 0029): an `extends` file names the base
+/// adapter's directory.
+fn adapter_chain(adapter: &Path) -> Result<Vec<PathBuf>> {
     let mut chain = vec![adapter.to_path_buf()];
     loop {
         let extends = chain.last().expect("never empty").join("extends");
@@ -880,6 +870,23 @@ fn adapter_sources(adapter: &Path) -> Result<Vec<PathBuf>> {
         }
         chain.push(base);
     }
+    Ok(chain)
+}
+
+/// The adapter directories `data_version`'s harness is built from, its own and its bases', as
+/// paths from the repo root (`oracle/adapters/26.3`).
+pub(crate) fn adapter_dirs(data_version: u32) -> Result<Vec<String>> {
+    let root = repo_root();
+    adapter_chain(&adapter(data_version)?)?
+        .iter()
+        .map(|dir| Ok(dir.strip_prefix(root)?.to_string_lossy().replace('\\', "/")))
+        .collect()
+}
+
+/// An adapter's Java files with its bases' (ADR 0029): a file in the adapter replaces the base's
+/// file of the same relative path.
+fn adapter_sources(adapter: &Path) -> Result<Vec<PathBuf>> {
+    let chain = adapter_chain(adapter)?;
     let mut by_name = std::collections::BTreeMap::new();
     for dir in chain.iter().rev() {
         let mut files = Vec::new();

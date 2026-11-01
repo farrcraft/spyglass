@@ -12,9 +12,11 @@ use crate::{Dimension, DimensionType, Error, Result, Session, World, dimension_t
 /// manifest and dimension types; each dimension's data is loaded on first use and kept, so
 /// every caller shares one load. `Send + Sync`, like [`World`].
 pub struct Game {
+    /// The version bundle.
     bundle: Bundle,
     /// Each dimension's `coordinate_scale`, if the preset has the dimension.
     scales: [Option<f64>; 3],
+    /// Each dimension's world, by [`Dimension::index`], once it's opened.
     worlds: [OnceLock<World>; 3],
     /// Held while a dimension's world loads, so threads asking at once load it once.
     loading: [Mutex<()>; 3],
@@ -35,9 +37,9 @@ impl Game {
     ) -> Result<Game> {
         let bundle = Bundle::open(dir)?;
         let mut scales = [None; 3];
-        for d in Dimension::ALL {
-            scales[d.index()] = match dimension_type(&bundle, d.id()) {
-                Ok(t) => Some(DimensionType::load(&bundle, &t)?.coordinate_scale),
+        for dimension in Dimension::ALL {
+            scales[dimension.index()] = match dimension_type(&bundle, dimension.id()) {
+                Ok(id) => Some(DimensionType::load(&bundle, &id)?.coordinate_scale),
                 Err(Error::Unknown { .. }) => None,
                 Err(e) => return Err(e),
             };
@@ -120,8 +122,11 @@ impl Game {
 
 /// A [`Game`] bound to a seed: a [`Session`] per dimension, each bound on first use.
 pub struct GameSession<'g> {
+    /// The game it binds.
     game: &'g Game,
+    /// The seed it's bound to.
     seed: i64,
+    /// Each dimension's session, by [`Dimension::index`], once it's bound.
     sessions: [OnceLock<Session<'g>>; 3],
 }
 

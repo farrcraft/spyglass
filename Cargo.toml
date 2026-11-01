@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*", "xtask"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.95"
 license = "MIT"
@@ -33,9 +33,11 @@ bare_urls = "deny"
 [workspace.dependencies]
 spyglass = { path = "crates/spyglass" }
 spyglass-biome = { path = "crates/spyglass-biome" }
+spyglass-blocks = { path = "crates/spyglass-blocks" }
 spyglass-data = { path = "crates/spyglass-data" }
 spyglass-density = { path = "crates/spyglass-density" }
 spyglass-extract = { path = "crates/spyglass-extract" }
+spyglass-feature = { path = "crates/spyglass-feature" }
 spyglass-noise = { path = "crates/spyglass-noise" }
 spyglass-oracle = { path = "crates/spyglass-oracle" }
 spyglass-rng = { path = "crates/spyglass-rng" }
@@ -48,6 +50,8 @@ anyhow = "1.0.104"
 directories = "6.0.0"
 # The viewer's GUI (ADR 0019): egui on wgpu, with egui's own settings persistence.
 eframe = { version = "0.37.0", features = ["persistence"] }
+# The viewer's map icons are SVGs, rasterised by egui_extras' resvg loader (ADR 0045).
+egui_extras = { version = "0.37.0", default-features = false, features = ["svg"] }
 flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs"] }
 md-5 = "0.11.0"
 png = "0.18.1"
@@ -62,6 +66,8 @@ serde = { version = "1.0.229", features = ["derive"] }
 # float_roundtrip makes derived f64 parsing correctly rounded (ADRs 0010, 0011).
 serde_json = { version = "1.0.154", features = ["arbitrary_precision", "float_roundtrip"] }
 sha1 = "0.11.0"
+# BiomeManager.obfuscateSeed, in spyglass-blocks (ADR 0051).
+sha2 = "0.11.1"
 # Release archives for macOS and Linux (ADR 0038).
 tar = { version = "0.4.46", default-features = false }
 tempfile = "3.27.0"

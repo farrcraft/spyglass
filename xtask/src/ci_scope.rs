@@ -27,6 +27,7 @@ struct Scope {
 }
 
 impl Scope {
+    /// Every job either scope runs.
     fn or(self, other: Scope) -> Scope {
         Scope {
             check: self.check || other.check,
@@ -45,6 +46,7 @@ const ORACLE_FILES: &[&str] = &[
     ".github/workflows/ci.yml",
     "xtask/Cargo.toml",
     "xtask/src/ci.rs",
+    "xtask/src/ci_plan.rs",
     "xtask/src/locate.rs",
     "xtask/src/oracle.rs",
     "xtask/src/oracle_test.rs",
@@ -74,6 +76,7 @@ fn needs(path: &str) -> Scope {
     }
     let oracle = (path.starts_with("crates/") && !path.starts_with("crates/spyglass-viewer/"))
         || path.starts_with("oracle/")
+        || path.starts_with("extractor-java/")
         || ORACLE_FILES.contains(&path);
     let linux_only = specs || LINUX_ONLY.contains(&path) || path.starts_with(".devcontainer/");
     Scope {
@@ -104,18 +107,27 @@ fn scope(files: &[&str]) -> Scope {
     }
 }
 
-pub fn run(args: &CiScope) -> Result<()> {
+/// The files changed since `base`, as paths from the repo root.
+pub(crate) fn changed_files(base: &str) -> Result<Vec<String>> {
     let out = command("git")
-        .args(["diff", "--name-only", &format!("{}...HEAD", args.base)])
+        .args(["diff", "--name-only", &format!("{base}...HEAD")])
         .output()?;
     ensure!(
         out.status.success(),
-        "git diff against {} failed: {}",
-        args.base,
+        "git diff against {base} failed: {}",
         String::from_utf8_lossy(&out.stderr).trim()
     );
-    let text = String::from_utf8_lossy(&out.stdout);
-    let files: Vec<&str> = text.lines().filter(|l| !l.is_empty()).collect();
+    Ok(String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(String::from)
+        .collect())
+}
+
+/// Prints the jobs the changes since `args.base` need.
+pub fn run(args: &CiScope) -> Result<()> {
+    let files = changed_files(&args.base)?;
+    let files: Vec<&str> = files.iter().map(String::as_str).collect();
     let scope = scope(&files);
     eprintln!("{} files changed: {scope:?}", files.len());
     println!(
@@ -157,6 +169,7 @@ mod tests {
         assert_eq!(scope(&["crates/spyglass-terrain/src/lib.rs"]), ALL);
         assert_eq!(scope(&["Cargo.lock", "README.md"]), ALL);
         assert_eq!(scope(&["oracle/src/Harness.java"]), ALL);
+        assert_eq!(scope(&["extractor-java/BlockReport.java"]), ALL);
         assert_eq!(scope(&[".github/workflows/ci.yml"]), ALL);
         assert_eq!(scope(&["xtask/src/oracle.rs"]), ALL);
     }

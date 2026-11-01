@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use spyglass::{DEFAULT_MAP_Y, Dimension, Heightmap, LOCATE_BIOME_RADIUS, LOCATE_RADIUS};
+use spyglass::{DEFAULT_MAP_Y, Dimension, Heightmap, LOCATE_BIOME_RADIUS, LOCATE_RADIUS, Pin};
 
 #[derive(Parser)]
 #[command(
@@ -32,12 +32,65 @@ pub enum Command {
     },
     /// Draw a map of a seed or world save as a PNG: biomes, and the layers you choose.
     Render(Render),
-    /// Find the seeds that fit a query best: required and preferred structures, biomes, slime
-    /// chunks and spawn, in any dimension.
+    /// Find the seeds that fit a query best: required and preferred structures, features,
+    /// biomes, slime chunks and spawn, in any dimension.
     Search(Search),
+    /// Places in one seed or world save that fit a `find` query, nearest first: a target (a
+    /// structure, a biome or a grid point) and constraints around it.
+    Find(Find),
     /// Terrain heights before structures, carvers and features, as structures are placed by:
     /// one column or a region.
     Heights(Heights),
+    /// A chunk's blocks before features, as the game generates them, carvers included: one
+    /// block, a column or a whole chunk.
+    Blocks(Blocks),
+    /// Features in a region: dungeons, geodes, desert wells, fossils and lava lakes, each
+    /// certain or a candidate.
+    Features(Features),
+}
+
+/// `spyglass features` (`docs/specs/locate.md#features`).
+#[derive(Args)]
+pub struct Features {
+    /// Feature id: a placed feature (`minecraft:monster_room_deep`) or a configured one
+    /// (`minecraft:monster_room`, both dungeons).
+    pub target: String,
+    /// A region's corner, `x,z` in blocks, with `--max`: every chunk they touch.
+    #[arg(long, allow_hyphen_values = true, value_parser = xz)]
+    pub min: [i32; 2],
+    /// The region's other corner, `x,z`.
+    #[arg(long, allow_hyphen_values = true, value_parser = xz)]
+    pub max: [i32; 2],
+    /// Also list candidates that didn't place on spyglass's blocks, which the game may still
+    /// place.
+    #[arg(long)]
+    pub all: bool,
+    /// Also check whether each answer holds whatever the neighbouring chunks do, if they're
+    /// decorated first: about twice as slow.
+    #[arg(long)]
+    pub neighbours: bool,
+    #[command(flatten)]
+    pub common: Common,
+}
+
+/// `spyglass blocks` (`docs/specs/material.md`).
+#[derive(Args)]
+#[command(group(clap::ArgGroup::new("what").required(true).args(["at", "column", "chunk"])))]
+pub struct Blocks {
+    /// One block, `x,y,z`.
+    #[arg(long, allow_hyphen_values = true, value_parser = xyz)]
+    pub at: Option<[i32; 3]>,
+    /// One column, `x,z`, from the bottom of the world up.
+    #[arg(long, allow_hyphen_values = true, value_parser = xz)]
+    pub column: Option<[i32; 2]>,
+    /// A whole chunk, `x,z` in chunks.
+    #[arg(long, allow_hyphen_values = true, value_parser = xz)]
+    pub chunk: Option<[i32; 2]>,
+    /// The blocks before carvers cut caves and ravines.
+    #[arg(long)]
+    pub no_carvers: bool,
+    #[command(flatten)]
+    pub common: Common,
 }
 
 /// `spyglass heights` (`docs/specs/terrain.md`).
@@ -138,6 +191,84 @@ pub struct Search {
     pub json: bool,
 }
 
+#[derive(Args)]
+pub struct Find {
+    /// The query: a `find` line, e.g. `find minecraft:swamp_hut within 4096`, then
+    /// constraints around `here`, one per line.
+    #[arg(
+        short,
+        long,
+        conflicts_with = "query_file",
+        required_unless_present = "query_file"
+    )]
+    pub query: Option<String>,
+    /// A file with the query.
+    #[arg(long)]
+    pub query_file: Option<PathBuf>,
+    /// The world seed: a number, or text hashed as the world-creation screen does.
+    #[arg(long, allow_hyphen_values = true, required_unless_present = "world")]
+    pub seed: Option<String>,
+    /// A world save instead of a seed: its folder, or its folder name in a launcher's saves.
+    #[arg(long, conflicts_with_all = ["seed", "bundle", "game_version"])]
+    pub world: Option<String>,
+    /// What `within R` alone is around: `x,z` in the target's dimension, or `player` for the
+    /// single player of `--world`, converted into the target's dimension.
+    #[arg(long, default_value = "0,0", allow_hyphen_values = true, value_parser = find_origin)]
+    pub from: FindOrigin,
+    /// How many matches to find.
+    #[arg(long, default_value_t = 20, value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..=10_000))]
+    pub top: usize,
+    /// Stop after this long: e.g. `90s` or `10m`.
+    #[arg(long, value_parser = duration)]
+    pub time: Option<Duration>,
+    /// Worker threads; all cores by default.
+    #[arg(long)]
+    pub threads: Option<usize>,
+    /// Report only matches whose required constraints are met whatever terrain decides, at
+    /// targets that certainly are what's looked for.
+    #[arg(long)]
+    pub certain: bool,
+    /// Decide structure starts with the seed's terrain, as the game does.
+    #[arg(long)]
+    pub confirm: bool,
+    /// Game version of the bundle to use, from `--bundles`. Defaults to the newest release there;
+    /// snapshots are used only when named.
+    #[arg(long)]
+    pub game_version: Option<String>,
+    /// A bundle directory to use instead of choosing one from `--bundles`.
+    #[arg(long, conflicts_with = "game_version")]
+    pub bundle: Option<PathBuf>,
+    /// Where bundles are, one directory per version. `SPYGLASS_BUNDLES` sets the default.
+    #[arg(long, default_value_os_t = spyglass::default_bundles_dir())]
+    pub bundles: PathBuf,
+    /// Print JSON (docs/specs/cli-json.md) instead of text.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// What a `find` query's `within R` alone is around.
+#[derive(Clone, Copy)]
+pub enum FindOrigin {
+    At([i32; 2]),
+    /// The single player of `--world`'s save.
+    Player,
+}
+
+fn find_origin(text: &str) -> Result<FindOrigin, String> {
+    if text == "player" {
+        return Ok(FindOrigin::Player);
+    }
+    let parse = |s: &str| {
+        s.trim()
+            .parse::<i32>()
+            .map_err(|_| format!("not a block: {s:?}"))
+    };
+    match text.split_once(',') {
+        Some((x, z)) => Ok(FindOrigin::At([parse(x)?, parse(z)?])),
+        None => Err("expected `x,z` or `player`".to_string()),
+    }
+}
+
 /// `A..B`, both included.
 fn range(text: &str) -> Result<[i64; 2], String> {
     text.split_once("..")
@@ -152,17 +283,18 @@ fn duration(text: &str) -> Result<Duration, String> {
         .find(|c: char| !c.is_ascii_digit())
         .unwrap_or(text.len());
     let (number, unit) = text.split_at(split);
-    let n: u64 = number
+    let count: u64 = number
         .parse()
         .map_err(|_| format!("expected a duration like 90s, 10m or 2h, got {text:?}"))?;
-    let times = |unit: u64| {
-        n.checked_mul(unit)
+    let times = |unit_seconds: u64| {
+        count
+            .checked_mul(unit_seconds)
             .map(Duration::from_secs)
             .ok_or_else(|| format!("{text:?} is too long"))
     };
     Ok(match unit {
-        "ms" => Duration::from_millis(n),
-        "" | "s" => Duration::from_secs(n),
+        "ms" => Duration::from_millis(count),
+        "" | "s" => Duration::from_secs(count),
         "m" => times(60)?,
         "h" => times(3600)?,
         _ => {
@@ -199,6 +331,11 @@ pub struct Render {
     /// Structures to mark: ids or `#tags`, separated by commas.
     #[arg(long, value_delimiter = ',')]
     pub structures: Vec<String>,
+    /// Features to mark (scales up to 2): placed or configured feature ids, separated by
+    /// commas, such as `minecraft:monster_room`. Each chunk they could be in is placed, which
+    /// takes a while.
+    #[arg(long, value_delimiter = ',')]
+    pub features: Vec<String>,
     /// Biomes to keep bright, separated by commas; the rest are dimmed.
     #[arg(long, value_delimiter = ',')]
     pub highlight: Vec<String>,
@@ -225,8 +362,46 @@ pub struct Render {
     /// Draw biomes at the surface instead of at `--y` (scales up to 4).
     #[arg(long, conflicts_with = "no_biomes")]
     pub surface: bool,
+    /// Tint copper and iron ore veins at `--y` (scales up to 4; the Overworld).
+    #[arg(long)]
+    pub veins: bool,
+    /// Tint noise caves at `--y`: the caves in the terrain itself, before carvers (scales up
+    /// to 4).
+    #[arg(long)]
+    pub caves: bool,
+    /// Tint the caves and ravines carvers cut at `--y` (scales up to 4).
+    #[arg(long)]
+    pub carvers: bool,
+    /// A pin at block `x,z`, with a colour `#rrggbb` after another comma (amber if none).
+    /// Repeat it for more; they're drawn last, in order.
+    #[arg(long = "pin", allow_hyphen_values = true, value_parser = pin)]
+    pub pins: Vec<Pin>,
     #[command(flatten)]
     pub common: Common,
+}
+
+/// A pin's colour when `--pin` gives none: the viewer's first marker colour.
+const PIN_COLOUR: [u8; 3] = [0xf0, 0xb0, 0x30];
+
+/// `x,z` or `x,z,#rrggbb`.
+fn pin(text: &str) -> Result<Pin, String> {
+    let bad = || format!("expected x,z or x,z,#rrggbb, got {text:?}");
+    let (at, colour) = match text.rsplit_once(',') {
+        Some((at, colour)) if colour.trim_start().starts_with('#') => (at, Some(colour.trim())),
+        _ => (text, None),
+    };
+    let position = xz(at).map_err(|_| bad())?;
+    let colour = match colour {
+        None => PIN_COLOUR,
+        Some(hex) => {
+            let digits = hex
+                .strip_prefix('#')
+                .filter(|d| d.len() == 6 && d.bytes().all(|b| b.is_ascii_hexdigit()));
+            let digits = digits.ok_or_else(bad)?;
+            [0, 2, 4].map(|i| u8::from_str_radix(&digits[i..i + 2], 16).unwrap_or(0))
+        }
+    };
+    Ok(Pin { position, colour })
 }
 
 /// Where a map is centred.
@@ -255,6 +430,17 @@ fn centre(text: &str) -> Result<Centre, String> {
         Ok(Centre::Player)
     } else {
         xz(text).map(Centre::At)
+    }
+}
+
+fn xyz(text: &str) -> Result<[i32; 3], String> {
+    match text
+        .split(',')
+        .map(|p| p.trim().parse::<i32>())
+        .collect::<Result<Vec<_>, _>>()
+    {
+        Ok(parts) if parts.len() == 3 => Ok([parts[0], parts[1], parts[2]]),
+        _ => Err(format!("expected x,y,z in blocks, got {text:?}")),
     }
 }
 
@@ -320,10 +506,36 @@ pub enum Locate {
         /// structures stay candidates.
         #[arg(long)]
         unconfirmed: bool,
-        /// Show each certain jigsaw structure's bounds and piece count (villages, outposts,
-        /// ancient cities, trial chambers and others). The first use loads the template pools.
+        /// Show each certain jigsaw structure's or mineshaft's bounds and piece count
+        /// (villages, outposts, ancient cities, trial chambers, mineshafts and others). The first
+        /// use for a jigsaw loads the template pools.
         #[arg(long)]
         bounds: bool,
+        /// Answer with the nearest start, not `/locate`'s: the game's `/locate` takes the first
+        /// it finds in its search order, which isn't always the nearest.
+        #[arg(long)]
+        nearest: bool,
+    },
+    /// The nearest feature: dungeons, geodes, desert wells, fossils or lava lakes, by placed
+    /// feature (`minecraft:monster_room_deep`) or configured feature (`minecraft:monster_room`).
+    Feature {
+        /// Feature id.
+        target: String,
+        #[command(flatten)]
+        common: Common,
+        #[command(flatten)]
+        from: From,
+        /// How far to search, in chunks. Each chunk with a try takes a while to place.
+        #[arg(long, default_value_t = 8)]
+        radius: i32,
+        /// Also list candidates that didn't place on spyglass's blocks, which the game may
+        /// still place.
+        #[arg(long)]
+        all: bool,
+        /// Also check whether each answer holds whatever the neighbouring chunks do, if
+        /// they're decorated first: about twice as slow.
+        #[arg(long)]
+        neighbours: bool,
     },
     /// The nearest biome, searched in 3D from `--from`, as `/locate biome` does.
     Biome {
@@ -359,6 +571,7 @@ impl Locate {
     pub fn common(&self) -> &Common {
         match self {
             Locate::Structure { common, .. }
+            | Locate::Feature { common, .. }
             | Locate::Biome { common, .. }
             | Locate::Slime { common, .. }
             | Locate::Spawn { common } => common,

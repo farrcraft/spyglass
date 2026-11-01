@@ -26,6 +26,8 @@
 //! terrain (unless it's confirmed, which computes it), and some results depend on the platform
 //! the game runs on; each result type says which applies. See `docs/specs/locate.md`.
 
+mod blocks;
+mod features;
 mod game;
 mod render;
 mod save;
@@ -36,29 +38,38 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use spyglass_biome::{BiomeId, BiomeSource, Biomes, SearchVolume, SpawnSearch, SpawnTargets};
+use spyglass_blocks::{BlockSettings, ChunkGenerator};
 use spyglass_data::anchor::AnchorHeights;
 use spyglass_data::bundle::{Bundle, BundleError};
 use spyglass_data::codec::{LoadError, full_id};
 use spyglass_data::versions::Checking;
-use spyglass_structure::{Assembly, JigsawPools, Placements, Starts, StructureSets};
+use spyglass_structure::{
+    Assembly, JigsawPools, Placements, Starts, StructureSearch, StructureSets,
+};
 use spyglass_terrain::{Terrain, TerrainSettings};
 
+pub use blocks::{BlockAt, BlockColumn, Carvers, ChunkBlocks};
+pub use features::{FeatureLocate, FeatureOptions, FeatureQuery, FoundFeature, Neighbours};
 pub use game::{Game, GameSession};
 pub use render::{
-    BiomeMap, DEFAULT_MAP_Y, HeightMap, Image, Layers, MARKER_REACH, MAX_PIXELS, MAX_SCALE,
-    MAX_SIDE, MAX_SLIME_SCALE, MAX_TERRAIN_SCALE, MapArea, MapFeatures, biome_colour,
-    structure_colour,
+    BiomeMap, CarverKind, CarvingMap, DEFAULT_MAP_Y, HeightMap, Image, Layers, MARKER_REACH,
+    MAX_FEATURE_SCALE, MAX_PIXELS, MAX_SCALE, MAX_SIDE, MAX_SLIME_SCALE, MAX_TERRAIN_SCALE,
+    MAX_UNDERGROUND_SCALE, MapArea, MapFeatures, Pin, UndergroundMap, Vein, VeinPart, biome_colour,
+    display_name, feature_colour, structure_colour, vein_colour,
 };
 pub use save::{
     LauncherSave, PackConcern, SaveInfo, SaveInspector, SaveLocation, SaveReport, SaveWarning,
     Scan, find_save, inspect_save, launcher_saves,
 };
 pub use search::{
-    ConstraintResult, Evaluation, Feature, Outcome, RankedSeed, SearchHit, SearchOptions,
-    SearchOutcome, SearchProgress, SearchQuery, SearchStop, SeedSource,
+    ConstraintResult, Evaluation, Feature, FindMatch, FindOptions, FindOutcome, FindProgress,
+    MAX_FIND_TARGETS, Outcome, RankedSeed, SearchHit, SearchOptions, SearchOutcome, SearchProgress,
+    SearchQuery, SearchStop, SearchThrottle, SeedSource,
 };
 pub use spyglass_data::build;
-pub use spyglass_data::bundle::{BUNDLES_ENV, Kind, default_bundles_dir};
+pub use spyglass_data::bundle::{
+    BUNDLES_ENV, Kind, app_bundles_dir, default_bundles_dir, user_bundles_dir,
+};
 pub use spyglass_data::dimension::Dimension;
 pub use spyglass_data::versions::{CHECKED, Checked};
 pub use spyglass_structure::LOCATE_RADIUS;
@@ -112,10 +123,15 @@ pub enum Error {
         /// The underlying error.
         source: std::io::Error,
     },
-    /// A structure, structure tag, biome or world save that doesn't exist.
+    /// A feature that exists, but that spyglass doesn't place yet.
+    #[error(
+        "spyglass doesn't place {0:?} yet: it places dungeons, geodes, desert wells, fossils and lava lakes"
+    )]
+    NotPlaced(String),
+    /// A structure, structure tag, biome, feature or world save that doesn't exist.
     #[error("unknown {what} {id:?}")]
     Unknown {
-        /// What was looked up: `structure`, `structure tag`, `biome` or `world save`.
+        /// What was looked up: `structure`, `structure tag`, `biome`, `feature` or `world save`.
         what: &'static str,
         /// The id or name as given.
         id: String,
@@ -417,19 +433,30 @@ pub(crate) const PRESET: &str = "minecraft:normal";
 
 /// One dimension of a version bundle, loaded once: everything that doesn't depend on the seed.
 pub struct World {
+    /// Tells this world apart from others, for the queries resolved against it.
     id: u64,
+    /// The version bundle it was loaded from.
     bundle: Bundle,
+    /// Which dimension it is.
     dimension: Dimension,
     /// The dimension type's `coordinate_scale`.
     coordinate_scale: f64,
     /// The dimension type's `has_ceiling`.
     has_ceiling: bool,
+    /// The dimension's biome source, and its biomes' names.
     source: BiomeSource,
+    /// The structure sets that place in the dimension, and their structures.
     sets: StructureSets,
+    /// The climate targets the spawn search looks for.
     spawn: SpawnTargets,
+    /// The noise settings' terrain, and the level's height.
     terrain: TerrainSettings,
     /// Loaded on first use: they read most of the bundle's structure templates.
     pools: OnceLock<JigsawPools>,
+    /// Loaded on first block query.
+    blocks: OnceLock<BlockSettings>,
+    /// Loaded on first feature query.
+    features: OnceLock<features::FeatureWorld>,
     /// Each biome's map colour, by [`BiomeId`].
     palette: Vec<[u8; 3]>,
 }
@@ -478,6 +505,8 @@ impl World {
             spawn,
             terrain,
             pools: OnceLock::new(),
+            blocks: OnceLock::new(),
+            features: OnceLock::new(),
             palette,
         })
     }
@@ -489,6 +518,15 @@ impl World {
         }
         let pools = JigsawPools::load(&self.bundle, &self.sets)?;
         Ok(self.pools.get_or_init(|| pools))
+    }
+
+    /// The settings for blocks, loaded the first time they're asked for.
+    fn block_settings(&self) -> Result<&BlockSettings> {
+        if let Some(settings) = self.blocks.get() {
+            return Ok(settings);
+        }
+        let settings = BlockSettings::load(&self.bundle, PRESET, self.dimension.id())?;
+        Ok(self.blocks.get_or_init(|| settings))
     }
 
     /// The game version, e.g. `26.3`.
@@ -517,6 +555,12 @@ impl World {
         self.coordinate_scale
     }
 
+    /// The level's lowest y and its height in blocks: the Overworld's are −64 and 384.
+    pub fn level(&self) -> [i32; 2] {
+        let level = self.sets.heights();
+        [level.level_min_y, level.level_height]
+    }
+
     /// Whether the dimension type has a ceiling, as the Nether does. Its `WORLD_SURFACE_WG`
     /// heights are then the ceiling's, so maps don't draw terrain layers there.
     pub fn has_ceiling(&self) -> bool {
@@ -533,6 +577,38 @@ impl World {
         self.sets.structures().iter().map(|s| s.id.as_str())
     }
 
+    /// The first structure set that places `structure`, by full id: whose colour its markers are
+    /// drawn in. `None` if no set names it.
+    pub fn structure_set(&self, structure: &str) -> Option<&str> {
+        let index = self
+            .sets
+            .structures()
+            .iter()
+            .position(|s| s.id == structure)?;
+        self.sets
+            .sets()
+            .iter()
+            .find(|set| set.entries.iter().any(|e| e.structure == index))
+            .map(|set| set.id.as_str())
+    }
+
+    /// Whether `structure`, by full id, can generate in this dimension: some set naming it is
+    /// possible here (`ChunkGeneratorStructureState.hasBiomesForStructureSet`).
+    pub fn structure_generates(&self, structure: &str) -> bool {
+        let Some(index) = self
+            .sets
+            .structures()
+            .iter()
+            .position(|s| s.id == structure)
+        else {
+            return false;
+        };
+        self.sets
+            .sets()
+            .iter()
+            .any(|set| set.possible && set.entries.iter().any(|e| e.structure == index))
+    }
+
     /// This world for `seed`.
     pub fn session(&self, seed: i64) -> Result<Session<'_>> {
         let biomes = self.source.with_seed(seed)?;
@@ -544,6 +620,7 @@ impl World {
             biomes,
             placements,
             terrain: OnceLock::new(),
+            chunks: OnceLock::new(),
         })
     }
 
@@ -572,20 +649,102 @@ impl World {
         })
     }
 
-    /// Resolves a biome id for this world's sessions. A biome that exists but that this
-    /// dimension can't have resolves, and is never found.
+    /// The structures `query` names in this dimension, by full id: the structure itself, or a
+    /// tag's members, each once, in the order the tag lists them. Members that no structure set
+    /// here names are left out.
+    pub fn query_structures(&self, query: &StructureQuery) -> Result<Vec<&str>> {
+        if query.world != self.id {
+            return Err(Error::OtherWorld(query.argument.clone()));
+        }
+        let all = self.sets.structures();
+        Ok(query.targets.iter().map(|&i| all[i].id.as_str()).collect())
+    }
+
+    /// Resolves a biome id, or a `#tag` as `/locate biome` takes one, for this world's
+    /// sessions. A tag's entries are expanded as structure tags are (`docs/specs/locate.md`).
+    /// Biomes that exist but that this dimension can't have resolve, and are never found.
     pub fn biome_query(&self, biome: &str) -> Result<BiomeQuery> {
-        if !self.exists("worldgen/biome", biome) {
-            return Err(Error::Unknown {
-                what: "biome",
-                id: biome.to_string(),
-            });
+        let mut ids = Vec::new();
+        match biome.strip_prefix('#') {
+            Some(tag) => self.biome_tag(tag, &mut Vec::new(), &mut ids)?,
+            None if self.exists("worldgen/biome", biome) => ids.push(full_id(biome)),
+            None => {
+                return Err(Error::Unknown {
+                    what: "biome",
+                    id: biome.to_string(),
+                });
+            }
+        }
+        let names = self.source.biome_names();
+        let mut biomes: Vec<BiomeId> = Vec::new();
+        for id in ids.iter().filter_map(|id| names.id(id)) {
+            if !biomes.contains(&id) {
+                biomes.push(id);
+            }
         }
         Ok(BiomeQuery {
             world: self.id,
             id: biome.to_string(),
-            biome: self.source.biome_names().id(&full_id(biome)),
+            biomes,
         })
+    }
+
+    /// Adds the biomes of tag `tag` to `out`, by full id, nested tags in place:
+    /// `TagEntry`s as [`StructureSets::resolve`] reads them, optional entries that don't exist
+    /// skipped.
+    fn biome_tag(&self, tag: &str, loading: &mut Vec<String>, out: &mut Vec<String>) -> Result<()> {
+        const TAG: &str = "tags/worldgen/biome";
+        let id = full_id(tag);
+        let malformed = |what: &str| Error::Unsupported(format!("biome tag #{id}: {what}"));
+        if loading.contains(&id) {
+            return Err(malformed("it includes itself"));
+        }
+        if !self.exists(TAG, &id) {
+            return Err(Error::Unknown {
+                what: "biome tag",
+                id: format!("#{id}"),
+            });
+        }
+        let json = self.bundle.resource(TAG, &id)?;
+        let values = json
+            .get("values")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| malformed("no `values`"))?;
+        loading.push(id.clone());
+        for entry in values {
+            let (name, required) = match entry {
+                serde_json::Value::String(s) => (s.as_str(), true),
+                serde_json::Value::Object(obj) => (
+                    obj.get("id")
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or_else(|| malformed("an entry has no `id`"))?,
+                    obj.get("required")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(true),
+                ),
+                _ => return Err(malformed("an entry isn't an id or an object")),
+            };
+            match name.strip_prefix('#') {
+                Some(nested) if required || self.exists(TAG, nested) => {
+                    self.biome_tag(nested, loading, out)?;
+                }
+                None if self.exists("worldgen/biome", name) => {
+                    let name = full_id(name);
+                    if !out.contains(&name) {
+                        out.push(name);
+                    }
+                }
+                None if required => {
+                    return Err(Error::Unknown {
+                        what: "biome",
+                        id: name.to_string(),
+                    });
+                }
+                _ => {}
+            }
+        }
+        loading.pop();
+        Ok(())
     }
 }
 
@@ -635,8 +794,11 @@ impl DimensionType {
 /// A `/locate structure` argument resolved by [`World::structure_query`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructureQuery {
+    /// The world it was resolved in, so it isn't asked of another.
     world: u64,
+    /// The argument as given.
     argument: String,
+    /// The structures it names, by index in the world's structure sets.
     targets: Vec<usize>,
 }
 
@@ -650,16 +812,28 @@ impl StructureQuery {
 /// A biome resolved by [`World::biome_query`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BiomeQuery {
+    /// The world it was resolved in, so it isn't asked of another.
     world: u64,
+    /// The biome id or `#tag` as given.
     id: String,
-    /// `None` if the dimension can't have the biome.
-    biome: Option<BiomeId>,
+    /// The biomes it names that the dimension can have: empty if none.
+    biomes: Vec<BiomeId>,
 }
 
 impl BiomeQuery {
-    /// The biome id as given, e.g. `minecraft:cherry_grove`.
+    /// The biome id or `#tag` as given, e.g. `minecraft:cherry_grove`.
     pub fn id(&self) -> &str {
         &self.id
+    }
+
+    /// Whether `biome` is one of those it names.
+    pub(crate) fn matches(&self, biome: BiomeId) -> bool {
+        self.biomes.contains(&biome)
+    }
+
+    /// Whether the dimension can have any biome it names.
+    pub(crate) fn possible(&self) -> bool {
+        !self.biomes.is_empty()
     }
 }
 
@@ -679,13 +853,20 @@ const _: () = {
 /// A [`World`] bound to a seed. Cheap to create; per-seed data that takes a while (stronghold
 /// rings) is computed on first use and kept.
 pub struct Session<'w> {
+    /// The world it binds.
     world: &'w World,
+    /// The seed it's bound to.
     seed: i64,
+    /// The seed's biomes.
     biomes: Biomes<'w>,
+    /// Where the seed's structure sets may start structures.
     placements: Placements<'w>,
+    /// The seed's spawn search.
     spawn: SpawnSearch,
     /// Bound on first use: most queries never need terrain.
     terrain: OnceLock<Terrain>,
+    /// Bound on first block query.
+    chunks: OnceLock<ChunkGenerator<'w>>,
 }
 
 /// The biome at a position.
@@ -767,7 +948,7 @@ impl From<spyglass_structure::BoundingBox> for BlockBox {
     }
 }
 
-/// A jigsaw structure's pieces, from [`Session::structure_layout`].
+/// A jigsaw structure's or a mineshaft's pieces, from [`Session::structure_layout`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructureLayout {
     /// Each piece's box, the start piece first, before placement moves any.
@@ -976,6 +1157,34 @@ impl<'w> Session<'w> {
         )?;
         let starts = self.starts(options.confirm);
         let search = starts.locate(&query.targets, from, options.radius);
+        Ok(self.located(&search, from))
+    }
+
+    /// The start of a structure `query` names that's nearest to `from`, horizontally, among the
+    /// placement cells [`locate_structure`](Self::locate_structure) searches with the same
+    /// radius. Hits are nearest first: every candidate nearer than the nearest certain start,
+    /// then that start, at [`certain_answer`](StructureLocate::certain_answer). This isn't
+    /// always `/locate`'s answer, which is the first in its search order. See
+    /// `docs/specs/locate.md`.
+    pub fn nearest_structure(
+        &self,
+        query: &StructureQuery,
+        from: [i32; 3],
+        options: &LocateOptions,
+    ) -> Result<StructureLocate> {
+        self.check_world(query.world, &query.argument)?;
+        at_most(
+            "a structure locate radius of",
+            options.radius,
+            MAX_LOCATE_RADIUS,
+        )?;
+        let starts = self.starts(options.confirm);
+        let search = starts.nearest(&query.targets, from, options.radius);
+        Ok(self.located(&search, from))
+    }
+
+    /// A structure search's answer, with distances as `/locate` prints them.
+    fn located(&self, search: &StructureSearch, from: [i32; 3]) -> StructureLocate {
         let hits = search
             .hits
             .iter()
@@ -993,11 +1202,11 @@ impl<'w> Session<'w> {
                 }
             })
             .collect();
-        Ok(StructureLocate {
+        StructureLocate {
             hits,
             complete: search.complete,
             certain_answer: search.certain_answer,
-        })
+        }
     }
 
     /// Every chunk in `min..=max` (chunk coordinates, inclusive) where a structure that `query`
@@ -1045,12 +1254,12 @@ impl<'w> Session<'w> {
         out
     }
 
-    /// The pieces of jigsaw structure `structure` (an id, e.g. `minecraft:village_plains`) if
-    /// it starts in `chunk`, as the game assembles them, with its bounds. Whether it starts
-    /// there is [`structures_in`](Self::structures_in)'s question; this one assumes it does.
-    /// `None` if the structure isn't a jigsaw, or has no start piece there. Binds the seed's
-    /// terrain, and the first call in a world loads its template pools, which takes a while
-    /// (about a second for 26.3).
+    /// The pieces of jigsaw structure or mineshaft `structure` (an id, e.g.
+    /// `minecraft:village_plains`) if it starts in `chunk`, as the game lays them out, with its
+    /// bounds. Whether it starts there is [`structures_in`](Self::structures_in)'s question;
+    /// this one assumes it does. `None` if the structure is neither, or a jigsaw with no start
+    /// piece there. Binds the seed's terrain, and the first call for a jigsaw in a world loads
+    /// its template pools, which takes a while (about a second for 26.3).
     pub fn structure_layout(
         &self,
         structure: &str,
@@ -1063,11 +1272,14 @@ impl<'w> Session<'w> {
                 what: "structure",
                 id: structure.to_string(),
             })?;
-        if sets.structures()[index].jigsaw.is_none() {
+        let definition = &sets.structures()[index];
+        let starts = if definition.mineshaft.is_some() {
+            self.starts(true)
+        } else if definition.jigsaw.is_some() {
+            self.starts(true).with_pools(self.world.pools()?)
+        } else {
             return Ok(None);
-        }
-        let pools = self.world.pools()?;
-        let starts = self.starts(true).with_pools(pools);
+        };
         Ok(match starts.assemble(index, chunk) {
             Some(Assembly::Built(layout)) => Some(StructureLayout {
                 pieces: layout.pieces.into_iter().map(BlockBox::from).collect(),
@@ -1092,7 +1304,6 @@ impl<'w> Session<'w> {
     ) -> Result<BiomeLocate> {
         self.check_world(query.world, &query.id)?;
         at_most("a biome locate radius of", radius, MAX_LOCATE_BIOME_RADIUS)?;
-        let target = query.biome;
         let heights = self.world.sets.heights();
         let min_y = heights.level_min_y;
         let max_y = min_y.wrapping_add(heights.level_height).wrapping_sub(1);
@@ -1106,13 +1317,14 @@ impl<'w> Session<'w> {
         };
         let search = self
             .biomes
-            .find_closest_biome_3d(volume, |b| Some(b) == target);
+            .find_closest_biome_3d(volume, |b| query.matches(b));
         let hits = search
             .hits
             .iter()
             .map(|h| {
-                let d = |i: usize| f64::from(h.position[i]) - f64::from(from[i]);
-                let distance_sqr = d(0) * d(0) + d(1) * d(1) + d(2) * d(2);
+                let offset = |i: usize| f64::from(h.position[i]) - f64::from(from[i]);
+                let distance_sqr =
+                    offset(0) * offset(0) + offset(1) * offset(1) + offset(2) * offset(2);
                 LocatedBiome {
                     position: h.position,
                     biome: self.biome_names(&h.biome),

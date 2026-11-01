@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-28
-- See also: [0026](0026-how-game-versions-coexist.md), [0028](0028-supported-versions-and-ci.md), [0037](0037-versions-and-releases.md)
+- See also: [0026](0026-how-game-versions-coexist.md), [0028](0028-supported-versions-and-ci.md), [0037](0037-versions-and-releases.md), [0043](0043-bundles-beside-the-executables.md), which amends point 1
 
 ## Context
 

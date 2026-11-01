@@ -32,16 +32,27 @@ use crate::java::{floor_div, floor_mod};
 /// A `NoiseChunk` for a seed's [`RandomState`]: a chunk, or the one-cell column a base column
 /// or height is computed in. Not thread-safe: it fills its caches as it's asked.
 pub struct NoiseChunk {
+    /// The random state's router, wrapped for a chunk, and its compiled program.
     graph: Arc<ChunkGraph>,
+    /// A cell's width in blocks, on x and z (`cellWidth`).
     cell_width: i32,
+    /// A cell's height in blocks (`cellHeight`).
     cell_height: i32,
+    /// How many cells the chunk spans on x and on z (`cellCountXZ`).
     cell_count_xz: i32,
+    /// How many cells the chunk spans on y (`cellCountY`).
     cell_count_y: i32,
+    /// The lowest cell's y, in cells (`cellNoiseMinY`).
     cell_noise_min_y: i32,
+    /// The first cell's x, in cells (`firstCellX`).
     first_cell_x: i32,
+    /// The first cell's z, in cells (`firstCellZ`).
     first_cell_z: i32,
+    /// The `flat_cache` window's first quart on x (`firstNoiseX`).
     first_noise_x: i32,
+    /// The `flat_cache` window's first quart on z (`firstNoiseZ`).
     first_noise_z: i32,
+    /// The `flat_cache` window's width in quarts, less one (`noiseSizeXZ`).
     noise_size_xz: i32,
     /// Each marker slot's table, made on first use.
     tables: Vec<OnceCell<Box<[OnceCell<f64>]>>>,
@@ -58,10 +69,10 @@ pub struct NoiseChunk {
     /// Whether the chunk evaluates the bound functions themselves, not their program: the
     /// reference the program is tested against.
     reference: bool,
-    /// Corner values shared with other chunks of the same state ([`CornerStore`]), and the
-    /// columns of it this chunk has fetched, by slot and corner column.
+    /// Corner values shared with other chunks of the same state ([`CornerStore`]).
     shared_corners: Option<Arc<CornerStore>>,
-    /// By slot, then corner column (`cx · n + cz`).
+    /// The columns of `shared_corners` this chunk has fetched, so it takes the lock once per
+    /// column: by slot, then corner column (`cx · corners_xz + cz`).
     fetched_columns: RefCell<Vec<Option<CornerColumn>>>,
 }
 
@@ -395,6 +406,9 @@ impl NoiseChunk {
 
     /// The input of the `interpolated` or `cache_once` in `slot` at corner `(cx, cy, cz)`, as
     /// `fillSlice` computes it: with the chunk itself as the context, at the corner.
+    ///
+    /// Each corner is computed once: into the chunk's own table, or, when the chunk shares
+    /// corners, into the shared store's column, fetched once per chunk.
     fn corner(
         &self,
         slot: u32,
@@ -403,9 +417,10 @@ impl NoiseChunk {
         cy: usize,
         cz: usize,
     ) -> f64 {
-        let n = self.cell_count_xz as usize + 1;
-        let ny = self.cell_count_y as usize + 1;
-        let index = (cx * n + cz) * ny + cy;
+        // One more corner than cells on each axis.
+        let corners_xz = self.cell_count_xz as usize + 1;
+        let corners_y = self.cell_count_y as usize + 1;
+        let index = (cx * corners_xz + cz) * corners_y + cy;
         let compute = || {
             #[cfg(feature = "timing")]
             let _t = crate::timing::span("26.2: cell corner (fillSlice)");
@@ -424,22 +439,24 @@ impl NoiseChunk {
             input(&self.ctx_stamped(x, y, z, Own::Corner { cx, cy, cz }, stamp))
         };
         let Some(store) = &self.shared_corners else {
-            return *self.table(slot, n * n * ny)[index].get_or_init(compute);
+            return *self.table(slot, corners_xz * corners_xz * corners_y)[index]
+                .get_or_init(compute);
         };
-        let at = slot as usize * n * n + cx * n + cz;
+        let column_index = slot as usize * corners_xz * corners_xz + cx * corners_xz + cz;
         let mut fetched = self.fetched_columns.borrow_mut();
-        if fetched.len() <= at {
-            fetched.resize(at + 1, None);
+        if fetched.len() <= column_index {
+            fetched.resize(column_index + 1, None);
         }
-        let column = fetched[at]
+        let column = fetched[column_index]
             .get_or_insert_with(|| {
                 let cell = [
                     self.first_cell_x.wrapping_add(cx as i32),
                     self.first_cell_z.wrapping_add(cz as i32),
                 ];
-                store.column(slot, cell, ny)
+                store.column(slot, cell, corners_y)
             })
             .clone();
+        // Released before computing: a `cache_once` inside the input fetches its own column.
         drop(fetched);
         *column[cy].get_or_init(compute)
     }
@@ -467,21 +484,23 @@ impl NoiseChunk {
                     iy,
                     iz,
                 } => {
-                    let mut n = |dx, dy, dz| self.corner(slot, input, cx + dx, cy + dy, cz + dz);
-                    let (cw, ch) = (f64::from(self.cell_width), f64::from(self.cell_height));
+                    // The cell's corner at offsets (dx, dy, dz), each 0 or 1.
+                    let mut at_corner =
+                        |dx, dy, dz| self.corner(slot, input, cx + dx, cy + dy, cz + dz);
+                    let (width, height) = (f64::from(self.cell_width), f64::from(self.cell_height));
                     // NoiseInterpolator.compute: Mth.lerp3, x, then y, then z, each t a division.
                     mth::lerp3_f64(
-                        f64::from(ix) / cw,
-                        f64::from(iy) / ch,
-                        f64::from(iz) / cw,
-                        n(0, 0, 0),
-                        n(1, 0, 0),
-                        n(0, 1, 0),
-                        n(1, 1, 0),
-                        n(0, 0, 1),
-                        n(1, 0, 1),
-                        n(0, 1, 1),
-                        n(1, 1, 1),
+                        f64::from(ix) / width,
+                        f64::from(iy) / height,
+                        f64::from(iz) / width,
+                        at_corner(0, 0, 0),
+                        at_corner(1, 0, 0),
+                        at_corner(0, 1, 0),
+                        at_corner(1, 1, 0),
+                        at_corner(0, 0, 1),
+                        at_corner(1, 0, 1),
+                        at_corner(0, 1, 1),
+                        at_corner(1, 1, 1),
                     )
                 }
                 Own::Incremental {
@@ -492,14 +511,20 @@ impl NoiseChunk {
                     iy,
                     iz,
                 } => {
-                    let mut n = |dx, dy, dz| self.corner(slot, input, cx + dx, cy + dy, cz + dz);
-                    let (cw, ch) = (f64::from(self.cell_width), f64::from(self.cell_height));
-                    let (tx, ty, tz) = (f64::from(ix) / cw, f64::from(iy) / ch, f64::from(iz) / cw);
-                    // updateForY, then updateForX, then updateForZ.
-                    let xz00 = mth::lerp_f64(ty, n(0, 0, 0), n(0, 1, 0));
-                    let xz10 = mth::lerp_f64(ty, n(1, 0, 0), n(1, 1, 0));
-                    let xz01 = mth::lerp_f64(ty, n(0, 0, 1), n(0, 1, 1));
-                    let xz11 = mth::lerp_f64(ty, n(1, 0, 1), n(1, 1, 1));
+                    let mut at_corner =
+                        |dx, dy, dz| self.corner(slot, input, cx + dx, cy + dy, cz + dz);
+                    let (width, height) = (f64::from(self.cell_width), f64::from(self.cell_height));
+                    let (tx, ty, tz) = (
+                        f64::from(ix) / width,
+                        f64::from(iy) / height,
+                        f64::from(iz) / width,
+                    );
+                    // updateForY, then updateForX, then updateForZ. `xz10` is the value at the
+                    // block's y on the cell's x = 1, z = 0 edge, and `z0` at its x on the z = 0 face.
+                    let xz00 = mth::lerp_f64(ty, at_corner(0, 0, 0), at_corner(0, 1, 0));
+                    let xz10 = mth::lerp_f64(ty, at_corner(1, 0, 0), at_corner(1, 1, 0));
+                    let xz01 = mth::lerp_f64(ty, at_corner(0, 0, 1), at_corner(0, 1, 1));
+                    let xz11 = mth::lerp_f64(ty, at_corner(1, 0, 1), at_corner(1, 1, 1));
                     let z0 = mth::lerp_f64(tx, xz00, xz10);
                     let z1 = mth::lerp_f64(tx, xz01, xz11);
                     mth::lerp_f64(tz, z0, z1)
@@ -510,12 +535,12 @@ impl NoiseChunk {
             Marker::FlatCache => {
                 // QuartPos.fromBlock, relative to the window's first quart.
                 let (qx, qz) = (ctx.x >> 2, ctx.z >> 2);
-                let i = qx.wrapping_sub(self.first_noise_x);
-                let j = qz.wrapping_sub(self.first_noise_z);
+                let window_x = qx.wrapping_sub(self.first_noise_x);
+                let window_z = qz.wrapping_sub(self.first_noise_z);
                 let size = self.noise_size_xz + 1;
-                if (0..size).contains(&i) && (0..size).contains(&j) {
+                if (0..size).contains(&window_x) && (0..size).contains(&window_z) {
                     let table = self.table(slot, (size * size) as usize);
-                    *table[(i + j * size) as usize]
+                    *table[(window_x + window_z * size) as usize]
                         .get_or_init(|| input(&self.ctx(qx << 2, 0, qz << 2, Own::Foreign)))
                 } else {
                     input(ctx)

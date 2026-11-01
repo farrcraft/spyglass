@@ -3,13 +3,16 @@
 
 use std::ops::ControlFlow;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use rayon::prelude::*;
 
-/// Indices per batch of checks: small, since one check can take milliseconds.
+/// The most indices per batch of checks: small, since one check can take milliseconds.
 const BATCH: u128 = 16;
+/// How long a batch aims to take on its thread: batches of slow checks, which can take seconds
+/// each, hold fewer, so every thread has one and a cut round drops little.
+const BATCH_TIME: f64 = 0.01;
 /// Seeds that share their lower 48 bits in [`SeedSource::All`]: one prefilter answer each.
 const GROUP: u128 = 1 << 16;
 /// How long a round of batches aims to take: progress is reported between rounds, and each
@@ -64,6 +67,84 @@ impl PartialEq for Stop {
 
 impl Eq for Stop {}
 
+/// Limits how many of a search's threads work at once, from any thread, while it runs: so a
+/// program can lend the search's cores to other work for a while and give them back. Clones share
+/// one limit. The runner takes it up before each batch of seeds, so a new limit holds within a
+/// batch's checks. Which seeds are reported doesn't depend on it (ADR 0021); only how fast.
+#[derive(Debug, Clone, Default)]
+pub struct Throttle(Arc<ThrottleState>);
+
+#[derive(Debug, Default)]
+struct ThrottleState {
+    /// The most threads at work; 0 for no limit.
+    limit: AtomicUsize,
+    /// Threads at work now.
+    active: AtomicUsize,
+}
+
+/// How long a thread held back by a [`Throttle`] waits before looking again.
+const THROTTLED_WAIT: Duration = Duration::from_millis(2);
+
+impl Throttle {
+    /// A handle with no limit yet.
+    pub fn new() -> Self {
+        Throttle::default()
+    }
+
+    /// At most `threads` at work at once (at least one), from each thread's next batch;
+    /// `None` lifts the limit.
+    pub fn set(&self, threads: Option<usize>) {
+        let limit = threads.map_or(0, |n| n.max(1));
+        self.0.limit.store(limit, Ordering::Relaxed);
+    }
+
+    /// The limit, if there is one.
+    pub fn limit(&self) -> Option<usize> {
+        match self.0.limit.load(Ordering::Relaxed) {
+            0 => None,
+            n => Some(n),
+        }
+    }
+
+    /// Waits until this thread may work, or until `stop` is asked; held until dropped.
+    fn enter(&self, stop: &Stop) -> Working<'_> {
+        let state = &*self.0;
+        loop {
+            let active = state.active.load(Ordering::Relaxed);
+            let limit = state.limit.load(Ordering::Relaxed);
+            if (limit == 0 || active < limit || stop.is_stopped())
+                && state
+                    .active
+                    .compare_exchange_weak(active, active + 1, Ordering::Relaxed, Ordering::Relaxed)
+                    .is_ok()
+            {
+                return Working(state);
+            }
+            if limit != 0 && active >= limit {
+                std::thread::sleep(THROTTLED_WAIT);
+            }
+        }
+    }
+}
+
+/// A thread a [`Throttle`] counts as at work.
+struct Working<'a>(&'a ThrottleState);
+
+impl Drop for Working<'_> {
+    fn drop(&mut self) {
+        self.0.active.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+/// Two handles are equal when they share one limit.
+impl PartialEq for Throttle {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for Throttle {}
+
 /// The thread pool a search runs on: `threads` workers, or one per core.
 pub fn pool(threads: Option<usize>) -> Result<rayon::ThreadPool, rayon::ThreadPoolBuildError> {
     rayon::ThreadPoolBuilder::new()
@@ -93,8 +174,8 @@ impl SeedSource {
         match self {
             SeedSource::All => None,
             SeedSource::Range { first, last } => {
-                let n = (i128::from(*last) - i128::from(*first) + 1).max(0);
-                u64::try_from(n).ok()
+                let count = (i128::from(*last) - i128::from(*first) + 1).max(0);
+                u64::try_from(count).ok()
             }
             SeedSource::List(seeds) => Some(seeds.len() as u64),
         }
@@ -137,6 +218,8 @@ pub struct RunOptions {
     pub top: usize,
     /// Stops the search when asked, part way through a round.
     pub stop: Stop,
+    /// How many threads may work at once, changed while it runs.
+    pub throttle: Throttle,
 }
 
 /// A reported seed.
@@ -187,6 +270,26 @@ pub fn map_prefix<T: Sync, R: Send, E: Send>(
     results.into_iter().map_while(|r| r).collect()
 }
 
+/// [`map_prefix`] that stops when `stop` is asked, with each item's work held to `throttle`'s
+/// limit on threads at work.
+pub fn map_prefix_throttled<T: Sync, R: Send, E: Send>(
+    pool: &rayon::ThreadPool,
+    items: &[T],
+    stop: &Stop,
+    throttle: &Throttle,
+    f: impl Fn(&T) -> Result<R, E> + Sync,
+) -> Result<Vec<R>, E> {
+    map_prefix(
+        pool,
+        items,
+        || stop.is_stopped(),
+        |item| {
+            let _working = throttle.enter(stop);
+            f(item)
+        },
+    )
+}
+
 /// Merges `hits` into `top` in rank order, keeping the first `n`.
 fn merge(top: &mut Vec<Hit>, hits: Vec<Hit>, n: usize) {
     top.extend(hits);
@@ -209,9 +312,13 @@ pub enum Checked {
 /// What one batch found.
 #[derive(Default)]
 struct Batch {
+    /// Seeds the prefilter rejected.
     prefiltered: u64,
+    /// Seeds checked.
     checked: u64,
+    /// Seeds reported, scored or below the threshold.
     reported: u64,
+    /// The batch's best hits, ranked and cut to the top list's length.
     top: Vec<Hit>,
 }
 
@@ -224,6 +331,14 @@ struct Batch {
 /// limit passes, or when it has run for a second. What's kept is every index below the first
 /// one not finished, so `next` still means every index below it is done; the rest is left for
 /// the next round (`docs/specs/search.md#seed-sources`).
+///
+/// The top list is the same for any thread count, throttle and timing, because nothing in it
+/// depends on which thread finished first. Every seed in a round is checked against the same
+/// threshold, fixed when the round begins. A seed scored below it can't be in the final list
+/// either, since the list's last score only rises, so a higher or lower threshold (rounds sized
+/// differently) changes how much work is skipped, not what's found. The batches are merged in
+/// index order, ties in score go to the lower index, and a cut keeps only a prefix of indices,
+/// so `next` always means the same set of seeds was done.
 pub fn run<E: Send>(
     pool: &rayon::ThreadPool,
     options: &RunOptions,
@@ -239,11 +354,12 @@ pub fn run<E: Send>(
     let from = u128::from(options.from).min(len);
     let end = options
         .seeds
-        .map_or(len, |n| (from + u128::from(n)).min(len));
+        .map_or(len, |count| (from + u128::from(count)).min(len));
     let threads = pool.current_num_threads() as u128;
-    // Every thread gets a batch in the first round; later rounds aim at ROUND.
-    let min_round = threads * BATCH;
-    let mut round = min_round;
+    // The first round has a batch of one index for each thread; later rounds' batches aim at
+    // BATCH_TIME, and their rounds at ROUND, with a batch for every thread at least.
+    let mut batch_len = 1;
+    let mut round = threads;
     let grouped = options.source.groups_share_lower_bits();
     let next = |cursor: u128| (cursor < len).then_some(cursor as u64);
     let mut state = Progress {
@@ -257,7 +373,8 @@ pub fn run<E: Send>(
     };
     let mut cursor = from;
     while cursor < end {
-        let mut stop = end.min(cursor + round);
+        // The round covers `cursor..round_end`, unless it's cut short.
+        let mut round_end = end.min(cursor + round);
         let started = Instant::now();
         let cut_off = started + MAX_ROUND_TIME;
         let threshold = if state.top.len() == top_n {
@@ -268,27 +385,28 @@ pub fn run<E: Send>(
         // The indices to check. In `All`, one prefilter answer covers each group of seeds
         // sharing their lower 48 bits, and rejected groups are skipped whole. Once
         // MAX_ROUND_CHECKS indices are accepted, the round ends at the next group.
-        let mut ranges = vec![(cursor, stop)];
+        let mut ranges = vec![(cursor, round_end)];
         let mut rejected = Vec::new();
         if grouped {
+            // Each group as `(start, end)`, cut at the round's ends.
             let mut groups = Vec::new();
-            let mut a = cursor;
-            while a < stop {
-                let b = ((a / GROUP + 1) * GROUP).min(stop);
-                groups.push((a, b));
-                a = b;
+            let mut group_start = cursor;
+            while group_start < round_end {
+                let group_end = ((group_start / GROUP + 1) * GROUP).min(round_end);
+                groups.push((group_start, group_end));
+                group_start = group_end;
             }
             let accepted: Vec<bool> = pool.install(|| {
                 groups
                     .par_iter()
-                    .map(|&(a, _)| accepts(options.source.seed(a as u64)))
+                    .map(|&(group_start, _)| accepts(options.source.seed(group_start as u64)))
                     .collect()
             });
             ranges.clear();
             let mut checks = 0;
             for (range, accepted) in groups.into_iter().zip(accepted) {
                 if checks >= MAX_ROUND_CHECKS {
-                    stop = range.0;
+                    round_end = range.0;
                     break;
                 }
                 if accepted {
@@ -299,11 +417,16 @@ pub fn run<E: Send>(
                 }
             }
         }
+        // Each range in pieces of `batch_len`, as `(start, end)`, in index order.
         let batches: Vec<(u128, u128)> = ranges
             .into_iter()
-            .flat_map(|(a, b)| {
-                (0..(b - a).div_ceil(BATCH))
-                    .map(move |k| (a + k * BATCH, (a + (k + 1) * BATCH).min(b)))
+            .flat_map(|(range_start, range_end)| {
+                (0..(range_end - range_start).div_ceil(batch_len)).map(move |k| {
+                    (
+                        range_start + k * batch_len,
+                        (range_start + (k + 1) * batch_len).min(range_end),
+                    )
+                })
             })
             .collect();
         // Whether to leave the seed at `index` for later. The round's first index is never
@@ -317,9 +440,10 @@ pub fn run<E: Send>(
         let results: Vec<Result<(Batch, u128), E>> = pool.install(|| {
             batches
                 .par_iter()
-                .map(|&(a, b)| {
+                .map(|&(batch_start, batch_end)| {
+                    let _working = options.throttle.enter(&options.stop);
                     let mut batch = Batch::default();
-                    for index in a..b {
+                    for index in batch_start..batch_end {
                         if cut(index) {
                             return Ok((batch, index));
                         }
@@ -339,20 +463,20 @@ pub fn run<E: Send>(
                             }
                         }
                     }
-                    Ok((batch, b))
+                    Ok((batch, batch_end))
                 })
                 .collect()
         });
         // Keep the batches in index order up to the first that stopped short, with that one's
         // part, and drop the rest: the next round checks their indices again.
-        let mut reached = stop;
-        for (&(_, b), result) in batches.iter().zip(results) {
+        let mut reached = round_end;
+        for (&(_, batch_end), result) in batches.iter().zip(results) {
             let (batch, got_to) = result?;
             state.prefiltered += batch.prefiltered;
             state.checked += batch.checked;
             state.reported += batch.reported;
             merge(&mut state.top, batch.top, top_n);
-            if got_to < b {
+            if got_to < batch_end {
                 reached = got_to;
                 break;
             }
@@ -361,12 +485,16 @@ pub fn run<E: Send>(
         // after it.
         state.prefiltered += rejected
             .iter()
-            .filter(|&&(_, b)| b <= reached)
-            .map(|&(a, b)| (b - a) as u64)
+            .filter(|&&(_, group_end)| group_end <= reached)
+            .map(|&(group_start, group_end)| (group_end - group_start) as u64)
             .sum::<u64>();
+        // Size the next round's batches and the round itself from this one's speed.
         let took = started.elapsed().as_secs_f64().max(1e-6);
         let per_second = (reached - cursor) as f64 / took;
-        round = ((per_second * ROUND.as_secs_f64()) as u128).clamp(min_round, MAX_ROUND);
+        // Per thread, so checks that keep every thread busy fill a batch as fast as one alone.
+        let per_thread = per_second / threads as f64;
+        batch_len = ((per_thread * BATCH_TIME) as u128).clamp(1, BATCH);
+        round = ((per_second * ROUND.as_secs_f64()) as u128).clamp(threads * batch_len, MAX_ROUND);
         cursor = reached;
         state.evaluated = u64::try_from(cursor - from).unwrap_or(u64::MAX);
         state.next = next(cursor);
@@ -394,6 +522,7 @@ mod tests {
             time: None,
             top,
             stop: Stop::new(),
+            throttle: Throttle::new(),
         }
     }
 
@@ -425,11 +554,11 @@ mod tests {
 
     /// A made-up score: reported when the seed is odd, scored by a hash of it.
     fn score(seed: i64, threshold: u64) -> Result<Checked, Infallible> {
-        let s = (seed as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 54; // 0 to 1023
-        Ok(match (seed & 1 == 1, s >= threshold) {
+        let hash = (seed as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 54; // 0 to 1023
+        Ok(match (seed & 1 == 1, hash >= threshold) {
             (false, _) => Checked::Failed,
             (true, false) => Checked::Below,
-            (true, true) => Checked::Scored(s),
+            (true, true) => Checked::Scored(hash),
         })
     }
 
@@ -442,6 +571,32 @@ mod tests {
             }
         }
         top
+    }
+
+    #[test]
+    fn a_throttle_limits_the_threads_at_work_but_not_the_results() {
+        let (at_work, most) = (AtomicUsize::new(0), AtomicUsize::new(0));
+        let check = |seed, threshold| {
+            let now = at_work.fetch_add(1, Ordering::SeqCst) + 1;
+            most.fetch_max(now, Ordering::SeqCst);
+            std::thread::sleep(Duration::from_micros(50));
+            at_work.fetch_sub(1, Ordering::SeqCst);
+            score(seed, threshold)
+        };
+        let source = SeedSource::Range {
+            first: 0,
+            last: 5000,
+        };
+        let o = options(source.clone(), 0, None, 10);
+        o.throttle.set(Some(1));
+        let out = run(&four(), &o, |_| true, check, |_| ControlFlow::Continue(())).unwrap();
+        assert_eq!(most.load(Ordering::SeqCst), 1);
+        assert_eq!(out.top, brute_force(&source, 0, 5001, 10));
+        // Lifted, the pool's threads work together again.
+        o.throttle.set(None);
+        assert_eq!(o.throttle.limit(), None);
+        run(&four(), &o, |_| true, check, |_| ControlFlow::Continue(())).unwrap();
+        assert!(most.load(Ordering::SeqCst) > 1);
     }
 
     #[test]
@@ -604,6 +759,39 @@ mod tests {
             |_| ControlFlow::Continue(()),
         );
         assert_eq!(out.unwrap_err(), "bad seed");
+    }
+
+    #[test]
+    fn slow_checks_spread_over_the_threads_and_run_once() {
+        // Checks of 300 ms each, as a feature search's are. Each thread takes one seed at a
+        // time, so no round is cut with checks done but dropped, and none runs twice.
+        let source = SeedSource::Range {
+            first: 0,
+            last: 999,
+        };
+        let o = options(source.clone(), 0, Some(24), 5);
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let started = Instant::now();
+        let out = run(
+            &four(),
+            &o,
+            |_| true,
+            |seed, threshold| {
+                calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                std::thread::sleep(Duration::from_millis(300));
+                score(seed, threshold)
+            },
+            |_| ControlFlow::Continue(()),
+        )
+        .unwrap();
+        assert_eq!(calls.into_inner(), 24);
+        assert_eq!(out.top, brute_force(&source, 0, 24, 5));
+        // Six rounds of four: 1.8 s, where batches of 16 took over 5 s.
+        assert!(
+            started.elapsed() < Duration::from_secs(4),
+            "{:?}",
+            started.elapsed()
+        );
     }
 
     #[test]

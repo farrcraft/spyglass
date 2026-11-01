@@ -13,7 +13,9 @@ const G3: f64 = 0.166_666_666_666_666_66;
 /// draws but never adds.
 #[derive(Debug, Clone)]
 pub struct SimplexNoise {
+    /// The shuffled `0..=255` that hashes the simplices' corners to gradients (`p`).
     perms: [u8; 256],
+    /// `xo`, `yo` and `zo`, drawn and kept but never added.
     offset: [f64; 3],
 }
 
@@ -40,7 +42,8 @@ impl SimplexNoise {
     }
 
     /// `getValue(double, double)`: 2D simplex noise, `70 · ((n0 + n1) + n2)` in `f64`. The
-    /// coordinates are used as given.
+    /// coordinates are used as given. The same steps as 26.3's
+    /// [`SimplexNoise::get`](crate::SimplexNoise::get), which explains them.
     pub fn get_value_2d(&self, x: f64, y: f64) -> f64 {
         // SQRT_3 = Math.sqrt(3.0); F2 and G2 as the class initializer computes them.
         let sqrt_3 = 3.0_f64.sqrt();
@@ -71,6 +74,9 @@ impl SimplexNoise {
     /// `getValue(double, double, double)`: 3D simplex noise, `32 · (((n0 + n1) + n2) + n3)` in
     /// `f64`, with `F3 = 1/3` and `G3 = 1/6` as constants and corners of base 0.6. The
     /// coordinates are used as given. No worldgen in spyglass's scope calls it.
+    ///
+    /// As in 2D, but the cube is skewed into six tetrahedra, so the order of the fraction's
+    /// coordinates picks one and its four corners each add a part.
     pub fn get_value(&self, x: f64, y: f64, z: f64) -> f64 {
         let s = ((x + y) + z) * F3;
         let i = mth::floor(x + s);

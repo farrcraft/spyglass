@@ -1,13 +1,18 @@
 //! Times the public API's main operations, for comparing changes: `cargo xtask bench`, or
-//! `cargo run --profile dist -p spyglass --example bench -- [bundle dir or version]`. Needs a bundle:
-//! a directory, a version in `bundles/`, or by default the newest release there. Each line is
-//! the median of several runs.
+//! `cargo run --profile dist -p spyglass --example bench -- [bundle dir or version] [--only text]`.
+//! Needs a bundle: a directory, a version in `bundles/`, or by default the newest release there.
+//! Each line is the median of several runs; `--only` runs just the lines whose names contain
+//! the text.
 
 use std::hint::black_box;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-use spyglass::{Dimension, Game, World};
+use spyglass::{Dimension, Game, Layers, MapArea, Session, World};
+
+/// The text a line's name must contain to run, from `--only`.
+static ONLY: OnceLock<Option<String>> = OnceLock::new();
 
 const SEEDS: [i64; 5] = [
     0,
@@ -18,7 +23,18 @@ const SEEDS: [i64; 5] = [
 ];
 
 fn main() -> spyglass::Result<()> {
-    let dir: PathBuf = match std::env::args().nth(1) {
+    let mut bundle = None;
+    let mut only = None;
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        if arg == "--only" {
+            only = args.next();
+        } else {
+            bundle = Some(arg);
+        }
+    }
+    ONLY.set(only).expect("set once");
+    let dir: PathBuf = match bundle {
         Some(arg) if Path::new(&arg).join("bundle.json").is_file() => arg.into(),
         version => spyglass::find_bundle("bundles", version.as_deref())?.dir,
     };
@@ -74,6 +90,60 @@ fn main() -> spyglass::Result<()> {
             );
         },
     );
+    // The nearest beside /locate's answer, confirmed, over the same seeds.
+    for target in [
+        "#minecraft:village",
+        "minecraft:ancient_city",
+        "minecraft:mansion",
+    ] {
+        let query = world.structure_query(target)?;
+        let options = spyglass::LocateOptions::default();
+        let mut seeds = SEEDS.iter().cycle();
+        report(&format!("locate_structure {target} confirmed"), 5, || {
+            let session = world.session(*seeds.next().unwrap()).unwrap();
+            black_box(
+                session
+                    .locate_structure(&query, [0, 64, 0], &options)
+                    .unwrap(),
+            );
+        });
+        let mut seeds = SEEDS.iter().cycle();
+        report(&format!("nearest_structure {target} confirmed"), 5, || {
+            let session = world.session(*seeds.next().unwrap()).unwrap();
+            black_box(
+                session
+                    .nearest_structure(&query, [0, 64, 0], &options)
+                    .unwrap(),
+            );
+        });
+    }
+    // `find` presets over the 4,096 blocks around the origin, in new sessions (ADR 0047).
+    for (name, text) in [
+        (
+            "double huts",
+            "find minecraft:swamp_hut within 4096\nrequire minecraft:swamp_hut within 200 of here",
+        ),
+        (
+            "flat outpost",
+            "find minecraft:pillager_outpost within 4096\nrequire flat 4 within 48 of here step 4",
+        ),
+        (
+            "mushroom fields",
+            "find biome minecraft:mushroom_fields within 4096 step 32",
+        ),
+    ] {
+        let query = world.search_query(text)?;
+        let options = spyglass::FindOptions::default();
+        let mut seeds = SEEDS.iter().cycle();
+        report(&format!("find {name}, new session"), 5, || {
+            let session = world.session(*seeds.next().unwrap()).unwrap();
+            black_box(
+                session
+                    .find(&query, &options, |_| std::ops::ControlFlow::Continue(()))
+                    .unwrap(),
+            );
+        });
+    }
     report("structure_layout village_plains, bound", 5, || {
         black_box(
             session
@@ -132,6 +202,9 @@ fn main() -> spyglass::Result<()> {
             },
         );
     }
+    viewer_tiles(&world, &mut seeds)?;
+    underground_tiles(&world, &mut seeds)?;
+    feature_tiles(&world, &mut seeds)?;
     let view = spyglass::MapArea::centred_on([0, 0], [1024, 1024], 16, 64)?;
     let layers = spyglass::Layers {
         structures: vec![villages.clone(), stronghold.clone()],
@@ -170,6 +243,23 @@ fn main() -> spyglass::Result<()> {
     report("heights_in 40 x 25 columns", 3, || {
         black_box(heights.heights_in([0, 0], [39, 24], spyglass::Heightmap::OceanFloorWg)).unwrap();
     });
+    // A chunk's blocks without and with carvers, in chunks far apart so no column is shared.
+    // 26.4's rule isn't ported, so it's skipped there.
+    for (name, carvers) in [
+        (
+            "chunk_blocks without carvers, bound",
+            spyglass::Carvers::Off,
+        ),
+        ("chunk_blocks with carvers, bound", spyglass::Carvers::On),
+    ] {
+        if wanted(name) && heights.chunk_blocks([0, 0], carvers).is_ok() {
+            let mut chunk = 0;
+            report(name, 5, || {
+                chunk += 1000;
+                black_box(heights.chunk_blocks([chunk, -40], carvers)).unwrap();
+            });
+        }
+    }
     // Seed search: one constraint of each kind, judged in a new session (what a search's
     // full check costs per seed), then whole searches.
     let kinds = [
@@ -211,6 +301,41 @@ fn main() -> spyglass::Result<()> {
             black_box(session.evaluate(&query, false).unwrap());
         });
     }
+    // Features: the nearest dungeon, and a search for two near the spawn (ADR 0057), whose
+    // seeds each place a hundred-odd chunks.
+    let dungeons = world.feature_query("minecraft:monster_room")?;
+    report("nearest_feature monster_room, new session", 3, || {
+        let session = world.session(*seeds.next().unwrap()).unwrap();
+        black_box(
+            session
+                .nearest_feature(
+                    &dungeons,
+                    [0, 64, 0],
+                    32,
+                    spyglass::FeatureOptions::default(),
+                )
+                .unwrap(),
+        );
+    });
+    let pair = world.search_query(
+        "require cluster 2 feature minecraft:monster_room within 16 of each other within 96 of spawn",
+    )?;
+    report("evaluate two dungeons near spawn, new session", 3, || {
+        let session = world.session(*seeds.next().unwrap()).unwrap();
+        black_box(session.evaluate(&pair, false).unwrap());
+    });
+    rate_world(
+        &world,
+        "search, two dungeons near spawn, all threads",
+        &pair,
+        spyglass::SeedSource::Range {
+            first: 0,
+            last: i64::MAX,
+        },
+        64,
+        None,
+        false,
+    );
     let huts = world.search_query(kinds[0].1)?;
     report("evaluate swamp hut count confirmed, new session", 5, || {
         let session = world.session(*seeds.next().unwrap()).unwrap();
@@ -347,6 +472,172 @@ fn main() -> spyglass::Result<()> {
     Ok(())
 }
 
+/// The work the viewer asks for: one 256 × 256 tile, in a new session and then for the tile
+/// east of it in the same session, since the viewer's workers share one session per seed.
+fn viewer_tiles<'a>(
+    world: &World,
+    seeds: &mut impl Iterator<Item = &'a i64>,
+) -> spyglass::Result<()> {
+    let tile = |scale: u32, x: i32| MapArea {
+        min: [x * 256 * scale as i32, 0],
+        size: [256, 256],
+        scale,
+        y: 64,
+    };
+    let mut both = |name: &str, scales: &[u32], runs: usize, f: &dyn Fn(&Session<'_>, &MapArea)| {
+        for &scale in scales {
+            for (place, warm) in [("new session", false), ("next tile", true)] {
+                report_after(
+                    &format!("tile {name} at 1:{scale}, {place}"),
+                    runs,
+                    || {
+                        let session = world.session(*seeds.next().unwrap()).unwrap();
+                        if warm {
+                            f(&session, &tile(scale, 0));
+                        }
+                        session
+                    },
+                    |session| f(session, &tile(scale, 1)),
+                );
+            }
+        }
+    };
+    both("biomes at y 64", &[4, 16], 5, &|session, area| {
+        black_box(session.biome_map(area).unwrap());
+    });
+    both("relief", &[4], 3, &|session, area| {
+        black_box(session.height_map(area).unwrap());
+    });
+    both("biomes at the surface", &[4], 3, &|session, area| {
+        let heights = session.height_map(area).unwrap();
+        black_box(session.surface_biome_map(&heights).unwrap());
+    });
+    for id in ["minecraft:swamp_hut", "#minecraft:village"] {
+        let query = world.structure_query(id)?;
+        for confirm in [false, true] {
+            let mode = if confirm { "confirmed" } else { "unconfirmed" };
+            let layers = Layers {
+                biomes: false,
+                structures: vec![query.clone()],
+                confirm,
+                ..Layers::default()
+            };
+            both(&format!("{id} {mode}"), &[4, 16], 3, &|session, area| {
+                black_box(session.map_features(area, &layers).unwrap());
+            });
+        }
+    }
+    Ok(())
+}
+
+/// The underground layers on one of the viewer's 128 × 128 tiles at y 0, in a session that
+/// has drawn the tile west of it, at each scale they're drawn at, beside relief at 1:4 on the
+/// same tile (`docs/specs/render.md#underground`).
+fn underground_tiles<'a>(
+    world: &World,
+    seeds: &mut impl Iterator<Item = &'a i64>,
+) -> spyglass::Result<()> {
+    let tile = |scale: u32, x: i32, y: i32| MapArea {
+        min: [x * 128 * scale as i32, 0],
+        size: [128, 128],
+        scale,
+        y,
+    };
+    let warm = |seeds: &mut dyn Iterator<Item = &'a i64>,
+                name: &str,
+                scale: u32,
+                f: &dyn Fn(&Session<'_>, &MapArea)| {
+        report_after(
+            &format!("128 x 128 tile {name} at 1:{scale}"),
+            3,
+            || {
+                let session = world.session(*seeds.next().unwrap()).unwrap();
+                f(&session, &tile(scale, 0, 0));
+                session
+            },
+            |session| f(session, &tile(scale, 1, 0)),
+        );
+    };
+    warm(seeds, "relief", 4, &|session, area| {
+        black_box(session.height_map(area).unwrap());
+    });
+    let layer = |veins, noise_caves, carvers| Layers {
+        biomes: false,
+        veins,
+        noise_caves,
+        carvers,
+        ..Layers::default()
+    };
+    let mut scale = 1;
+    while scale <= spyglass::MAX_UNDERGROUND_SCALE {
+        for (name, layers) in [
+            ("ore veins", layer(true, false, false)),
+            ("noise caves", layer(false, true, false)),
+            ("carvers", layer(false, false, true)),
+            ("all underground", layer(true, true, true)),
+        ] {
+            warm(seeds, name, scale, &|session, area| {
+                black_box(session.underground_map(area, &layers, None).unwrap());
+            });
+        }
+        // Another height, with the tile's carving map kept, as the viewer does.
+        report_after(
+            &format!("128 x 128 tile carvers at 1:{scale}, kept carving map"),
+            3,
+            || {
+                let session = world.session(*seeds.next().unwrap()).unwrap();
+                let carvings = session.carving_map(&tile(scale, 1, 0)).unwrap();
+                (session, carvings)
+            },
+            |(session, carvings)| {
+                let area = tile(scale, 1, -30);
+                let layers = layer(false, false, true);
+                black_box(
+                    session
+                        .underground_map(&area, &layers, Some(carvings))
+                        .unwrap(),
+                );
+            },
+        );
+        scale *= 2;
+    }
+    Ok(())
+}
+
+/// Dungeon markers on one of the viewer's 128 × 128 tiles, at each scale they're drawn at, in
+/// a session that has drawn the tile west of it (`docs/specs/render.md#layers`).
+fn feature_tiles<'a>(
+    world: &World,
+    seeds: &mut impl Iterator<Item = &'a i64>,
+) -> spyglass::Result<()> {
+    let layers = Layers {
+        biomes: false,
+        features: vec![world.feature_query("minecraft:monster_room")?],
+        ..Layers::default()
+    };
+    for scale in 1..=spyglass::MAX_FEATURE_SCALE {
+        let tile = |x: i32| MapArea {
+            min: [x * 128 * scale as i32, 0],
+            size: [128, 128],
+            scale,
+            y: 64,
+        };
+        report_after(
+            &format!("128 x 128 tile dungeons at 1:{scale}, next tile"),
+            3,
+            || {
+                let session = world.session(*seeds.next().unwrap()).unwrap();
+                black_box(session.map_features(&tile(0), &layers).unwrap());
+                session
+            },
+            |session| {
+                black_box(session.map_features(&tile(1), &layers).unwrap());
+            },
+        );
+    }
+    Ok(())
+}
+
 /// [`rate`] for a search in one world.
 fn rate_world(
     world: &World,
@@ -373,6 +664,9 @@ fn rate(
     confirm: bool,
     search: impl Fn(&spyglass::SearchOptions) -> spyglass::SearchOutcome,
 ) {
+    if !wanted(name) {
+        return;
+    }
     let options = spyglass::SearchOptions {
         source,
         seeds: Some(count),
@@ -385,19 +679,35 @@ fn rate(
     let seconds = start.elapsed().as_secs_f64();
     let p = &outcome.progress;
     println!(
-        "{name:<50} {:>10.0} seeds/s ({} checked, {} reported)",
+        "{name:<50} {:>10.1} seeds/s ({} checked, {} reported)",
         count as f64 / seconds,
         p.checked,
         p.reported
     );
 }
 
+/// Whether `--only` lets the line `name` run.
+fn wanted(name: &str) -> bool {
+    ONLY.get()
+        .and_then(Option::as_deref)
+        .is_none_or(|only| name.contains(only))
+}
+
 /// Runs `f` `runs` times and prints the median.
 fn report(name: &str, runs: usize, mut f: impl FnMut()) {
+    report_after(name, runs, || (), |()| f());
+}
+
+/// Runs `f` on what `setup` gives, `runs` times, and prints the median time of `f` alone.
+fn report_after<T>(name: &str, runs: usize, mut setup: impl FnMut() -> T, mut f: impl FnMut(&T)) {
+    if !wanted(name) {
+        return;
+    }
     let mut times: Vec<Duration> = (0..runs)
         .map(|_| {
+            let input = setup();
             let start = Instant::now();
-            f();
+            f(&input);
             start.elapsed()
         })
         .collect();

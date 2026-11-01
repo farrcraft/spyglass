@@ -86,6 +86,8 @@ When the harness doesn't compile against the new jar:
 
 26.4-snapshot-6's adapter is the model: an `extends` of `26.4`, and one file, `RandomStates.java`, for `RandomState.createForGenerator`.
 
+**The chunk steps' stand-ins** ([ADR 0049](adr/0049-the-oracle-generates-chunks-with-stand-ins.md)) break in their own way. A version whose chunk steps use more of the region fails with a null pointer in `WorldGenRegion` or `StructureManager`: override that method in the adapter's `Chunks.java`. A version that changes the status tasks' glue around the steps, as 26.4 did with its biome statuses, needs a `Chunks.java` of its own. Read `ChunkStatusTasks` in the new jar with `javap -c` and repeat what it does.
+
 A change in the harness core changes every version's output. After one, regenerate the goldens of every version and check that they're unchanged where they should be.
 
 ## Tests pinned to one version
@@ -94,7 +96,7 @@ A few comparisons expect one version's values exactly, for example the CLI's out
 
 ## Finishing
 
-- **CI.** Add the version to the `oracle` job's matrix in `.github/workflows/ci.yml`, and to `CHECKED` in `crates/spyglass-data/src/versions.rs` with its data version, in the same commit; a test fails if they differ. The matrix only grows. Each version runs as two jobs, `only heights` and `exclude heights` ([ADR 0041](adr/0041-ci-runs-what-a-change-can-affect.md)). If the version's `only heights` job runs close to its 60-minute timeout, as 26.2's did, split it by seed: `exclude` its `select: only` entry and `include` one entry per shard (`shard: "1/2"`, `"2/2"`), as the matrix does for 26.2. Until the version is in `CHECKED`, its bundle loads with an `unchecked_version` warning ([bundle-format.md](specs/bundle-format.md#checked-versions)).
+- **CI.** Add the version to `CHECKED` in `crates/spyglass-data/src/versions.rs` with its data version. CI plans its oracle jobs from that list, so the workflow doesn't change ([ADR 0058](adr/0058-oracle-ci-planned-by-cost.md)). The list only grows. Until the version has estimates of its own, `cargo xtask ci-plan` uses the newest older version's. After its first full run, compare the `ci: ... took` lines in the job logs with those estimates, and if they differ much, as 26.2's slower heights do, add an entry to `COSTS` in `xtask/src/ci_plan.rs`. Until the version is in `CHECKED`, its bundle loads with an `unchecked_version` warning ([bundle-format.md](specs/bundle-format.md#checked-versions)).
 - **Specs.** Each change has a _Versions_ note in its spec. Each spec's status line lists the versions it has been checked against the oracle for.
 - **The cost log** below gets a row.
 - **A retro, if it wasn't cheap.** _Cheap_ means about a day or less, with changes confined to loaders, switches, harness adapters and spec notes. Any other update gets a short retro in the current plan's notes (see the [plans index](plans/README.md)): what forced the work, and what change to the structure would have made it cheap. That change becomes a task, or an ADR if it's a design change. The point is to learn, not to hit a number.

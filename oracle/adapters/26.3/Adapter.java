@@ -300,6 +300,23 @@ final class Adapter implements GameApi {
     }
 
     @Override
+    public net.minecraft.world.level.chunk.ChunkAccess generateChunk(Game game, NoiseBasedChunkGenerator generator,
+            LevelHeightAccessor height, RandomState random, long seed, ChunkPos pos) {
+        return Chunks.generate(game, generator, height, random, seed, pos);
+    }
+
+    @Override
+    public void recordFeatures(Game game, java.util.Set<String> placed) throws Exception {
+        Decoration.record(game, placed);
+    }
+
+    @Override
+    public void decorate(Game game, NoiseBasedChunkGenerator generator, LevelHeightAccessor height,
+            RandomState random, long seed, ChunkPos pos, boolean neighboursFirst) {
+        Decoration.decorate(game, generator, height, random, seed, pos, neighboursFirst);
+    }
+
+    @Override
     public JsonArray probeTerrain(Game game, List<String> seeds) {
         return ProbeWorldgen.terrain(game, seeds);
     }

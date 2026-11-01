@@ -104,9 +104,8 @@ pub struct Checked {
     pub data_version: u32,
 }
 
-/// Every version CI checks this build against, oldest first. It changes in the same commit as
-/// the matrix in `.github/workflows/ci.yml`, which a test checks. Other versions still load, with
-/// a warning (ADR 0039).
+/// Every version CI checks this build against, oldest first: CI plans its oracle jobs from this
+/// list (ADR 0058). Other versions still load, with a warning (ADR 0039).
 pub const CHECKED: &[Checked] = &[
     Checked {
         id: "26.2",
@@ -178,6 +177,15 @@ switches! {
     /// upscaling every block.
     upscale_offset_by_step, "density-functions.md#upscale", [5126..];
 
+    /// `Mth.sin` and `Mth.cos` round to the nearest entry of the sine table, take negative angles
+    /// by symmetry, and the table's quarter turns are exact, where 26.3 truncated the index.
+    rounded_trig, "carvers.md#shapes", [5125..];
+
+    /// The carving mask spans the level's heights (`LevelHeightAccessor`), where
+    /// 26.4-snapshot-5's spanned the vertical anchors' context: from 1 above the bottom to 7
+    /// below the top either way.
+    carving_mask_level_bounds, "carvers.md#264-the-carving-mask-with-the-rule", [5126..];
+
     /// A feature pool element's jigsaw is named `minecraft:bottom`, and attaches only to a parent
     /// jigsaw targeting that name exactly. Later versions leave the name empty, matching any target.
     feature_jigsaw_named_bottom, "structure-placement.md#jigsaw-assembly", [0..5023];
@@ -185,6 +193,10 @@ switches! {
     /// `OCEAN_FLOOR_WG` counts blocks whose `blocksMotion()` is true, a block property, not the
     /// `#minecraft:blocks_motion_in_heightmap` tag, which doesn't exist.
     heightmap_blocks_motion, "terrain.md#queries", [0..5023];
+
+    /// The geode's noise is the 1.21 family's `NormalNoise.create(random, -4, 1.0)`, sampled in
+    /// `double`, not `NormalNoise.createParity(-4, 1.0)` sampled in `float`.
+    geode_noise_v1_21, "features.md#geode", [0..5023];
 }
 
 #[cfg(test)]
@@ -229,29 +241,6 @@ mod tests {
         assert_eq!(Checking::of(100), Checking::Unchecked);
         assert!(is_checked_id("26.3") && !is_checked_id("26.1"));
         assert!(CHECKED.is_sorted_by_key(|c| c.data_version));
-    }
-
-    /// CHECKED names the versions in CI's oracle matrix, no more and no fewer.
-    #[test]
-    fn checked_is_the_ci_matrix() {
-        let ci =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.github/workflows/ci.yml");
-        let ci = std::fs::read_to_string(&ci).unwrap();
-        let mut ids: Vec<&str> = ci
-            .lines()
-            .skip_while(|line| line.trim() != "version:")
-            .skip(1)
-            .map_while(|line| line.trim().strip_prefix("- "))
-            .map(|id| id.trim_matches('"'))
-            .collect();
-        assert!(!ids.is_empty(), "no oracle matrix in ci.yml");
-        let mut checked: Vec<&str> = CHECKED.iter().map(|c| c.id).collect();
-        ids.sort_unstable();
-        checked.sort_unstable();
-        assert_eq!(
-            checked, ids,
-            "versions::CHECKED and ci.yml's oracle matrix differ"
-        );
     }
 
     #[test]

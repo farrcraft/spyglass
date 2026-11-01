@@ -14,6 +14,7 @@ import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.BiomeSource;
 import net.minecraft.world.level.biome.Climate;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.ChunkGenerator;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator;
@@ -120,4 +121,29 @@ interface GameApi {
 
     /** The probe's terrain (aquifer) cases. */
     JsonArray probeTerrain(Game game, List<String> seeds);
+
+    /**
+     * The chunk at {@code pos} as generation leaves it before features, with no structures: the
+     * generator's own chunk steps, given stand-ins for the server ({@link StandIns}).
+     */
+    ChunkAccess generateChunk(Game game, NoiseBasedChunkGenerator generator, LevelHeightAccessor height,
+            RandomState random, long seed, ChunkPos pos);
+
+    /**
+     * Wraps the configured feature of each placed feature in {@code placed} (by id) in the
+     * registry, so each call to it reports to {@link Features#record}, then places as before.
+     * Once per game.
+     */
+    void recordFeatures(Game game, java.util.Set<String> placed) throws Exception;
+
+    /**
+     * Decorates the chunk at {@code pos} as {@code ChunkStatusTasks.generateFeatures} does: it and
+     * its 8 neighbours generated through the step before features, with no structures; a
+     * {@code WorldGenRegion} over them; the generator's own {@code applyBiomeDecoration}. The
+     * region reports what it's generating to {@link Features#generating}. With
+     * {@code neighboursFirst}, each of the 8 neighbours is first decorated in full, z then x
+     * ascending, inside {@link Features#quiet}; otherwise none is.
+     */
+    void decorate(Game game, NoiseBasedChunkGenerator generator, LevelHeightAccessor height, RandomState random,
+            long seed, ChunkPos pos, boolean neighboursFirst);
 }

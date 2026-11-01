@@ -44,16 +44,17 @@ enum Cmd {
     },
 }
 
+/// Extracts a bundle, or verifies one; Java's missing gets advice on where to find it.
 fn main() -> ExitCode {
     let args = Args::parse();
     let result = match &args.command {
         Some(Cmd::Verify { dir }) => bundle::verify(dir)
-            .map(|m| {
+            .map(|manifest| {
                 println!(
                     "{}: bundle for {} is valid ({} files)",
                     dir.display(),
-                    m.version,
-                    m.files.len()
+                    manifest.version,
+                    manifest.files.len()
                 );
             })
             .map_err(anyhow::Error::from),
@@ -64,25 +65,14 @@ fn main() -> ExitCode {
         Err(err) => {
             eprintln!("error: {err}");
             if let Some(ExtractError::Java(not_found)) = err.downcast_ref() {
-                let n = not_found.required;
-                let example = if cfg!(windows) {
-                    format!("winget install EclipseAdoptium.Temurin.{n}.JRE")
-                } else if cfg!(target_os = "macos") {
-                    format!("brew install --cask temurin@{n}")
-                } else {
-                    format!("your distro's openjdk-{n}-jre package")
-                };
-                eprintln!(
-                    "\nIf you play this version, starting it once in your launcher downloads a \
-                     matching runtime. Otherwise install a Java {n} runtime ({example}, or Eclipse \
-                     Temurin from https://adoptium.net), or pass --java <path>."
-                );
+                eprintln!("\n{} Or pass --java <path>.", not_found.advice());
             }
             ExitCode::FAILURE
         }
     }
 }
 
+/// Extracts the version asked for, printing each step.
 fn run_extract(args: &Args) -> anyhow::Result<()> {
     let cache = match &args.cache_dir {
         Some(dir) => JarCache::new(dir),

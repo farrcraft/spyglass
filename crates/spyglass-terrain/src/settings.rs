@@ -73,6 +73,7 @@ pub(crate) enum Family {
         final_density: Df,
         /// `aquifers`, absent where the dimension has none (the aquifer is then disabled).
         aquifers: Option<[Df; 6]>,
+        /// Every noise the functions sample, by id.
         noises: HashMap<String, NormalNoiseParameters>,
         /// `legacy_random_source`.
         legacy: bool,
@@ -315,14 +316,22 @@ impl TerrainSettings {
         let aquifer = match aquifers {
             None => None,
             Some(functions) => {
-                let [a, b, c, d, e, f] = functions.each_ref().map(|f| binder.bind(f));
+                // Bound in `AQUIFER_ENTRIES`' order.
+                let [
+                    barrier,
+                    fluid_level_floodedness,
+                    fluid_level_spread,
+                    lava,
+                    exclusion,
+                    surface_level,
+                ] = functions.each_ref().map(|f| binder.bind(f));
                 Some(AquiferSamplers {
-                    barrier: a?,
-                    fluid_level_floodedness: b?,
-                    fluid_level_spread: c?,
-                    lava: d?,
-                    exclusion: e?,
-                    surface_level: f?,
+                    barrier: barrier?,
+                    fluid_level_floodedness: fluid_level_floodedness?,
+                    fluid_level_spread: fluid_level_spread?,
+                    lava: lava?,
+                    exclusion: exclusion?,
+                    surface_level: surface_level?,
                 })
             }
         };

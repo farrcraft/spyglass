@@ -25,6 +25,8 @@ pub const JAR_DIRS: &[&str] = &[
 pub const REPORTS: &[&str] = &[
     "reports/biome_parameters/minecraft/overworld.json",
     "reports/biome_parameters/minecraft/nether.json",
+    "reports/blocks.json",
+    crate::datagen::BLOCK_BEHAVIOUR,
 ];
 
 /// Why a bundle couldn't be written.
@@ -58,6 +60,7 @@ pub enum WriteError {
     Exists(PathBuf),
 }
 
+/// An I/O error at `path`, for `map_err`.
 fn io_err(path: &Path) -> impl FnOnce(io::Error) -> WriteError + '_ {
     move |source| WriteError::Io {
         path: path.to_path_buf(),
@@ -97,6 +100,7 @@ pub fn game_version(game_jar: &Path) -> Result<GameVersion, WriteError> {
     read_game_version(&mut ZipArchive::new(file)?)
 }
 
+/// `version.json` from the open game jar.
 fn read_game_version(jar: &mut ZipArchive<File>) -> Result<GameVersion, WriteError> {
     let mut text = String::new();
     jar.by_name("version.json")?
@@ -290,7 +294,7 @@ mod tests {
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(path, format!("{{\"report\": \"{report}\"}}\n")).unwrap();
         }
-        fs::write(out.join("reports/blocks.json"), "not copied").unwrap();
+        fs::write(out.join("reports/items.json"), "not copied").unwrap();
         out
     }
 
@@ -328,6 +332,8 @@ mod tests {
                 "data/minecraft/worldgen/noise/a.json",
                 "reports/biome_parameters/minecraft/nether.json",
                 "reports/biome_parameters/minecraft/overworld.json",
+                "reports/block_behaviour.json",
+                "reports/blocks.json",
             ]
         );
         assert_eq!(

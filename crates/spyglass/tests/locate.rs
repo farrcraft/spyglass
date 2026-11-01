@@ -260,7 +260,7 @@ fn layouts_agree_with_the_game() {
                 let id = t["structure"].as_str().unwrap();
                 let Some(layout) = session.structure_layout(id, [chunk[0], chunk[1]]).unwrap()
                 else {
-                    continue; // not a jigsaw
+                    continue; // neither a jigsaw nor a mineshaft
                 };
                 let pieces: Vec<_> = t["pieces"].as_array().unwrap().iter().map(box_of).collect();
                 assert_eq!(layout.bounds, box_of(bounds), "{id} at {chunk:?}");
@@ -269,7 +269,7 @@ fn layouts_agree_with_the_game() {
             }
         }
     }
-    assert!(layouts > 10, "only {layouts} jigsaw layouts");
+    assert!(layouts > 10, "only {layouts} layouts");
     assert!(
         session
             .structure_layout("minecraft:swamp_hut", [0, 0])
@@ -282,4 +282,115 @@ fn layouts_agree_with_the_game() {
             .is_err()
     );
     println!("{layouts} layouts equal to the game's");
+}
+
+/// The horizontal distance squared between two block positions.
+fn horizontal(a: [i32; 3], b: [i32; 3]) -> i128 {
+    let d = |i: usize| i128::from(b[i]) - i128::from(a[i]);
+    d(0) * d(0) + d(2) * d(2)
+}
+
+#[test]
+#[ignore = "needs oracle-out/<version>/locate and bundles/<version>: cargo xtask oracle locate"]
+fn nearest_is_never_farther_than_the_game() {
+    let version = spyglass_oracle::version();
+    let dir = spyglass_oracle::out_dir().join("locate");
+    let files = std::fs::read_dir(&dir)
+        .unwrap_or_else(|e| panic!("{}: {e}; run cargo xtask oracle locate", dir.display()));
+    let worlds = Dimension::ALL.map(|d| {
+        World::open_dimension(spyglass_oracle::bundle_dir(), d)
+            .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {version}"))
+    });
+    let mut failures = Vec::new();
+    let (mut cases, mut differ, mut uncertain) = (0, Vec::new(), Vec::new());
+    for file in files.flatten() {
+        let json: Value =
+            serde_json::from_str(&std::fs::read_to_string(file.path()).unwrap()).unwrap();
+        // A save's cases are the same seed's; the seeds' cases cover the search.
+        if json["world_dir"].is_string() {
+            continue;
+        }
+        let seed = spyglass::parse_seed(json["seed"].as_str().unwrap()).unwrap();
+        let sessions = Dimension::ALL.map(|d| worlds[d as usize].session(seed).unwrap());
+        for case in json["cases"].as_array().unwrap() {
+            if case["kind"] != "structure" || game_rejected(case) {
+                continue;
+            }
+            let session = &sessions[dimension(case) as usize];
+            let target = case["target"].as_str().unwrap();
+            let from: Vec<i32> = ints(&case["from"]).into_iter().flatten().collect();
+            let from = [from[0], from[1], from[2]];
+            let name = format!("seed {seed}: {target} from {from:?} in {}", dimension(case));
+            let query = session.world().structure_query(target).unwrap();
+            let r = session
+                .nearest_structure(&query, from, &spyglass::LocateOptions::default())
+                .unwrap();
+            cases += 1;
+            let Some(i) = r.certain_answer else {
+                if case["answer"].is_array() {
+                    uncertain.push(format!("{name}: {} candidates", r.hits.len()));
+                }
+                continue;
+            };
+            let best = &r.hits[i].start;
+            let d = horizontal(from, best.position);
+            if i > 0 {
+                uncertain.push(format!("{name}: {i} candidates nearer than {best:?}"));
+            }
+            let listed = |p: [i32; 3]| {
+                r.hits
+                    .iter()
+                    .any(|h| h.start.position[0] == p[0] && h.start.position[2] == p[2])
+            };
+            // The game's answer generates, so it's never nearer than ours, unless it's one of
+            // the candidates listed before ours.
+            if let Some(answer) = case["answer"].as_array().map(|_| ints(&case["answer"])) {
+                let game = [answer[0].unwrap(), 0, answer[2].unwrap()];
+                let g = horizontal(from, game);
+                if g < d && !listed(game) {
+                    failures.push(format!(
+                        "{name}: the game's {game:?} is nearer than {best:?}"
+                    ));
+                } else if g > d {
+                    differ.push(format!(
+                        "{name}: nearest {:?} ({} blocks), the game's {game:?} ({} blocks)",
+                        best.position,
+                        d.isqrt(),
+                        g.isqrt()
+                    ));
+                }
+            }
+            // No certain start nearer than ours in the chunks around it.
+            let reach = i32::try_from(d.isqrt() / 16 + 2).unwrap();
+            let (cx, cz) = (from[0] >> 4, from[2] >> 4);
+            let around = session
+                .structures_in(
+                    &query,
+                    [cx.saturating_sub(reach), cz.saturating_sub(reach)],
+                    [cx.saturating_add(reach), cz.saturating_add(reach)],
+                    true,
+                )
+                .unwrap();
+            // A ring position that's tie- or platform-dependent is a candidate in the search,
+            // though structures_in counts its chunk as certain.
+            if let Some(nearer) = around
+                .iter()
+                .find(|s| s.certain && horizontal(from, s.position) < d && !listed(s.position))
+            {
+                failures.push(format!("{name}: {nearer:?} is nearer than {best:?}"));
+            }
+        }
+    }
+    assert!(cases > 0, "no locate files; run cargo xtask oracle locate");
+    println!(
+        "{cases} structure cases; nearer than the game's answer in {}:\n{}",
+        differ.len(),
+        differ.join("\n")
+    );
+    println!(
+        "uncertain in {}:\n{}",
+        uncertain.len(),
+        uncertain.join("\n")
+    );
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

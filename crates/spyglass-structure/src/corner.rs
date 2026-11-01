@@ -16,6 +16,7 @@ use crate::jigsaw::BoundingBox;
 /// `CornerConstraint`: every predicate must hold.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CornerConstraint {
+    /// The predicates, tested in order.
     predicates: Vec<DensityPredicate>,
 }
 
@@ -139,15 +140,15 @@ impl DensityPredicate {
     /// the game's order, stopping as soon as too many corners match or too few can.
     fn test(&self, bbox: &BoundingBox, samplers: &mut CornerSamplers<'_>) -> bool {
         let sampler = samplers.get(&self.function);
-        let b = bbox.inflated(self.padding);
-        let corners = corners(&b, self.corners);
+        let padded = bbox.inflated(self.padding);
+        let corners = corners(&padded, self.corners);
         let [min_required, max_required] = self.required;
         let mut matched = 0;
         for (checked, [x, y, z]) in corners.iter().copied().enumerate() {
-            let v = f64::from(sampler.sample(x, y, z));
+            let density = f64::from(sampler.sample(x, y, z));
             // InclusiveRange.isValueInRange, with Double.compareTo's order.
-            if java_compare(v, self.acceptable[0]).is_ge()
-                && java_compare(v, self.acceptable[1]).is_le()
+            if java_compare(density, self.acceptable[0]).is_ge()
+                && java_compare(density, self.acceptable[1]).is_le()
             {
                 matched += 1;
                 if matched > max_required {
@@ -237,7 +238,10 @@ fn interval<T: Copy>(
 
 /// The corner constraints' functions bound for one seed (`RandomState.getSampler`), each once.
 pub(crate) struct CornerSamplers<'n> {
+    /// Binds functions for the seed.
     binder: Binder<'n>,
+    /// The functions bound so far, by identity. Each keeps its function alive, so the pointer
+    /// stays unique.
     bound: HashMap<*const DensityFunction, (Df, Sampler)>,
 }
 

@@ -16,6 +16,7 @@ const IMAGE: &str = "spyglass-linux-check";
 const CONTAINER: &str = "spyglass-linux-check";
 /// The base image's non-root user, so the check runs as a contributor would.
 const USER: &str = "ubuntu";
+/// Where the repository is cloned in the container, from the read-only mount at `/src`.
 const CLONE: &str = "/home/ubuntu/spyglass";
 /// Where setup.sh puts rustup and uv, ahead of the system path.
 const PATH: &str = "/home/ubuntu/.cargo/bin:/home/ubuntu/.local/bin:\
@@ -36,10 +37,12 @@ pub struct LinuxCheck {
 
 /// The running container. Removed on drop unless kept.
 struct Container {
+    /// Leave it running when dropped.
     keep: bool,
 }
 
 impl Container {
+    /// Starts the container, the repository mounted read-only, replacing any left over.
     fn start() -> Result<Self> {
         let _ = command("docker").args(["rm", "-f", CONTAINER]).output();
         let mount = format!(
@@ -59,6 +62,7 @@ impl Container {
         Ok(Container { keep: false })
     }
 
+    /// A command running `script` in the container as `user`, in the clone once there is one.
     fn exec(&self, user: &str, script: &str) -> std::process::Command {
         let mut cmd = command("docker");
         cmd.args(["exec", "--user", user, "--env"])
@@ -132,14 +136,14 @@ pub fn run(args: &LinuxCheck) -> Result<()> {
         .status()
         .context("failed to run docker build")?;
     ensure!(status.success(), "docker build failed");
-    let mut c = Container::start()?;
-    c.keep = args.keep;
+    let mut container = Container::start()?;
+    container.keep = args.keep;
 
-    clone_and_set_up(&c, &target)?;
-    java_and_extraction(&c, &target)?;
+    clone_and_set_up(&container, &target)?;
+    java_and_extraction(&container, &target)?;
     if args.full {
         step("cargo xtask check");
-        c.must("cargo xtask check")?;
+        container.must("cargo xtask check")?;
     }
 
     let minutes = started.elapsed().as_secs_f64() / 60.0;
@@ -154,13 +158,16 @@ pub fn run(args: &LinuxCheck) -> Result<()> {
 struct Target {
     /// The commit cloned.
     head: String,
-    /// The game version extracted, and the Java major it needs.
+    /// The game version extracted.
     version: String,
+    /// The Java major version it needs.
     java: u32,
     /// `channel` from rust-toolchain.toml.
     channel: String,
 }
 
+/// Checks what the run needs before starting anything: Docker, the commit to clone, and the
+/// game version and its Java.
 fn preflight(game_version: &str) -> Result<Target> {
     if first_line("docker", &["version", "--format", "{{.Server.Version}}"]).is_none() {
         bail!("Docker isn't available; install Docker and make sure its daemon is running");

@@ -4,7 +4,9 @@
 # jobs only call `cargo xtask`, so they run the same locally.
 #
 # A pull request runs only the jobs its files can affect, which `cargo xtask ci-scope` decides;
-# a push to main and the release workflow run everything (ADR 0041).
+# a push to main and the release workflow run everything (ADR 0041). `cargo xtask ci-plan` divides
+# the oracle work into jobs that fit the hour; a pull request checks the newest versions in full
+# and the others in part, unless it has the `oracle: full` label (ADR 0058).
 name: CI
 
 # Pushes to main, and pull requests: a branch with a pull request runs once, not twice.
@@ -36,6 +38,7 @@ jobs:
       windows: ${{ steps.scope.outputs.windows }}
       oracle: ${{ steps.scope.outputs.oracle }}
       docs: ${{ steps.scope.outputs.docs }}
+      matrix: ${{ steps.scope.outputs.matrix }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -44,10 +47,17 @@ jobs:
       - id: scope
         env:
           EVENT: ${{ github.event_name }}
+          FULL: "${{ contains(github.event.pull_request.labels.*.name, 'oracle: full') }}"
         run: |
           if [ "$EVENT" = pull_request ]; then
             cargo xtask ci-scope --base "origin/$GITHUB_BASE_REF" >> "$GITHUB_OUTPUT"
+            if [ "$FULL" = true ]; then
+              cargo xtask ci-plan --mode full >> "$GITHUB_OUTPUT"
+            else
+              cargo xtask ci-plan --mode pr --base "origin/$GITHUB_BASE_REF" >> "$GITHUB_OUTPUT"
+            fi
           else
+            cargo xtask ci-plan --mode full >> "$GITHUB_OUTPUT"
             echo "check=true" >> "$GITHUB_OUTPUT"
             echo "windows=true" >> "$GITHUB_OUTPUT"
             echo "oracle=true" >> "$GITHUB_OUTPUT"
@@ -140,39 +150,35 @@ jobs:
           "$env:USERPROFILE\.local\bin" >> $env:GITHUB_PATH
       - run: cargo xtask check
 
-  # Two jobs per version: `--only heights` (the height golden files and their test) and
-  # `--exclude heights` (everything else), each making only the oracle outputs its tests read.
-  # Where a version's heights don't fit an hour, they're split by seed (`--shard`) (ADR 0041).
+  # The jobs `cargo xtask ci-plan` planned: each makes some of one version's oracle outputs and
+  # runs the comparisons that read them (ADR 0058).
   oracle:
-    name: oracle ${{ matrix.version }} ${{ matrix.select }} heights${{ matrix.shard && format(' {0}', matrix.shard) || '' }}
+    name: ${{ matrix.name }}
     needs: scope
     if: needs.scope.outputs.oracle == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
       fail-fast: false
-      matrix:
-        # Every supported version, permanently (ADR 0028). docs/adding-a-version.md adds to it.
-        version:
-          - "26.2"
-          - "26.3"
-          - "26.4-snapshot-5"
-          - "26.4-snapshot-6"
-        select: [only, exclude]
-        # 26.2's game takes 8 to 12 minutes per Overworld heights file on a hosted runner, about
-        # 45 minutes for all ten seeds: two jobs of five seeds each.
-        exclude:
-          - version: "26.2"
-            select: only
-        include:
-          - version: "26.2"
-            select: only
-            shard: "1/2"
-          - version: "26.2"
-            select: only
-            shard: "2/2"
+      matrix: ${{ fromJSON(needs.scope.outputs.matrix) }}
+    env:
+      CARGO_INCREMENTAL: "0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # spyglass's own build, shared by every oracle job: never target/oracle/, which holds the
+      # game's unpacked jars (ADR 0008). Saved only from main, so pull requests don't fill the
+      # repository's cache with copies.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: build-cache
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/debug/
+            target/release/
+          key: oracle-build-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: oracle-build-${{ runner.os }}-
       - name: The JDK major ${{ matrix.version }} needs
         id: jdk
         run: |
@@ -184,8 +190,18 @@ jobs:
           java-version: ${{ steps.jdk.outputs.major }}
       # `oracle locate` runs Mojang's dedicated server; this accepts the Minecraft EULA for it
       # (https://aka.ms/MinecraftEULA, ADR 0033).
-      - run: >-
-          cargo xtask ci --game-version '${{ matrix.version }}' --${{ matrix.select }} heights
-          ${{ matrix.shard && format('--shard {0}', matrix.shard) || '' }}
+      - run: cargo xtask ci --game-version "$VERSION" --units "$UNITS"
         env:
+          VERSION: ${{ matrix.version }}
+          UNITS: ${{ matrix.units }}
           SPYGLASS_ACCEPT_EULA: "1"
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: github.ref == 'refs/heads/main' && steps.build-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/debug/
+            target/release/
+          key: ${{ steps.build-cache.outputs.cache-primary-key }}

@@ -39,22 +39,30 @@ GitHub CLI:
 2. Get the game data
 --------------------
 
-spyglass ships nothing of Mojang's. The extractor downloads the game's server
-jar from Mojang, checks it, and builds the data spyglass reads from it, all on
-your machine:
+spyglass ships nothing of Mojang's. It downloads the game's server jar from
+Mojang, checks it, and builds the data spyglass reads from it, all on your
+machine.
+
+The easiest way: start spyglass-viewer. With no data yet, it asks where to
+keep it (next to the programs, in this folder, unless you choose otherwise),
+which game version you want, and extracts it when you press Extract.
+
+From a terminal, the extractor does the same:
 
     spyglass-extract 26.3
 
 (`spyglass-extract` alone uses the latest release.) Run it once for each game
 version you want.
 
-It needs a Java runtime of the version the game needs: Java 25 for 26.3. If
-you've played that version, you probably have one already. The extractor
+Either way it needs a Java runtime of the version the game needs: Java 25 for
+26.3. If you've played that version, you probably have one already. spyglass
 looks in the official Minecraft Launcher and the Modrinth App, after
 JAVA_HOME and PATH. Otherwise install one, for example Eclipse Temurin from
 https://adoptium.net, or point the extractor at one with --java <path>.
 
-The data goes in your per-user data folder:
+Every program looks for the data in a "bundles" folder next to itself, if
+there is one, and otherwise in your per-user data folder, which is where the
+extractor puts it unless that "bundles" folder exists:
 
     Windows  %LOCALAPPDATA%\spyglass\data\bundles
     macOS    ~/Library/Application Support/spyglass/bundles

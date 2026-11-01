@@ -12,10 +12,15 @@ workspace = true
 
 [dependencies]
 eframe.workspace = true
+egui_extras.workspace = true
 rfd.workspace = true
 serde.workspace = true
+# The user data file (ADR 0048).
+serde_json.workspace = true
 spyglass.workspace = true
+# Extracting bundles from the viewer (ADR 0042).
+spyglass-extract.workspace = true
 
 [dev-dependencies]
-serde_json.workspace = true
 spyglass-oracle.workspace = true
+tempfile.workspace = true

@@ -113,8 +113,10 @@ impl FrequencyReduction {
                 worldgen::large_feature_with_salt(seed, salt, x, z).next_float() < frequency
             }
             FrequencyReduction::LegacyType1 => {
-                let (i, j) = (x >> 4, z >> 4);
-                let mut random = LegacyRandomSource::new(i64::from(i ^ j << 4) ^ seed);
+                // The 16 × 16-chunk region, so a region gives one answer.
+                let (region_x, region_z) = (x >> 4, z >> 4);
+                let mut random =
+                    LegacyRandomSource::new(i64::from(region_x ^ region_z << 4) ^ seed);
                 random.next_int();
                 // `(int)(1.0F / frequency)`: Rust's `as` saturates like Java's f2i.
                 random.next_int_bounded((1.0_f32 / frequency) as i32) == 0
@@ -217,10 +219,15 @@ const SETTLE_REACH: i32 = 7;
 /// platform's rounding if that can differ (ADR 0012), and the random its biome search uses.
 #[derive(Debug, Clone)]
 struct RingPoint {
+    /// Chunk x, as this platform rounds it.
     x: i32,
+    /// Chunk z, as this platform rounds it.
     z: i32,
+    /// The chunk x another platform's `Math.cos` may give.
     other_x: Option<i32>,
+    /// The chunk z another platform's `Math.sin` may give.
     other_z: Option<i32>,
+    /// The ring random's fork, which the point's biome search draws from.
     fork: LegacyRandomSource,
 }
 
@@ -236,6 +243,11 @@ impl ConcentricRings {
 
     /// Every ring point, in the game's order. The ring's own random never depends on biomes:
     /// each position's search draws from a fork of it.
+    ///
+    /// The points go round the origin at a random starting angle, evenly spaced on each ring,
+    /// each at the ring's distance give or take a random part of `distance`. Each ring is
+    /// further out than the last and holds more points (`spread` grows), but never more than
+    /// are left; a new ring starts at a fresh random angle.
     fn points(&self, seed: i64) -> Vec<RingPoint> {
         let mut points = Vec::with_capacity(self.count.max(0) as usize);
         if self.count == 0 {
@@ -287,12 +299,12 @@ impl ConcentricRings {
         } = *point;
         let mut position = self.settle(x, z, biomes, &mut fork.clone());
         position.platform_dependent = other_x.is_some() || other_z.is_some();
-        for ax in [Some(x), other_x].into_iter().flatten() {
-            for az in [Some(z), other_z].into_iter().flatten() {
-                if [ax, az] == [x, z] {
+        for any_x in [Some(x), other_x].into_iter().flatten() {
+            for any_z in [Some(z), other_z].into_iter().flatten() {
+                if [any_x, any_z] == [x, z] {
                     continue;
                 }
-                let other = self.settle(ax, az, biomes, &mut fork.clone());
+                let other = self.settle(any_x, any_z, biomes, &mut fork.clone());
                 position.alternatives_known &= other.alternatives_known;
                 for chunk in std::iter::once(other.chunk).chain(other.alternatives) {
                     if chunk != position.chunk && !position.alternatives.contains(&chunk) {
@@ -349,7 +361,9 @@ impl ConcentricRings {
 /// make for every seed of a search.
 #[derive(Debug, Clone, Copy)]
 pub struct SeedPlacements<'s> {
+    /// The dimension's structure sets.
     sets: &'s StructureSets,
+    /// The world seed; only its lower 48 bits matter here.
     seed: i64,
 }
 
@@ -464,7 +478,9 @@ fn frequent(placement: &Placement, seed: i64, x: i32, z: i32) -> bool {
 /// only when something asks about the area it can land in, then kept.
 #[derive(Debug, Clone)]
 pub struct Placements<'s> {
+    /// What the seed alone decides, asked first.
     seed_only: SeedPlacements<'s>,
+    /// The seed's biomes, which ring positions move towards.
     biomes: Biomes<'s>,
     /// Ring points and their positions by set index, once generated.
     rings: Vec<OnceLock<Rings>>,
@@ -475,7 +491,9 @@ pub struct Placements<'s> {
 /// One concentric-ring set's points, each with its position once settled.
 #[derive(Debug, Clone)]
 struct Rings {
+    /// Every point, in the game's order.
     points: Vec<RingPoint>,
+    /// Each point's position, by the point's index, once its biome search has run.
     settled: Vec<OnceLock<RingPosition>>,
     /// Every position, in order, once all have been asked for.
     all: OnceLock<Vec<RingPosition>>,

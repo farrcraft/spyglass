@@ -143,7 +143,9 @@ impl ParameterPoint {
         self.parameters
             .iter()
             .zip(target.0)
-            .fold(0i64, |sum, (p, t)| sum.wrapping_add(square(p.distance(t))))
+            .fold(0i64, |sum, (range, value)| {
+                sum.wrapping_add(square(range.distance(value)))
+            })
             .wrapping_add(square(self.offset))
     }
 }
@@ -195,8 +197,11 @@ impl BiomeNames {
 /// `Climate.ParameterList`: parameter points with their biomes, in the game's order.
 #[derive(Debug, Clone)]
 pub struct ParameterList {
+    /// The points, in the report's order, which breaks ties.
     points: Vec<ParameterPoint>,
+    /// Each point's biome.
     biomes: Vec<BiomeId>,
+    /// The biomes' ids, in order of first appearance.
     names: BiomeNames,
 }
 

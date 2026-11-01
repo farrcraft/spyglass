@@ -36,3 +36,43 @@ fn candidates_are_explained_in_plain_text() {
         assert!(!line.contains("  "), "{line:?}");
     }
 }
+
+#[test]
+fn nearest_is_named_in_text_and_json() {
+    let fixture = fixtures::structured_overworld(false);
+    let run = |extra: &[&str]| {
+        let out = Command::new(env!("CARGO_BIN_EXE_spyglass"))
+            .args(["locate", "structure", "minecraft:hut", "--seed", "5"])
+            .args(["--unconfirmed", "--nearest"])
+            .args(extra)
+            .arg("--bundle")
+            .arg(fixture.path())
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap()
+    };
+    let text = run(&[]);
+    assert!(
+        text.starts_with("nearest minecraft:hut from 0 64 0"),
+        "{text}"
+    );
+    assert!(
+        text.contains("The nearest is the first of these that generates"),
+        "{text}"
+    );
+    let json: serde_json::Value = serde_json::from_str(&run(&["--json"])).unwrap();
+    assert_eq!(json["mode"], "nearest");
+    // Nearest first.
+    let away: Vec<i64> = json["hits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| h["blocks_away"].as_i64().unwrap())
+        .collect();
+    assert!(away.is_sorted(), "{away:?}");
+}

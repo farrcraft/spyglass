@@ -19,7 +19,10 @@ fn grad_dot(hash: i32, x: f64, y: f64, z: f64) -> f64 {
 /// smeared Perlin with a non-zero one. It doesn't wrap its coordinates; the octave set does.
 #[derive(Debug, Clone)]
 pub struct ImprovedNoise {
+    /// The shuffled `0..=255` that hashes lattice corners to gradients (`p`).
     perms: [u8; 256],
+    /// Added to every coordinate, so each octave samples its own part of the lattice (`xo`,
+    /// `yo`, `zo`).
     offset: [f64; 3],
 }
 
@@ -59,6 +62,9 @@ impl ImprovedNoise {
     /// as non-zero), the gradients see `yf` less a fudge: `y_max` if `0 ≤ y_max < yf`, else
     /// `yf`, rounded down to a multiple of `y_scale` after a small upward shift. The y
     /// smoothstep sees `yf` itself.
+    ///
+    /// The fudge holds the gradients' y input still across each `y_scale` step, so the noise
+    /// stretches along y: what the old blended terrain is built from.
     pub fn noise_smeared(&self, x: f64, y: f64, z: f64, y_scale: f64, y_max: f64) -> f64 {
         let xx = x + self.offset[0];
         let yy = y + self.offset[1];
@@ -70,12 +76,12 @@ impl ImprovedNoise {
         // dcmpl/ifeq: NaN takes the fudge branch.
         let fudge = if y_scale != 0.0 || y_scale.is_nan() {
             // dcmpl/iflt then dcmpg/ifge: a NaN y_max fails both tests and takes yf.
-            let r = if y_max >= 0.0 && y_max < yf {
+            let rounded = if y_max >= 0.0 && y_max < yf {
                 y_max
             } else {
                 yf
             };
-            f64::from(mth::floor(r / y_scale + SHIFT_UP_EPSILON)) * y_scale
+            f64::from(mth::floor(rounded / y_scale + SHIFT_UP_EPSILON)) * y_scale
         } else {
             0.0
         };
@@ -83,7 +89,10 @@ impl ImprovedNoise {
     }
 
     /// `sampleAndLerp(int, int, int, double, double, double, double)`: `yf` is the gradients'
-    /// y fraction, `y_smooth` the smoothstep's.
+    /// y fraction, `y_smooth` the smoothstep's. As 26.3's
+    /// [`PerlinNoise`](crate::PerlinNoise), in `f64`: the eight corners' gradient dots, hashed
+    /// through the permutation (`h<x><y>` for the corners' x and y offsets), blended by the
+    /// fade curve.
     #[allow(
         clippy::too_many_arguments,
         reason = "mirrors the game's sampleAndLerp"

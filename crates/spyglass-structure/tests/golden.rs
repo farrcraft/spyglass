@@ -371,6 +371,9 @@ struct TerrainReport {
     /// Jigsaw starts whose pieces and bounds equal the game's, and their pieces.
     layouts: usize,
     pieces: usize,
+    /// The same for mineshafts.
+    mineshafts: usize,
+    mineshaft_pieces: usize,
 }
 
 /// A golden `[minX, minY, minZ, maxX, maxY, maxZ]` box.
@@ -384,8 +387,8 @@ fn bounding_box(v: &Value) -> BoundingBox {
 }
 
 /// One file against [`Starts::with_terrain`]: every stub spyglass computes must be the game's,
-/// every outcome it decides must be the game's, and every jigsaw start's pieces and bounds must
-/// be the game's.
+/// every outcome it decides must be the game's, and every jigsaw or mineshaft start's pieces and
+/// bounds must be the game's.
 fn with_terrain(
     path: &std::path::Path,
     sets: &StructureSets,
@@ -436,7 +439,11 @@ fn with_terrain(
                     )),
                     (None, None) => {}
                 }
-                // Jigsaw starts: every piece's box, in order, and the bounds.
+                // Jigsaw and mineshaft starts: every piece's box, in order, and the bounds.
+                let laid_out = {
+                    let s = &sets.structures()[structure];
+                    s.jigsaw.is_some() || s.mineshaft.is_some()
+                };
                 if let (Some(bounds), Some(Assembly::Built(ours))) =
                     (t.get("bounds"), starts.assemble(structure, at))
                 {
@@ -447,8 +454,13 @@ fn with_terrain(
                         .map(bounding_box)
                         .collect();
                     if ours.pieces == game && ours.bounds == bounding_box(bounds) {
-                        report.layouts += 1;
-                        report.pieces += game.len();
+                        if sets.structures()[structure].mineshaft.is_some() {
+                            report.mineshafts += 1;
+                            report.mineshaft_pieces += game.len();
+                        } else {
+                            report.layouts += 1;
+                            report.pieces += game.len();
+                        }
                     } else {
                         let first = ours.pieces.iter().zip(&game).position(|(a, b)| a != b);
                         report.failures.push(format!(
@@ -459,8 +471,7 @@ fn with_terrain(
                             bounding_box(bounds)
                         ));
                     }
-                } else if t.get("bounds").is_some() && sets.structures()[structure].jigsaw.is_some()
-                {
+                } else if t.get("bounds").is_some() && laid_out {
                     report.failures.push(format!(
                         "{name}: {set_id} {at:?}: {id}: the game started it, ours {:?}",
                         starts.assemble(structure, at)
@@ -521,6 +532,7 @@ fn with_terrain_in(bundle: &Bundle, version: &str, folder: &str) {
     let mut unknown: BTreeMap<String, usize> = BTreeMap::new();
     let (mut stubs, mut tie_stubs, mut decided, mut open) = (0, 0, 0, 0);
     let (mut layouts, mut pieces) = (0, 0);
+    let (mut mineshafts, mut mineshaft_pieces) = (0, 0);
     let mut failures = Vec::new();
     for r in reports {
         stubs += r.stubs;
@@ -529,13 +541,15 @@ fn with_terrain_in(bundle: &Bundle, version: &str, folder: &str) {
         open += r.open;
         layouts += r.layouts;
         pieces += r.pieces;
+        mineshafts += r.mineshafts;
+        mineshaft_pieces += r.mineshaft_pieces;
         for (k, n) in r.unknown {
             *unknown.entry(k).or_default() += n;
         }
         failures.extend(r.failures);
     }
     println!(
-        "{} files: {stubs} stubs equal to the game's, {tie_stubs} behind a tie the game failed, unknown by type {unknown:?}; {decided} outcomes decided and equal to the game's, {open} left open; {layouts} jigsaw layouts equal to the game's ({pieces} pieces)",
+        "{} files: {stubs} stubs equal to the game's, {tie_stubs} behind a tie the game failed, unknown by type {unknown:?}; {decided} outcomes decided and equal to the game's, {open} left open; {layouts} jigsaw layouts equal to the game's ({pieces} pieces); {mineshafts} mineshaft layouts equal to the game's ({mineshaft_pieces} pieces)",
         files.len()
     );
     assert!(

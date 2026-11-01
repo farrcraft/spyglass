@@ -141,22 +141,24 @@ It builds the `base` stage of `.devcontainer/Dockerfile` (only git, curl and a C
 
 Project-level commands live in the `xtask` crate and run as `cargo xtask <command>` (see [ADR 0003](adr/0003-cargo-xtask-for-project-commands.md)). `cargo xtask --help` lists them. The first run compiles it, which takes a few seconds.
 
-| Command                    | What it does                                                                                                              |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `cargo xtask bench`        | Times the public API's main operations (`dist` build).                                                                    |
-| `cargo xtask check`        | Every check in the pre-commit config, on all files.                                                                       |
-| `cargo xtask ci`           | One game version's CI job, from extraction to comparison.                                                                 |
-| `cargo xtask ci-scope`     | Which CI jobs a pull request needs, from the files it changes ([ADR 0041](adr/0041-ci-runs-what-a-change-can-affect.md)). |
-| `cargo xtask dist`         | Builds one target's release archive into `target/archives/` ([ADR 0038](adr/0038-how-release-archives-are-built.md)).     |
-| `cargo xtask doctor`       | Reports whether this machine is ready.                                                                                    |
-| `cargo xtask fuzz`         | Fuzzes the NBT or region reader (nightly and cargo-fuzz; [ADR 0036](adr/0036-fuzzing-with-cargo-fuzz.md)).                |
-| `cargo xtask links`        | Checks every relative link and anchor in the Markdown.                                                                    |
-| `cargo xtask linux-check`  | Checks a fresh clone on a clean Linux machine, in Docker.                                                                 |
-| `cargo xtask msrv`         | Builds the workspace with its minimum Rust version.                                                                       |
-| `cargo xtask oracle`       | Builds and runs the oracle harness (below).                                                                               |
-| `cargo xtask oracle-test`  | Runs the ignored comparisons with the game (below).                                                                       |
-| `cargo xtask release`      | Sets the version and dates the changelog for a release ([releasing](releasing.md)).                                       |
-| `cargo xtask version-diff` | Reports what changed between two bundles ([adding a version](adding-a-version.md)).                                       |
+| Command                     | What it does                                                                                                              |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `cargo xtask bench`         | Times the public API's main operations (`dist` build).                                                                    |
+| `cargo xtask check`         | Every check in the pre-commit config, on all files.                                                                       |
+| `cargo xtask ci`            | One game version's CI job, from extraction to comparison.                                                                 |
+| `cargo xtask ci-plan`       | CI's oracle jobs, planned from estimated costs ([ADR 0058](adr/0058-oracle-ci-planned-by-cost.md)).                       |
+| `cargo xtask ci-scope`      | Which CI jobs a pull request needs, from the files it changes ([ADR 0041](adr/0041-ci-runs-what-a-change-can-affect.md)). |
+| `cargo xtask dist`          | Builds one target's release archive into `target/archives/` ([ADR 0038](adr/0038-how-release-archives-are-built.md)).     |
+| `cargo xtask doctor`        | Reports whether this machine is ready.                                                                                    |
+| `cargo xtask fuzz`          | Fuzzes the NBT or region reader (nightly and cargo-fuzz; [ADR 0036](adr/0036-fuzzing-with-cargo-fuzz.md)).                |
+| `cargo xtask links`         | Checks every relative link and anchor in the Markdown.                                                                    |
+| `cargo xtask linux-check`   | Checks a fresh clone on a clean Linux machine, in Docker.                                                                 |
+| `cargo xtask msrv`          | Builds the workspace with its minimum Rust version.                                                                       |
+| `cargo xtask oracle`        | Builds and runs the oracle harness (below).                                                                               |
+| `cargo xtask oracle-test`   | Runs the ignored comparisons with the game (below).                                                                       |
+| `cargo xtask release`       | Sets the version and dates the changelog for a release ([releasing](releasing.md)).                                       |
+| `cargo xtask version-diff`  | Reports what changed between two bundles ([adding a version](adding-a-version.md)).                                       |
+| `cargo xtask viewer-timing` | Times the viewer's cold start in five fixed scenarios (`dist` build; [the viewer](#10-the-viewer)).                       |
 
 ## 6. The oracle
 
@@ -233,7 +235,7 @@ The extractor downloads the server jar (about 60 MB, once, into your per-user ca
 
 If no matching Java is found, the error lists every place that was searched. Install a runtime of the right major version, or point `--java` at one. Jars and bundles stay on your machine: the cache is outside the repo, and `bundles/` is gitignored.
 
-The bundles folder is `bundles/` when you run from the repo's root, since it exists there. Elsewhere it's `SPYGLASS_BUNDLES` if set, or else a folder in your per-user data folder; `--help` shows which ([bundle-format.md](specs/bundle-format.md#where-bundles-are)). The extractor, the `spyglass` command and the viewer all pick it the same way.
+The bundles folder is `bundles/` when you run from the repo's root, since it exists there. Elsewhere it's `SPYGLASS_BUNDLES` if set, else a `bundles` folder beside the programs if one exists, or else a folder in your per-user data folder; `--help` shows which ([bundle-format.md](specs/bundle-format.md#where-bundles-are)). The extractor, the `spyglass` command and the viewer all pick it the same way.
 
 ## 9. The `spyglass` command
 
@@ -246,10 +248,15 @@ cargo run --release -p spyglass-cli -- locate biome minecraft:cherry_grove --see
 cargo run --release -p spyglass-cli -- locate slime --seed 12345 --radius 4
 cargo run --release -p spyglass-cli -- locate spawn --seed 12345
 cargo run --release -p spyglass-cli -- locate structure minecraft:bastion_remnant --seed 12345 --dimension nether
+cargo run --release -p spyglass-cli -- locate feature minecraft:monster_room --seed 12345
+cargo run --release -p spyglass-cli -- features minecraft:amethyst_geode --seed 12345 --min -200,-200 --max 200,200
 cargo run --release -p spyglass-cli -- heights --seed 12345 --min 0,0 --max 15,15
+cargo run --release -p spyglass-cli -- blocks --seed 12345 --column 100,-37
 ```
 
 Or install it with `cargo install --path crates/spyglass-cli` and run `spyglass ...` directly.
+
+`locate feature` and `features` find dungeons (`minecraft:monster_room`, both kinds), amethyst geodes, desert wells, fossils and lava lakes, which the game has no `/locate` for. They place each chunk as the game decorates it, tens of milliseconds a chunk, so `locate feature` searches 8 chunks around `--from` unless `--radius` says more. Each answer is **certain**, or a **candidate** with the reason: something spyglass doesn't place, such as a mineshaft's pieces, could change it. `--all` adds the candidates that didn't place on spyglass's blocks, which are nearly every try ([specs/locate.md](specs/locate.md#features)).
 
 | Option                | Default        | What it does                                                                              |
 | --------------------- | -------------- | ----------------------------------------------------------------------------------------- |
@@ -259,7 +266,8 @@ Or install it with `cargo install --path crates/spyglass-cli` and run `spyglass 
 | `--dimension <d>`     | Overworld      | `overworld`, `nether` or `end`. With `--from player`, the player's dimension by default.  |
 | `--radius <n>`        | as `/locate`   | Placement-cell rings (structures), blocks (biomes) or chunks (slime).                     |
 | `--unconfirmed`       | off            | Structures: don't decide candidates with the seed's terrain. Faster, but less certain.    |
-| `--bounds`            | off            | Structures: each certain jigsaw structure's bounds and piece count.                       |
+| `--bounds`            | off            | Structures: each certain jigsaw structure's or mineshaft's bounds and piece count.        |
+| `--nearest`           | off            | Structures: the nearest start, not `/locate`'s answer, which isn't always the nearest.    |
 | `--game-version <id>` | newest release | Which bundle in `--bundles` to use. Snapshots are used only when named.                   |
 | `--bundle <dir>`      | none           | Use this bundle directory instead.                                                        |
 | `--bundles <dir>`     | bundles folder | Where bundles are ([§8](#8-game-data)).                                                   |
@@ -268,6 +276,8 @@ Or install it with `cargo install --path crates/spyglass-cli` and run `spyglass 
 Slime chunks and the world spawn are only in the Overworld. In the Nether, heights find the solid ceiling (about 128 everywhere), which is what the game's own structure checks see too.
 
 `spyglass heights` prints the generator's terrain heights for one column (`--at x,z`) or a region (`--min x,z --max x,z`, up to 256 × 256 columns): one above the highest block before structures, carvers, features and surface blocks change it, as structures are placed by ([specs/terrain.md](specs/terrain.md)). `--heightmap ocean-floor` ignores water.
+
+`spyglass blocks` prints the blocks the game generates before structures and features: one block (`--at x,y,z`), a column top down (`--column x,z`), or how many of each block a chunk has (`--chunk x,z`, in chunks; `--json` for every block). That's the terrain with its surface (grass, sand, terracotta bands, icebergs), ore veins, and the caves and ravines carvers cut; `--no-carvers` leaves those out ([specs/material.md](specs/material.md), [specs/carvers.md](specs/carvers.md)).
 
 ### Your own worlds
 
@@ -296,14 +306,17 @@ cargo run --release -p spyglass-cli -- render --world "My World" --highlight min
 | `--centre <x,z>` or `--min <x,z>` | 0,0, or the player | The block at the image's centre, or at its top-left corner.                              |
 | `--size <WxH>`                    | `1024x1024`        | Pixels.                                                                                  |
 | `--scale <n>`                     | `4`                | Blocks per pixel: 1, 2, 4 and so on up to 256.                                           |
-| `--y <y>`                         | `64`               | The height biomes are drawn at. The map is a slice at this height, not the surface.      |
+| `--y <y>`                         | `64`               | The height biomes and the underground layers are drawn at: a slice, not the surface.     |
 | `--surface`                       | off                | Biomes at the surface instead of at `--y` (scales up to 4).                              |
 | `--relief`                        | off                | Shade by terrain height (scales up to 4). Slow: about a second per 256 × 256 at scale 1. |
+| `--veins`, `--caves`, `--carvers` | off                | Ore veins, noise caves, and carvers' caves and ravines at `--y` (scales up to 4).        |
 | `--structures <ids>`              | none               | Structure ids or `#tags` to mark, separated by commas. Hollow markers are candidates.    |
+| `--features <ids>`                | none               | Feature ids to mark (scales up to 2), such as `minecraft:monster_room`. Slow.            |
 | `--confirm`                       | off                | Decide structure markers with the seed's terrain, so nearly all are certain.             |
 | `--highlight <ids>`               | none               | Biomes to keep bright; the rest are dimmed.                                              |
 | `--slime`, `--spawn`, `--ties`    | off                | Slime chunks (scales up to 16), the spawn's origin, tied biome cells.                    |
 | `--no-biomes`                     | off                | A plain background under the other layers, or grey by height with `--relief`.            |
+| `--pin <x,z[,#rrggbb]>`           | none               | A pin at a block, in a colour (amber if none). Repeat it for more.                       |
 
 The seed, world, dimension and bundle options are as for `locate`; with `--world`, a map centred on the player is in the player's dimension. In the Nether, terrain layers aren't drawn, since its surface heights are the ceiling's, and slime chunks and the spawn are the Overworld's alone. With `--json` it prints the area and everything it drew.
 
@@ -336,11 +349,31 @@ Each constraint is in one dimension, inferred from what it counts: fortresses an
 
 The bundle options are as for `locate`; `--json` prints every hit with what each constraint matched. Searching every seed checks structure placement first, which depends only on the seed's lower 48 bits, so seeds that can't place enough structures are skipped 65,536 at a time. The same query, range, start and count always give the same list, on any machine.
 
+Features count too: `feature F` counts them in a place, and `cluster N feature F` asks for N within a distance of each other, measured in three dimensions, as a spawner farm needs:
+
+```sh
+cargo run --release -p spyglass-cli -- search --range 0..100000 --count 1000 -q 'require cluster 2 feature minecraft:monster_room within 16 of each other within 96 of spawn'
+```
+
+Each seed's dungeons are placed chunk by chunk, so this runs at about a seed a second, and a feature's place is at most 1,024 blocks on a side. Likely candidates count only towards **possibly** met; `--certain` keeps only seeds whose features are certain ([specs/search.md](specs/search.md#outcomes)).
+
 Most structures need terrain to confirm. Without `--confirm`, a constraint on them is usually **possibly** met rather than met: the structures are where the game tries them, and whether each one generates depends on the ground there. With it, terrain decides them, and only tied biomes and platform-dependent results stay uncertain. Confirming costs little on top of a search, since it runs only on seeds that pass everything else.
+
+### Finding places in one seed
+
+`spyglass find` searches one seed, or a world save with `--world`, for places that fit a query: a `find` line naming what to look for, then constraints around each one, where `here` is the place being judged ([specs/search.md](specs/search.md#searching-within-a-seed)):
+
+```sh
+cargo run --release -p spyglass-cli -- find --seed 12345 -q 'find minecraft:pillager_outpost within 4096
+require flat 4 within 48 of here step 4'
+cargo run --release -p spyglass-cli -- find --world "My World" --from player -q 'find biome minecraft:mushroom_fields within 4096 step 32'
+```
+
+The target is a structure or tag (each start), `feature F` (each feature), `biome B` (each sample of a grid), or `point` (each grid point). `within R` alone is around `--from` (default `0,0`). Matches come nearest first, up to `--top` (default 20); `--confirm`, `--certain`, `--threads`, `--time` and `--json` are as for `search`. Biome tags such as `#minecraft:is_ocean`, and the terrain conditions `height A to B` and `flat D` (over the terrain before structures and features), work in both kinds of query.
 
 ### Reading the answers
 
-Answers are listed in the game's search order, which isn't always nearest first. `locate` decides each structure with the seed's terrain, as the game does, so its answers are almost always **certain**, and then exactly the game's `/locate` answer. A **candidate** is left where the game's choice depends on a tied biome cell, a platform-dependent stronghold ring position or a mineshaft spyglass can't place yet: the game's answer is the first of them it generates, usually the first one listed. Without terrain (`--unconfirmed`, and maps and searches unless they confirm), most surface structures (villages, temples, monuments) are candidates.
+Answers are listed in the game's search order, which isn't always nearest first: `/locate` can skip a nearer structure for one it scans first. `--nearest` answers with the nearest instead, and lists nearest first ([specs/locate.md](specs/locate.md#nearest)). `locate` decides each structure with the seed's terrain, as the game does, so its answers are almost always **certain**, and then exactly the game's `/locate` answer. A **candidate** is left where the game's choice depends on a tied biome cell or a platform-dependent stronghold ring position: the game's answer is the first of them it generates, usually the first one listed. Without terrain (`--unconfirmed`, and maps and searches unless they confirm), most surface structures (villages, temples, monuments) are candidates.
 
 ## 10. The viewer
 
@@ -348,19 +381,28 @@ Answers are listed in the game's search order, which isn't always nearest first.
 cargo run --release -p spyglass-viewer
 ```
 
-The viewer opens the newest release in the bundles folder (or the newest snapshot if there's no release) (choose another folder from the side panel) and shows seed 0. Without a bundle it says how to extract one.
+The viewer opens the newest release in the bundles folder (or the newest snapshot if there's no release) (choose another folder from the side panel) and shows seed 0. Without a bundle it offers to extract one: pick where the data goes (beside the viewer, your per-user data folder or another folder), pick a game version and press Extract. It needs Java, as the extractor does. **Add a game version** in the side panel's World section extracts more later.
 
 ![The viewer's side panel and a biome map of seed 8675309 at 8 blocks per pixel, with villages, outposts, swamp huts, temples, mansions and monuments marked](images/viewer-overworld.png)
 
 - **Move around:** drag to pan, scroll to zoom around the pointer, or use the arrow keys and `+`/`-`. **Go to** takes `x z` or `x y z`. The status bar shows the block, chunk and biome under the pointer.
 - **Seed or save:** type a seed and press **Show**, or open a save from the launchers' list or any folder. A save opens on its player, in the player's dimension, with anything that makes its answers inexact listed.
 - **Dimension:** switch between the Overworld, the Nether and the End; each keeps its own view. Slime chunks and the spawn are the Overworld's, and terrain layers aren't drawn in the Nether, whose surface is its ceiling.
-- **Layers:** tied biome cells, slime chunks, the world spawn, structures to mark (hover a marker for what it is), and biomes to highlight. **Height** sets the y biomes are drawn at. Up close (4 blocks per pixel or less), **Relief** shades the map by terrain height and **Biomes at the surface** draws each column's biome at its height; both are slow to fill in. **Confirm with terrain** (on by default) decides structure markers and locates with the seed's terrain, and draws the bounds of villages and other jigsaw structures up close. The status bar shows the terrain height under the pointer.
-- **Locate:** right-click the map for the nearest structure or biome from there, as `/locate` would. Hits are listed in the side panel (click one to go there) and ringed on the map.
-- **Export:** **Export image…** saves the view as a PNG, and **Copy command** copies the `spyglass render` command that draws the same image.
+- **Layers:** tied biome cells, slime chunks, the world spawn, structures to mark (hover a marker for what it is), and biomes to highlight. **Height** sets the y biomes are drawn at, with **Surface**, **Underground** (y 0) and **Bottom** presets. Up close, **Underground** draws ore veins (copper orange, iron blue; filler stone fainter), noise caves (darkened) and the caves and ravines carvers cut (yellow and magenta) at that height; moving the height keeps the carvers already worked out. Up close (4 blocks per pixel or less), **Relief** shades the map by terrain height and **Biomes at the surface** draws each column's biome at its height; both are slow to fill in. Very close (2 blocks per pixel or less), **Features** marks dungeons, amethyst geodes, desert wells, fossils and lava lakes with diamonds, filled when certain and outlined when likely; each chunk is placed, so they fill in slowly. **Confirm with terrain** (on by default) decides structure markers and locates with the seed's terrain, and draws the bounds of villages, other jigsaw structures and mineshafts up close. The status bar shows the terrain height under the pointer.
+- **Locate:** right-click the map for the nearest structure, feature or biome from there, as `/locate` would. Hits are listed in the side panel (click one to go there) and pinned on the map. For a structure, where the nearest isn't `/locate`'s answer, both are listed and pinned, the nearest first.
+- **Markers:** right-click the map and **Add a marker here**, or press M over it, then name it and pick a colour. Click a marker to edit it. The **Markers** tab lists the world's markers in the dimension shown, and what you've marked done.
+- **Done:** right-click a structure, a locate pin or a search match and **Mark done**. Done things are drawn dimmed; untick **Done things** in the Layers tab to hide them. A structure stays done when you switch game versions.
+- **Worlds:** every seed and save you open is kept as a recent world, with its markers and where you left it. Name one in the Markers tab to keep it, and open any from **Worlds** in the toolbar.
+- **Share:** **Share → Copy the view text** copies a line such as `spyglass:1;s=12345;v=26.3;d=overworld;c=0,0;sc=4;y=64;l=spawn,confirm`. Paste it into **Share → Open a view text**, or onto the map, to open the same seed, version, dimension, view and layers. Your markers aren't in it.
+- **Export:** **Export image…** saves the view as a PNG, with your markers in view as pins unless you untick **Include markers**, and **Copy command** copies the `spyglass render` command that draws the same image.
 - **Search:** type a query in the **Search** section, set a seed count or time limit (and **Confirm with terrain** to decide structures), and press **Search**. The best seeds appear as they're found; click one to open it, in its first constraint's dimension and centred on that constraint's place, with everything its constraints matched there ringed.
+- **This seed:** the Search tab's other mode finds places in the seed shown, around the view's centre: pick a query from **Presets** (double witch huts, a monument in deep ocean, a flat outpost, rare biomes, a base site) or write one, and press **Find**. The nearest match opens on the map; **Previous** and **Next**, or P and N on the map, step through the rest.
 
 Rendering runs in the background on all but one core, so the map stays responsive while tiles fill in. Settings are kept between runs.
+
+Markers, done places and worlds are kept in `spyglass-data.json` beside the settings: `%APPDATA%\spyglass\data\` on Windows, `~/.local/share/spyglass/` on Linux, and `~/Library/Application Support/spyglass/` on macOS. **Settings** shows where, and exports all of it, or one world, to a file that **Import…** merges into another spyglass's. The format is [specs/user-data.md](specs/user-data.md), so scripts can read it too.
+
+Two environment variables are for measuring the viewer. `SPYGLASS_VIEWER_TIMING=1` writes each tile job's time to stderr, and how long the map takes to cover the window and to fill it, after anything changes what it shows (on Windows, redirect stderr to see it). `SPYGLASS_VIEWER_SETTINGS=<file>` keeps settings in that file instead of the per-user one, and user data in that file's folder, so a measurement can start from known settings. `cargo xtask viewer-timing` uses both: it starts the viewer from settings of its own in five scenarios, from biomes at 1:4 to biomes at the surface while a search runs in another process, and prints the timings.
 
 Up close, with **Relief** and **Biomes at the surface** on, and the bounds of a plains village drawn:
 

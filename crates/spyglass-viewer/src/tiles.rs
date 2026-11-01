@@ -1,11 +1,17 @@
 //! Map tiles: computed on worker threads, cached on the UI thread.
 //!
-//! Workers do the slow parts: a tile's biome map, heights and slime chunks, separately the
-//! structure starts on a tile for the structures chosen, and the layouts of jigsaw structures
-//! shown up close. The UI thread turns biome maps into textures with the current style (ties,
-//! highlight, slime, relief) through the library's `BiomeMap::colorize`, `Image::shade` and
-//! `Image::draw_features`, so restyling never samples biomes again, and draws structure markers
-//! and bounds itself.
+//! Workers do the slow parts: a tile's biome map, heights, underground layers and slime
+//! chunks (keeping each tile's carving map across heights), separately the structure starts on
+//! a tile for the structures chosen, the features chosen up close, and the layouts of jigsaw
+//! structures shown up close. The UI thread turns biome maps into textures with the current
+//! style (ties, highlight, slime, relief) through the library's `BiomeMap::colorize`,
+//! `Image::shade` and `Image::draw_features`, so restyling never samples biomes again, and draws
+//! structure markers and bounds itself.
+//!
+//! Each frame, the map lists every job it would like, most wanted first, and the list replaces
+//! the queue: a tile scrolled away before a worker took it is never computed. Finished jobs come
+//! back over a channel, and the map keeps them in a [`Cache`] that drops the tiles least
+//! recently drawn.
 
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
@@ -15,10 +21,12 @@ use std::thread;
 
 use eframe::egui;
 use spyglass::{
-    BiomeMap, DEFAULT_MAP_Y, HeightMap, Layers, MAX_SLIME_SCALE, MapFeatures, Session,
-    StructureLayout, StructureQuery, StructureStart,
+    BiomeMap, CarvingMap, DEFAULT_MAP_Y, FeatureQuery, FoundFeature, HeightMap, Layers,
+    MAX_SLIME_SCALE, MapFeatures, Session, StructureLayout, StructureQuery, StructureStart,
+    UndergroundMap,
 };
 
+use crate::timing;
 use crate::view::{TILE, Tile};
 
 /// A tile's biomes: the world and seed, the height, what terrain it needs, and its place.
@@ -26,22 +34,75 @@ use crate::view::{TILE, Tile};
 pub struct TileKey {
     /// The app's number for the world and seed shown; each new session gets a new one.
     pub source: u64,
+    /// The height biomes are sampled at, and underground layers drawn at.
     pub y: i32,
     /// Compute the tile's heights, for relief or surface biomes.
     pub heights: bool,
     /// Biomes at the surface rather than at `y`; needs `heights`.
     pub surface: bool,
+    /// The underground layers to compute at `y`.
+    pub underground: Underground,
+    /// Where the tile is, and its scale.
     pub tile: Tile,
 }
+
+/// Which underground layers a tile has.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct Underground {
+    /// Ore veins.
+    pub veins: bool,
+    /// The density graph's caves, before carvers.
+    pub noise_caves: bool,
+    /// The carvers' caves and canyons.
+    pub carvers: bool,
+}
+
+impl Underground {
+    /// Whether the tile has any underground layer.
+    pub fn any(self) -> bool {
+        self.veins || self.noise_caves || self.carvers
+    }
+
+    /// The library's layers for these.
+    pub fn layers(self) -> Layers {
+        Layers {
+            biomes: false,
+            veins: self.veins,
+            noise_caves: self.noise_caves,
+            carvers: self.carvers,
+            ..Layers::default()
+        }
+    }
+}
+
+/// Carving maps kept across heights, by world and seed and tile.
+const CARVING_TILES: usize = 256;
+/// The carving maps kept, shared by the workers.
+type Carvings = Mutex<Cache<(u64, Tile), Arc<CarvingMap>>>;
 
 /// A tile's structure markers: the world and seed, the structures chosen, whether terrain
 /// decides them, and its place.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MarkerKey {
+    /// The app's number for the world and seed shown.
     pub source: u64,
     /// The app's number for the structures chosen.
     pub selection: u64,
+    /// Decide starts with the seed's terrain (`Layers::confirm`).
     pub confirm: bool,
+    /// Where the tile is, and its scale.
+    pub tile: Tile,
+}
+
+/// A tile's feature markers: the world and seed, the features chosen, and its place, at a scale
+/// they're drawn at (`spyglass::MAX_FEATURE_SCALE`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FeatureKey {
+    /// The app's number for the world and seed shown.
+    pub source: u64,
+    /// The app's number for the features chosen.
+    pub selection: u64,
+    /// Where the tile is, and its scale.
     pub tile: Tile,
 }
 
@@ -49,16 +110,22 @@ pub struct MarkerKey {
 /// `World::structures`) and its start chunk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LayoutKey {
+    /// The app's number for the world and seed shown.
     pub source: u64,
+    /// The structure, as an index into `World::structures`.
     pub structure: usize,
+    /// The structure's start chunk, x and z.
     pub chunk: [i32; 2],
 }
 
 /// A computed tile.
 pub struct TileData {
+    /// The biomes, one cell a pixel.
     pub biomes: BiomeMap,
     /// Heights, where the key asked for them.
     pub heights: Option<HeightMap>,
+    /// The underground layers, where the key asked for them.
+    pub underground: Option<Box<UndergroundMap>>,
     /// Slime chunks, at scales where they're drawn.
     pub slime_chunks: Vec<[i32; 2]>,
 }
@@ -66,40 +133,70 @@ pub struct TileData {
 /// What a job computes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum JobKey {
+    /// A tile's biomes, heights, underground layers and slime chunks.
     Biomes(TileKey),
+    /// A tile's structure starts.
     Markers(MarkerKey),
+    /// A tile's features.
+    Features(FeatureKey),
+    /// A structure's layout, for its bounds.
     Layout(LayoutKey),
+}
+
+impl Job {
+    /// The app's number for the job's world and seed.
+    fn session_id(&self) -> u64 {
+        match self.key {
+            JobKey::Biomes(k) => k.source,
+            JobKey::Markers(k) => k.source,
+            JobKey::Features(k) => k.source,
+            JobKey::Layout(k) => k.source,
+        }
+    }
 }
 
 /// Something to compute.
 pub struct Job {
+    /// What to compute, and the key its result is kept under.
     pub key: JobKey,
+    /// The world and seed to compute it in.
     pub session: Arc<Session<'static>>,
     /// For markers: the structures chosen.
     pub structures: Arc<[StructureQuery]>,
+    /// For feature markers: the features chosen.
+    pub features: Arc<[FeatureQuery]>,
 }
 
+/// What a job computed, by the kind of job.
 pub enum Output {
+    /// A tile's biomes and the layers drawn with them.
     Biomes(TileData),
     /// The structure starts whose marker centre is on the tile, in drawing order.
     Markers(Vec<StructureStart>),
-    /// `None` if the structure isn't a jigsaw.
+    /// The features whose marker centre is on the tile, in drawing order.
+    Features(Vec<FoundFeature>),
+    /// `None` if the structure is neither a jigsaw nor a mineshaft.
     Layout(Option<StructureLayout>),
 }
 
+/// A finished job: its key, and what it computed or why it failed.
 type Done = (JobKey, Result<Output, String>);
 
+/// The jobs the UI thread and the workers share, under one lock.
 #[derive(Default)]
 struct Queue {
     /// Waiting, most wanted first.
     waiting: Vec<Job>,
+    /// Taken by a worker and not yet done, so a new list doesn't queue them again.
     running: HashSet<JobKey>,
 }
 
 /// Worker threads computing tiles, most wanted first. Jobs no longer wanted are dropped before
 /// they start.
 pub struct Pool {
+    /// The queue, and the signal that wakes idle workers when it changes.
     queue: Arc<(Mutex<Queue>, Condvar)>,
+    /// Finished jobs, sent by the workers.
     done: Receiver<Done>,
 }
 
@@ -111,15 +208,18 @@ impl Pool {
         Pool::with_threads(threads, wake)
     }
 
+    /// A pool of `threads` workers; none, in tests, leaves every job waiting.
     fn with_threads(threads: usize, wake: impl Fn() + Send + Sync + 'static) -> Pool {
         let queue = Arc::new((Mutex::new(Queue::default()), Condvar::new()));
         let (send, done) = channel();
         let wake = Arc::new(wake);
+        let carvings: Arc<Carvings> = Arc::new(Mutex::new(Cache::new(CARVING_TILES)));
         for i in 0..threads {
             let (queue, send, wake) = (queue.clone(), send.clone(), wake.clone());
+            let carvings = carvings.clone();
             thread::Builder::new()
                 .name(format!("tiles-{i}"))
-                .spawn(move || work(&queue, &send, &*wake))
+                .spawn(move || work(&queue, &send, &*wake, &carvings))
                 .expect("a tile worker thread");
         }
         Pool { queue, done }
@@ -139,10 +239,10 @@ impl Pool {
         wake.notify_all();
     }
 
-    /// Whether anything is being computed or waiting.
-    pub fn busy(&self) -> bool {
+    /// How many jobs are being computed or waiting.
+    pub fn pending(&self) -> usize {
         let queue = self.queue.0.lock().unwrap_or_else(PoisonError::into_inner);
-        !queue.waiting.is_empty() || !queue.running.is_empty()
+        queue.waiting.len() + queue.running.len()
     }
 
     /// The jobs waiting, most wanted first.
@@ -158,22 +258,30 @@ impl Pool {
     }
 }
 
-fn work(queue: &(Mutex<Queue>, Condvar), send: &Sender<Done>, wake: &(dyn Fn() + Send + Sync)) {
+/// A worker's loop: take the most wanted job, compute it outside the lock, and send it back.
+/// It sleeps while nothing waits, and ends when the pool's receiver is dropped.
+fn work(
+    queue: &(Mutex<Queue>, Condvar),
+    send: &Sender<Done>,
+    wake: &(dyn Fn() + Send + Sync),
+    carvings: &Carvings,
+) {
     let (lock, signal) = queue;
     loop {
         let job = {
-            let mut q = lock.lock().unwrap_or_else(PoisonError::into_inner);
-            while q.waiting.is_empty() {
-                q = signal.wait(q).unwrap_or_else(PoisonError::into_inner);
+            let mut queue = lock.lock().unwrap_or_else(PoisonError::into_inner);
+            while queue.waiting.is_empty() {
+                queue = signal.wait(queue).unwrap_or_else(PoisonError::into_inner);
             }
-            let job = q.waiting.remove(0);
-            q.running.insert(job.key);
+            let job = queue.waiting.remove(0);
+            queue.running.insert(job.key);
             job
         };
         // A panic in the library is a bug, but it fails one tile: the worker lives on, and the
         // job leaves `running`, so the tile isn't waited on forever.
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compute(&job)))
-            .unwrap_or_else(|_| Err("spyglass failed on this tile".to_string()));
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compute(&job, carvings)))
+                .unwrap_or_else(|_| Err("spyglass failed on this tile".to_string()));
         lock.lock()
             .unwrap_or_else(PoisonError::into_inner)
             .running
@@ -185,10 +293,12 @@ fn work(queue: &(Mutex<Queue>, Condvar), send: &Sender<Done>, wake: &(dyn Fn() +
     }
 }
 
-fn compute(job: &Job) -> Result<Output, String> {
+/// Computes one job with the library, timing each part.
+fn compute(job: &Job, carvings: &Carvings) -> Result<Output, String> {
     let (tile, y) = match job.key {
         JobKey::Biomes(key) => (key.tile, key.y),
         JobKey::Markers(key) => (key.tile, DEFAULT_MAP_Y),
+        JobKey::Features(key) => (key.tile, DEFAULT_MAP_Y),
         JobKey::Layout(key) => {
             let structure = job
                 .session
@@ -196,16 +306,19 @@ fn compute(job: &Job) -> Result<Output, String> {
                 .structures()
                 .nth(key.structure)
                 .ok_or("no such structure")?;
-            return job
-                .session
-                .structure_layout(structure, key.chunk)
-                .map(Output::Layout)
-                .map_err(|e| e.to_string());
+            return timing::job(
+                || "layout".to_string(),
+                || job.session.structure_layout(structure, key.chunk),
+            )
+            .map(Output::Layout)
+            .map_err(|e| e.to_string());
         }
     };
     let area = tile
         .area(y)
         .ok_or("the tile is outside block coordinates")?;
+    // The name a part is timed under, such as "biomes 1:4".
+    let timing_name = |what: &'static str| move || format!("{what} 1:{}", tile.scale);
     let features = |layers: Layers| {
         job.session
             .map_features(&area, &layers)
@@ -214,15 +327,30 @@ fn compute(job: &Job) -> Result<Output, String> {
     match job.key {
         JobKey::Biomes(key) => {
             let heights = if key.heights {
-                Some(job.session.height_map(&area).map_err(|e| e.to_string())?)
+                let heights = timing::job(timing_name("heights"), || job.session.height_map(&area));
+                Some(heights.map_err(|e| e.to_string())?)
             } else {
                 None
             };
-            let biomes = match &heights {
+            let biomes = timing::job(timing_name("biomes"), || match &heights {
                 Some(heights) if key.surface => job.session.surface_biome_map(heights),
                 _ => job.session.biome_map(&area),
-            }
+            })
             .map_err(|e| e.to_string())?;
+            let underground = if key.underground.any() {
+                let carved = if key.underground.carvers {
+                    Some(carving_map(job, carvings, key.tile, &area)?)
+                } else {
+                    None
+                };
+                let map = timing::job(timing_name("underground"), || {
+                    job.session
+                        .underground_map(&area, &key.underground.layers(), carved.as_deref())
+                });
+                Some(Box::new(map.map_err(|e| e.to_string())?))
+            } else {
+                None
+            };
             let slime = Layers {
                 biomes: false,
                 slime_chunks: true,
@@ -238,17 +366,18 @@ fn compute(job: &Job) -> Result<Output, String> {
             Ok(Output::Biomes(TileData {
                 biomes,
                 heights,
+                underground,
                 slime_chunks,
             }))
         }
         JobKey::Markers(key) => {
-            let mut starts = features(Layers {
+            let layers = Layers {
                 biomes: false,
                 structures: job.structures.to_vec(),
                 confirm: key.confirm,
                 ..Layers::default()
-            })?
-            .structures;
+            };
+            let mut starts = timing::job(timing_name("markers"), || features(layers))?.structures;
             // Each marker belongs to the tile its centre is on, so it's drawn once.
             let inside = 0..i64::from(TILE);
             starts.retain(|s| {
@@ -257,16 +386,62 @@ fn compute(job: &Job) -> Result<Output, String> {
             });
             Ok(Output::Markers(starts))
         }
+        JobKey::Features(_) => {
+            let layers = Layers {
+                biomes: false,
+                features: job.features.to_vec(),
+                ..Layers::default()
+            };
+            let mut found = timing::job(timing_name("features"), || features(layers))?.features;
+            // Each marker belongs to the tile its centre is on, so it's drawn once.
+            let inside = 0..i64::from(TILE);
+            found.retain(|f| {
+                let [x, z] = area.pixel([f.position[0], f.position[2]]);
+                inside.contains(&x) && inside.contains(&z)
+            });
+            Ok(Output::Features(found))
+        }
         JobKey::Layout(_) => unreachable!("layouts are computed above"),
     }
+}
+
+/// The tile's carving map, kept across heights: carving a tile is most of its underground
+/// layers' cost.
+fn carving_map(
+    job: &Job,
+    carvings: &Carvings,
+    tile: Tile,
+    area: &spyglass::MapArea,
+) -> Result<Arc<CarvingMap>, String> {
+    let key = (job.session_id(), tile);
+    {
+        let mut kept = carvings.lock().unwrap_or_else(PoisonError::into_inner);
+        kept.next_frame();
+        if let Some(map) = kept.get(&key) {
+            return Ok(map.clone());
+        }
+    }
+    let map = timing::job(
+        || format!("carvers 1:{}", tile.scale),
+        || job.session.carving_map(area),
+    )
+    .map_err(|e| e.to_string())?;
+    let map = Arc::new(map);
+    carvings
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(key, map.clone());
+    Ok(map)
 }
 
 /// How tiles are coloured.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Style {
+    /// Show tied cells as a checker of their candidates.
     pub ties: bool,
     /// Biome ids to keep bright.
     pub highlight: Vec<String>,
+    /// Draw slime chunks, where the tile has them.
     pub slime_chunks: bool,
     /// Shade by the tile's heights, where it has them.
     pub relief: bool,
@@ -274,7 +449,9 @@ pub struct Style {
 
 /// A computed tile and its texture in some style.
 pub struct Entry {
+    /// The tile, or why it failed.
     pub data: Result<TileData, String>,
+    /// The texture last made, and the style it was made in: another style makes it again.
     pub texture: Option<(Style, egui::TextureHandle)>,
 }
 
@@ -289,8 +466,11 @@ impl Entry {
 
 /// Values by key, least recently used dropped first.
 pub struct Cache<K, V> {
+    /// Each value, with the frame it was last used in.
     entries: HashMap<K, (V, u64)>,
+    /// How many values are kept.
     capacity: usize,
+    /// The current frame's number.
     frame: u64,
 }
 
@@ -315,7 +495,11 @@ impl<K: Copy + Eq + Hash, V> Cache<K, V> {
     pub fn insert(&mut self, key: K, value: V) {
         self.entries.insert(key, (value, self.frame));
         if self.entries.len() > self.capacity {
-            let mut ages: Vec<(u64, K)> = self.entries.iter().map(|(k, (_, f))| (*f, *k)).collect();
+            let mut ages: Vec<(u64, K)> = self
+                .entries
+                .iter()
+                .map(|(key, (_, last_used))| (*last_used, *key))
+                .collect();
             ages.sort_by_key(|(age, _)| *age);
             let excess = self.entries.len() - self.capacity;
             for (_, key) in ages.into_iter().take(excess) {
@@ -359,6 +543,7 @@ mod tests {
             y: 64,
             heights: false,
             surface: false,
+            underground: Underground::default(),
             tile: Tile { scale: 4, x, z: 0 },
         }
     }
@@ -377,11 +562,13 @@ mod tests {
                 resource(
                     "worldgen/structure",
                     "tower",
-                    json!({"type": "minecraft:stronghold", "biomes": "minecraft:plains"}),
+                    json!({"type": "minecraft:stronghold", "biomes": "minecraft:plains", "step": "surface_structures"}),
                 ),
             ],
             true,
         );
+        // Kept for the test's life: the world reads its block settings when first asked.
+        let fixture = Box::leak(Box::new(fixture));
         let world: &'static spyglass::World =
             Box::leak(Box::new(spyglass::World::open(fixture.path()).unwrap()));
         Arc::new(world.session(9).unwrap())
@@ -395,6 +582,7 @@ mod tests {
             key,
             session: session.clone(),
             structures,
+            features: Arc::from(Vec::new()),
         }
     }
 
@@ -419,7 +607,7 @@ mod tests {
         );
         pool.want(vec![biomes(2)]);
         assert_eq!(pool.waiting(), [JobKey::Biomes(key(2))]);
-        assert!(pool.busy());
+        assert!(pool.pending() > 0);
     }
 
     #[test]
@@ -457,7 +645,7 @@ mod tests {
                 assert_eq!(data.biomes, session.biome_map(&area).unwrap());
                 assert_eq!(data.heights, None);
             }
-            let side = 256 * key.tile.scale as i32;
+            let side = (TILE * key.tile.scale) as i32;
             assert_eq!(
                 data.slime_chunks,
                 session.slime_chunks(
@@ -466,7 +654,49 @@ mod tests {
                 )
             );
         }
-        assert!(!pool.busy());
+        assert_eq!(pool.pending(), 0);
+    }
+
+    #[test]
+    fn underground_tiles_are_the_library_s_at_every_height() {
+        let session = session();
+        let (wake, woken) = channel();
+        let pool = Pool::with_threads(1, move || {
+            let _ = wake.send(());
+        });
+        let underground = Underground {
+            veins: false,
+            noise_caves: true,
+            carvers: true,
+        };
+        let deep = |y| TileKey {
+            y,
+            underground,
+            tile: Tile {
+                scale: 1,
+                x: -1,
+                z: 0,
+            },
+            ..key(0)
+        };
+        // One worker, so the second height finds the first's carving map kept.
+        pool.want(vec![
+            job(&session, JobKey::Biomes(deep(0))),
+            job(&session, JobKey::Biomes(deep(-30))),
+        ]);
+        for (key, result) in run(&pool, &woken, 2) {
+            if let Err(e) = &result {
+                panic!("{e}");
+            }
+            let (JobKey::Biomes(key), Ok(Output::Biomes(data))) = (key, result) else {
+                panic!("a biome tile");
+            };
+            let area = key.tile.area(key.y).unwrap();
+            let expected = session
+                .underground_map(&area, &underground.layers(), None)
+                .unwrap();
+            assert_eq!(data.underground.as_deref(), Some(&expected), "y {}", key.y);
+        }
     }
 
     #[test]
@@ -500,12 +730,14 @@ mod tests {
             })
             .collect();
         // Together, exactly the starts in the blocks the tiles cover.
+        let side = (TILE * 2) as i32;
         let query = session.world().structure_query("minecraft:tower").unwrap();
         let mut expected = session
             .structures_in(&query, [-200, -10], [10, 200], false)
             .unwrap();
-        expected
-            .retain(|s| (-1536..0).contains(&s.position[0]) && (0..1024).contains(&s.position[2]));
+        expected.retain(|s| {
+            (-3 * side..0).contains(&s.position[0]) && (0..2 * side).contains(&s.position[2])
+        });
         let order = |s: &StructureStart| (s.chunk[1], s.chunk[0]);
         found.sort_by_key(order);
         expected.sort_by_key(order);

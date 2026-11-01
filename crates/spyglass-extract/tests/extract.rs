@@ -22,22 +22,28 @@ fn extracts_26_3_reproducibly() {
         extract::extract(&options, |_| {}).unwrap()
     };
 
-    let a = run("a");
-    assert_eq!(a.manifest.version, "26.3");
-    assert_eq!(a.manifest.data_version, 5023);
+    let first = run("a");
+    assert_eq!(first.manifest.version, "26.3");
+    assert_eq!(first.manifest.data_version, 5023);
     for dir in write::JAR_DIRS {
-        assert!(a.manifest.files.keys().any(|p| p.starts_with(dir)), "{dir}");
+        assert!(
+            first.manifest.files.keys().any(|p| p.starts_with(dir)),
+            "{dir}"
+        );
     }
     for report in write::REPORTS {
-        assert!(a.manifest.files.contains_key(*report), "{report}");
+        assert!(first.manifest.files.contains_key(*report), "{report}");
     }
-    assert_eq!(spyglass_data::bundle::verify(&a.dir).unwrap(), a.manifest);
+    assert_eq!(
+        spyglass_data::bundle::verify(&first.dir).unwrap(),
+        first.manifest
+    );
 
     // A second extraction is identical, down to the bytes of bundle.json.
-    let b = run("b");
-    assert_eq!(b.manifest, a.manifest);
+    let second = run("b");
+    assert_eq!(second.manifest, first.manifest);
     assert_eq!(
-        std::fs::read(a.dir.join(spyglass_data::bundle::MANIFEST)).unwrap(),
-        std::fs::read(b.dir.join(spyglass_data::bundle::MANIFEST)).unwrap()
+        std::fs::read(first.dir.join(spyglass_data::bundle::MANIFEST)).unwrap(),
+        std::fs::read(second.dir.join(spyglass_data::bundle::MANIFEST)).unwrap()
     );
 }

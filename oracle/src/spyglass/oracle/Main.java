@@ -69,6 +69,12 @@ public final class Main {
                 case "spawn" -> Spawn.run(game, Path.of(args[1]), dimension(args), positional(args));
                 case "heights" -> Heights.run(game, Path.of(args[1]), dimension(args), positional(args),
                         intOption(args, "--threads", Runtime.getRuntime().availableProcessors()));
+                case "column" -> Blocks.column(game, args[1], dimension(args), Integer.parseInt(args[2]),
+                        Integer.parseInt(args[3]));
+                case "blocks" -> Blocks.run(game, Path.of(args[1]), dimension(args), positional(args),
+                        intOption(args, "--threads", Runtime.getRuntime().availableProcessors()));
+                case "features" -> Features.run(game, Path.of(args[1]), dimension(args), positional(args),
+                        intOption(args, "--threads", Runtime.getRuntime().availableProcessors()));
                 default -> {
                     usage();
                     yield 2;
@@ -162,7 +168,8 @@ public final class Main {
         System.err.println("usage: biomes <jobs file> [--threads N] | check-save <world dir> [--dimension ID]"
                 + " | probe <out dir> <seed>... | structures <out dir> [--dimension ID] <seed>..."
                 + " | spawn <out dir> [--dimension ID] <seed>... | heights <out dir> [--dimension ID] [--threads N]"
-                + " <seed>...");
+                + " <seed>... | blocks <out dir> [--dimension ID] [--threads N] <seed>..."
+                + " | features <out dir> [--dimension ID] [--threads N] <seed>...");
         System.exit(2);
     }
 }

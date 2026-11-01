@@ -42,8 +42,8 @@ impl NoiseParameters {
                 hi = hi.max(i as i32);
             }
         }
-        let k = hi.wrapping_sub(lo);
-        let deviation = 0.1 * (1.0 + 1.0 / f64::from(k.wrapping_add(1)));
+        let span = hi.wrapping_sub(lo);
+        let deviation = 0.1 * (1.0 + 1.0 / f64::from(span.wrapping_add(1)));
         0.166_666_666_666_666_66 / deviation
     }
 }
@@ -52,8 +52,12 @@ impl NoiseParameters {
 /// `s` = 1.0181268882175227 and both sets from the same parameters.
 #[derive(Debug, Clone)]
 pub struct NormalNoise {
+    /// The octave set sampled at the input.
     first: PerlinNoise,
+    /// The octave set sampled at the same point scaled by [`INPUT_FACTOR`]
+    /// (1.0181268882175227).
     second: PerlinNoise,
+    /// What the sum is scaled by, from the amplitudes' span.
     value_factor: f64,
 }
 
@@ -124,10 +128,11 @@ impl NormalNoise {
     /// `getValue(double, double, double)`: each set's sum on its own, added, then scaled, in
     /// `f64`.
     pub fn get_value(&self, x: f64, y: f64, z: f64) -> f64 {
-        let x2 = x * INPUT_FACTOR;
-        let y2 = y * INPUT_FACTOR;
-        let z2 = z * INPUT_FACTOR;
-        (self.first.get_value(x, y, z) + self.second.get_value(x2, y2, z2)) * self.value_factor
+        let second_x = x * INPUT_FACTOR;
+        let second_y = y * INPUT_FACTOR;
+        let second_z = z * INPUT_FACTOR;
+        (self.first.get_value(x, y, z) + self.second.get_value(second_x, second_y, second_z))
+            * self.value_factor
     }
 
     /// `maxValue()`: `(first.maxValue() + second.maxValue()) · valueFactor`.

@@ -6,6 +6,8 @@ Code must not reference plans. Anything durable a plan produces belongs in a spe
 
 ## Active
 
-- [m11-releases](m11-releases.md): versioned release archives built by CI from a tag ([milestone 11](../roadmap/11-releases.md)).
+- [m08-ci-plan](m08-ci-plan.md): oracle CI planned by cost, for milestone [08](../roadmap/completed/08-dimensions-and-versions.md)'s versions.
 
-Milestone 08's follow-ups ([roadmap](../roadmap/README.md#follow-ups)) need no plan of their own.
+No milestone is in progress. The next is [20](../roadmap/20-loot.md).
+
+The follow-ups of milestones 08 and 11 ([roadmap](../roadmap/README.md#follow-ups)) need no plan of their own.

@@ -75,11 +75,14 @@ pub fn run(args: &Release) -> Result<()> {
 /// A SemVer version: major, minor and patch, and an optional pre-release.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Version {
+    /// Major, minor and patch.
     core: (u64, u64, u64),
+    /// The pre-release after `-`, such as `rc.1`.
     pre: Option<String>,
 }
 
 impl Version {
+    /// `major.minor.patch`, with an optional `-pre`.
     fn parse(text: &str) -> Result<Self> {
         let (core, pre) = match text.split_once('-') {
             Some((core, pre)) => (core, Some(pre.to_string())),
@@ -126,6 +129,7 @@ fn today() -> String {
     format!("{year}-{month:02}-{day:02}")
 }
 
+/// The changelog's heading for changes not released yet.
 const UNRELEASED: &str = "## [Unreleased]\n";
 
 /// The text of the changelog's Unreleased section, after its heading and before the next.

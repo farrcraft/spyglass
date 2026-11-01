@@ -15,16 +15,31 @@ const VERSION_VAR: &str = "SPYGLASS_ORACLE_VERSION";
 /// What a test reads: a bundle, or one of the oracle's outputs under `oracle-out/<version>/`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Input {
+    /// A bundle, extracted or a merged test pack's.
     Bundle,
     /// A bundle extracted into `bundles/`, which the front ends find by version; not a merged
     /// test pack's.
     Extracted,
+    /// The probe files.
     Probe,
+    /// The biome grids.
     Biomes,
+    /// The structure files.
     Structures,
+    /// The spawn files.
     Spawn,
+    /// The `/locate` answers.
     Locate,
+    /// The height files.
     Heights,
+    /// The block files with carvers.
+    Blocks,
+    /// The block files without carvers, under `oracle-out/<version>+no-carvers/`.
+    BlocksNoCarvers,
+    /// The feature files.
+    Features,
+    /// The Overworld feature file of `oracle::DUNGEON_SEED`, which a test needs in particular.
+    DungeonSeed,
 }
 
 impl Input {
@@ -49,6 +64,24 @@ impl Input {
             Input::Spawn => "spawn",
             Input::Locate => "locate",
             Input::Heights => "heights",
+            Input::Blocks => "blocks",
+            Input::Features => "features",
+            Input::DungeonSeed => {
+                return root
+                    .join("oracle-out")
+                    .join(version)
+                    .join("features")
+                    .join("overworld")
+                    .join(format!("{}.json", crate::oracle::DUNGEON_SEED))
+                    .is_file();
+            }
+            Input::BlocksNoCarvers => {
+                return root
+                    .join("oracle-out")
+                    .join(format!("{version}+no-carvers"))
+                    .join("blocks")
+                    .is_dir();
+            }
         };
         root.join("oracle-out").join(version).join(sub).is_dir()
     }
@@ -63,6 +96,8 @@ impl Input {
             Input::Spawn => "cargo xtask oracle spawn",
             Input::Locate => "cargo xtask oracle locate",
             Input::Heights => "cargo xtask oracle heights",
+            Input::Blocks | Input::BlocksNoCarvers => "cargo xtask oracle blocks",
+            Input::Features | Input::DungeonSeed => "cargo xtask oracle features",
         }
     }
 }
@@ -72,7 +107,7 @@ pub(crate) type Keep<'a> = &'a dyn Fn(&[Input]) -> bool;
 
 /// Every ignored test that checks against the game or a bundle: package, test name, inputs.
 /// Tests that read this machine's saves or download the server jar aren't here.
-const TESTS: &[(&str, &str, &[Input])] = &[
+pub(crate) const TESTS: &[(&str, &str, &[Input])] = &[
     (
         "spyglass-rng",
         "every_random_source_value_matches_the_game",
@@ -110,8 +145,63 @@ const TESTS: &[(&str, &str, &[Input])] = &[
     ),
     (
         "spyglass-terrain",
+        "a_column_in_parts_is_the_column",
+        &[Input::Bundle],
+    ),
+    (
+        "spyglass-terrain",
         "every_height_matches_the_game",
         &[Input::Heights, Input::Bundle],
+    ),
+    (
+        "spyglass-terrain",
+        "chunks_without_carvers_have_the_columns_air_and_fluids",
+        &[Input::BlocksNoCarvers, Input::Bundle],
+    ),
+    (
+        "spyglass-blocks",
+        "chunks_without_carvers_match_the_game",
+        &[Input::BlocksNoCarvers, Input::Bundle],
+    ),
+    (
+        "spyglass-blocks",
+        "chunks_with_carvers_match_the_game",
+        &[Input::Blocks, Input::Bundle],
+    ),
+    (
+        "spyglass-blocks",
+        "probes_and_veins_are_the_chunks",
+        &[Input::Bundle],
+    ),
+    (
+        "spyglass-blocks",
+        "carvings_hold_every_carved_block",
+        &[Input::Bundle],
+    ),
+    (
+        "spyglass-feature",
+        "every_dimension_sorts",
+        &[Input::Bundle],
+    ),
+    (
+        "spyglass-feature",
+        "tries_match_the_game",
+        &[Input::Features, Input::Bundle],
+    ),
+    (
+        "spyglass-feature",
+        "placing_matches_the_game",
+        &[Input::Features, Input::Bundle],
+    ),
+    (
+        "spyglass",
+        "blocks_through_the_api_are_the_game_s",
+        &[Input::Blocks, Input::BlocksNoCarvers, Input::Bundle],
+    ),
+    (
+        "spyglass-terrain",
+        "carvers_only_carve",
+        &[Input::Blocks, Input::BlocksNoCarvers],
     ),
     (
         "spyglass-oracle",
@@ -208,8 +298,38 @@ const TESTS: &[(&str, &str, &[Input])] = &[
         "search::tests::the_fast_path_agrees_across_dimensions_on_the_real_game",
         &[Input::Bundle],
     ),
+    (
+        "spyglass",
+        "features_in_are_the_game_s",
+        &[Input::Features, Input::Bundle],
+    ),
+    (
+        "spyglass",
+        "two_dungeon_seeds_are_the_game_s",
+        &[Input::Features, Input::DungeonSeed, Input::Bundle],
+    ),
+    (
+        "spyglass",
+        "feature_constraints_count_features_in",
+        &[Input::Bundle],
+    ),
+    (
+        "spyglass",
+        "the_fast_path_agrees_with_evaluate_for_features",
+        &[Input::Bundle],
+    ),
+    (
+        "spyglass",
+        "find_feature_targets_skip_themselves",
+        &[Input::Bundle],
+    ),
     ("spyglass", "each_dimension_opens", &[Input::Bundle]),
     ("spyglass", "a_game_spans_the_dimensions", &[Input::Bundle]),
+    (
+        "spyglass-viewer",
+        "icons::tests::every_bundled_structure_has_a_family",
+        &[Input::Bundle],
+    ),
     ("spyglass-cli", "structures", &[Input::Extracted]),
     ("spyglass-cli", "jigsaw_bounds", &[Input::Extracted]),
     ("spyglass-cli", "biomes", &[Input::Extracted]),
@@ -232,19 +352,23 @@ const TESTS: &[(&str, &str, &[Input])] = &[
     ),
 ];
 
-/// Tests whose expected values are one version's, with that version: they run only for it.
-const PINNED: &[(&str, &str)] = &[
-    ("loads_every_overworld_structure_set", "26.3"),
-    ("a_default_world", "26.3"),
-    ("a_player_in_the_nether", "26.3"),
-    ("worlds_spyglass_cant_predict", "26.3"),
-    ("a_preset_world_is_named", "26.3"),
+/// Tests that run only for some versions, with those versions: tests whose expected values are
+/// one version's, and tests of behavior ported for some versions so far.
+const PINNED: &[(&str, &[&str])] = &[
+    ("loads_every_overworld_structure_set", &["26.3"]),
+    ("a_default_world", &["26.3"]),
+    ("a_player_in_the_nether", &["26.3"]),
+    ("worlds_spyglass_cant_predict", &["26.3"]),
+    ("a_preset_world_is_named", &["26.3"]),
 ];
 
 /// How one version's run went.
 enum Outcome {
+    /// This many tests ran, and passed.
     Passed(usize),
+    /// A test failed, or cargo did.
     Failed,
+    /// None of its tests had their inputs.
     NoInputs,
 }
 
@@ -321,7 +445,7 @@ fn run_version(root: &Path, version: &str, made: &[Input], keep: Keep<'_>) -> Re
     let mut names = Vec::new();
     for &(package, name, inputs) in TESTS.iter().filter(|(_, _, inputs)| keep(inputs)) {
         if let Some(&(_, pinned)) = PINNED.iter().find(|(n, _)| *n == name)
-            && pinned != version
+            && !pinned.contains(&version)
         {
             continue;
         }
@@ -357,8 +481,8 @@ fn run_version(root: &Path, version: &str, made: &[Input], keep: Keep<'_>) -> Re
     let mut cmd = command("cargo");
     cmd.env(VERSION_VAR, version)
         .args(["test", "--release", "--no-fail-fast"]);
-    for p in &packages {
-        cmd.args(["-p", p]);
+    for package in &packages {
+        cmd.args(["-p", package]);
     }
     cmd.args(["--", "--ignored", "--exact"]).args(&names);
     Ok(if cmd.status().context("failed to run cargo")?.success() {

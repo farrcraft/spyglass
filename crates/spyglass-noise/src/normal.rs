@@ -143,13 +143,17 @@ pub struct OctaveInfo {
 /// seeded noise.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NormalNoise {
+    /// The octaves that are present, lowest frequency first.
     octaves: Vec<OctaveInfo>,
+    /// What every octave's amplitude is scaled by, so the sum's deviation is near
+    /// [`TARGET_DEVIATION`].
     normalization_factor: f64,
     /// The octaves' `|amplitude|`, summed as the game sums them (and adjusted for legacy
     /// normalization).
     amplitude_sum: f64,
-    /// The parameters the legacy Nether biome construction reads.
+    /// The parameters' `base_octave`, which the legacy Nether biome construction reads.
     base_octave: i32,
+    /// The parameters' `base_amplitude`, which it reads too.
     base_amplitude: f64,
     /// One modifier per octave: the parameters', or all 1.
     modifiers: Vec<f64>,
@@ -210,6 +214,50 @@ impl NormalNoise {
         })
     }
 
+    /// `NormalNoise.createParity(base_octave, amplitudes)`: a normalized noise of one octave per
+    /// amplitude, from `base_octave`, whose base amplitude
+    /// (`computeParityBaseAmplitude`) gives it the parity normalization's deviation. Features
+    /// sample it (the geode, from 26.3).
+    ///
+    /// # Errors
+    ///
+    /// For no amplitudes, or parameters outside the codec's ranges.
+    pub fn create_parity(base_octave: i32, amplitudes: &[f64]) -> Result<Self, NoiseError> {
+        if amplitudes.is_empty() {
+            return Err(NoiseError::OctaveCount);
+        }
+        let count = amplitudes.len() as i32;
+        // computeParityBaseAmplitude: buildOctaves(base, 1.0, count, true, amplitudes).
+        let unit = Parameters {
+            base_amplitude: 1.0,
+            base_octave,
+            octave_count: count,
+            normalize: Normalization::Enabled,
+            amplitude_modifiers: amplitudes.to_vec(),
+        };
+        let octaves = build_octaves(&unit);
+        let sum = java_double_stream_sum(octaves.iter().map(|o| o.amplitude.abs()));
+        let factor = normalization_factor(sum, &octaves);
+        let base_amplitude = if factor == 0.0 {
+            1.0
+        } else {
+            parity_normalization_factor(1.0, amplitudes) / factor
+        };
+        // The builder sets only the modifiers that aren't 1, which reads the same.
+        let amplitude_modifiers = if amplitudes.iter().all(|&a| a == 1.0) {
+            Vec::new()
+        } else {
+            amplitudes.to_vec()
+        };
+        Self::from_parameters(&Parameters {
+            base_amplitude,
+            base_octave,
+            octave_count: count,
+            normalize: Normalization::Enabled,
+            amplitude_modifiers,
+        })
+    }
+
     /// The octaves that are present, in order.
     pub fn octaves(&self) -> &[OctaveInfo] {
         &self.octaves
@@ -236,16 +284,16 @@ impl NormalNoise {
         let mut layers = Vec::with_capacity(2 * self.octaves.len());
         for octave in &self.octaves {
             let seed = format!("octave_{}", octave.octave_index);
-            let a = PerlinNoise::new(&mut first.from_hash_of(&seed));
-            let b = PerlinNoise::new(&mut second.from_hash_of(&seed));
+            let first_noise = PerlinNoise::new(&mut first.from_hash_of(&seed));
+            let second_noise = PerlinNoise::new(&mut second.from_hash_of(&seed));
             let amplitude = (self.normalization_factor * octave.amplitude) as f32;
             layers.push(Layer {
-                noise: a,
+                noise: first_noise,
                 frequency: octave.frequency,
                 amplitude,
             });
             layers.push(Layer {
-                noise: b,
+                noise: second_noise,
                 frequency: octave.frequency * INPUT_FACTOR,
                 amplitude,
             });
@@ -297,8 +345,10 @@ pub(crate) fn legacy_levels<R: RandomSource, N: Clone>(
     mut make: impl FnMut(&mut R) -> N,
 ) -> Result<Vec<Option<N>>, NoiseError> {
     let n = amplitudes.len() as i32;
+    // The index of the level at frequency 1 (octave 0), which may be past the last level.
     let zero = first_octave.wrapping_neg();
     let mut levels: Vec<Option<N>> = vec![None; amplitudes.len()];
+    // Made whether or not it's kept, as the game draws it either way.
     let at_zero = make(random);
     if (0..n).contains(&zero) && amplitudes[zero as usize] != 0.0 {
         levels[zero as usize] = Some(at_zero);
@@ -307,6 +357,9 @@ pub(crate) fn legacy_levels<R: RandomSource, N: Clone>(
         if i < n && amplitudes[i as usize] != 0.0 {
             levels[i as usize] = Some(make(random));
         } else {
+            // The game's fixed `consumeCount(262)`: three offsets of two `next` calls each,
+            // then 256 for the shuffle. A real octave's shuffle can draw more (its bounded
+            // draws can reject), but the game always skips exactly 262, so this must too.
             random.consume_count(262);
         }
     }
@@ -334,6 +387,8 @@ fn legacy_fbm<R: RandomSource>(
     let levels = legacy_levels(random, first_octave, modifiers, PerlinNoise::new)?;
     // Math.pow(2, -zero) and pow(2, n - 1) / (pow(2, n) - 1), exact for these integers.
     let mut frequency = exp2i(zero.wrapping_neg());
+    // The level's amplitude before its modifier (the spec's `val`), halving with each level so
+    // that all of them sum to 1.
     let mut value = exp2i(n - 1) / (exp2i(n) - 1.0);
     let mut layers = Vec::new();
     for (level, &modifier) in levels.into_iter().zip(modifiers) {
@@ -361,12 +416,13 @@ fn parity_normalization_factor(base_amplitude: f64, modifiers: &[f64]) -> f64 {
         }
     }
     // parityExpectedDeviation(hi - lo): 0.1 * (1.0 + 1.0 / (double)(n + 1)), int arithmetic.
-    let n = hi.wrapping_sub(lo);
-    let deviation = 0.1 * (1.0 + 1.0 / f64::from(n.wrapping_add(1)));
+    let span = hi.wrapping_sub(lo);
+    let deviation = 0.1 * (1.0 + 1.0 / f64::from(span.wrapping_add(1)));
     base_amplitude * 0.5 * TARGET_DEVIATION / deviation
 }
 
-/// `NormalNoise.buildOctaves`.
+/// `NormalNoise.buildOctaves`: each octave doubles the frequency and halves the amplitude, and
+/// normalization scales the first amplitude so that all of them sum to `base_amplitude`.
 fn build_octaves(p: &Parameters) -> Vec<OctaveInfo> {
     let mut frequency = exp2i(p.base_octave);
     let mut amplitude = p.base_amplitude;
@@ -395,7 +451,9 @@ fn build_octaves(p: &Parameters) -> Vec<OctaveInfo> {
     octaves
 }
 
-/// `NormalNoise.computeNormalizationFactor`, with `estimateDeviation` inlined.
+/// `NormalNoise.computeNormalizationFactor`, with `estimateDeviation` inlined: the octaves'
+/// deviations, `OCTAVE_DEVIATION · |amplitude|` each, add as independent ones do (the root of
+/// the sum of squares), and the factor takes that total to the target.
 fn normalization_factor(sum: f64, octaves: &[OctaveInfo]) -> f64 {
     let deviation = octaves
         .iter()
@@ -416,6 +474,7 @@ fn normalization_factor(sum: f64, octaves: &[OctaveInfo]) -> f64 {
 fn java_double_stream_sum(values: impl IntoIterator<Item = f64>) -> f64 {
     let (mut sum, mut compensation, mut simple) = (0.0_f64, 0.0_f64, 0.0_f64);
     for value in values {
+        // `tmp` and `velvel` are the JDK's names.
         let tmp = value - compensation;
         let velvel = sum + tmp;
         compensation = (velvel - sum) - tmp;
@@ -433,6 +492,34 @@ fn java_double_stream_sum(values: impl IntoIterator<Item = f64>) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parity_noise_weighs_its_layers_by_the_parity_factor() {
+        // computeParityBaseAmplitude divides the parity factor by the normalization factor,
+        // which doesn't depend on the base amplitude, so each octave weighs the parity factor
+        // times its weight at base amplitude 1, to rounding.
+        for amplitudes in [&[1.0][..], &[1.0, 0.0, 2.0], &[0.5, 1.0, 1.0, 1.0]] {
+            let noise = NormalNoise::create_parity(-4, amplitudes).unwrap();
+            let unit = build_octaves(&Parameters {
+                amplitude_modifiers: amplitudes.to_vec(),
+                octave_count: amplitudes.len() as i32,
+                ..Parameters::new(-4)
+            });
+            let parity = parity_normalization_factor(1.0, amplitudes);
+            for (o, u) in noise.octaves().iter().zip(&unit) {
+                let weight = noise.normalization_factor() * o.amplitude;
+                let want = parity * u.amplitude;
+                assert!(
+                    (weight - want).abs() < 1e-12,
+                    "{amplitudes:?}: {weight} vs {want}"
+                );
+            }
+        }
+        assert_eq!(
+            NormalNoise::create_parity(-4, &[]),
+            Err(NoiseError::OctaveCount)
+        );
+    }
 
     #[test]
     fn sqrt_2_matches_math_sqrt() {

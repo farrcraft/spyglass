@@ -137,12 +137,19 @@ pub fn extract(
         .prefix("spyglass-extract-")
         .tempdir()
         .map_err(ExtractError::Scratch)?;
-    let game_jar = Bundler::open(&server_jar)?.unpack_game(&scratch.path().join("game"))?;
+    let classpath = Bundler::open(&server_jar)?.unpack(&scratch.path().join("game"))?;
+    let game_jar = classpath.game.clone();
     progress(Step::Datagen);
     let reports_dir = datagen::run_reports(
         &java.executable,
         &server_jar,
         &scratch.path().join("datagen"),
+    )?;
+    datagen::run_block_report(
+        &java.executable,
+        &classpath,
+        &scratch.path().join("block-report"),
+        &reports_dir,
     )?;
 
     let dir = options.out.join(&server.version);

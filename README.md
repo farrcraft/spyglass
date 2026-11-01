@@ -19,7 +19,7 @@ Not affiliated with or endorsed by Mojang or Microsoft.
 - **Your existing worlds.** Point spyglass at a local world save and it reads the seed, version and world settings, then answers "where is the nearest stronghold, ancient city or mushroom island from here?" for that world, not just for theoretical seeds.
 - **All three dimensions:** Overworld, Nether and End.
 - **Library first.** Everything is a Rust library. A command-line tool (JSON output, for scripts) and the GUI are both thin front ends over the same API, so anything the GUI can show, a script can compute.
-- **Local only.** No server, no account, no telemetry. The only network access is downloading the game's own server jar from Mojang, which the extractor does once per version.
+- **Local only.** No server, no account, no telemetry. The only network access is downloading the game's own server jar from Mojang, which the extractor (or the viewer, when asked to) does once per version.
 
 ## Why
 
@@ -27,7 +27,11 @@ Existing seed tools either hand-port per-version tables and fall behind new rele
 
 Mojang's data and code are never committed or redistributed. The extractor runs locally against a server jar you download yourself.
 
-## Quick start
+## Install
+
+Download the archive for your system from the [releases page](https://github.com/farrcraft/spyglass/releases/latest): Windows, Linux, or macOS (Apple silicon or Intel). Unpack it into a folder of its own and start `spyglass-viewer`. With no game data yet, it extracts some for you, into a `bundles` folder beside it; that needs a Java runtime matching the game version. `GETTING-STARTED.txt` in the archive covers the rest, including the `spyglass` command and the warnings unsigned programs get on Windows and macOS. No Rust is needed.
+
+## Build from source
 
 ```sh
 # Windows (PowerShell)

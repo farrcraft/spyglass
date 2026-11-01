@@ -17,6 +17,7 @@ import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.levelgen.LegacyRandomSource;
 import net.minecraft.world.level.levelgen.PositionalRandomFactory;
 import net.minecraft.world.level.levelgen.RandomSupport;
+import net.minecraft.world.level.levelgen.WorldgenRandom;
 import net.minecraft.world.level.levelgen.XoroshiroRandomSource;
 
 /**
@@ -127,15 +128,44 @@ final class Probe {
             var hash = RandomSupport.seedFromHashOf(name);
             cases.add(kase("seed_from_hash_of").name(name).longs(hash.seedLo(), hash.seedHi()).json);
         }
-        for (String kind : List.of("xoroshiro", "legacy")) {
-            Function<Long, RandomSource> make = kind.equals("xoroshiro")
-                    ? XoroshiroRandomSource::new
-                    : LegacyRandomSource::new;
+        for (String kind : List.of("xoroshiro", "legacy", "worldgen")) {
+            Function<Long, RandomSource> make = switch (kind) {
+                case "xoroshiro" -> XoroshiroRandomSource::new;
+                case "legacy" -> LegacyRandomSource::new;
+                // As applyBiomeDecoration makes it.
+                default -> seed -> new WorldgenRandom(new XoroshiroRandomSource(seed));
+            };
             for (long seed : RNG_SEEDS) {
                 sequences(cases, kind, seed, make);
             }
         }
+        for (long seed : RNG_SEEDS) {
+            decorationSeeds(cases, seed);
+        }
         return cases;
+    }
+
+    /**
+     * {@code setDecorationSeed} at each position's x and z, then {@code setFeatureSeed} for a few
+     * indices and steps: the decoration seed, and two longs after each.
+     */
+    private static void decorationSeeds(JsonArray cases, long seed) {
+        for (int[] p : POSITIONS) {
+            var r = new WorldgenRandom(new XoroshiroRandomSource(0L));
+            long decoration = r.setDecorationSeed(seed, p[0], p[2]);
+            long[] values = new long[2 + 3 * 2];
+            values[0] = decoration;
+            values[1] = r.nextLong();
+            int[][] features = {{0, 0}, {7, 3}, {Integer.MAX_VALUE, 10}};
+            for (int i = 0; i < features.length; i++) {
+                r.setFeatureSeed(decoration, features[i][0], features[i][1]);
+                values[2 + 2 * i] = r.nextLong();
+                values[3 + 2 * i] = r.nextInt(16);
+            }
+            var c = kase("decoration_seed").kind("worldgen").seed(seed);
+            c.json.add("pos", ints(p));
+            cases.add(c.longs(values).json);
+        }
     }
 
     private static void sequences(JsonArray cases, String kind, long seed, Function<Long, RandomSource> make) {

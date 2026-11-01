@@ -186,11 +186,17 @@ pub fn is_v1_21(noise_settings: &Value) -> bool {
 /// seed-independent.
 #[derive(Debug, Clone)]
 pub struct NoiseRouter {
+    /// The router's entries, in [`RouterEntry`]'s order.
     entries: [Df; 15],
+    /// The settings' `noise`.
     noise: NoiseSettings,
+    /// `legacy_random_source`.
     legacy_random_source: bool,
+    /// `aquifers_enabled`.
     aquifers_enabled: bool,
+    /// `ore_veins_enabled`.
     ore_veins_enabled: bool,
+    /// The noises the entries use, by full id.
     noises: HashMap<String, NormalNoiseParameters>,
 }
 
@@ -217,10 +223,11 @@ impl NoiseRouter {
     ) -> Result<Self, LoadError> {
         let at = At::root(id);
         let flag = |name: &'static str| -> LoadResult<bool> {
-            let v = json
+            let value = json
                 .get(name)
                 .ok_or_else(|| at.error(LoadErrorKind::Missing(name)))?;
-            v.as_bool()
+            value
+                .as_bool()
                 .ok_or_else(|| at.child(name).error(LoadErrorKind::Shape("true or false")))
         };
         let noise = NoiseSettings::parse(
@@ -285,24 +292,38 @@ impl NoiseRouter {
     pub fn bind(&self, seed: i64) -> Result<RandomState, LoadError> {
         let mut binder = Binder::new(&self.noises, seed, self.legacy_random_source);
         let bind_all = |binder: &mut Binder<'_>, wiring| -> Result<[Function; 15], LoadError> {
-            let v = self
+            let bound = self
                 .entries
                 .iter()
                 .map(|f| binder.bind_with(f, wiring))
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok(v.try_into().expect("fifteen entries"))
+            Ok(bound.try_into().expect("fifteen entries"))
         };
         let plain = bind_all(&mut binder, Wiring::Plain)?;
         let chunk = bind_all(&mut binder, Wiring::Chunk)?;
         let climate = CLIMATE.map(|e| binder.bind_with(&self.entries[e as usize], Wiring::Climate));
-        let [t, h, c, e, d, w] = climate;
+        let [
+            temperature,
+            humidity,
+            continentalness,
+            erosion,
+            depth,
+            weirdness,
+        ] = climate;
         // cacheAllInCell(add(finalDensity, beardifier)): an Ap2 add of the beardifier's 0.
         let density = Function::add_zero(&chunk[RouterEntry::FinalDensity as usize]);
         let roots: Vec<&Function> = chunk.iter().chain([&density]).collect();
         let (program, args) = Program::compile(&roots);
         Ok(RandomState {
             plain,
-            climate: ClimateSampler([t?, h?, c?, e?, d?, w?]),
+            climate: ClimateSampler([
+                temperature?,
+                humidity?,
+                continentalness?,
+                erosion?,
+                depth?,
+                weirdness?,
+            ]),
             chunk: Arc::new(ChunkGraph {
                 binder: binder.id(),
                 slots: binder.slots(),
@@ -321,9 +342,22 @@ impl NoiseRouter {
     /// `RandomState.sampler()` for `seed` alone, without binding the rest of the router.
     pub fn climate_sampler(&self, seed: i64) -> Result<ClimateSampler, LoadError> {
         let mut binder = Binder::new(&self.noises, seed, self.legacy_random_source);
-        let [t, h, c, e, d, w] =
-            CLIMATE.map(|e| binder.bind_with(&self.entries[e as usize], Wiring::Climate));
-        Ok(ClimateSampler([t?, h?, c?, e?, d?, w?]))
+        let [
+            temperature,
+            humidity,
+            continentalness,
+            erosion,
+            depth,
+            weirdness,
+        ] = CLIMATE.map(|e| binder.bind_with(&self.entries[e as usize], Wiring::Climate));
+        Ok(ClimateSampler([
+            temperature?,
+            humidity?,
+            continentalness?,
+            erosion?,
+            depth?,
+            weirdness?,
+        ]))
     }
 }
 
@@ -334,6 +368,7 @@ pub(crate) struct ChunkGraph {
     pub(crate) binder: u64,
     /// How many slots it numbered.
     pub(crate) slots: u32,
+    /// The entries, in [`RouterEntry`]'s order: the reference evaluation.
     pub(crate) entries: [Function; 15],
     /// `fullNoiseDensity`.
     pub(crate) density: Function,
@@ -348,9 +383,13 @@ pub(crate) struct ChunkGraph {
 /// 26.2's `RandomState` for one seed: the router wired to the seed.
 #[derive(Debug, Clone)]
 pub struct RandomState {
+    /// The entries as `router()` holds them, for points outside any `NoiseChunk`.
     plain: [Function; 15],
+    /// `sampler()`.
     climate: ClimateSampler,
+    /// The entries as a `NoiseChunk` wraps them, shared by every chunk of the seed.
     chunk: Arc<ChunkGraph>,
+    /// The settings' `noise`.
     noise: NoiseSettings,
 }
 

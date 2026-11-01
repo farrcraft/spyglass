@@ -51,8 +51,8 @@ impl ChunkVersions {
     }
 
     fn merge(&mut self, other: ChunkVersions) {
-        for (v, n) in other.by_version {
-            *self.by_version.entry(v).or_default() += n;
+        for (version, count) in other.by_version {
+            *self.by_version.entry(version).or_default() += count;
         }
         self.unversioned += other.unversioned;
         self.unreadable += other.unreadable;
@@ -82,10 +82,10 @@ pub fn region_files(dir: &Path) -> Vec<PathBuf> {
 pub fn chunk_versions(dir: &Path) -> std::io::Result<ChunkVersions> {
     let files = region_files(dir);
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
-    let chunk = files.len().div_ceil(threads).max(1);
+    let files_per_thread = files.len().div_ceil(threads).max(1);
     std::thread::scope(|scope| {
         let handles: Vec<_> = files
-            .chunks(chunk)
+            .chunks(files_per_thread)
             .map(|part| {
                 scope.spawn(move || -> std::io::Result<ChunkVersions> {
                     let mut counts = ChunkVersions::default();
@@ -121,12 +121,16 @@ pub fn file_versions(path: &Path) -> std::io::Result<ChunkVersions> {
         return Ok(counts);
     }
     let mut buffer = Vec::new();
-    for i in 0..1024 {
-        let entry = u32::from_be_bytes(header[i * 4..i * 4 + 4].try_into().expect("4 bytes"));
+    for index in 0..1024 {
+        let entry = u32::from_be_bytes(
+            header[index * 4..index * 4 + 4]
+                .try_into()
+                .expect("4 bytes"),
+        );
         if entry == 0 {
             continue;
         }
-        match chunk_version(path, &mut file, &mut buffer, entry, i) {
+        match chunk_version(path, &mut file, &mut buffer, entry, index) {
             Some(Some(v)) => *counts.by_version.entry(v).or_default() += 1,
             Some(None) => counts.unversioned += 1,
             None => counts.unreadable += 1,
@@ -135,14 +139,15 @@ pub fn file_versions(path: &Path) -> std::io::Result<ChunkVersions> {
     Ok(counts)
 }
 
-/// The `DataVersion` of the chunk at location `entry` (index `i` in the header), read into
-/// `buffer`: `None` if the chunk can't be read, `Some(None)` if it has no data version.
+/// The `DataVersion` of the chunk at location `entry` (`index` in the header, x fastest),
+/// read into `buffer`: `None` if the chunk can't be read, `Some(None)` if it has no data
+/// version.
 fn chunk_version(
     path: &Path,
     file: &mut File,
     buffer: &mut Vec<u8>,
     entry: u32,
-    i: usize,
+    index: usize,
 ) -> Option<Option<i32>> {
     // RegionFile.getChunkDataInputStream: the chunk's sectors, or what's left of the file.
     let (sector, sectors) = (u64::from(entry >> 8), u64::from(entry & 0xFF));
@@ -161,17 +166,17 @@ fn chunk_version(
     let data = if compression & 128 != 0 {
         // RegionFile.getExternalChunkPath: c.<x>.<z>.mcc beside the region file, with the
         // chunk's absolute coordinates. The length is otherwise ignored.
-        let (rx, rz) = region_coords(path)?;
+        let (region_x, region_z) = region_coords(path)?;
         let (x, z) = (
-            rx.wrapping_mul(32).wrapping_add((i % 32) as i32),
-            rz.wrapping_mul(32).wrapping_add((i / 32) as i32),
+            region_x.wrapping_mul(32).wrapping_add((index % 32) as i32),
+            region_z.wrapping_mul(32).wrapping_add((index / 32) as i32),
         );
         external = read_capped(&path.with_file_name(format!("c.{x}.{z}.mcc")), MAX_CHUNK).ok()?;
         &external[..]
     } else {
         // Truncated if it runs past what was read; a negative length is malformed.
-        let n = usize::try_from(length.wrapping_sub(1)).ok()?;
-        buffer.get(5..5 + n)?
+        let payload_len = usize::try_from(length.wrapping_sub(1)).ok()?;
+        buffer.get(5..5 + payload_len)?
     };
     let mut raw = Vec::new();
     match compression & 127 {

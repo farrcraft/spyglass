@@ -184,7 +184,7 @@ pub fn run(harness: &Harness, worlds: &[PathBuf]) -> Result<()> {
         ));
     }
     for (name, source, cases, seed) in jobs {
-        let t0 = Instant::now();
+        let started = Instant::now();
         let file = out.join(&name);
         let answers = server(harness, &name, &source, &cases)?;
         let rows: Vec<Value> = cases
@@ -212,7 +212,11 @@ pub fn run(harness: &Harness, worlds: &[PathBuf]) -> Result<()> {
             root["world_dir"] = json!(dir);
         }
         fs::write(&file, serde_json::to_string_pretty(&root)? + "\n")?;
-        println!("{}: {:.0} s", file.display(), t0.elapsed().as_secs_f64());
+        println!(
+            "{}: {:.0} s",
+            file.display(),
+            started.elapsed().as_secs_f64()
+        );
     }
     Ok(())
 }
@@ -232,10 +236,15 @@ fn copy_save(from: &Path, to: &Path) -> Result<()> {
     Ok(())
 }
 
+/// One `/locate` question.
 struct Case {
+    /// The dimension asked in.
     dimension: &'static str,
+    /// `structure` or `biome`, as `/locate` takes it.
     kind: &'static str,
+    /// The structure or biome id, or `#tag`.
     target: &'static str,
+    /// Where it's asked from.
     from: [i32; 3],
 }
 
@@ -243,25 +252,25 @@ struct Case {
 /// save's player).
 fn cases(extra: Option<(&str, [i32; 3])>) -> Vec<Case> {
     let mut cases = Vec::new();
-    for d in DIMENSIONS {
-        let mut origins = d.from.to_vec();
+    for dimension_cases in DIMENSIONS {
+        let mut origins = dimension_cases.from.to_vec();
         if let Some((dimension, at)) = extra
-            && dimension == d.dimension
+            && dimension == dimension_cases.dimension
         {
             origins.push(at);
         }
         for from in origins {
-            for &target in d.structures {
+            for &target in dimension_cases.structures {
                 cases.push(Case {
-                    dimension: d.dimension,
+                    dimension: dimension_cases.dimension,
                     kind: "structure",
                     target,
                     from,
                 });
             }
-            for &target in d.biomes {
+            for &target in dimension_cases.biomes {
                 cases.push(Case {
-                    dimension: d.dimension,
+                    dimension: dimension_cases.dimension,
                     kind: "biome",
                     target,
                     from,
@@ -272,6 +281,7 @@ fn cases(extra: Option<(&str, [i32; 3])>) -> Vec<Case> {
     cases
 }
 
+/// The game's answer to one case.
 struct Answer {
     /// Block x, y and z; y is `None` where the game prints `~` (structures).
     position: Option<[Option<i32>; 3]>,
@@ -386,14 +396,18 @@ fn server_dir(harness: &Harness, name: &str, source: &Source<'_>) -> Result<Path
 
 /// A running server and its output lines, with a deadline for the whole run.
 struct Server {
+    /// The server's process, killed if the run ends early.
     child: KillOnDrop,
+    /// Its output, a line at a time, read on a thread of its own.
     lines: mpsc::Receiver<String>,
+    /// When the whole run gives up.
     deadline: Instant,
     /// The server's folder, for its log.
     dir: PathBuf,
 }
 
 impl Server {
+    /// Starts the game's server in `dir`.
     fn start(harness: &Harness, dir: &Path) -> Result<Server> {
         let mut java = Command::new(&harness.java);
         java.args(["-Xmx4G", "--enable-native-access=ALL-UNNAMED"]);

@@ -18,11 +18,14 @@ cargo run -p spyglass-viewer                  # run the viewer
 cargo xtask check                             # every check, whole repo (as CI)
 cargo xtask oracle golden                     # regenerate the game's answers (oracle --help for the rest)
 cargo xtask oracle-test                       # ignored comparisons with the game, where inputs exist
-cargo xtask ci --game-version <v>             # one version's CI job: extract, regenerate, compare (--only, --exclude, --shard split it)
+cargo xtask ci --game-version <v>             # one version's CI job: extract, regenerate, compare (--units splits it)
+cargo xtask ci-plan --mode <full|pr>          # CI's oracle jobs, planned from estimated costs to fit the hour
 cargo xtask bench                             # time the public API's main operations
+cargo xtask viewer-timing [<scenario>...]     # time the viewer's cold start in fixed scenarios
 cargo xtask dist [--target <triple>]          # one target's release archive, in target/archives/
 cargo xtask release <version>                 # set the version and date the changelog, for a PR
 cargo xtask doctor                            # is this machine ready? (check-only)
+cargo xtask java-report [--check]             # rebuild (or check) the extractor's block report class
 cargo xtask links                             # every relative Markdown link and anchor resolves
 cargo xtask fuzz <nbt|region>                 # fuzz a reader of untrusted files (nightly, cargo-fuzz)
 cargo xtask msrv                              # build with the minimum supported Rust version
@@ -37,6 +40,7 @@ All checks are defined in `.pre-commit-config.yaml` and run as git hooks (commit
 - `crates/` holds one crate per layer (rng → noise → density → biome/terrain → structure → search, with `data` feeding versioned parameters and `viewer` on top). Keep dependencies flowing in that direction; lower crates must not depend on higher ones.
 - `docs/` holds getting-started, architecture, the development process, `specs/` (behavior the code must match), `adr/` (decision records), `research/` (prior art, open questions), `roadmap/` (one file per milestone) and `plans/` (implementation plans). `roadmap/` and `plans/` each have a `completed/` subdirectory.
 - `xtask/` holds project commands (`cargo xtask <cmd>`; [ADR 0003](docs/adr/0003-cargo-xtask-for-project-commands.md)). It's tooling: no crate may depend on it. Add new project commands here, in Rust, rather than as scripts.
+- `extractor-java/` holds the extractor's block report, the only Java outside `oracle/`: a reflection-only program and its committed class, rebuilt with `cargo xtask java-report` ([ADR 0054](docs/adr/0054-block-behaviour-from-the-running-game.md)).
 - `fuzz/` holds cargo-fuzz targets for the readers of untrusted files, a workspace of its own that needs nightly ([ADR 0036](docs/adr/0036-fuzzing-with-cargo-fuzz.md)).
 - `scripts/` holds only the setup scripts, in PowerShell and POSIX sh, because they run before Rust exists. Keep the pair in sync.
 
@@ -46,6 +50,7 @@ All checks are defined in `.pre-commit-config.yaml` and run as git hooks (commit
 - **Library first.** Worldgen logic belongs in the library crates, never in `spyglass-cli` or `spyglass-viewer`. If a front end needs a result, add it to the API.
 - **Algorithms in code, parameters in data.** If a value changes between game versions, it belongs in an extracted bundle, not a Rust constant. Behavior that changes between versions without showing in the data is a named switch in `spyglass_data::versions`, never a data-version check in the code ([ADR 0026](docs/adr/0026-how-game-versions-coexist.md)).
 - **Bit-exact means bit-exact.** Match Java semantics precisely: wrapping integer arithmetic, `i32`/`i64` widths, signed shifts, `f64` vs `f32`, and operation order in floating-point expressions. Do not "simplify" math in a way that could change results.
+- **Readable over terse.** Names say what a value means (`spread`, `crack_threshold`, `bud_sites`), not `d9`, `s`, `t`, `ns`. Single letters are fine for coordinates, loop indices and short closures, and in close ports of game math (noise, RNG) that follow the game's structure. A name kept from the game for parity is explained where it's defined. A non-obvious algorithm opens with a comment on its idea (what shape a feature draws and why), and comments say why where the code says what. Struct fields that hold configuration say what they control. Renaming never changes arithmetic or the order of random draws; the oracle comparisons confirm it.
 - **Correctness is checked against the oracle** (see [docs/specs/oracle.md](docs/specs/oracle.md)), not against other third-party tools.
 - New behavior that has a spec should cite the spec; if the spec is wrong or missing, update it in the same change.
 - **Follow the development process** in [docs/development-process.md](docs/development-process.md): milestones → implementation plans → code. Write a plan in `docs/plans/` before starting milestone work, keep its task list current, and `git mv` it to `docs/plans/completed/` when done (milestones likewise to `docs/roadmap/completed/`). Fix relative links after any move.

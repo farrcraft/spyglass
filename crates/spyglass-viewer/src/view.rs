@@ -4,8 +4,9 @@
 use serde::{Deserialize, Serialize};
 use spyglass::{DEFAULT_MAP_Y, MAX_SCALE, MapArea};
 
-/// A tile's side in pixels. One tile pixel is drawn as one point.
-pub const TILE: u32 = 256;
+/// A tile's side in pixels. One tile pixel is drawn as one point. Small enough that a window
+/// up close is many jobs, so the last ones to finish are short.
+pub const TILE: u32 = 128;
 /// How far from 0 the centre may go, in blocks: past the world border, short of overflowing
 /// block coordinates.
 const MAX_CENTRE: f64 = 1_000_000_000.0;
@@ -13,8 +14,11 @@ const MAX_CENTRE: f64 = 1_000_000_000.0;
 /// A tile: `TILE` × `TILE` pixels at a scale, numbered from the world origin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Tile {
+    /// Blocks per pixel.
     pub scale: u32,
+    /// The tile's column, east of the origin: its west edge is at `x * TILE * scale`.
     pub x: i32,
+    /// The tile's row, south of the origin: its north edge is at `z * TILE * scale`.
     pub z: i32,
 }
 
@@ -46,6 +50,29 @@ impl Tile {
             )
         })
     }
+}
+
+/// How much coarser the stand-in tiles drawn first are: four times the scale, so one covers 16
+/// of the view's tiles and, past `MAX_TERRAIN_SCALE`, needs no heights.
+pub const COARSE: u32 = 4;
+
+/// The coarser tiles containing `tiles`, each once, in the order first needed: what to draw
+/// first so the view fills quickly. None if the view is too coarse to have them.
+pub fn coarse(tiles: &[Tile]) -> Vec<Tile> {
+    let mut out: Vec<Tile> = Vec::new();
+    for &tile in tiles {
+        let Some((parent, _)) = tile.parent() else {
+            continue;
+        };
+        let Some((grandparent, _)) = parent.parent() else {
+            continue;
+        };
+        debug_assert_eq!(grandparent.scale, tile.scale * COARSE);
+        if !out.contains(&grandparent) {
+            out.push(grandparent);
+        }
+    }
+    out
 }
 
 /// The map's view.
@@ -88,23 +115,25 @@ impl View {
     /// The pixel offset of the world's block grid: where block (0, 0)'s pixel corner is, from the
     /// map's centre, rounded so tiles land on whole pixels.
     pub fn origin(&self) -> [f64; 2] {
-        let s = f64::from(self.scale);
-        self.centre.map(|c| (-c / s).round())
+        let blocks_per_point = f64::from(self.scale);
+        self.centre.map(|c| (-c / blocks_per_point).round())
     }
 
     /// The block under a screen offset from the map's centre.
     pub fn block_at(&self, offset: [f32; 2]) -> [f64; 2] {
-        let s = f64::from(self.scale);
+        let blocks_per_point = f64::from(self.scale);
         let origin = self.origin();
-        [0, 1].map(|d| (f64::from(offset[d]) - origin[d]) * s)
+        [0, 1].map(|axis| (f64::from(offset[axis]) - origin[axis]) * blocks_per_point)
     }
 
     /// Moves the map by `delta` points, as when dragged.
     pub fn pan(&mut self, delta: [f32; 2]) {
-        let s = f64::from(self.scale);
+        let blocks_per_point = f64::from(self.scale);
         let centre = self.centre;
-        self.centre =
-            [0, 1].map(|d| (centre[d] - f64::from(delta[d]) * s).clamp(-MAX_CENTRE, MAX_CENTRE));
+        self.centre = [0, 1].map(|axis| {
+            (centre[axis] - f64::from(delta[axis]) * blocks_per_point)
+                .clamp(-MAX_CENTRE, MAX_CENTRE)
+        });
     }
 
     /// Zooms one step in (halving the scale) or out, keeping the block under `offset` still.
@@ -116,19 +145,22 @@ impl View {
         };
         let fixed = self.block_at(offset);
         self.scale = scale;
-        let s = f64::from(scale);
-        self.centre =
-            [0, 1].map(|d| (fixed[d] - f64::from(offset[d]) * s).clamp(-MAX_CENTRE, MAX_CENTRE));
+        let blocks_per_point = f64::from(scale);
+        self.centre = [0, 1].map(|axis| {
+            (fixed[axis] - f64::from(offset[axis]) * blocks_per_point)
+                .clamp(-MAX_CENTRE, MAX_CENTRE)
+        });
     }
 
     /// The tiles covering a map of `size` points, nearest the centre first.
     pub fn tiles(&self, size: [f32; 2]) -> Vec<Tile> {
         let side = f64::from(TILE);
         let origin = self.origin();
-        let range = |d: usize| {
-            let half = f64::from(size[d]) / 2.0;
-            let lo = ((-half - origin[d]) / side).floor() as i32;
-            let hi = ((half - origin[d]) / side).ceil() as i32 - 1;
+        // The tile numbers on one axis that overlap the map, from the edge's offset.
+        let range = |axis: usize| {
+            let half = f64::from(size[axis]) / 2.0;
+            let lo = ((-half - origin[axis]) / side).floor() as i32;
+            let hi = ((half - origin[axis]) / side).ceil() as i32 - 1;
             lo..=hi
         };
         let mut tiles: Vec<Tile> = range(1)
@@ -140,7 +172,7 @@ impl View {
             })
             .collect();
         let distance = |t: &Tile| {
-            let centre = |i: i32, d: usize| (f64::from(i) + 0.5) * side + origin[d];
+            let centre = |i: i32, axis: usize| (f64::from(i) + 0.5) * side + origin[axis];
             let (dx, dz) = (centre(t.x, 0), centre(t.z, 1));
             dx * dx + dz * dz
         };
@@ -216,13 +248,15 @@ mod tests {
             y: 64,
         };
         let tiles = view.tiles([600.0, 300.0]);
-        // x from -300 to 300 points: tiles -2..=1; z from -150 to 150: tiles -1..=0.
-        assert_eq!(tiles.len(), 8);
+        // x from -300 to 300 points: tiles -3..=2; z from -150 to 150: tiles -2..=1.
+        assert_eq!(TILE, 128);
+        assert_eq!(tiles.len(), 24);
         assert!(tiles[..4].iter().all(|t| (-1..=0).contains(&t.x)));
+        let side = TILE as f32;
         for t in &tiles {
             let [x, z] = view.tile_offset(*t);
             assert!(
-                x < 300.0 && x + 256.0 > -300.0 && z < 150.0 && z + 256.0 > -150.0,
+                x < 300.0 && x + side > -300.0 && z < 150.0 && z + side > -150.0,
                 "{t:?}"
             );
         }
@@ -236,7 +270,8 @@ mod tests {
             z: 2,
         };
         let area = tile.area(70).unwrap();
-        assert_eq!(area.min, [-3072, 2048]);
+        let side = TILE as i32 * 4;
+        assert_eq!(area.min, [-3 * side, 2 * side]);
         assert_eq!(area.y, 70);
         assert_eq!(
             tile.parent(),
@@ -261,12 +296,46 @@ mod tests {
         assert_eq!(
             Tile {
                 scale: 256,
-                x: 40_000,
+                x: 80_000,
                 z: 0
             }
             .area(64),
             None
         );
+    }
+
+    #[test]
+    fn coarse_tiles_contain_the_view_s_tiles() {
+        let view = View {
+            centre: [100.0, -3000.0],
+            scale: 4,
+            y: 64,
+        };
+        let tiles = view.tiles([1200.0, 800.0]);
+        let coarse = coarse(&tiles);
+        // Each coarse tile covers 4 × 4 of the view's, so far fewer are needed.
+        assert!(!coarse.is_empty() && coarse.len() * 4 <= tiles.len() + 8);
+        for tile in &tiles {
+            let side = |t: &Tile| i64::from(TILE) * i64::from(t.scale);
+            let inside = coarse.iter().filter(|c| {
+                [(tile.x, c.x), (tile.z, c.z)].iter().all(|&(t, c)| {
+                    let start = i64::from(t) * side(tile);
+                    let outer = i64::from(c) * side(&coarse[0]);
+                    (outer..outer + side(&coarse[0])).contains(&start)
+                })
+            });
+            assert_eq!(inside.count(), 1, "{tile:?}");
+        }
+        assert!(coarse.iter().all(|c| c.scale == 4 * COARSE));
+        // Nearest first, as the view's tiles are.
+        assert_eq!(coarse[0], super::coarse(&tiles[..1])[0]);
+        // No coarser tiles than the largest scale.
+        let far = Tile {
+            scale: MAX_SCALE,
+            x: 0,
+            z: 0,
+        };
+        assert!(super::coarse(&[far]).is_empty());
     }
 
     #[test]

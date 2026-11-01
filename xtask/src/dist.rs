@@ -55,7 +55,9 @@ const ALLOWED: [&str; 8] = [
 pub struct Entry {
     /// Its name below the archive's top folder.
     pub name: String,
+    /// Its contents.
     pub bytes: Vec<u8>,
+    /// Whether it's a program, which Unix archives mark executable.
     pub executable: bool,
 }
 
@@ -146,6 +148,7 @@ fn host_target() -> Result<String> {
         .context("rustc -vV didn't name the host")
 }
 
+/// The commit checked out and its time, from git.
 fn build_info() -> Result<Build> {
     let git = |args: &[&str]| -> Result<String> {
         let out = command("git")
@@ -215,6 +218,7 @@ fn remaps() -> Vec<(PathBuf, &'static str)> {
     remaps
 }
 
+/// The user's home folder.
 fn home_dir() -> Option<PathBuf> {
     std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from)
 }
@@ -255,6 +259,7 @@ fn allowed(name: &str) -> bool {
     ALLOWED.contains(&name.strip_suffix(".exe").unwrap_or(name))
 }
 
+/// `path`'s bytes, an error naming it if it can't be read.
 fn read(path: &Path) -> Result<Vec<u8>> {
     std::fs::read(path).with_context(|| format!("reading {}", path.display()))
 }
@@ -369,6 +374,9 @@ pub fn zip(root: &str, entries: &[Entry], epoch: u64) -> Result<Vec<u8>> {
 /// The UTC date `days` days after 1970-01-01, as (year, month, day). Howard Hinnant's
 /// `civil_from_days`.
 pub fn civil_date(days: u64) -> (u64, u8, u8) {
+    // The names are Hinnant's: an era is 400 years from 0000-03-01, `doe` and `yoe` the day and
+    // year of the era, `doy` the day of a year that starts in March (so leap days come last),
+    // and `mp` its month from March.
     let z = days + 719_468;
     let era = z / 146_097;
     let doe = z % 146_097;

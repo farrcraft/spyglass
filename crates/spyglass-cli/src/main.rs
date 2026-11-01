@@ -13,6 +13,9 @@ macro_rules! out {
 }
 
 mod args;
+mod blocks;
+mod features;
+mod find;
 mod heights;
 mod json;
 mod locate;
@@ -63,7 +66,10 @@ fn run(cli: Cli) -> Result<()> {
         Command::World { what } => world::run(what),
         Command::Render(args) => render::run(&args),
         Command::Search(args) => search::run(&args),
+        Command::Find(args) => find::run(&args),
         Command::Heights(args) => heights::run(&args),
+        Command::Blocks(args) => blocks::run(&args),
+        Command::Features(args) => features::run(&args),
     }
 }
 
@@ -105,6 +111,7 @@ fn run_locate(what: &Locate) -> Result<()> {
     let common = what.common();
     let player = match what {
         Locate::Structure { from, .. }
+        | Locate::Feature { from, .. }
         | Locate::Biome { from, .. }
         | Locate::Slime { from, .. } => {
             matches!(from.from, Origin::Player)
@@ -125,14 +132,31 @@ fn run_locate(what: &Locate) -> Result<()> {
             radius,
             unconfirmed,
             bounds,
+            nearest,
             ..
         } => {
             let options = spyglass::LocateOptions {
                 radius: *radius,
                 confirm: !unconfirmed,
             };
-            locate::structure(&out, target, out.origin(from.from)?, &options, *bounds)?;
+            let from = out.origin(from.from)?;
+            locate::structure(&out, target, from, &options, *bounds, *nearest)?;
         }
+        Locate::Feature {
+            target,
+            from,
+            radius,
+            all,
+            neighbours,
+            ..
+        } => locate::feature(
+            &out,
+            target,
+            out.origin(from.from)?,
+            *radius,
+            *all,
+            *neighbours,
+        )?,
         Locate::Biome {
             biome,
             from,

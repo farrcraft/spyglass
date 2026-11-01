@@ -7,11 +7,12 @@
 pub trait RandomSource {
     /// The factory [`fork_positional`](Self::fork_positional) returns.
     type Positional: PositionalRandomFactory;
+    /// The source [`fork`](Self::fork) returns: the same kind, except for a `WorldgenRandom`,
+    /// whose fork is its inner source's.
+    type Fork: RandomSource;
 
     /// `fork()`: a new, independent source seeded from this one.
-    fn fork(&mut self) -> Self
-    where
-        Self: Sized;
+    fn fork(&mut self) -> Self::Fork;
     /// `forkPositional()`: a factory of per-position and per-name sources seeded from this one.
     fn fork_positional(&mut self) -> Self::Positional;
     /// `nextInt()`.

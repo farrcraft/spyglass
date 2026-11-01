@@ -14,7 +14,8 @@ pub use aquifer::{
     Aquifer, AquiferSamplers, Block, FluidPicker, FluidStatus, SurfaceLevels, VeinBlock,
     WAY_BELOW_MIN_Y,
 };
-pub use column::{BlockColumn, Heightmap, Terrain};
+pub use column::{BlockColumn, Heightmap, Probe, Substances, Terrain};
 pub use settings::{BoundTerrain, TerrainSettings};
 #[cfg(feature = "timing")]
 pub use spyglass_density::timing;
+pub use tags::tag;

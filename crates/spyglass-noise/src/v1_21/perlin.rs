@@ -23,8 +23,12 @@ pub fn wrap(d: f64) -> f64 {
 /// (`-0.0` included; NaN counts as non-zero).
 #[derive(Debug, Clone)]
 pub struct PerlinNoise {
+    /// Each level's noise, lowest frequency first, `None` where its amplitude is zero
+    /// (`noiseLevels`).
     levels: Vec<Option<ImprovedNoise>>,
+    /// The lowest level's octave: its frequency is `2^first_octave` (`firstOctave`).
     first_octave: i32,
+    /// Each level's weight (`amplitudes`).
     amplitudes: Vec<f64>,
     /// `lowestFreqInputFactor`: `2^first_octave`.
     input_factor: f64,
@@ -147,23 +151,27 @@ impl PerlinNoise {
     /// `inF = 2^first_octave` and `valF` = [`value_factor`](Self::value_factor),
     /// `sum = sum + (amplitude · noise(wrap(x·inF), wrap(y·inF), wrap(z·inF), y_scale·inF,
     /// y_max·inF)) · valF`; then `inF *= 2` and `valF /= 2`, empty levels included.
+    ///
+    /// Each level doubles the frequency and halves the weight, the usual fractal sum: the
+    /// coarse levels shape the noise and the fine ones add detail.
     pub fn get_value_smeared(&self, x: f64, y: f64, z: f64, y_scale: f64, y_max: f64) -> f64 {
         let mut sum = 0.0;
-        let mut input = self.input_factor;
-        let mut value = self.value_factor;
+        // `inF` and `valF`.
+        let mut frequency = self.input_factor;
+        let mut weight = self.value_factor;
         for (level, &amplitude) in self.levels.iter().zip(&self.amplitudes) {
             if let Some(noise) = level {
-                let v = noise.noise_smeared(
-                    wrap(x * input),
-                    wrap(y * input),
-                    wrap(z * input),
-                    y_scale * input,
-                    y_max * input,
+                let sample = noise.noise_smeared(
+                    wrap(x * frequency),
+                    wrap(y * frequency),
+                    wrap(z * frequency),
+                    y_scale * frequency,
+                    y_max * frequency,
                 );
-                sum += amplitude * v * value;
+                sum += amplitude * sample * weight;
             }
-            input *= 2.0;
-            value /= 2.0;
+            frequency *= 2.0;
+            weight /= 2.0;
         }
         sum
     }
@@ -188,12 +196,13 @@ impl PerlinNoise {
     /// halving per level from [`value_factor`](Self::value_factor).
     fn edge_value(&self, m: f64) -> f64 {
         let mut sum = 0.0;
-        let mut value = self.value_factor;
+        // `valF`.
+        let mut weight = self.value_factor;
         for (level, &amplitude) in self.levels.iter().zip(&self.amplitudes) {
             if level.is_some() {
-                sum += amplitude * m * value;
+                sum += amplitude * m * weight;
             }
-            value /= 2.0;
+            weight /= 2.0;
         }
         sum
     }

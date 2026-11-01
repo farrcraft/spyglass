@@ -46,6 +46,8 @@ pub struct Sampler {
     /// Whether its value over a volume, at each position, depends only on the position, not on
     /// the volume's extent, so values from different volumes can be shared.
     pub(crate) position_only: bool,
+    /// See [`Sampler::y_alignment`].
+    pub(crate) y_align: Option<i32>,
     /// The [`Binder`] that made it, which numbered its slots.
     binder: u64,
     /// Where its value is remembered, or [`NO_SLOT`] for constants.
@@ -58,6 +60,7 @@ pub struct Sampler {
 /// The slot of a node that isn't worth remembering.
 pub(crate) const NO_SLOT: u32 = u32::MAX;
 
+/// A bound function's sampler, with its inputs bound.
 #[derive(Debug)]
 pub(crate) enum Node {
     Constant(f32),
@@ -72,7 +75,9 @@ pub(crate) enum Node {
         noise: Arc<NoiseStack>,
         xz_scale: f64,
         y_scale: f64,
+        /// `shift_x`.
         sx: Sampler,
+        /// `shift_z`.
         sz: Sampler,
     },
     /// `NoiseFunction.ShiftedXyzSampler`.
@@ -80,6 +85,7 @@ pub(crate) enum Node {
         noise: Arc<NoiseStack>,
         xz_scale: f64,
         y_scale: f64,
+        /// `shift_x`, `shift_y` and `shift_z`.
         sx: Sampler,
         sy: Sampler,
         sz: Sampler,
@@ -158,10 +164,15 @@ pub(crate) enum Node {
     /// corner values for the seed.
     Interpolated {
         input: Sampler,
+        /// The cell's width on x and z, in blocks.
         cell_xz: i32,
+        /// The cell's height, in blocks.
         cell_y: i32,
+        /// `1.0f / (float) cell_xz`.
         inv_xz: f32,
+        /// `1.0f / (float) cell_y`.
         inv_y: f32,
+        /// The input's values at cell corners, kept across queries.
         corners: CornerCache,
     },
     /// `UpscaleFunction.Sampler`.
@@ -182,19 +193,26 @@ pub(crate) enum Node {
     /// `GradientFunction.ClampedSampler`.
     Gradient {
         axis: Axis,
+        /// The resolved `from` coordinate, where the value is `from_value`.
         from: i32,
+        /// The lower and higher of the two ends, which the coordinate is clamped to.
         min: i32,
         max: i32,
         from_value: f32,
+        /// The value's change per block: `(to_value − from_value) / (to − from)`.
         factor: f32,
     },
     /// `GradientFunction.RepeatSampler`, and with `mirrored`, `MirroredRepeatSampler`.
     GradientRepeat {
         axis: Axis,
+        /// The resolved `from` coordinate, where each period starts.
         from: i32,
+        /// `to − from`, wrapped: the period's length, signed.
         range: i32,
         from_value: f32,
+        /// The value's change per block.
         factor: f32,
+        /// Whether every other period runs backwards.
         mirrored: bool,
     },
     Spline(BoundSpline),
@@ -230,7 +248,9 @@ pub(crate) enum Warp {
 #[derive(Debug)]
 pub(crate) struct BoundUpscale {
     pub(crate) input: Sampler,
+    /// The x, y and z axes' modes and cell sizes.
     pub(crate) axes: [UpscaleAxis; 3],
+    /// `valueUpscaler`, for the axes' own modes and cell sizes.
     pub(crate) upscaler: Upscaler,
     /// Switch `upscale_offset_by_step`.
     pub(crate) offset_by_step: bool,
@@ -275,9 +295,13 @@ pub(crate) const NETHER_BIOME_NOISES: [(&str, i64); 2] = [
 /// Binds functions for one seed. Shared nodes stay shared, and each noise is created once, as
 /// `RandomState.getOrCreateNoise` does.
 pub struct Binder<'n> {
+    /// Each noise's parameters, by full id.
     noise_parameters: &'n HashMap<String, NormalNoiseParameters>,
+    /// The world seed.
     seed: i64,
+    /// The seed's positional random, which each noise is forked from by its id.
     random: WorldRandom,
+    /// Each noise made so far, by full id.
     noises: HashMap<String, Arc<NoiseStack>>,
     /// Samplers by function identity. Each entry keeps its function alive, so its address can't
     /// be reused by another function while the binder holds it.
@@ -287,8 +311,11 @@ pub struct Binder<'n> {
     /// [`domain_axes`] by node identity, for every node under `axes_roots`, which keep them
     /// alive. Shared, so nested warps don't each walk their subtrees again.
     axes: HashMap<*const DensityFunction, u8>,
+    /// The functions `axes` was computed under.
     axes_roots: Vec<Df>,
+    /// Tells this binder's samplers apart from another's ([`BINDERS`]).
     id: u64,
+    /// Memo slots numbered so far.
     slots: u32,
     /// What vertical anchors resolve against, if known.
     anchors: Option<AnchorHeights>,
@@ -375,8 +402,8 @@ impl<'n> Binder<'n> {
     /// `RandomState.getOrCreateNoise`, via `Noises.instantiate`. Each is made once per binder;
     /// the game makes the Nether's anew each time, which gives the same noise.
     fn noise(&mut self, id: &str) -> Result<Arc<NoiseStack>, LoadError> {
-        if let Some(n) = self.noises.get(id) {
-            return Ok(n.clone());
+        if let Some(noise) = self.noises.get(id) {
+            return Ok(noise.clone());
         }
         let normal = self.normal_noise(id)?;
         let nether = NETHER_BIOME_NOISES.iter().find(|(n, _)| *n == id);
@@ -387,23 +414,33 @@ impl<'n> Binder<'n> {
                     .create_for_legacy_nether_biome(&mut random)
                     .map_err(|e| LoadError::new(id, "", LoadErrorKind::Invalid(e.reason())))?
             }
-            (None, WorldRandom::Xoroshiro(f)) => normal.create(&mut f.from_hash_of(id)),
-            (None, WorldRandom::Legacy(f)) => normal.create(&mut f.from_hash_of(id)),
+            (None, WorldRandom::Xoroshiro(positional)) => {
+                normal.create(&mut positional.from_hash_of(id))
+            }
+            (None, WorldRandom::Legacy(positional)) => {
+                normal.create(&mut positional.from_hash_of(id))
+            }
         };
         let stack = Arc::new(stack);
         self.noises.insert(id.to_string(), stack.clone());
         Ok(stack)
     }
 
+    /// `RandomState.getOrCreateNoise(id)`: the seed's noise `id`, made once per binder, for
+    /// code that samples noises itself, such as the material rule.
+    pub fn noise_stack(&mut self, id: &str) -> Result<Arc<NoiseStack>, LoadError> {
+        self.noise(id)
+    }
+
     /// `DensityFunction.range()`, remembered per function.
     pub(crate) fn range(&mut self, function: &Df) -> Result<Interval, LoadError> {
         let key = Arc::as_ptr(function);
-        if let Some((_, r)) = self.ranges.get(&key) {
-            return Ok(*r);
+        if let Some((_, interval)) = self.ranges.get(&key) {
+            return Ok(*interval);
         }
-        let r = range::of(self, function)?;
-        self.ranges.insert(key, (function.clone(), r));
-        Ok(r)
+        let interval = range::of(self, function)?;
+        self.ranges.insert(key, (function.clone(), interval));
+        Ok(interval)
     }
 
     /// A sampler for `node`, with a slot unless it's a constant.
@@ -414,9 +451,16 @@ impl<'n> Binder<'n> {
             self.slots += 1;
             self.slots - 1
         };
+        let depends_on_y = node.depends_on_y();
         Sampler {
-            depends_on_y: node.depends_on_y(),
+            depends_on_y,
             position_only: node.position_only(),
+            // Over a volume, a node that can't depend on y is sampled at y 0 whatever its y.
+            y_align: if depends_on_y {
+                node.y_align()
+            } else {
+                Some(1)
+            },
             node: Arc::new(node),
             binder: self.id,
             slot,
@@ -427,9 +471,9 @@ impl<'n> Binder<'n> {
     /// Binds `function` (`compileSampler`).
     pub fn bind(&mut self, function: &Df) -> Result<Sampler, LoadError> {
         let key = Arc::as_ptr(function);
-        if let Some((_, s)) = self.bound.get(&key) {
-            s.shared.store(true, Ordering::Relaxed);
-            return Ok(s.clone());
+        if let Some((_, sampler)) = self.bound.get(&key) {
+            sampler.shared.store(true, Ordering::Relaxed);
+            return Ok(sampler.clone());
         }
         let sampler = match self.compile(function)? {
             Compiled::Node(node) => self.sampler(node),
@@ -575,32 +619,32 @@ impl<'n> Binder<'n> {
                 cell_height: *cell_height,
             },
             DensityFunction::OldBlendedNoise(noise) => return self.compile_blended(noise),
-            DensityFunction::Gradient(g) => {
+            DensityFunction::Gradient(gradient) => {
                 // compileSampler: both ends resolved, the end moved up one if they meet, and the
                 // factor computed once, from the wrapped int difference.
-                let from = self.resolve(g.from_coordinate)?;
-                let mut to = self.resolve(g.to_coordinate)?;
+                let from = self.resolve(gradient.from_coordinate)?;
+                let mut to = self.resolve(gradient.to_coordinate)?;
                 if from == to {
                     to = from.wrapping_add(1);
                 }
                 let range = to.wrapping_sub(from);
-                let factor = (g.to_value - g.from_value) / range as f32;
-                match g.tiling {
+                let factor = (gradient.to_value - gradient.from_value) / range as f32;
+                match gradient.tiling {
                     Tiling::ClampToEdge => Node::Gradient {
-                        axis: g.axis,
+                        axis: gradient.axis,
                         from,
                         min: from.min(to),
                         max: from.max(to),
-                        from_value: g.from_value,
+                        from_value: gradient.from_value,
                         factor,
                     },
                     Tiling::Repeat | Tiling::MirroredRepeat => Node::GradientRepeat {
-                        axis: g.axis,
+                        axis: gradient.axis,
                         from,
                         range,
-                        from_value: g.from_value,
+                        from_value: gradient.from_value,
                         factor,
-                        mirrored: g.tiling == Tiling::MirroredRepeat,
+                        mirrored: gradient.tiling == Tiling::MirroredRepeat,
                     },
                 }
             }
@@ -696,79 +740,81 @@ impl<'n> Binder<'n> {
     /// `BinaryFunction.compileSampler`. Both operands are compiled first; then constants and,
     /// for `min` and `max`, ranges choose the sampler.
     fn compile_binary(&mut self, op: Binary, left: &Df, right: &Df) -> Result<Compiled, LoadError> {
+        // `a` and `b` are the bound left and right operands.
         let (a, b) = (self.bind(left)?, self.bind(right)?);
-        let (ca, cb) = (left.as_constant(), right.as_constant());
+        let constants = (left.as_constant(), right.as_constant());
         Ok(Compiled::Node(match op {
             // IEEE addition is commutative, and x − c is x + (−c), so the constant samplers
             // compute the same floats as the general ones.
             Binary::Add => Node::Add(a, b),
             Binary::Sub => Node::Sub(a, b),
-            Binary::Mul => match (ca, cb) {
+            Binary::Mul => match constants {
                 (Some(c), _) => Node::MulConst(b, c),
                 (None, Some(c)) => Node::MulConst(a, c),
                 (None, None) => Node::Mul(a, b),
             },
-            Binary::Div => match (ca, cb) {
+            Binary::Div => match constants {
                 (Some(c), _) => Node::ConstDiv(c, b),
                 (None, Some(c)) => Node::MulConst(a, 1.0 / c),
                 (None, None) => Node::Div(a, b),
             },
             Binary::Min => {
-                let (ra, rb) = (self.range(left)?, self.range(right)?);
+                let (left_range, right_range) = (self.range(left)?, self.range(right)?);
                 // An operand that's never above the other is the value.
-                if ra.max() < rb.min() {
+                if left_range.max() < right_range.min() {
                     return Ok(Compiled::Alias(a));
                 }
-                if rb.max() < ra.min() {
+                if right_range.max() < left_range.min() {
                     return Ok(Compiled::Alias(b));
                 }
-                match (ca, cb) {
+                match constants {
                     (Some(c), _) => Node::MinConst(b, c),
                     (None, Some(c)) => Node::MinConst(a, c),
-                    (None, None) => Node::Min(a, b, rb.min()),
+                    (None, None) => Node::Min(a, b, right_range.min()),
                 }
             }
             Binary::Max => {
-                let (ra, rb) = (self.range(left)?, self.range(right)?);
-                if ra.min() > rb.max() {
+                let (left_range, right_range) = (self.range(left)?, self.range(right)?);
+                if left_range.min() > right_range.max() {
                     return Ok(Compiled::Alias(a));
                 }
-                if rb.min() > ra.max() {
+                if right_range.min() > left_range.max() {
                     return Ok(Compiled::Alias(b));
                 }
-                match (ca, cb) {
+                match constants {
                     (Some(c), _) => Node::MaxConst(b, c),
                     (None, Some(c)) => Node::MaxConst(a, c),
-                    (None, None) => Node::Max(a, b, rb.max()),
+                    (None, None) => Node::Max(a, b, right_range.max()),
                 }
             }
         }))
     }
 
-    /// `ClampFunction.compileSampler` under switch `clamp_positive_zero`: by the input's range
-    /// `r`, the input itself if the bounds hold all of `r`, a `ConstMaxSampler` with `min` if
-    /// only `max` does, a `ConstMinSampler` with `max` if only `min` does, else the clamp, with
-    /// `Math.clamp`. A NaN bound of `r` fails every test.
+    /// `ClampFunction.compileSampler` under switch `clamp_positive_zero`: by the input's range,
+    /// the input itself if the bounds hold all of it, a `ConstMaxSampler` with `min` if only
+    /// `max` does, a `ConstMinSampler` with `max` if only `min` does, else the clamp, with
+    /// `Math.clamp`. A NaN bound of the range fails every test.
     fn compile_math_clamp(
         &mut self,
         input: &Df,
         min: f32,
         max: f32,
     ) -> Result<Compiled, LoadError> {
-        let r = self.range(input)?;
-        let s = self.bind(input)?;
-        Ok(if min <= r.min() && max >= r.max() {
-            Compiled::Alias(s)
-        } else if max >= r.max() {
-            Compiled::Node(Node::MaxConst(s, min))
-        } else if min <= r.min() {
-            Compiled::Node(Node::MinConst(s, max))
+        let range = self.range(input)?;
+        let bound = self.bind(input)?;
+        Ok(if min <= range.min() && max >= range.max() {
+            Compiled::Alias(bound)
+        } else if max >= range.max() {
+            Compiled::Node(Node::MaxConst(bound, min))
+        } else if min <= range.min() {
+            Compiled::Node(Node::MinConst(bound, max))
         } else {
-            Compiled::Node(Node::MathClamp(s, min, max))
+            Compiled::Node(Node::MathClamp(bound, min, max))
         })
     }
 
-    /// `PowFunction.compileSampler` and `compileConstExponent`.
+    /// `PowFunction.compileSampler` and `compileConstExponent`. `b` and `e` are the bound base
+    /// and exponent, and `c` a constant one.
     fn compile_pow(&mut self, base: &Df, exponent: &Df) -> Result<Compiled, LoadError> {
         let (b, e) = (self.bind(base)?, self.bind(exponent)?);
         if let Some(c) = base.as_constant() {
@@ -799,21 +845,24 @@ impl<'n> Binder<'n> {
 
     /// `BlendedNoise.compileSampler`: `lerp(clamp(main + 0.5, 0, 1), minLimit, maxLimit)`, the
     /// three noises sampled by `NoiseFunction.Sampler`.
-    fn compile_blended(&mut self, p: &BlendedNoise) -> Result<Compiled, LoadError> {
+    fn compile_blended(&mut self, parameters: &BlendedNoise) -> Result<Compiled, LoadError> {
         // CompileContext.createRandom(NOISE_SEED): with legacy randomness LegacyRandomSource(seed)
         // itself, else the factory's fromHashOf; then createFbmSet.
         match &self.random {
-            WorldRandom::Xoroshiro(f) => {
-                let mut random = f.from_hash_of("minecraft:terrain");
-                self.compile_blended_with(p, &mut random)
+            WorldRandom::Xoroshiro(positional) => {
+                let mut random = positional.from_hash_of("minecraft:terrain");
+                self.compile_blended_with(parameters, &mut random)
             }
             WorldRandom::Legacy(_) => {
                 let mut random = LegacyRandomSource::new(self.seed);
-                self.compile_blended_with(p, &mut random)
+                self.compile_blended_with(parameters, &mut random)
             }
         }
     }
 
+    /// [`compile_blended`](Self::compile_blended) with its random: the two limit noises and
+    /// the main noise, drawn in that order. `p` is the noise's parameters, short for the many
+    /// uses below.
     fn compile_blended_with(
         &mut self,
         p: &BlendedNoise,
@@ -883,29 +932,39 @@ fn distance(metric: DistanceMetric, point: [i32; 3], pos: [i32; 3]) -> f32 {
 
 /// `EndIslandFunction.getHeightValue(noise, x, z)`, with `x` and `z` a block's divided by 8:
 /// the highest outer island over the 25 × 25 cells around `(x / 2, z / 2)`, from −100.
+///
+/// Each island is a cone, 100 at its peak and falling with distance, clamped to −100..80. An
+/// island sits on each cell beyond 64 cells from the origin where the simplex noise is below
+/// −0.9, with a slope from the cell's position.
 fn end_island_height(noise: &SimplexNoise, x: i32, z: i32) -> f32 {
-    let (xs, zs, xr, zr) = (x / 2, z / 2, x % 2, z % 2);
+    // Java's truncating `/` and `%`, kept for parity: for a negative coordinate the cell rounds
+    // toward zero and the offset is negative, so this is not the cell that holds the position.
+    let (cell_x, cell_z, within_x, within_z) = (x / 2, z / 2, x % 2, z % 2);
     let mut height = -100.0_f32;
     for dx in -12..=12 {
         for dz in -12..=12 {
-            let px = i64::from(xs.wrapping_add(dx));
-            let pz = i64::from(zs.wrapping_add(dz));
+            let island_x = i64::from(cell_x.wrapping_add(dx));
+            let island_z = i64::from(cell_z.wrapping_add(dz));
             // lcmp/ifle: strictly beyond 64 cells; fcmpg/ifge: NaN fails the test.
-            if px * px + pz * pz > 4096 && noise.get(px as f64, pz as f64) < -0.9_f32 {
-                let size = ((px as f32).abs() * 3439.0 + (pz as f32).abs() * 147.0) % 13.0 + 9.0;
-                let fx = xr.wrapping_sub(dx.wrapping_mul(2)) as f32;
-                let fz = zr.wrapping_sub(dz.wrapping_mul(2)) as f32;
+            if island_x * island_x + island_z * island_z > 4096
+                && noise.get(island_x as f64, island_z as f64) < -0.9_f32
+            {
+                let slope = ((island_x as f32).abs() * 3439.0 + (island_z as f32).abs() * 147.0)
+                    % 13.0
+                    + 9.0;
+                let to_x = within_x.wrapping_sub(dx.wrapping_mul(2)) as f32;
+                let to_z = within_z.wrapping_sub(dz.wrapping_mul(2)) as f32;
                 // Mth.sqrt(float): (float) Math.sqrt((double) f).
-                let length = f64::from(fx * fx + fz * fz).sqrt() as f32;
-                let v = 100.0 - length * size;
+                let length = f64::from(to_x * to_x + to_z * to_z).sqrt() as f32;
+                let island = 100.0 - length * slope;
                 // Mth.clamp(float): v < min ? min : Math.min(v, max). Java's min and max, as
-                // everywhere, though v is finite and never -0 here.
-                let v = if v < -100.0 {
+                // everywhere, though the height is finite and never -0 here.
+                let island = if island < -100.0 {
                     -100.0
                 } else {
-                    java::min(v, 80.0)
+                    java::min(island, 80.0)
                 };
-                height = java::max(height, v);
+                height = java::max(height, island);
             }
         }
     }
@@ -931,10 +990,10 @@ fn create_fbm(
     smear: f64,
     factor: f64,
 ) -> NoiseStack<SmearedPerlinNoise> {
-    let n = 1 - first_octave;
+    let octaves = 1 - first_octave;
     let mut frequency = 1.0;
-    let mut amplitude = factor / (exp2i(n) - 1.0);
-    let layers = (0..n)
+    let mut amplitude = factor / (exp2i(octaves) - 1.0);
+    let layers = (0..octaves)
         .map(|_| {
             let layer = Layer {
                 noise: SmearedPerlinNoise::new(random, smear * frequency),
@@ -965,17 +1024,59 @@ impl From<IntervalError> for LoadError {
 /// column's and point's entries from stale ones, so moving on never clears anything.
 #[derive(Default)]
 pub(crate) struct Memo {
+    /// The binder whose samplers are being evaluated.
     binder: u64,
+    /// The column being evaluated, `(x, z)`.
     column: Option<(i32, i32)>,
+    /// The y being evaluated in it.
     y: Option<i32>,
+    /// The last stamp handed out.
     stamps: u64,
+    /// The stamp of the current column, for values that don't depend on y.
     column_stamp: u64,
+    /// The stamp of the current point, for values that do.
     point_stamp: u64,
     /// By slot: the stamp the value was computed under, and the value. Stamp 0 is never valid.
     entries: Vec<(u64, f32)>,
+    /// Interpolated and upscaled cells' corners, for points: by the input's binder and slot
+    /// and the corners' volume ([`corners_of`]). Cleared when it holds [`MAX_POINT_CELLS`].
+    cells: HashMap<CornersKey, Arc<[f32]>>,
 }
 
-/// Where a [`Memo`] was, to go back after evaluating a child somewhere else.
+/// A point's corners: the input's binder and slot, and the corners' least position, step and
+/// size.
+type CornersKey = (u64, u32, [i32; 3], [i32; 3], [i32; 3]);
+
+/// How many cells a [`Memo`] keeps the corners of: a few chunks' worth.
+const MAX_POINT_CELLS: usize = 1 << 14;
+
+/// `input` over a point's `corners`, through its volume path. For a position-only input,
+/// whose values are the same wherever they're asked from, they're kept in the memo, so the
+/// points of one cell share them.
+fn corners_of(memo: &mut Memo, input: &Sampler, corners: &Volume) -> Arc<[f32]> {
+    let kept = input.position_only && input.slot != NO_SLOT;
+    let key = (
+        input.binder,
+        input.slot,
+        corners.min,
+        corners.step,
+        corners.size,
+    );
+    if kept && let Some(values) = memo.cells.get(&key) {
+        return values.clone();
+    }
+    let values: Arc<[f32]> = input.volume_in(memo, corners).into();
+    if kept {
+        if memo.cells.len() >= MAX_POINT_CELLS {
+            memo.cells.clear();
+        }
+        memo.cells.insert(key, values.clone());
+    }
+    values
+}
+
+/// Where a [`Memo`] was, to go back after evaluating a child somewhere else: its fields of the
+/// same names.
 struct Place {
     binder: u64,
     column: Option<(i32, i32)>,
@@ -1032,6 +1133,7 @@ pub(crate) struct Pos {
     x: i32,
     y: i32,
     z: i32,
+    /// `x`, `y` and `z` as `double`s, converted once.
     xd: f64,
     yd: f64,
     zd: f64,
@@ -1055,6 +1157,15 @@ impl Sampler {
     /// for a given x and z, bit for bit (see `docs/specs/density-functions.md`).
     pub fn depends_on_y(&self) -> bool {
         self.depends_on_y
+    }
+
+    /// The y its volumes can start on without changing values: over two volumes at the same x
+    /// and z positions, with the same steps, more than one position high, whose lowest y are
+    /// both multiples of it, a position in both has the same value in each. The least common
+    /// multiple of the y cell sizes of the interpolation and upscaling inside it, or `None` if
+    /// something inside it, a domain warp, has no such y (`docs/specs/density-functions.md`).
+    pub fn y_alignment(&self) -> Option<i32> {
+        self.y_align
     }
 
     /// `sampleValue` at block `(x, y, z)`.
@@ -1084,8 +1195,8 @@ impl Sampler {
         } else {
             memo.column_stamp
         };
-        if let Some(&(s, value)) = memo.entries.get(slot)
-            && s == stamp
+        if let Some(&(remembered_stamp, value)) = memo.entries.get(slot)
+            && remembered_stamp == stamp
         {
             return value;
         }
@@ -1269,15 +1380,15 @@ impl Node {
             Node::MaxConst(a, c) => java::max(a.eval(memo, pos), *c),
             Node::Unary(op, a) => unary(*op, a.eval(memo, pos)),
             Node::Round(kind, input, multiple) => {
-                let v = input.eval(memo, pos);
-                round_to_multiple(v, multiple.eval(memo, pos), *kind)
+                let value = input.eval(memo, pos);
+                round_to_multiple(value, multiple.eval(memo, pos), *kind)
             }
             Node::RoundInteger(kind, input) => round_to_integer(input.eval(memo, pos), *kind),
             Node::Clamp(input, min, max) => clamp(input.eval(memo, pos), *min, *max),
             Node::MathClamp(input, min, max) => java::clamp(input.eval(memo, pos), *min, *max),
             Node::Pow(base, exponent) => {
-                let b = f64::from(base.eval(memo, pos));
-                java_pow(b, f64::from(exponent.eval(memo, pos)))
+                let base = f64::from(base.eval(memo, pos));
+                java_pow(base, f64::from(exponent.eval(memo, pos)))
             }
             Node::PowConstBase(base, exponent) => {
                 java_pow(*base, f64::from(exponent.eval(memo, pos)))
@@ -1309,8 +1420,8 @@ impl Node {
                 when_in_range,
                 when_out_of_range,
             } => {
-                let v = input.eval(memo, pos);
-                if v >= *min_inclusive && v < *max_exclusive {
+                let value = input.eval(memo, pos);
+                if value >= *min_inclusive && value < *max_exclusive {
                     when_in_range.eval(memo, pos)
                 } else {
                     when_out_of_range.eval(memo, pos)
@@ -1323,12 +1434,12 @@ impl Node {
                 thresholds,
                 samplers,
             } => {
-                let v = input.eval(memo, pos);
-                let i = thresholds
+                let value = input.eval(memo, pos);
+                let chosen = thresholds
                     .iter()
-                    .position(|t| v < *t)
+                    .position(|t| value < *t)
                     .unwrap_or(samplers.len() - 1);
-                samplers[i].eval(memo, pos)
+                samplers[chosen].eval(memo, pos)
             }
             Node::Slice {
                 axis,
@@ -1348,11 +1459,12 @@ impl Node {
                 cell_y,
                 ..
             } => {
-                let (cxz, cy) = (*cell_xz, *cell_y);
+                let (cell_xz, cell_y) = (*cell_xz, *cell_y);
+                // The block's offsets in its cell.
                 let (fx, fy, fz) = (
-                    java::floor_mod(x, cxz),
-                    java::floor_mod(y, cy),
-                    java::floor_mod(z, cxz),
+                    java::floor_mod(x, cell_xz),
+                    java::floor_mod(y, cell_y),
+                    java::floor_mod(z, cell_xz),
                 );
                 if fx == 0 && fy == 0 && fz == 0 {
                     return input.eval(memo, pos);
@@ -1360,14 +1472,14 @@ impl Node {
                 let corners = Volume::new(
                     [2, 2, 2],
                     [x.wrapping_sub(fx), y.wrapping_sub(fy), z.wrapping_sub(fz)],
-                    [cxz, cy, cxz],
+                    [cell_xz, cell_y, cell_xz],
                 );
-                let c = input.volume_in(memo, &corners);
-                let at = |x, y, z| c[corners.index(x, y, z)];
+                let corner_values = corners_of(memo, input, &corners);
+                let at = |x, y, z| corner_values[corners.index(x, y, z)];
                 mth::lerp3(
-                    fx as f32 / cxz as f32,
-                    fy as f32 / cy as f32,
-                    fz as f32 / cxz as f32,
+                    fx as f32 / cell_xz as f32,
+                    fy as f32 / cell_y as f32,
+                    fz as f32 / cell_xz as f32,
                     at(0, 0, 0),
                     at(1, 0, 0),
                     at(0, 1, 0),
@@ -1382,31 +1494,40 @@ impl Node {
             // whose mode is exact there. Otherwise the corners around the cell, sampleCount per
             // axis a cell apart, through the input's volume path, then upscaleValue: z, then x,
             // then y, with each axis's coefficients at its offset in the cell.
-            Node::Upscale(u) => {
-                let [ax, ay, az] = u.axes;
-                let f = [
-                    java::floor_mod(x, ax.cell_size),
-                    java::floor_mod(y, ay.cell_size),
-                    java::floor_mod(z, az.cell_size),
+            Node::Upscale(upscale) => {
+                let [axis_x, axis_y, axis_z] = upscale.axes;
+                // The block's offsets in its cell.
+                let offsets = [
+                    java::floor_mod(x, axis_x.cell_size),
+                    java::floor_mod(y, axis_y.cell_size),
+                    java::floor_mod(z, axis_z.cell_size),
                 ];
-                if f == [0, 0, 0] && u.axes.iter().all(|a| a.mode.exact_on_corner()) {
-                    return u.input.eval(memo, pos);
+                if offsets == [0, 0, 0] && upscale.axes.iter().all(|a| a.mode.exact_on_corner()) {
+                    return upscale.input.eval(memo, pos);
                 }
-                let first = |c: i32, f: i32, a: UpscaleAxis| {
-                    c.wrapping_sub(f)
-                        .wrapping_sub(a.mode.samples_before().wrapping_mul(a.cell_size))
+                // The first corner along an axis: the cell's, less the samples the mode reads
+                // before it.
+                let first = |block: i32, offset: i32, axis: UpscaleAxis| {
+                    block
+                        .wrapping_sub(offset)
+                        .wrapping_sub(axis.mode.samples_before().wrapping_mul(axis.cell_size))
                 };
                 let corners = Volume::new(
-                    u.axes.map(|a| a.mode.sample_count()),
-                    [first(x, f[0], ax), first(y, f[1], ay), first(z, f[2], az)],
-                    u.axes.map(|a| a.cell_size),
+                    upscale.axes.map(|a| a.mode.sample_count()),
+                    [
+                        first(x, offsets[0], axis_x),
+                        first(y, offsets[1], axis_y),
+                        first(z, offsets[2], axis_z),
+                    ],
+                    upscale.axes.map(|a| a.cell_size),
                 );
-                let samples = u.input.volume_in(memo, &corners);
-                u.upscaler.value(f, &samples)
+                let samples = corners_of(memo, &upscale.input, &corners);
+                upscale.upscaler.value(offsets, &samples)
             }
             // NearestNeighborSampler.sampleValue: the input at the cell's corner.
             Node::UpscaleNearest { input, cell } => {
-                let corner = |c: i32, size: i32| java::floor_div(c, size).wrapping_mul(size);
+                let corner =
+                    |block: i32, size: i32| java::floor_div(block, size).wrapping_mul(size);
                 input.eval_at(
                     memo,
                     corner(x, cell[0]),
@@ -1430,30 +1551,30 @@ impl Node {
             Node::EndIslands(noise) => (end_island_height(noise, x / 8, z / 8) - 8.0) / 128.0,
             // Each offset at the position, truncated (f2i), then the input where they point.
             Node::DomainWarp { input, offsets, .. } => match offsets {
-                Warp::Const([ox, oy, oz]) => input.eval_at(
+                Warp::Const([offset_x, offset_y, offset_z]) => input.eval_at(
                     memo,
-                    x.wrapping_add(*ox),
-                    y.wrapping_add(*oy),
-                    z.wrapping_add(*oz),
+                    x.wrapping_add(*offset_x),
+                    y.wrapping_add(*offset_y),
+                    z.wrapping_add(*offset_z),
                 ),
                 Warp::FlatXz { x: sx, z: sz } => {
-                    let ox = sx.eval(memo, pos) as i32;
-                    let oz = sz.eval(memo, pos) as i32;
-                    input.eval_at(memo, x.wrapping_add(ox), 0, z.wrapping_add(oz))
+                    let offset_x = sx.eval(memo, pos) as i32;
+                    let offset_z = sz.eval(memo, pos) as i32;
+                    input.eval_at(memo, x.wrapping_add(offset_x), 0, z.wrapping_add(offset_z))
                 }
                 Warp::General {
                     x: sx,
                     y: sy,
                     z: sz,
                 } => {
-                    let ox = sx.eval(memo, pos) as i32;
-                    let oy = sy.eval(memo, pos) as i32;
-                    let oz = sz.eval(memo, pos) as i32;
+                    let offset_x = sx.eval(memo, pos) as i32;
+                    let offset_y = sy.eval(memo, pos) as i32;
+                    let offset_z = sz.eval(memo, pos) as i32;
                     input.eval_at(
                         memo,
-                        x.wrapping_add(ox),
-                        y.wrapping_add(oy),
-                        z.wrapping_add(oz),
+                        x.wrapping_add(offset_x),
+                        y.wrapping_add(offset_y),
+                        z.wrapping_add(offset_z),
                     )
                 }
             },
@@ -1466,8 +1587,12 @@ impl Node {
                 from_value,
                 factor,
             } => {
-                let c = axis.choose(x, y, z);
-                let clamped = if c < *min { *min } else { c.min(*max) };
+                let coordinate = axis.choose(x, y, z);
+                let clamped = if coordinate < *min {
+                    *min
+                } else {
+                    coordinate.min(*max)
+                };
                 from_value + clamped.wrapping_sub(*from) as f32 * factor
             }
             // RepeatSampler and MirroredRepeatSampler.compute, with Java's floorMod and
@@ -1480,16 +1605,17 @@ impl Node {
                 factor,
                 mirrored,
             } => {
-                let d = axis.choose(x, y, z).wrapping_sub(*from);
+                let distance = axis.choose(x, y, z).wrapping_sub(*from);
                 if !mirrored {
-                    return from_value + java::floor_mod(d, *range) as f32 * factor;
+                    return from_value + java::floor_mod(distance, *range) as f32 * factor;
                 }
-                let q = java::floor_div(d, *range);
-                let rem = d.wrapping_sub(q.wrapping_mul(*range));
-                if q & 1 == 0 {
-                    from_value + rem as f32 * factor
+                // Which period the block is in, and how far into it: an odd period runs back.
+                let period = java::floor_div(distance, *range);
+                let within = distance.wrapping_sub(period.wrapping_mul(*range));
+                if period & 1 == 0 {
+                    from_value + within as f32 * factor
                 } else {
-                    from_value + range.wrapping_sub(rem) as f32 * factor
+                    from_value + range.wrapping_sub(within) as f32 * factor
                 }
             }
             Node::Spline(spline) => spline.sample(memo, pos),
@@ -1563,6 +1689,72 @@ impl Node {
         }
     }
 
+    /// [`Sampler::y_alignment`] for a node that can depend on y, from the children's. An
+    /// interpolated or upscaled block depends on where the volume's lowest y falls in its cell,
+    /// and its input is sampled over a corner volume that starts on a cell's corner.
+    fn y_align(&self) -> Option<i32> {
+        let all = |samplers: &[&Sampler]| {
+            samplers
+                .iter()
+                .try_fold(1, |a, s| s.y_align.and_then(|b| lcm(a, b)))
+        };
+        match self {
+            Node::DomainWarp { .. } => None,
+            Node::Interpolated { input, cell_y, .. } => all(&[input]).and_then(|a| lcm(a, *cell_y)),
+            Node::Upscale(u) => all(&[&u.input]).and_then(|a| lcm(a, u.axes[1].cell_size)),
+            Node::UpscaleNearest { input, cell } => all(&[input]).and_then(|a| lcm(a, cell[1])),
+            Node::Constant(_)
+            | Node::Noise { .. }
+            | Node::SmearedNoise { .. }
+            | Node::ShiftA(_)
+            | Node::ShiftB(_)
+            | Node::Shift(_)
+            | Node::Gradient { .. }
+            | Node::GradientRepeat { .. }
+            | Node::DistanceToPoint { .. }
+            | Node::EndIslands(_) => Some(1),
+            Node::NoiseShiftedXz { sx, sz, .. } => all(&[sx, sz]),
+            Node::NoiseShiftedXyz { sx, sy, sz, .. } => all(&[sx, sy, sz]),
+            Node::Add(a, b)
+            | Node::Sub(a, b)
+            | Node::Mul(a, b)
+            | Node::Div(a, b)
+            | Node::Min(a, b, _)
+            | Node::Max(a, b, _)
+            | Node::Round(_, a, b)
+            | Node::Pow(a, b) => all(&[a, b]),
+            Node::MulConst(a, _)
+            | Node::ConstDiv(_, a)
+            | Node::MinConst(a, _)
+            | Node::MaxConst(a, _)
+            | Node::Unary(_, a)
+            | Node::RoundInteger(_, a)
+            | Node::Clamp(a, _, _)
+            | Node::MathClamp(a, _, _)
+            | Node::PowConstBase(_, a)
+            | Node::PowConstExponent(a, _) => all(&[a]),
+            Node::Lerp {
+                alpha,
+                first,
+                second,
+            } => all(&[alpha, first, second]),
+            Node::RangeChoice {
+                input,
+                when_in_range,
+                when_out_of_range,
+                ..
+            } => all(&[input, when_in_range, when_out_of_range]),
+            Node::IntervalSelect {
+                input, samplers, ..
+            } => samplers
+                .iter()
+                .try_fold(all(&[input])?, |a, s| s.y_align.and_then(|b| lcm(a, b))),
+            Node::Slice { input, .. } => all(&[input]),
+            Node::FindTopSurface { upper_bound, .. } => all(&[upper_bound]),
+            Node::Spline(spline) => spline.y_align(),
+        }
+    }
+
     /// Whether the value can depend on y, from the children's flags.
     ///
     /// A noise's y input only reaches the noise as `wrap(y * frequency) + offset`, with an offset
@@ -1633,6 +1825,17 @@ impl Node {
             Node::DomainWarp { axes, .. } => axes & AXIS_Y != 0,
         }
     }
+}
+
+/// The least common multiple of two positive numbers, or `None` if it overflows.
+fn lcm(a: i32, b: i32) -> Option<i32> {
+    let gcd = |mut a: i32, mut b: i32| {
+        while b != 0 {
+            (a, b) = (b, a % b);
+        }
+        a
+    };
+    (a / gcd(a, b)).checked_mul(b)
 }
 
 /// `FindTopSurfaceFunction.Sampler.findSurfaceFrom`: from the cell below `upper` down to
@@ -1741,6 +1944,17 @@ impl BoundSpline {
         }
     }
 
+    fn y_align(&self) -> Option<i32> {
+        match self {
+            BoundSpline::Constant(_) => Some(1),
+            BoundSpline::Multipoint {
+                coordinate, values, ..
+            } => values.iter().try_fold(coordinate.y_align?, |a, v| {
+                v.y_align().and_then(|b| lcm(a, b))
+            }),
+        }
+    }
+
     fn depends_on_y(&self) -> bool {
         match self {
             BoundSpline::Constant(_) => false,
@@ -1794,12 +2008,12 @@ pub(crate) fn sample_multipoint<V>(
     let last = locations.len() - 1;
     // linearExtend outside the points.
     let mut extend = |i: usize| {
-        let v = value(&values[i]);
-        let d = derivatives[i];
-        if d == 0.0 {
-            v
+        let point_value = value(&values[i]);
+        let derivative = derivatives[i];
+        if derivative == 0.0 {
+            point_value
         } else {
-            v + d * (c - locations[i])
+            point_value + derivative * (c - locations[i])
         }
     };
     if i < 0 {
@@ -1809,6 +2023,8 @@ pub(crate) fn sample_multipoint<V>(
     if i == last {
         return extend(last);
     }
+    // Between points i and i + 1: the two values lerped, plus a cubic term from the tangents,
+    // with x the locations, f the values and t how far c is between them.
     let (x0, x1) = (locations[i], locations[i + 1]);
     let t = (c - x0) / (x1 - x0);
     let f0 = value(&values[i]);
@@ -1837,11 +2053,11 @@ fn sample_nan_is_nan(
     // linearExtend: the point's value, plus its derivative times the distance if that's not 0.
     let mut extend = |i: usize| {
         let value = values[i].sample_with(coordinate_value);
-        let d = derivatives[i];
-        if d == 0.0 {
+        let derivative = derivatives[i];
+        if derivative == 0.0 {
             value
         } else {
-            value + d * (c - locations[i])
+            value + derivative * (c - locations[i])
         }
     };
     if c <= locations[0] {
@@ -1850,6 +2066,7 @@ fn sample_nan_is_nan(
     if c >= locations[last] {
         return extend(last);
     }
+    // The interval from point j to point i.
     let mut i = 1;
     while i < last && c >= locations[i] {
         i += 1;

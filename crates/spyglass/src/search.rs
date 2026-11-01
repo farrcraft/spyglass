@@ -2,22 +2,26 @@
 //! against a world or a whole game, and seeds judged against them.
 
 mod evaluate;
+mod find;
 
 use std::ops::ControlFlow;
 use std::time::Duration;
 
 use spyglass_search::{
     Anchor, Kind, Named, Place, Prefilter, Query, Region, RunOptions, SPAWN_REACH,
+    Target as FindTarget,
 };
 use spyglass_structure::PlacementKind;
 
 use evaluate::Sessions;
 pub use evaluate::{ConstraintResult, Evaluation, Feature, Outcome};
+pub use find::{FindMatch, FindOptions, FindOutcome, FindProgress, MAX_FIND_TARGETS};
 pub use spyglass_search::{
     Hit as RankedSeed, Progress as SearchProgress, SeedSource, Stop as SearchStop,
+    Throttle as SearchThrottle,
 };
 
-use crate::{BiomeQuery, Dimension, Error, Game, Result, StructureQuery, World};
+use crate::{BiomeQuery, Dimension, Error, FeatureQuery, Game, Result, StructureQuery, World};
 
 /// A search query parsed and resolved by [`World::search_query`] or [`Game::search_query`].
 /// Its `Display` is the canonical text.
@@ -25,13 +29,38 @@ use crate::{BiomeQuery, Dimension, Error, Game, Result, StructureQuery, World};
 pub struct SearchQuery {
     /// The id of the world each dimension the query reads was resolved against.
     worlds: [Option<u64>; 3],
+    /// The parsed query.
     query: Query,
-    /// By constraint.
+    /// Each constraint's dimension and names, by constraint.
     resolved: Vec<Resolved>,
     /// Necessary conditions on the seed's lower 48 bits, in each dimension that has any.
     prefilters: Vec<(Dimension, Prefilter)>,
     /// Constraint indices, cheapest to check first.
     order: Vec<usize>,
+    /// A `find` query's target, resolved.
+    find: Option<Found>,
+}
+
+/// A `find` line's target, resolved: what's looked for, and the dimension it's in.
+#[derive(Debug, Clone)]
+pub(crate) struct Found {
+    /// The dimension the targets are in.
+    pub dimension: Dimension,
+    /// What's looked for.
+    pub target: Looked,
+}
+
+/// What a `find` query looks for.
+#[derive(Debug, Clone)]
+pub(crate) enum Looked {
+    /// A structure's starts.
+    Structure(StructureQuery),
+    /// The biome grid's points in a biome.
+    Biome(BiomeQuery),
+    /// A feature's tries that placed, or might have.
+    Feature(FeatureQuery),
+    /// Every point of the grid.
+    Point,
 }
 
 /// A constraint's dimension and names, resolved.
@@ -39,17 +68,19 @@ pub struct SearchQuery {
 struct Resolved {
     /// The dimension it counts in, whose coordinates its places are in.
     dimension: Dimension,
-    /// What's counted: a structure for structure counts and clusters, a biome for biome
-    /// constraints.
+    /// What's counted: a structure for structure counts and clusters, a feature for feature
+    /// counts and clusters, a biome for biome constraints.
     target: Option<Target>,
     /// The structure of a structure anchor, and the dimension its starts are in.
     anchor: Option<(Dimension, StructureQuery)>,
 }
 
+/// What a constraint counts, resolved.
 #[derive(Debug, Clone)]
 enum Target {
     Structure(StructureQuery),
     Biome(BiomeQuery),
+    Feature(FeatureQuery),
 }
 
 impl SearchQuery {
@@ -64,10 +95,24 @@ impl SearchQuery {
         self.resolved.get(index).map(|r| r.dimension)
     }
 
-    /// The first constraint's dimension. Every query has a constraint: parsing one without is
-    /// an error.
+    /// The first constraint's dimension, or a `find` query's target's if it has no constraint.
     pub fn first_dimension(&self) -> Dimension {
-        self.resolved[0].dimension
+        self.resolved
+            .first()
+            .map(|r| r.dimension)
+            .or_else(|| self.find.as_ref().map(|f| f.dimension))
+            .unwrap_or(Dimension::Overworld)
+    }
+
+    /// For a `find` query, the dimension its targets are in, whose coordinates its origin is
+    /// in. `None` for a seed search's query.
+    pub fn find_dimension(&self) -> Option<Dimension> {
+        self.find.as_ref().map(|f| f.dimension)
+    }
+
+    /// The resolved `find` target, if this is a `find` query.
+    pub(crate) fn found(&self) -> Option<&Found> {
+        self.find.as_ref()
     }
 }
 
@@ -91,8 +136,12 @@ enum Subject<'q> {
     Structure(&'q str),
     /// A biome id.
     Biome(&'q str),
+    /// A placed or configured feature id.
+    Feature(&'q str),
     /// Something only the Overworld has, described for errors.
     Overworld(&'static str),
+    /// Terrain heights: the Overworld's unless written, and not under a ceiling.
+    Terrain,
 }
 
 /// Where a query is resolved: one world, whose dimension every constraint is in, or a game's
@@ -117,7 +166,8 @@ impl<'a> Scope<'a> {
     }
 
     /// Whether `world` places `subject`: some of a structure or tag's structures can start
-    /// there, its biome source has the biome, or it's the Overworld.
+    /// there, its biome source has the biome, spyglass places the feature there, or it's the
+    /// Overworld.
     fn places(world: &World, subject: Subject<'_>) -> Result<bool> {
         Ok(match subject {
             Subject::Structure(s) => {
@@ -128,8 +178,14 @@ impl<'a> Scope<'a> {
                     .iter()
                     .any(|&t| !structures[t].biomes.is_empty())
             }
-            Subject::Biome(b) => world.biome_query(b)?.biome.is_some(),
+            Subject::Biome(b) => world.biome_query(b)?.possible(),
+            Subject::Feature(f) => match world.feature_query(f) {
+                Ok(_) => true,
+                Err(Error::NotPlaced(_) | Error::Unknown { .. }) => false,
+                Err(e) => return Err(e),
+            },
             Subject::Overworld(_) => world.dimension_kind() == Dimension::Overworld,
+            Subject::Terrain => !world.has_ceiling(),
         })
     }
 
@@ -140,6 +196,7 @@ impl<'a> Scope<'a> {
         let game = match (self, subject) {
             (_, Subject::Overworld(_)) => return Ok(Dimension::Overworld),
             (Scope::World(w), _) => return Ok(w.dimension_kind()),
+            (Scope::Game(_), Subject::Terrain) => return Ok(Dimension::Overworld),
             (Scope::Game(g), _) => g,
         };
         for d in Dimension::ALL {
@@ -186,6 +243,17 @@ fn spawn_anchored(place: &Place) -> bool {
     )
 }
 
+/// Whether `place` is a disc around a `find` query's target.
+fn here_anchored(place: &Place) -> bool {
+    matches!(
+        place,
+        Place::Within {
+            anchor: Anchor::Here,
+            ..
+        }
+    )
+}
+
 /// [`World::search_query`] or [`Game::search_query`].
 fn resolve(scope: Scope<'_>, text: &str) -> Result<SearchQuery> {
     let mut query = Query::parse(text).map_err(|e| Error::InvalidQuery {
@@ -194,7 +262,68 @@ fn resolve(scope: Scope<'_>, text: &str) -> Result<SearchQuery> {
         message: e.message,
     })?;
     let mut worlds = [None; 3];
+    let find = match (query.find(), query.find_line()) {
+        (Some(find), Some(line)) => {
+            let at_line = |e: Error| Error::InvalidQuery {
+                line,
+                column: None,
+                message: e.to_string(),
+            };
+            let subject = match &find.target {
+                FindTarget::Structure(s) => Subject::Structure(s),
+                FindTarget::Biome(b) => Subject::Biome(b),
+                FindTarget::Feature(f) => Subject::Feature(f),
+                FindTarget::Point => Subject::Terrain,
+            };
+            // A point target is the Overworld's in a game, like terrain, but may be under a
+            // ceiling.
+            let dimension = match (find.target.clone(), scope) {
+                (FindTarget::Point, Scope::World(w)) => w.dimension_kind(),
+                _ => scope.infer(subject).map_err(at_line)?,
+            };
+            let world = scope.world(dimension).map_err(at_line)?;
+            worlds[dimension.index()] = Some(world.id);
+            if let Place::Within {
+                anchor: Anchor::Spawn,
+                ..
+            } = find.place
+            {
+                if dimension == Dimension::End {
+                    return Err(at_line(Error::NotLinked {
+                        from: Dimension::Overworld,
+                        to: Dimension::End,
+                    }));
+                }
+                let overworld = scope.world(Dimension::Overworld).map_err(at_line)?;
+                worlds[Dimension::Overworld.index()] = Some(overworld.id);
+            }
+            let target = match &find.target {
+                FindTarget::Structure(s) => {
+                    Looked::Structure(world.structure_query(s).map_err(at_line)?)
+                }
+                FindTarget::Biome(b) => {
+                    check_y(world, dimension, find.sampling.y).map_err(|message| {
+                        Error::InvalidQuery {
+                            line,
+                            column: None,
+                            message,
+                        }
+                    })?;
+                    Looked::Biome(world.biome_query(b).map_err(at_line)?)
+                }
+                FindTarget::Feature(f) => Looked::Feature(world.feature_query(f).map_err(at_line)?),
+                FindTarget::Point => Looked::Point,
+            };
+            Some(Found { dimension, target })
+        }
+        _ => None,
+    };
+    // Each constraint's dimension: written, or inferred from what it counts. Its places, and
+    // any spawn, `here` or structure anchor, are then checked against the dimensions they're
+    // in, and its names resolved there.
     let mut resolved = Vec::with_capacity(query.constraints().len());
+    // The constraints whose written dimension is the inferred one: the canonical text leaves
+    // it out.
     let mut forget = Vec::new();
     for (i, (constraint, &line)) in query.constraints().iter().zip(query.lines()).enumerate() {
         let message = |message: String| Error::InvalidQuery {
@@ -203,10 +332,11 @@ fn resolve(scope: Scope<'_>, text: &str) -> Result<SearchQuery> {
             message,
         };
         let at_line = |e: Error| message(e.to_string());
-        let mut world = |d: Dimension| -> Result<&World> {
-            let w = scope.world(d).map_err(at_line)?;
-            worlds[d.index()] = Some(w.id);
-            Ok(w)
+        // A dimension's world, noted as one the query reads.
+        let mut world = |dimension: Dimension| -> Result<&World> {
+            let world = scope.world(dimension).map_err(at_line)?;
+            worlds[dimension.index()] = Some(world.id);
+            Ok(world)
         };
         let kind = &constraint.kind;
         let subject = match kind {
@@ -214,8 +344,12 @@ fn resolve(scope: Scope<'_>, text: &str) -> Result<SearchQuery> {
                 Subject::Structure(structure)
             }
             Kind::Biome { biome, .. } | Kind::Coverage { biome, .. } => Subject::Biome(biome),
+            Kind::Features { feature, .. } | Kind::FeatureCluster { feature, .. } => {
+                Subject::Feature(feature)
+            }
             Kind::Slime { .. } => Subject::Overworld("slime chunks are"),
             Kind::Spawn { .. } => Subject::Overworld("the spawn is"),
+            Kind::Height { .. } | Kind::Flat { .. } => Subject::Terrain,
         };
         let inferred = scope.infer(subject).map_err(at_line)?;
         let dimension = constraint.dimension.unwrap_or(inferred);
@@ -232,14 +366,37 @@ fn resolve(scope: Scope<'_>, text: &str) -> Result<SearchQuery> {
             return Err(message(match subject {
                 Subject::Structure(s) => format!("{s} isn't placed in {}", dimension.name()),
                 Subject::Biome(b) => format!("{} has no {b}", dimension.name()),
-                Subject::Overworld(_) => unreachable!("checked above"),
+                Subject::Feature(f) => format!("{f} isn't placed in {}", dimension.name()),
+                Subject::Overworld(_) | Subject::Terrain => unreachable!("checked below"),
             }));
         }
-        // A disc around the spawn in dimension `d` is around the Overworld's, converted.
-        let mut spawn_in = |p: &Place, d: Dimension| -> Result<()> {
-            if !spawn_anchored(p) {
+        if matches!(subject, Subject::Terrain) && here.has_ceiling() {
+            return Err(message(format!(
+                "terrain isn't checked in {}: its surface heights are the ceiling's",
+                dimension.name()
+            )));
+        }
+        // A disc around a `find` target in `place_in` is around the target, converted.
+        let here_in = |place: &Place, place_in: Dimension| -> Result<()> {
+            let Some(found) = &find else {
+                return Ok(());
+            };
+            if here_anchored(place)
+                && found.dimension != place_in
+                && (found.dimension == Dimension::End || place_in == Dimension::End)
+            {
+                return Err(at_line(Error::NotLinked {
+                    from: found.dimension,
+                    to: place_in,
+                }));
+            }
+            Ok(())
+        };
+        // A disc around the spawn in `place_in` is around the Overworld's, converted.
+        let mut spawn_in = |place: &Place, place_in: Dimension| -> Result<()> {
+            if !spawn_anchored(place) {
                 Ok(())
-            } else if d == Dimension::End {
+            } else if place_in == Dimension::End {
                 Err(message(
                     "`spawn` isn't linked to the End: its coordinates aren't the Overworld's"
                         .to_string(),
@@ -252,6 +409,7 @@ fn resolve(scope: Scope<'_>, text: &str) -> Result<SearchQuery> {
             Kind::Structures { region, .. } | Kind::Slime { region, .. } => match region {
                 Region::Place(p) => {
                     spawn_in(p, dimension)?;
+                    here_in(p, dimension)?;
                     None
                 }
                 Region::NearStructure {
@@ -260,27 +418,37 @@ fn resolve(scope: Scope<'_>, text: &str) -> Result<SearchQuery> {
                     // The constraint's own dimension if it places the anchor, else the
                     // anchor's.
                     let subject = Subject::Structure(structure);
-                    let d = if Scope::places(here, subject).map_err(at_line)? {
+                    let anchor_in = if Scope::places(here, subject).map_err(at_line)? {
                         dimension
                     } else {
                         scope.infer(subject).map_err(at_line)?
                     };
-                    if d != dimension && (d == Dimension::End || dimension == Dimension::End) {
+                    if anchor_in != dimension
+                        && (anchor_in == Dimension::End || dimension == Dimension::End)
+                    {
                         return Err(at_line(Error::NotLinked {
-                            from: d,
+                            from: anchor_in,
                             to: dimension,
                         }));
                     }
-                    spawn_in(place, d)?;
-                    let anchor = world(d)?.structure_query(structure).map_err(at_line)?;
-                    Some((d, anchor))
+                    spawn_in(place, anchor_in)?;
+                    here_in(place, anchor_in)?;
+                    let anchor = world(anchor_in)?
+                        .structure_query(structure)
+                        .map_err(at_line)?;
+                    Some((anchor_in, anchor))
                 }
             },
             Kind::Cluster { place, .. }
+            | Kind::Features { place, .. }
+            | Kind::FeatureCluster { place, .. }
             | Kind::Biome { place, .. }
             | Kind::Coverage { place, .. }
-            | Kind::Spawn { place } => {
+            | Kind::Spawn { place }
+            | Kind::Height { place, .. }
+            | Kind::Flat { place, .. } => {
                 spawn_in(place, dimension)?;
+                here_in(place, dimension)?;
                 None
             }
         };
@@ -294,21 +462,15 @@ fn resolve(scope: Scope<'_>, text: &str) -> Result<SearchQuery> {
             | Kind::Coverage {
                 biome, sampling, ..
             } => {
-                let heights = here.sets.heights();
-                let (min_y, max_y) = (
-                    heights.level_min_y,
-                    heights.level_min_y + heights.level_height - 1,
-                );
-                if !(min_y..=max_y).contains(&sampling.y) {
-                    return Err(message(format!(
-                        "y {} is outside the build height of {}, {min_y} to {max_y}",
-                        sampling.y,
-                        dimension.name()
-                    )));
-                }
+                check_y(here, dimension, sampling.y).map_err(message)?;
                 Some(Target::Biome(here.biome_query(biome).map_err(at_line)?))
             }
-            Kind::Slime { .. } | Kind::Spawn { .. } => None,
+            Kind::Features { feature, .. } | Kind::FeatureCluster { feature, .. } => Some(
+                Target::Feature(here.feature_query(feature).map_err(at_line)?),
+            ),
+            Kind::Slime { .. } | Kind::Spawn { .. } | Kind::Height { .. } | Kind::Flat { .. } => {
+                None
+            }
         };
         resolved.push(Resolved {
             dimension,
@@ -321,36 +483,43 @@ fn resolve(scope: Scope<'_>, text: &str) -> Result<SearchQuery> {
     }
     let constraints = query.constraints();
     let mut prefilters = Vec::new();
-    for d in Dimension::ALL {
-        let mine: Vec<usize> = (0..resolved.len())
-            .filter(|&i| resolved[i].dimension == d)
+    // A `find` query's places are around its targets, which a seed's lower 48 bits don't
+    // decide; and it judges one seed, so there's nothing to skip.
+    // Each dimension's prefilter, from the constraints in it. An anchor in another dimension
+    // isn't placed by this one's sets, so it's left out.
+    for dimension in Dimension::ALL.into_iter().filter(|_| find.is_none()) {
+        let in_dimension: Vec<usize> = (0..resolved.len())
+            .filter(|&i| resolved[i].dimension == dimension)
             .collect();
-        if mine.is_empty() {
+        if in_dimension.is_empty() {
             continue;
         }
-        let world = scope.world(d)?;
-        let subset: Vec<_> = mine.iter().map(|&i| constraints[i].clone()).collect();
-        let named: Vec<Named<'_>> = mine
+        let world = scope.world(dimension)?;
+        let subset: Vec<_> = in_dimension
+            .iter()
+            .map(|&i| constraints[i].clone())
+            .collect();
+        let named: Vec<Named<'_>> = in_dimension
             .iter()
             .map(|&i| {
-                let r = &resolved[i];
+                let names = &resolved[i];
                 Named {
-                    target: match &r.target {
-                        Some(Target::Structure(q)) => Some(&q.targets[..]),
+                    target: match &names.target {
+                        Some(Target::Structure(structure)) => Some(&structure.targets[..]),
                         _ => None,
                     },
-                    anchor: r
+                    anchor: names
                         .anchor
                         .as_ref()
-                        .filter(|(anchor_in, _)| *anchor_in == d)
-                        .map(|(_, q)| &q.targets[..]),
+                        .filter(|(anchor_in, _)| *anchor_in == dimension)
+                        .map(|(_, anchor)| &anchor.targets[..]),
                 }
             })
             .collect();
-        let uses_spawn = mine
+        let uses_spawn = in_dimension
             .iter()
             .any(|&i| evaluate::uses_spawn(&constraints[i].kind));
-        let reach = if d == Dimension::Overworld || !uses_spawn {
+        let reach = if dimension == Dimension::Overworld || !uses_spawn {
             SPAWN_REACH
         } else {
             // Converted and rounded down, the spawn is at most a block further on each axis.
@@ -360,7 +529,7 @@ fn resolve(scope: Scope<'_>, text: &str) -> Result<SearchQuery> {
         };
         let prefilter = Prefilter::new(&world.sets, &subset, &named, reach);
         if !prefilter.is_empty() {
-            prefilters.push((d, prefilter));
+            prefilters.push((dimension, prefilter));
         }
     }
     let costs = (0..resolved.len())
@@ -374,29 +543,70 @@ fn resolve(scope: Scope<'_>, text: &str) -> Result<SearchQuery> {
         resolved,
         prefilters,
         order,
+        find,
     })
+}
+
+/// Fails for a `find` query, which searches within one seed, not across seeds.
+pub(crate) fn reject_find(query: &SearchQuery) -> Result<()> {
+    match query.query.find_line() {
+        Some(line) => Err(Error::InvalidQuery {
+            line,
+            column: None,
+            message: "a `find` query searches within one seed: run it with find".to_string(),
+        }),
+        None => Ok(()),
+    }
+}
+
+/// Fails, saying why, unless `y` is within `world`'s build height.
+fn check_y(world: &World, dimension: Dimension, y: i32) -> std::result::Result<(), String> {
+    let heights = world.sets.heights();
+    let (min_y, max_y) = (
+        heights.level_min_y,
+        heights.level_min_y + heights.level_height - 1,
+    );
+    if (min_y..=max_y).contains(&y) {
+        Ok(())
+    } else {
+        Err(format!(
+            "y {y} is outside the build height of {}, {min_y} to {max_y}",
+            dimension.name()
+        ))
+    }
 }
 
 /// A rough rank of how long a constraint takes to check, for ordering checks cheapest first:
 /// structures and slime chunks, then those that need the spawn (about 1 ms), the spawn itself,
-/// biome grids by size, and last anything on concentric rings (strongholds, about 1 s).
+/// biome grids by size, anything on concentric rings (strongholds, about 1 s), terrain
+/// conditions by size (a few milliseconds a column), and last features by size (tens of
+/// milliseconds a chunk).
 fn cost(scope: Scope<'_>, kind: &Kind, resolved: &Resolved) -> Result<(u8, u64)> {
-    let rings = |d: Dimension, q: &StructureQuery| -> Result<bool> {
-        Ok(scope.world(d)?.sets.sets().iter().any(|s| {
-            s.possible
-                && matches!(s.placement.kind, PlacementKind::ConcentricRings(_))
-                && s.entries.iter().any(|e| q.targets.contains(&e.structure))
+    let rings = |dimension: Dimension, structure: &StructureQuery| -> Result<bool> {
+        Ok(scope.world(dimension)?.sets.sets().iter().any(|set| {
+            set.possible
+                && matches!(set.placement.kind, PlacementKind::ConcentricRings(_))
+                && set
+                    .entries
+                    .iter()
+                    .any(|entry| structure.targets.contains(&entry.structure))
         }))
     };
     let target_on_rings = match &resolved.target {
-        Some(Target::Structure(q)) => rings(resolved.dimension, q)?,
+        Some(Target::Structure(structure)) => rings(resolved.dimension, structure)?,
         _ => false,
     };
     let anchor_on_rings = match &resolved.anchor {
-        Some((d, q)) => rings(*d, q)?,
+        Some((anchor_in, anchor)) => rings(*anchor_in, anchor)?,
         None => false,
     };
     Ok(match kind {
+        Kind::Features { place, .. } | Kind::FeatureCluster { place, .. } => {
+            (6, place.grid_bound(16))
+        }
+        Kind::Height { place, step, .. } | Kind::Flat { place, step, .. } => {
+            (5, place.grid_bound(*step))
+        }
         _ if target_on_rings || anchor_on_rings => (4, 0),
         Kind::Biome {
             place, sampling, ..
@@ -434,6 +644,9 @@ pub struct SearchOptions {
     /// Stops the search from another thread, before its next seed. [`SearchStop::stop`] still
     /// evaluates the best seeds found; [`SearchStop::stop_now`] cuts that short too.
     pub stop: SearchStop,
+    /// Limits how many of its threads work at once, from another thread while it runs, to lend
+    /// its cores to other work: [`SearchThrottle::set`]. The seeds found don't depend on it.
+    pub throttle: SearchThrottle,
 }
 
 impl Default for SearchOptions {
@@ -449,6 +662,7 @@ impl Default for SearchOptions {
             certain: false,
             confirm: false,
             stop: SearchStop::new(),
+            throttle: SearchThrottle::new(),
         }
     }
 }
@@ -554,6 +768,7 @@ fn search(
     evaluate: impl Fn(i64) -> Result<Evaluation> + Sync,
     progress: impl FnMut(&SearchProgress) -> ControlFlow<()>,
 ) -> Result<SearchOutcome> {
+    reject_find(query)?;
     let pool = spyglass_search::pool(options.threads)
         .map_err(|e| Error::Threads(crate::Cause(Box::new(e))))?;
     let run = RunOptions {
@@ -563,6 +778,7 @@ fn search(
         time: options.time,
         top: options.top,
         stop: options.stop.clone(),
+        throttle: options.throttle.clone(),
     };
     let progress = spyglass_search::run(&pool, &run, accepts, check, progress)?;
     let stop = || options.stop.is_stopped_now();

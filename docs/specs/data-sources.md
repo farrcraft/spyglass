@@ -69,7 +69,7 @@ java -DbundlerMainClass=net.minecraft.data.Main -jar server.jar --reports --outp
 
 - The bundler unpacks `libraries/` and `versions/` into the **working directory**, and the game writes `logs/` there, so run it in a scratch directory, never in the repo.
 - `--reports` is enough; `--server` would regenerate the worldgen JSON the jar already contains. For 26.3 the run takes a few seconds and writes 1,666 files under `<dir>/reports/` (plus a `<dir>/.cache/`).
-- The reports the bundle needs are `reports/biome_parameters/minecraft/overworld.json` (7,594 entries for 26.3) and `reports/biome_parameters/minecraft/nether.json`. These are the `multi_noise_biome_source_parameter_list` presets that the jar's JSON only names (`{"preset": "minecraft:overworld"}`). The End has no parameter list. The other reports (`blocks.json`, `registries.json`, `commands.json`, item components and so on) aren't needed yet.
+- The reports the bundle needs are `reports/biome_parameters/minecraft/overworld.json` (7,594 entries for 26.3) and `reports/biome_parameters/minecraft/nether.json`. These are the `multi_noise_biome_source_parameter_list` presets that the jar's JSON only names (`{"preset": "minecraft:overworld"}`). The End has no parameter list. `reports/blocks.json` (6.8 MB for 26.2) lists every block's properties and default state, which block states are named by ([material.md](material.md#the-chunk)). The other reports (`registries.json`, `commands.json`, item components and so on) aren't needed yet.
 
 Each report entry is `{"biome": id, "parameters": {temperature, humidity, continentalness, erosion, depth, weirdness, offset}}`, where the six climate parameters are `[min, max]` pairs or single numbers and `offset` is a number.
 
@@ -79,6 +79,35 @@ The game stores climate parameters as quantized longs: `quantizeCoord(f) = (long
 
 Recover `q` by parsing the number as `f32` and rounding `value * 10000` to the **nearest** integer, in `f64`. That inverse is exact for every `|q| <= 40000` (checked exhaustively on 2026-10-25), which covers the codec's `[-2, 2]` range. Re-quantizing the way the game's own codec does (`f32` multiply, then truncation) is **not** exact in general: it is off by one for 2,286 values of `q` in `[-20000, 20000]`. It happens to be exact for the 39 distinct values in 26.3's overworld list (range `-12000..=11000`), but the extractor must not rely on that.
 
+### Block report
+
+Placing features reads block behaviour that no report has, because the game computes it in code when it boots (from collision shapes and per-block overrides). So after the data generator, the extractor runs a small program of its own on the unpacked game ([ADR 0054](../adr/0054-block-behaviour-from-the-running-game.md)): `extractor-java/BlockReport.java`, compiled into the committed `BlockReport.class` and embedded in the extractor. It calls the game only through reflection, so the same class works in every version, and it runs on the same Java runtime:
+
+```sh
+java -cp <class dir><sep><game jar><sep><libraries…> BlockReport <bundle>/reports/block_behaviour.json
+```
+
+It runs `SharedConstants.tryDetectVersion` and `Bootstrap.bootStrap`, then writes every state in `Block.BLOCK_STATE_REGISTRY`, one object per line, by the state ids `reports/blocks.json` lists:
+
+```json
+{
+  "format": 1,
+  "states": [
+    { "id": 0, "air": true, "replaceable": true },
+    {
+      "id": 89,
+      "liquid": true,
+      "replaceable": true,
+      "fluid": { "id": "minecraft:water", "amount": 8, "source": true }
+    }
+  ]
+}
+```
+
+Only the flags that are true are written: `air` (`isAir`), `liquid`, `solid` (`isSolid`, the legacy solid flag), `replaceable` (`canBeReplaced()`), `solid_render` (`isSolidRender`), `blocks_motion` (`blocksMotion`, a method only 26.2 has: written where the version has it) and `leaves` (the block is a `LeavesBlock`). `shape_updater` is the simple name of the first class from the block's up to `BlockBehaviour` that declares `updateShape`, when one does: which override a neighbour's change runs. `fluid` is the state's fluid when it isn't empty: its id, `getAmount` and `isSource`. For 26.3 it takes about 5 seconds and lists 35,723 states (1.8 MB).
+
+`cargo xtask java-report` rebuilds the class with a JDK 25's `javac --release 21`; `--check`, a commit hook, fails when the committed class isn't what the source compiles to, and skips on machines without a JDK 25.
+
 ## Licensing
 
 Mojang's data and code are never committed or redistributed. The extractor runs locally against a jar the user downloads themselves, the same approach Amidst used. Generated bundles go in `/bundles`, which is gitignored.
@@ -86,5 +115,5 @@ Mojang's data and code are never committed or redistributed. The extractor runs 
 ## Open questions
 
 - ~~Bundle format and layout on disk.~~ Specified in [bundle-format.md](bundle-format.md), decided in [ADR 0006](../adr/0006-bundle-format-raw-json-tree.md).
-- ~~Which data-generator reports are needed vs which can be read straight from the jar?~~ **Only the overworld and nether biome parameter lists** (see [Data generator](#data-generator)). Everything else comes from the jar's `data/minecraft/worldgen/` JSON.
+- ~~Which data-generator reports are needed vs which can be read straight from the jar?~~ **The overworld and nether biome parameter lists, and `blocks.json`** (see [Data generator](#data-generator)). Everything else comes from the jar's `data/minecraft/worldgen/` JSON.
 - ~~Does the extractor need a Java runtime?~~ **Yes.** The overworld biome parameter list isn't in the jar's JSON (`multi_noise_biome_source_parameter_list/overworld.json` is only `{"preset": "minecraft:overworld"}`). It is built in code by `OverworldBiomeBuilder`, so it has to come from the data generator. The required Java version comes from the version JSON's `javaVersion.majorVersion` (25 for 26.3).

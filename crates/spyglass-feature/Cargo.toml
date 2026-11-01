@@ -1,0 +1,26 @@
+[package]
+name = "spyglass-feature"
+description = "Decoration: the order features place in, their seeds, placement modifiers and the features themselves (ADR 0052)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde_json.workspace = true
+spyglass-biome.workspace = true
+spyglass-blocks.workspace = true
+spyglass-data.workspace = true
+spyglass-density.workspace = true
+spyglass-noise.workspace = true
+spyglass-rng.workspace = true
+spyglass-structure.workspace = true
+spyglass-terrain.workspace = true
+
+[dev-dependencies]
+rayon.workspace = true
+spyglass-oracle.workspace = true

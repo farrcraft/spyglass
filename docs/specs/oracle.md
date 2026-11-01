@@ -1,6 +1,6 @@
 # Differential oracle
 
-Status: stable. Biome grids, structure placement and bounds, the spawn origin and the generator's heights are specified.
+Status: stable. Biome grids, structure placement and bounds, the spawn origin, the generator's heights and the blocks of whole chunks before features are specified.
 
 Correctness is tested against the real game, not assumed.
 
@@ -12,6 +12,7 @@ A standalone Java harness in `oracle/`, compiled against the user's own server j
 - structure placement: placement chunks, what the game tries in each, ring positions and slime chunks ([below](#structure-golden-files));
 - the spawn origin and the climate search behind it ([below](#spawn-golden-files));
 - the generator's heights and block columns ([below](#height-golden-files));
+- the blocks of whole chunks before features, with and without carvers ([below](#block-golden-files));
 - `/locate` answers, from the real dedicated server ([below](#locate-answers)).
 
 CI runs the Rust crates against these for a fixed set of seeds per supported version. Golden files are generated locally into `/oracle-out` (gitignored), since they are derived from the game. No game-derived values are committed, not even small test sets ([ADR 0008](../adr/0008-game-derived-test-values-stay-local.md)).
@@ -20,18 +21,21 @@ CI runs the Rust crates against these for a fixed set of seeds per supported ver
 
 `cargo xtask oracle` builds and runs the harness. Every subcommand takes `--game-version` (default `latest`), `--cache-dir` and `--java`.
 
-| Command                                                         | Does                                                                                                                    |
-| --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `build`                                                         | Fetch and verify the server jar, unpack its libraries, compile the harness.                                             |
-| `biomes <seed> [--dimension] [--x] [--z] [--size] --out <file>` | Write one golden biome file. Block coordinates; x, z and size must be multiples of 16.                                  |
-| `check-save <world> [--dimension]`                              | Compare the harness with the biomes stored in a real save. Fails on any unexplained cell.                               |
-| `probe`                                                         | Write the [probe files](#probe-files) into `oracle-out/<version>/probe/`.                                               |
-| `structures`                                                    | Write the [structure golden files](#structure-golden-files) for the golden seeds and dimensions.                        |
-| `spawn`                                                         | Write the [spawn golden files](#spawn-golden-files) for the golden seeds and dimensions.                                |
-| `heights [--threads N]`                                         | Write the [height golden files](#height-golden-files) for the golden seeds and dimensions.                              |
-| `locate`                                                        | Ask a real dedicated server `/locate` questions ([below](#locate-answers)). Not part of `golden`.                       |
-| `test-pack`                                                     | Write probe and structure files with the [test pack](#the-test-pack) loaded, into `oracle-out/<version>+testpack/`.     |
-| `golden`                                                        | Regenerate the whole golden set below, probe, structure, spawn and height files included, into `oracle-out/<version>/`. |
+| Command                                                         | Does                                                                                                                                    |
+| --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `build`                                                         | Fetch and verify the server jar, unpack its libraries, compile the harness.                                                             |
+| `biomes <seed> [--dimension] [--x] [--z] [--size] --out <file>` | Write one golden biome file. Block coordinates; x, z and size must be multiples of 16.                                                  |
+| `check-save <world> [--dimension]`                              | Compare the harness with the biomes stored in a real save. Fails on any unexplained cell.                                               |
+| `probe`                                                         | Write the [probe files](#probe-files) into `oracle-out/<version>/probe/`.                                                               |
+| `structures`                                                    | Write the [structure golden files](#structure-golden-files) for the golden seeds and dimensions.                                        |
+| `spawn`                                                         | Write the [spawn golden files](#spawn-golden-files) for the golden seeds and dimensions.                                                |
+| `heights [--threads N]`                                         | Write the [height golden files](#height-golden-files) for the golden seeds and dimensions.                                              |
+| `blocks [--threads N] [--seed S]…`                              | Write the [block golden files](#block-golden-files), with and without carvers, for the golden seeds (or those given).                   |
+| `features [--threads N] [--seed S]…`                            | Write the [feature golden files](#feature-golden-files) for the golden seeds and seed 56 (or those given).                              |
+| `column <seed> <x> <z> [--dimension]`                           | Print a generated chunk's column beside `getBaseColumn`'s, marking where they differ. For debugging.                                    |
+| `locate`                                                        | Ask a real dedicated server `/locate` questions ([below](#locate-answers)). Not part of `golden`.                                       |
+| `test-pack`                                                     | Write probe and structure files with the [test pack](#the-test-pack) loaded, into `oracle-out/<version>+testpack/`.                     |
+| `golden`                                                        | Regenerate the whole golden set below, probe, structure, spawn, height, block and feature files included, into `oracle-out/<version>/`. |
 
 `build` runs automatically before the others, and does nothing when nothing changed:
 
@@ -58,7 +62,9 @@ The Rust tests that compare spyglass with these files are `#[ignore]`d, since th
 3. runs `oracle test-pack` if [the test pack](#the-test-pack) loads in the version;
 4. runs `oracle-test` for `<id>`, then for `<id>+testpack` if step 3 ran.
 
-Unlike a plain `oracle-test`, a comparison that can't run because an input the job just made is missing is an error, not a skip, and so is a version with no comparison at all. A skip would hide a broken step. The tests pinned to another version are still left out. The workflow, `.github/workflows/ci.yml`, calls only this command and `cargo xtask check`.
+CI divides a version's work between jobs with `--units`, a comma-separated list of what to make: `probe`, `biomes`, `structures`, `spawn`, `locate`, `bundle`, or `heights`, `blocks` or `features` for one seed (`features:56`). `bundle` stands for the tests that read only the bundle, and the test pack. A job runs the comparisons whose oracle inputs it made all of; one that reads a per-seed output compares the seeds the job made. A bundle-only test runs in the job with `bundle`. Without `--units`, the job does everything. `cargo xtask ci-plan` picks each job's units from estimated minutes per unit, so each job fits its hour, and prints them as the workflow's matrix ([ADR 0058](../adr/0058-oracle-ci-planned-by-cost.md)). Each unit's actual time is printed as a `ci: ... took` line, to compare with the estimates.
+
+Unlike a plain `oracle-test`, a comparison that can't run because an input the job just made is missing is an error, not a skip, and so is a version with no comparison at all. A skip would hide a broken step. The tests pinned to another version are still left out. The workflow, `.github/workflows/ci.yml`, calls only this command, `cargo xtask ci-plan`, `cargo xtask ci-scope` and `cargo xtask check`.
 
 ### What the harness does
 
@@ -287,6 +293,117 @@ Structures ask the generator about terrain before any chunk exists ([terrain.md]
 
 The level is the dimension type's height, as for structures. `cargo xtask oracle heights` takes about 90 seconds for the golden set on 16 cores: each `getBaseHeight` costs the game about half a millisecond.
 
+## Block golden files
+
+The blocks of whole chunks as generation leaves them before features, with no structures: what the material rule, ore veins and carvers make. One UTF-8 JSON file per seed and dimension, `oracle-out/<version>/blocks/<dimension path>/<seed>.json`, and the same without carvers in `oracle-out/<version>+no-carvers/blocks/`.
+
+```json
+{
+  "format": 1,
+  "harness": 1,
+  "version": "26.3",
+  "data_version": 5023,
+  "seed": 0,
+  "dimension": "minecraft:overworld",
+  "min_y": -64,
+  "height": 384,
+  "chunks": [
+    {
+      "chunk": [-2, -2],
+      "columns": [
+        [
+          ["minecraft:bedrock", 4],
+          ["minecraft:deepslate", 47],
+          ["minecraft:air", 5]
+        ]
+      ]
+    }
+  ]
+}
+```
+
+- **`chunks`:** each square of chunks in turn, z outer and x inner:
+  - a 4 × 4 square around the origin (chunks −2 to 1);
+  - 2 × 2 at `far-pos` (chunk 62,500), `far-neg` (−62,504), `border-pos` (1,874,995) and `border-neg` (−1,874,999), the chunks at the corners of the [biome regions](#golden-set).
+- **`columns`:** each chunk's 256, x fastest within z. A column is runs of one block state from `min_y` up, covering the full `height`.
+- **A state** is its block id, then its non-default properties in brackets, by name: `minecraft:grass_block[snowy=true]`.
+
+**How the harness makes them** ([ADR 0049](../adr/0049-the-oracle-generates-chunks-with-stand-ins.md)):
+
+- **The steps:** the generator's own chunk steps, on fresh proto chunks:
+  - 26.2: `fillFromNoise`, `buildSurface` and `applyCarvers`;
+  - 26.3: `buildTerrain`;
+  - 26.4: noise biomes, upscaled biomes, then `buildTerrain`.
+- **The glue:** each adapter's `Chunks.java` repeats what the server's status tasks do around each step: the biome steps of the chunk and its neighbours, the set of possible biomes, and the biome manager's seed.
+- **The stand-ins:** the region and the structure manager are stand-ins that hand out the neighbouring chunks and no structures. There's no blending.
+- **Without carvers:** the second run loads a data pack, generated from the bundle into `target/oracle/<version>/no-carvers/`, that empties every biome's `carvers` list.
+
+**Checks:**
+
+- **Air and fluids:** an ignored test (`spyglass-terrain`'s `blocks`) compares every chunk without carvers with spyglass's [columns](terrain.md#the-column): air, water and lava must be where the column has them, and solid blocks where it's solid. The material rule mostly chooses only which solid block, and the test allows what else it does:
+  - icebergs and eroded badlands pillars put solid blocks over the column's air and water;
+  - the Nether's floor holes below y 32 are lava where the column is solid.
+- **Carving:** in every version, the runs with carvers differ from those without only at solid blocks. Carving opens them (26.2's Nether carver to `cave_air`), and fixes the surface next to what it opens, where dirt becomes grass.
+- **Determinism:** a second run writes the same bytes.
+
+`cargo xtask oracle blocks` takes about 50 seconds per version for the golden set on 16 cores, both runs included. Each run's files take about 45 MB.
+
+## Feature golden files
+
+Each chunk decorated on its own, and every call decoration makes to a target feature: where, and whether it placed. One UTF-8 JSON file per seed and dimension, `oracle-out/<version>/features/<dimension path>/<seed>.json`, for the golden seeds and seed 56: a seed search for two dungeons near the spawn finds seed 56's in every supported version, and a test checks them against these files ([search.md](search.md#testing)).
+
+```json
+{
+  "format": 1,
+  "harness": 1,
+  "version": "26.3",
+  "data_version": 5023,
+  "seed": 0,
+  "dimension": "minecraft:overworld",
+  "order": [
+    [],
+    ["minecraft:lake_lava_underground", "minecraft:lake_lava_surface"]
+  ],
+  "chunks": [
+    {
+      "chunk": [-8, -8],
+      "tries": [
+        {
+          "feature": "minecraft:monster_room",
+          "pos": [-121, 47, -125],
+          "placed": false
+        }
+      ],
+      "after_neighbours": [
+        {
+          "feature": "minecraft:monster_room",
+          "pos": [-121, 47, -125],
+          "placed": false
+        }
+      ]
+    }
+  ]
+}
+```
+
+- **`order`:** the generator's own `featuresPerStep`: each step's placed features in decoration order, by id, `null` for one written inline in a biome.
+- **The targets** are the placed features `monster_room`, `monster_room_deep`, `amethyst_geode`, `desert_well`, `fossil_upper`, `fossil_lower`, `lake_lava_underground` and `lake_lava_surface`. Every call to their configured features is recorded, under the placed feature running then.
+- **`chunks`:** none in a dimension where no target runs (the Nether and the End). In the Overworld, a 16 × 16 square around the origin (chunks −8 to 7), then, for the rare targets, chunks near the origin (rings outwards, up to 256 chunks away) where the feature's rarity filter passes, by the game's own `WorldgenRandom`, and the biome at the chunk's quart (2, 16, 2) lists it: 8 for the desert well, 4 for each fossil. The rarity and biome only pick chunks; their decoration is the game's.
+- **`tries`:** in the order they happened: `feature` (the placed feature's id), `pos` (the origin the feature was called with) and `placed`.
+- **`after_neighbours`:** the same, from a second run with the chunk's 8 neighbours decorated in full first. Files from before the second run have none.
+
+**How the harness makes them** ([ADR 0053](../adr/0053-the-oracle-decorates-chunks-on-their-own.md)):
+
+- **The neighbourhood:** the chunk and its 8 neighbours generated as for [block golden files](#block-golden-files), each with what the version's status tasks do after terrain (26.3 and 26.4 prime the heightmaps features read), and set to the statuses the `FEATURES` step needs. None is decorated, and there are no structures.
+- **The step:** `ChunkStatusTasks.generateFeatures` repeated: 26.2 first primes the chunk's heightmaps, 26.4 drops its noise biomes; then a real `WorldGenRegion`, built by its own constructor over stand-ins for the server level, its chunk cache, the chunk holders and the server (for fossils' templates), and the generator's own `applyBiomeDecoration`.
+- **The recording:** each target's configured feature in the registry is swapped for one that reports `place` and delegates: a proxy of the `Feature` interface from 26.3, a `Feature` subclass in a new `ConfiguredFeature` in 26.2. The region reports the placed feature it's generating.
+- **Stopping:** at the first feature past `surface_structures`, the last step with a target, since later steps can't change what earlier ones did in the chunk.
+- **The second run:** the 5 × 5 chunks around the chunk generated, then each of its 8 neighbours decorated in full (all steps, z then x ascending, each over its own 3 × 3), recording nothing, then the chunk as in the first run. No chunk is lit during features, so the stand-in light engine answers what the game's does for a column it has no light for: sky light 15 (where the dimension has it), block light 0.
+
+**Checks:** spyglass's order, and its tries in sequence for each placed feature until one isn't exact ([features.md](features.md#tries)). A dungeon's declined calls are replayed, so its tries are compared up to the first that placed. Then placing: every call's position and result on the carved chunks, compared with `tries` ([features.md](features.md#placing)). **Determinism:** a second run writes the same bytes.
+
+`cargo xtask oracle features` takes 25 to 55 seconds per seed on 16 cores, most of it the second run. In 26.3's golden area, `after_neighbours` differs from `tries` in 4 of 2,684 chunks.
+
 ## Locate answers
 
 `/locate` decides whether a structure is generated by generating chunks in a live level, which the standalone harness doesn't build. So `cargo xtask oracle locate` asks the real game ([ADR 0015](../adr/0015-locate-checks-on-a-real-server.md)).
@@ -364,9 +481,9 @@ A case names what was called (`test`, and `method` where a test has several), ca
 | `f64`  | Hex strings of the raw bits, 16 digits (`Double.doubleToRawLongBits`).                  |
 | `text` | One string, e.g. the game's own `parityConfigString` description of a noise or factory. |
 
-Floating-point inputs (`point`) are hex `f64` bits too, so nothing depends on decimal parsing. Parameters: `seed` (a `long`), `kind` (`xoroshiro` for `XoroshiroRandomSource`, `legacy` for `LegacyRandomSource`, each from `new ...(seed)`), `bound`, `pos` (block `[x, y, z]`), `name` (a string hashed by `seedFromHashOf`, or a noise id).
+Floating-point inputs (`point`) are hex `f64` bits too, so nothing depends on decimal parsing. Parameters: `seed` (a `long`), `kind` (`xoroshiro` for `XoroshiroRandomSource`, `legacy` for `LegacyRandomSource`, each from `new ...(seed)`, and `worldgen` for `new WorldgenRandom(new XoroshiroRandomSource(seed))`), `bound`, `pos` (block `[x, y, z]`), `name` (a string hashed by `seedFromHashOf`, or a noise id).
 
-**`rng.json`** covers `RandomSupport` (`mix_stafford13`, `upgrade_seed_to_128bit`, `upgrade_seed_to_128bit_unmixed`, `seed_from_hash_of`), and for each kind and seed a fresh source per sequence: `next_long`, `next_int`, `next_int_bounded`, `next_float`, `next_double`, `next_gaussian`, `next_boolean` (8 values each), `gaussian_interleaved` (Gaussian, long, Gaussian, Gaussian, `nextInt(10)`, with Gaussians as raw `f64` bits), `consume_count_5` (two longs after `consumeCount(5)`), `fork` (two longs from the fork, then two from the parent), and from `forkPositional()`: `positional_parity`, `positional_at` and `positional_from_hash_of` (two longs each).
+**`rng.json`** covers `RandomSupport` (`mix_stafford13`, `upgrade_seed_to_128bit`, `upgrade_seed_to_128bit_unmixed`, `seed_from_hash_of`), and for each kind and seed a fresh source per sequence: `next_long`, `next_int`, `next_int_bounded`, `next_float`, `next_double`, `next_gaussian`, `next_boolean` (8 values each), `gaussian_interleaved` (Gaussian, long, Gaussian, Gaussian, `nextInt(10)`, with Gaussians as raw `f64` bits), `consume_count_5` (two longs after `consumeCount(5)`), `fork` (two longs from the fork, then two from the parent), and from `forkPositional()`: `positional_parity`, `positional_at` and `positional_from_hash_of` (two longs each). `decoration_seed`, for each seed and `pos`, on a `worldgen` source: `setDecorationSeed(seed, x, z)`'s result and the next long, then for `setFeatureSeed` with index and step `(0, 0)`, `(7, 3)` and `(2³¹ − 1, 10)`, a long and `nextInt(16)` after each.
 
 **`noise.json`** has, for each golden seed: `perlin` (a `PerlinNoise` built from `new XoroshiroRandomSource(seed)`) and `perlin_parity`; and for each overworld climate noise (`temperature`, `vegetation`, `continentalness`, `erosion`, `ridge`, `offset`) as `RandomState` creates it, `normal_noise` and `normal_noise_parity`. Samples have `method` `get_3d` or `get_2d`, one point each.
 

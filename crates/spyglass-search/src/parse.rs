@@ -3,8 +3,9 @@
 use spyglass_data::dimension::Dimension;
 
 use crate::query::{
-    Anchor, Constraint, Count, Importance, Kind, MAX_COORDINATE, MAX_PLACE_SIDE, MAX_SAMPLES,
-    Place, Region, Sampling, keyword,
+    Anchor, Constraint, Count, DEFAULT_STEP, Find, Importance, Kind, MAX_COORDINATE,
+    MAX_FEATURE_SIDE, MAX_HEIGHT, MAX_HEIGHT_SAMPLES, MAX_PLACE_SIDE, MAX_SAMPLES, Place, Region,
+    Sampling, Target, keyword,
 };
 
 /// Why a query's text didn't parse, and where.
@@ -19,7 +20,15 @@ pub struct ParseError {
     pub message: String,
 }
 
-const KEYWORDS: [&str; 21] = [
+/// The query language's words, which a bare id can't be (`minecraft:end` can).
+const KEYWORDS: [&str; 28] = [
+    "find",
+    "feature",
+    "here",
+    "apart",
+    "point",
+    "height",
+    "flat",
     "require",
     "prefer",
     "weight",
@@ -46,16 +55,21 @@ const KEYWORDS: [&str; 21] = [
 /// A word of a line, and its column.
 #[derive(Debug, Clone, Copy)]
 struct Token<'a> {
+    /// The word.
     text: &'a str,
+    /// Its first character's column, from 1.
     column: usize,
 }
 
-/// Splits a line into tokens, dropping its comment.
+/// Splits a line into tokens, dropping its comment. A `#` at the start of a word starts a
+/// comment when it's the line's first word or a word on its own; otherwise it's a tag, as in
+/// `#minecraft:village`.
 fn tokens(line: &str) -> Vec<Token<'_>> {
     let mut out = Vec::new();
     let mut start: Option<(usize, usize)> = None; // byte offset and column of the current token
     let mut chars = line.char_indices().enumerate().peekable();
-    while let Some((i, (at, c))) = chars.next() {
+    // `index` counts characters, for columns; `at` is the byte offset, for slicing.
+    while let Some((index, (at, c))) = chars.next() {
         let blank = c == ' ' || c == '\t';
         if blank {
             if let Some((from, column)) = start.take() {
@@ -75,7 +89,7 @@ fn tokens(line: &str) -> Vec<Token<'_>> {
             }
         }
         if start.is_none() {
-            start = Some((at, i + 1));
+            start = Some((at, index + 1));
         }
     }
     if let Some((from, column)) = start {
@@ -87,9 +101,20 @@ fn tokens(line: &str) -> Vec<Token<'_>> {
     out
 }
 
-/// Parses a whole query into its constraints, each with its line.
-pub(crate) fn query(text: &str) -> Result<Vec<(usize, Constraint)>, ParseError> {
-    let mut out = Vec::new();
+/// A parsed query: its `find` line and its constraints, each with its line.
+pub(crate) struct ParsedQuery {
+    /// The `find` line's number and what it asks for, if there is one.
+    pub find: Option<(usize, Find)>,
+    /// Each constraint with its line's number, in order.
+    pub constraints: Vec<(usize, Constraint)>,
+}
+
+/// Parses a whole query: an optional `find` line before its constraints.
+pub(crate) fn query(text: &str) -> Result<ParsedQuery, ParseError> {
+    let mut out = ParsedQuery {
+        find: None,
+        constraints: Vec::new(),
+    };
     for (i, line) in text.lines().enumerate() {
         let tokens = tokens(line);
         if tokens.is_empty() {
@@ -102,10 +127,21 @@ pub(crate) fn query(text: &str) -> Result<Vec<(usize, Constraint)>, ParseError> 
             end_column: tokens
                 .last()
                 .map_or(1, |t| t.column + t.text.chars().count()),
+            here: out.find.is_some(),
         };
-        out.push((i + 1, parser.constraint()?));
+        if parser.peek_is("find") {
+            if out.find.is_some() {
+                return Err(parser.error("a query has at most one `find` line"));
+            }
+            if !out.constraints.is_empty() {
+                return Err(parser.error("the `find` line comes before every constraint"));
+            }
+            out.find = Some((i + 1, parser.find()?));
+        } else {
+            out.constraints.push((i + 1, parser.constraint()?));
+        }
     }
-    if out.is_empty() {
+    if out.find.is_none() && out.constraints.is_empty() {
         return Err(ParseError {
             line: 1,
             column: 1,
@@ -117,11 +153,16 @@ pub(crate) fn query(text: &str) -> Result<Vec<(usize, Constraint)>, ParseError> 
 
 /// One line's tokens, read left to right.
 struct Parser<'t, 'a> {
+    /// The line's number, from 1, for errors.
     line: usize,
+    /// The line's tokens.
     tokens: &'t [Token<'a>],
+    /// The index of the next token to read.
     next: usize,
     /// The column just past the last token, where "end of line" errors point.
     end_column: usize,
+    /// Whether `here` may be an anchor: a `find` line came first.
+    here: bool,
 }
 
 type Parsed<T> = Result<T, ParseError>;
@@ -185,6 +226,61 @@ impl<'a> Parser<'_, 'a> {
         found
     }
 
+    /// `find TARGET [place] [sampling] [apart D]`.
+    fn find(&mut self) -> Parsed<Find> {
+        self.keyword("find")?;
+        let target = if self.eat("biome") {
+            Target::Biome(self.biome()?)
+        } else if self.eat("feature") {
+            Target::Feature(self.id("a feature")?)
+        } else if self.eat("point") {
+            Target::Point
+        } else {
+            Target::Structure(self.structure()?)
+        };
+        // `within R` alone is around the origin the search is given.
+        let origin = self.peek_is("within")
+            && !self
+                .tokens
+                .get(self.next + 2)
+                .is_some_and(|t| t.text == "of");
+        let start = self.peek();
+        let place = if origin {
+            self.next += 1;
+            Place::Within {
+                radius: self.radius()?,
+                anchor: Anchor::Origin,
+            }
+        } else {
+            // The target isn't its own anchor.
+            let here = std::mem::replace(&mut self.here, false);
+            let place = self.place(true);
+            self.here = here;
+            place?
+        };
+        if matches!(target, Target::Feature(_)) && !place.fits_features() {
+            return Err(self.too_wide(start));
+        }
+        let sampling = match target {
+            Target::Structure(_) | Target::Feature(_) => Sampling::default(),
+            Target::Biome(_) | Target::Point => self.sampling(&place)?,
+        };
+        let apart = if self.eat("apart") {
+            self.distance()?
+        } else {
+            target.default_apart()
+        };
+        if self.peek().is_some() {
+            return Err(self.expected("the end of the line"));
+        }
+        Ok(Find {
+            target,
+            place,
+            sampling,
+            apart,
+        })
+    }
+
     fn constraint(&mut self) -> Parsed<Constraint> {
         let required = match self.peek().map(|t| t.text) {
             Some("require") => true,
@@ -228,13 +324,31 @@ impl<'a> Parser<'_, 'a> {
             "cluster" => {
                 self.next += 1;
                 let size = self.number("a cluster size", 2, 64)?;
-                let structure = self.structure()?;
+                let feature = self.eat("feature");
+                let target = if feature {
+                    self.id("a feature")?
+                } else {
+                    self.structure()?
+                };
                 self.keyword("within")?;
                 let apart = self.distance()?;
                 for word in ["of", "each", "other"] {
                     self.keyword(word)?;
                 }
-                let place = self.place(true)?;
+                let place = if feature {
+                    self.feature_place()?
+                } else {
+                    self.place(true)?
+                };
+                if feature {
+                    return Ok(Kind::FeatureCluster {
+                        size,
+                        feature: target,
+                        apart,
+                        place,
+                    });
+                }
+                let structure = target;
                 Ok(Kind::Cluster {
                     size,
                     structure,
@@ -244,7 +358,7 @@ impl<'a> Parser<'_, 'a> {
             }
             "biome" => {
                 self.next += 1;
-                let biome = self.id("a biome")?;
+                let biome = self.biome()?;
                 if self.eat("covers") {
                     let percent = self.percentage()?;
                     let place = self.place(true)?;
@@ -265,15 +379,45 @@ impl<'a> Parser<'_, 'a> {
                     place: self.place(false)?,
                 })
             }
+            "height" => {
+                self.next += 1;
+                let one = self.signed("a height", MAX_HEIGHT)?;
+                self.keyword("to")?;
+                let other = self.signed("a height", MAX_HEIGHT)?;
+                let place = self.place(true)?;
+                let step = self.height_step(&place)?;
+                Ok(Kind::Height {
+                    min: one.min(other),
+                    max: one.max(other),
+                    place,
+                    step,
+                })
+            }
+            "flat" => {
+                self.next += 1;
+                let range = self.number("a height difference", 0, MAX_HEIGHT.unsigned_abs())?;
+                let place = self.place(true)?;
+                let step = self.height_step(&place)?;
+                Ok(Kind::Flat { range, place, step })
+            }
             _ => {
                 let count = self.count()?;
                 if count == Count::No && self.eat("biome") {
-                    let biome = self.id("a biome")?;
+                    let biome = self.biome()?;
                     return self.biome_presence(false, biome);
                 }
                 if self.eat("slime") {
                     let region = self.region()?;
                     return Ok(Kind::Slime { count, region });
+                }
+                if self.eat("feature") {
+                    let feature = self.id("a feature")?;
+                    let place = self.feature_place()?;
+                    return Ok(Kind::Features {
+                        count,
+                        feature,
+                        place,
+                    });
                 }
                 let structure = self.structure()?;
                 let region = self.region()?;
@@ -315,12 +459,14 @@ impl<'a> Parser<'_, 'a> {
 
     /// `place`, or `within R of STRUCTURE place`.
     fn region(&mut self) -> Parsed<Region> {
-        let at = self.next;
+        // `within R of` starts both forms: the word after `of` tells them apart, and for a
+        // place the parser goes back to read it whole.
+        let start = self.next;
         if self.eat("within") {
             let radius = self.radius()?;
             self.keyword("of")?;
             let anchor = self.peek().ok_or_else(|| self.expected("an anchor"))?;
-            if anchor.text != "spawn" && point(anchor.text).is_none() {
+            if !matches!(anchor.text, "spawn" | "here") && point(anchor.text).is_none() {
                 let structure = self.structure()?;
                 let place = self.place(true)?;
                 return Ok(Region::NearStructure {
@@ -329,7 +475,7 @@ impl<'a> Parser<'_, 'a> {
                     place,
                 });
             }
-            self.next = at;
+            self.next = start;
         }
         Ok(Region::Place(self.place(true)?))
     }
@@ -347,6 +493,15 @@ impl<'a> Parser<'_, 'a> {
                     }
                     self.next += 1;
                     Anchor::Spawn
+                } else if self.peek_is("here") {
+                    if !self.here {
+                        return Err(self.error(
+                            "`here` is the target of a `find` line, which this query doesn't have \
+                             before this line",
+                        ));
+                    }
+                    self.next += 1;
+                    Anchor::Here
                 } else {
                     let what = if spawn_anchor {
                         "`spawn` or a point `x,z`"
@@ -360,10 +515,10 @@ impl<'a> Parser<'_, 'a> {
             Some("in") => {
                 self.next += 1;
                 let first = self.peek();
-                let a = self.point("a point `x,z`")?;
+                let corner = self.point("a point `x,z`")?;
                 self.keyword("to")?;
-                let b = self.point("a point `x,z`")?;
-                if (0..2).any(|i| a[i].abs_diff(b[i]) >= MAX_PLACE_SIDE) {
+                let other = self.point("a point `x,z`")?;
+                if (0..2).any(|i| corner[i].abs_diff(other[i]) >= MAX_PLACE_SIDE) {
                     let message = format!("a box may be at most {MAX_PLACE_SIDE} blocks on a side");
                     return Err(match first {
                         Some(t) => self.error_at(t, message),
@@ -371,8 +526,8 @@ impl<'a> Parser<'_, 'a> {
                     });
                 }
                 Ok(Place::Box {
-                    min: [a[0].min(b[0]), a[1].min(b[1])],
-                    max: [a[0].max(b[0]), a[1].max(b[1])],
+                    min: [corner[0].min(other[0]), corner[1].min(other[1])],
+                    max: [corner[0].max(other[0]), corner[1].max(other[1])],
                 })
             }
             _ => Err(self.expected("`within` or `in`")),
@@ -400,6 +555,65 @@ impl<'a> Parser<'_, 'a> {
             });
         }
         Ok(sampling)
+    }
+
+    /// The place of a feature count or cluster, which is at most [`MAX_FEATURE_SIDE`] blocks on
+    /// a side.
+    fn feature_place(&mut self) -> Parsed<Place> {
+        let start = self.peek();
+        let place = self.place(true)?;
+        if place.fits_features() {
+            Ok(place)
+        } else {
+            Err(self.too_wide(start))
+        }
+    }
+
+    /// A feature place too wide to place, starting at `start`.
+    fn too_wide(&self, start: Option<Token<'_>>) -> ParseError {
+        let message = format!(
+            "features are placed over at most {MAX_FEATURE_SIDE} blocks on a side: use a smaller \
+             place"
+        );
+        match start {
+            Some(t) => self.error_at(t, message),
+            None => self.error(message),
+        }
+    }
+
+    /// `[step S]` for a terrain condition, checking the grid's size.
+    fn height_step(&mut self, place: &Place) -> Parsed<u32> {
+        let start = self.peek();
+        let step = if self.eat("step") {
+            self.number("a step", 1, 4096)?
+        } else {
+            DEFAULT_STEP
+        };
+        if place.grid_bound(step) > MAX_HEIGHT_SAMPLES {
+            let message = format!(
+                "this height grid has over {MAX_HEIGHT_SAMPLES} points: use a larger `step` or a \
+                 smaller place"
+            );
+            return Err(match start {
+                Some(t) => self.error_at(t, message),
+                None => self.error(message),
+            });
+        }
+        Ok(step)
+    }
+
+    /// A biome id, or `#` and a biome tag.
+    fn biome(&mut self) -> Parsed<String> {
+        let token = self.peek().ok_or_else(|| self.expected("a biome"))?;
+        match token.text.strip_prefix('#') {
+            Some(tag) => {
+                self.next += 1;
+                let id = full_id(tag)
+                    .ok_or_else(|| self.error_at(token, format!("`{}` isn't a tag", token.text)))?;
+                Ok(format!("#{id}"))
+            }
+            None => self.id("a biome"),
+        }
     }
 
     fn structure(&mut self) -> Parsed<String> {
@@ -486,10 +700,11 @@ impl<'a> Parser<'_, 'a> {
 
     fn point(&mut self, what: &str) -> Parsed<[i32; 2]> {
         let token = self.take(what)?;
-        let p = point(token.text).ok_or_else(|| {
+        let xz = point(token.text).ok_or_else(|| {
             self.error_at(token, format!("expected {what}, found `{}`", token.text))
         })?;
-        if p.iter()
+        if xz
+            .iter()
             .any(|c| c.unsigned_abs() > MAX_COORDINATE.unsigned_abs())
         {
             return Err(self.error_at(
@@ -497,7 +712,7 @@ impl<'a> Parser<'_, 'a> {
                 format!("coordinates must be -{MAX_COORDINATE} to {MAX_COORDINATE}"),
             ));
         }
-        Ok(p)
+        Ok(xz)
     }
 }
 
@@ -520,9 +735,9 @@ fn point(text: &str) -> Option<[i32; 2]> {
 /// one.
 fn full_id(text: &str) -> Option<String> {
     let (namespace, path) = text.split_once(':').unwrap_or(("minecraft", text));
-    let valid = |s: &str, extra: &[u8]| {
-        !s.is_empty()
-            && s.bytes().all(|b| {
+    let valid = |part: &str, extra: &[u8]| {
+        !part.is_empty()
+            && part.bytes().all(|b| {
                 b.is_ascii_lowercase()
                     || b.is_ascii_digit()
                     || b"_.-".contains(&b)
@@ -707,6 +922,220 @@ mod tests {
         );
     }
 
+    #[test]
+    fn find_lines() {
+        let q = Query::parse(
+            "# Two huts close enough to share an AFK spot.\n\
+             find swamp_hut within 4096\n\
+             require swamp_hut within 200 of here",
+        )
+        .unwrap();
+        assert_eq!(
+            q.find(),
+            Some(&Find {
+                target: Target::Structure("minecraft:swamp_hut".to_string()),
+                place: Place::Within {
+                    radius: 4096,
+                    anchor: Anchor::Origin
+                },
+                sampling: Sampling::default(),
+                apart: 0,
+            })
+        );
+        assert_eq!(q.find_line(), Some(2));
+        assert_eq!(q.lines(), [3]);
+        assert_eq!(
+            q.to_string(),
+            "find minecraft:swamp_hut within 4096\n\
+             require minecraft:swamp_hut within 200 of here\n"
+        );
+        // A grid target, its sampling and `apart`; an explicit place.
+        let q = Query::parse("find biome #is_ocean within 500 of spawn at y 40 step 8 apart 64")
+            .unwrap();
+        let find = q.find().unwrap();
+        assert_eq!(
+            find.target,
+            Target::Biome("#minecraft:is_ocean".to_string())
+        );
+        assert_eq!(find.sampling, Sampling { y: 40, step: 8 });
+        assert_eq!(find.apart, 64);
+        assert!(q.constraints().is_empty());
+        assert_eq!(
+            q.to_string(),
+            "find biome #minecraft:is_ocean within 500 of spawn at y 40 step 8 apart 64\n"
+        );
+        // `apart` is printed only when it isn't the target's default.
+        assert_eq!(
+            Query::parse("find point in 0,0 to 99,99 apart 256")
+                .unwrap()
+                .to_string(),
+            "find point in 0,0 to 99,99\n"
+        );
+        assert_eq!(
+            Query::parse("find village within 9 of 1,2 apart 0")
+                .unwrap()
+                .to_string(),
+            "find minecraft:village within 9 of 1,2\n"
+        );
+        // `here` anchors anything that takes a place.
+        let c = parse(
+            "find point within 100\n\
+             require spawn within 50 of here\n\
+             prefer igloo within 10 of village within 64 of here\n\
+             require no biome desert within 0 of here",
+        );
+        assert!(matches!(
+            c[0].kind,
+            Kind::Spawn {
+                place: Place::Within {
+                    anchor: Anchor::Here,
+                    ..
+                }
+            }
+        ));
+        assert!(matches!(
+            &c[1].kind,
+            Kind::Structures {
+                region: Region::NearStructure {
+                    place: Place::Within {
+                        anchor: Anchor::Here,
+                        ..
+                    },
+                    ..
+                },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn features() {
+        let q = Query::parse(
+            "find feature monster_room within 256\n\
+             require cluster 2 feature minecraft:monster_room within 16 of each other within 100 of spawn\n\
+             prefer no feature desert_well in 0,0 to 1023,1023 weight 3\n\
+             require 2 feature monster_room_deep within 32 of here",
+        )
+        .unwrap();
+        assert_eq!(
+            q.find().unwrap().target,
+            Target::Feature("minecraft:monster_room".to_string())
+        );
+        assert_eq!(
+            q.constraints()[0].kind,
+            Kind::FeatureCluster {
+                size: 2,
+                feature: "minecraft:monster_room".to_string(),
+                apart: 16,
+                place: Place::Within {
+                    radius: 100,
+                    anchor: Anchor::Spawn
+                },
+            }
+        );
+        assert_eq!(
+            q.constraints()[1].kind,
+            Kind::Features {
+                count: Count::No,
+                feature: "minecraft:desert_well".to_string(),
+                place: Place::Box {
+                    min: [0, 0],
+                    max: [1023, 1023]
+                },
+            }
+        );
+        assert_eq!(
+            q.to_string(),
+            "find feature minecraft:monster_room within 256\n\
+             require cluster 2 feature minecraft:monster_room within 16 of each other within 100 of spawn\n\
+             prefer no feature minecraft:desert_well in 0,0 to 1023,1023 weight 3\n\
+             require 2 feature minecraft:monster_room_deep within 32 of here\n"
+        );
+        // Places are at most 1,024 blocks on a side, and features have no structure anchors.
+        assert!(Query::parse("require feature monster_room within 511 of 0,0").is_ok());
+        for (text, column) in [
+            ("require feature monster_room within 512 of 0,0", 30),
+            ("require feature monster_room in 0,0 to 1024,5", 30),
+            ("find feature lake_lava_surface within 600", 32),
+            (
+                "require cluster 2 feature monster_room within 9 of each other within 600 of spawn",
+                63,
+            ),
+        ] {
+            let e = error(text);
+            assert_eq!(e.column, column, "{text}: {e}");
+            assert!(e.message.contains("1024"), "{text}: {e}");
+        }
+        assert_eq!(
+            error("require feature monster_room within 9 of village within 9 of spawn").column,
+            42
+        );
+        assert_eq!(error("require feature within 9 of spawn").column, 17);
+    }
+
+    #[test]
+    fn biome_tags_and_terrain() {
+        let c = parse(
+            "require biome #required_ocean_monument_surrounding covers 100% within 128 of 0,0\n\
+             prefer no biome #c:is_dry within 5 of spawn\n\
+             require height 80 to 62 within 48 of spawn step 4\n\
+             prefer flat 3 in 0,0 to 31,31",
+        );
+        assert!(matches!(
+            &c[0].kind,
+            Kind::Coverage { biome, .. } if biome == "#minecraft:required_ocean_monument_surrounding"
+        ));
+        assert!(matches!(&c[1].kind, Kind::Biome { biome, .. } if biome == "#c:is_dry"));
+        assert_eq!(
+            c[2].kind,
+            Kind::Height {
+                min: 62,
+                max: 80,
+                place: Place::Within {
+                    radius: 48,
+                    anchor: Anchor::Spawn
+                },
+                step: 4,
+            }
+        );
+        assert_eq!(
+            c[2].to_string(),
+            "require height 62 to 80 within 48 of spawn step 4"
+        );
+        assert_eq!(c[3].to_string(), "prefer flat 3 in 0,0 to 31,31");
+    }
+
+    #[test]
+    fn find_errors_have_positions() {
+        let cases = [
+            // `here` needs a `find` line before it.
+            ("require igloo within 5 of here", (1, 27)),
+            (
+                "require igloo within 5 of spawn\nfind igloo within 5",
+                (2, 1),
+            ),
+            ("find igloo within 5\nfind igloo within 5", (2, 1)),
+            // The target isn't its own anchor.
+            ("find igloo within 5 of here", (1, 24)),
+            ("find igloo within 5 step 4", (1, 21)),
+            ("find biome within 5", (1, 12)),
+            ("find biome #Bad within 5", (1, 12)),
+            ("find point within 4096 step 4", (1, 24)),
+            ("find point within 5 apart -1", (1, 27)),
+            ("find", (1, 5)),
+            ("find point", (1, 11)),
+            ("require height 5 within 5 of spawn", (1, 18)),
+            ("require height 1 to 5000 within 5 of spawn", (1, 21)),
+            ("require flat -1 within 5 of spawn", (1, 14)),
+            ("require flat 3 within 4096 of spawn step 8", (1, 37)),
+            ("require flat 3 within 64 of spawn at y 3", (1, 35)),
+        ];
+        for (text, at) in cases {
+            let e = error(text);
+            assert_eq!((e.line, e.column), at, "{text:?}: {e}");
+        }
+    }
+
     /// The spec's query examples: its `text` blocks that start like a query.
     fn spec_examples() -> Vec<String> {
         let spec = include_str!("../../../docs/specs/search.md");
@@ -715,7 +1144,7 @@ mod tests {
             .filter_map(|block| block.split_once("```").map(|(body, _)| body.to_string()))
             .filter(|body| {
                 let first = body.trim_start();
-                ["#", "require", "prefer"]
+                ["#", "require", "prefer", "find"]
                     .iter()
                     .any(|p| first.starts_with(p))
             })
@@ -842,6 +1271,15 @@ mod tests {
             "é",
             "99999999999",
             "-",
+            "find",
+            "here",
+            "apart",
+            "point",
+            "height",
+            "flat",
+            "#is_ocean",
+            "feature",
+            "monster_room",
         ];
         let mut state = 0x2545_f491_u32;
         let mut next = |n: usize| {
@@ -868,6 +1306,7 @@ mod tests {
                     parsed += 1;
                     let again = Query::parse(&q.to_string()).unwrap();
                     assert_eq!(again.constraints(), q.constraints(), "{tokens:?}");
+                    assert_eq!(again.find(), q.find(), "{tokens:?}");
                 }
                 Err(_) => failed += 1,
             }

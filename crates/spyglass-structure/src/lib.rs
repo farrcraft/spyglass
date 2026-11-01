@@ -3,7 +3,7 @@
 //! [`StructureSets::load`] reads a bundle's structure sets for one biome source;
 //! [`StructureSets::with_seed`] binds them to a seed as [`Placements`], which answer where each
 //! set may start, and [`Starts::locate`] is `/locate structure`. Slime chunks are
-//! [`is_slime_chunk`]. With [`JigsawPools`], [`Starts::assemble`] builds jigsaw starts' pieces.
+//! [`is_slime_chunk`]. [`Starts::assemble`] builds mineshafts' pieces, and with [`JigsawPools`] jigsaw starts'.
 //! See `docs/specs/structure-placement.md`.
 
 mod assembly;
@@ -13,6 +13,7 @@ mod corner;
 mod jigsaw;
 mod load;
 mod locate;
+mod mineshaft;
 mod placement;
 mod portal;
 mod slime;
@@ -21,8 +22,9 @@ pub use assembly::{Assembly, JigsawPools, Layout};
 pub use biomes::BiomeSet;
 pub use check::{Check, Selection, Starts};
 pub use jigsaw::{BoundingBox, GenerationHeights, HeightProvider, Jigsaw, JigsawCheck};
-pub use load::{Entry, Structure, StructureSet, StructureSets, StructureType};
+pub use load::{Entry, STEPS, Structure, StructureSet, StructureSets, StructureType};
 pub use locate::{LOCATE_RADIUS, MAX_UNCERTAIN, StructureHit, StructureSearch};
+pub use mineshaft::Mineshaft;
 pub use placement::{
     ConcentricRings, ExclusionZone, FrequencyReduction, Placement, PlacementKind, Placements,
     RandomSpread, RingPosition, SeedPlacements, SpreadType,

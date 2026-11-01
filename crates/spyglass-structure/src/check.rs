@@ -11,6 +11,7 @@ use crate::assembly::{Assembly, JigsawPools};
 use crate::biomes::BiomeSet;
 use crate::jigsaw::{Jigsaw, JigsawCheck};
 use crate::load::{Structure, StructureType};
+use crate::mineshaft::{self, Heights};
 use crate::placement::Placements;
 
 /// What spyglass can say about one structure's biome check in one chunk.
@@ -50,9 +51,13 @@ impl Selection {
 /// Structure starts for one seed: [`Placements`] plus the biome source for the same seed, and
 /// optionally its terrain.
 pub struct Starts<'a> {
+    /// Where each set's starts may be, before any biome check.
     placements: &'a Placements<'a>,
+    /// The seed's biome source, for the checks themselves.
     biomes: &'a Biomes<'a>,
+    /// The seed's Overworld terrain, which places most checks; without it they're candidates.
     terrain: Option<&'a Terrain>,
+    /// The jigsaw pools, for [`assemble`](Self::assemble) only.
     pools: Option<&'a JigsawPools>,
 }
 
@@ -114,17 +119,27 @@ impl<'a> Starts<'a> {
         }
     }
 
-    /// A jigsaw structure's pieces and bounds if it starts in `chunk`
-    /// (`JigsawPlacement.addPieces`), whether or not its biome check passes. Pieces that
-    /// follow the terrain need it: without, the answer is [`Assembly::NeedsTerrain`]. `None` if
-    /// the structure isn't a jigsaw or there are no pools.
+    /// A jigsaw structure's or a mineshaft's pieces and bounds if it starts in `chunk`
+    /// (`JigsawPlacement.addPieces`, `MineshaftStructure.generatePiecesAndAdjust`), whether or
+    /// not its biome check passes. Pieces that follow the terrain, and mesa mineshafts, need it:
+    /// without, the answer is [`Assembly::NeedsTerrain`]. `None` for other types, and for
+    /// jigsaws without pools.
     pub fn assemble(&self, structure: usize, chunk: [i32; 2]) -> Option<Assembly> {
         let sets = self.placements.sets();
-        let jigsaw = sets.structures()[structure].jigsaw.as_ref()?;
+        let config = &sets.structures()[structure];
         let terrain = self.terrain;
         let mut first_free = |x: i32, z: i32, heightmap: Heightmap| {
             terrain.map(|t| t.first_free_height(x, z, heightmap))
         };
+        if let Some(shaft) = &config.mineshaft {
+            return Some(shaft.assemble(
+                self.placements.seed(),
+                chunk,
+                &self.mineshaft_heights(),
+                &mut first_free,
+            ));
+        }
+        let jigsaw = config.jigsaw.as_ref()?;
         Some(jigsaw.assemble(
             self.placements.seed(),
             chunk,
@@ -132,6 +147,15 @@ impl<'a> Starts<'a> {
             self.pools?,
             &mut first_free,
         ))
+    }
+
+    /// What a mineshaft's layout needs from the dimension.
+    fn mineshaft_heights(&self) -> Heights {
+        let sets = self.placements.sets();
+        Heights {
+            sea_level: sets.sea_level(),
+            generator_min_y: sets.generator_min_y(),
+        }
     }
 
     /// The placements.
@@ -158,6 +182,9 @@ impl<'a> Starts<'a> {
     /// The game's choice among set `set`'s structures in placement chunk `chunk`: a single entry
     /// directly; otherwise a weighted pick from `setLargeFeatureSeed(seed, x, z)`, removing each
     /// structure that fails and picking again from the same random.
+    ///
+    /// A candidate is recorded and the picking goes on as if it had failed, since that's the
+    /// only way a later entry can start. A certain pass ends the list.
     pub fn select(&self, set: usize, chunk: [i32; 2]) -> Selection {
         let sets = self.placements.sets();
         let entries = &sets.sets()[set].entries;
@@ -169,20 +196,21 @@ impl<'a> Starts<'a> {
             }
             return Selection { tries };
         }
-        let mut list = entries.clone();
-        let mut total: i32 = list.iter().map(|e| e.weight).sum();
+        let mut remaining = entries.clone();
+        let mut total: i32 = remaining.iter().map(|e| e.weight).sum();
         let mut random = worldgen::large_feature(self.placements.seed(), chunk[0], chunk[1]);
-        while !list.is_empty() {
-            let mut n = random.next_int_bounded(total);
-            let mut i = 0;
-            for entry in &list {
-                n -= entry.weight;
-                if n < 0 {
+        while !remaining.is_empty() {
+            // The weighted pick: take each entry's weight off the draw until it goes below zero.
+            let mut draw = random.next_int_bounded(total);
+            let mut picked = 0;
+            for entry in &remaining {
+                draw -= entry.weight;
+                if draw < 0 {
                     break;
                 }
-                i += 1;
+                picked += 1;
             }
-            let entry = list[i];
+            let entry = remaining[picked];
             match self.check(entry.structure, chunk) {
                 Check::Passes => {
                     tries.push((entry.structure, Check::Passes));
@@ -191,7 +219,7 @@ impl<'a> Starts<'a> {
                 Check::Candidate => tries.push((entry.structure, Check::Candidate)),
                 Check::Rejected => {}
             }
-            list.remove(i);
+            remaining.remove(picked);
             total -= entry.weight;
         }
         Selection { tries }
@@ -200,14 +228,14 @@ impl<'a> Starts<'a> {
     /// One structure's biome check in `chunk`, by its type's rules.
     pub fn check(&self, structure: usize, chunk: [i32; 2]) -> Check {
         let found = self.find(structure, chunk);
-        let s = &self.placements.sets().structures()[structure];
+        let config = &self.placements.sets().structures()[structure];
         let (before, at) = match (found.before, found.at) {
             (Check::Rejected, _) => return Check::Rejected,
             // A mineshaft whose whole column is in its set, or a ruined portal whose set is every
             // biome, passes wherever its check is.
             (Check::Passes, None)
                 if matches!(
-                    s.kind,
+                    config.kind,
                     StructureType::Mineshaft | StructureType::RuinedPortal
                 ) =>
             {
@@ -216,7 +244,7 @@ impl<'a> Starts<'a> {
             (before, None) => return precondition(before),
             (before, Some(at)) => (before, at),
         };
-        and(before, self.point(&s.biomes, at))
+        and(before, self.point(&config.biomes, at))
     }
 
     /// Where `structure`'s biome check in `chunk` is (`findGenerationPoint`'s stub), if
@@ -228,9 +256,14 @@ impl<'a> Starts<'a> {
     }
 
     /// The conditions before the biome check, and its position, by the type's rules.
+    ///
+    /// Each arm follows its type's `findGenerationPoint` in the game's order: the climate-only
+    /// conditions first (most ask whether any quart of a column could be in the set), then what
+    /// terrain decides (a footprint too low, a jigsaw start that doesn't fit), then the
+    /// position. Without terrain, the answer stops at what the climate can say.
     fn find(&self, structure: usize, chunk: [i32; 2]) -> Found {
         let sets = self.placements.sets();
-        let s: &Structure = &sets.structures()[structure];
+        let config: &Structure = &sets.structures()[structure];
         let heights = sets.heights();
         let (min_x, min_z) = (chunk[0].wrapping_shl(4), chunk[1].wrapping_shl(4));
         let (mid_x, mid_z) = (min_x.wrapping_add(8), min_z.wrapping_add(8));
@@ -240,8 +273,15 @@ impl<'a> Starts<'a> {
             .wrapping_sub(1);
         let terrain = self.terrain;
         // couldValidBiomeExistInTerrainColumn: one block below the level, to its top.
-        let terrain_column =
-            |x: i32, z: i32| self.column(&s.biomes, x, z, level_min_y.wrapping_sub(1), level_max_y);
+        let terrain_column = |x: i32, z: i32| {
+            self.column(
+                &config.biomes,
+                x,
+                z,
+                level_min_y.wrapping_sub(1),
+                level_max_y,
+            )
+        };
         // onTopOfChunkCenter: the chunk-centre pre-check, then the check at the centre's first
         // occupied height.
         let on_top_of_chunk_center = |heightmap: Heightmap| {
@@ -259,13 +299,13 @@ impl<'a> Starts<'a> {
             before: Check::Passes,
             at: Some(at),
         };
-        match s.kind {
+        match config.kind {
             StructureType::Stronghold => fixed([min_x, 0, min_z]),
             StructureType::Fortress => fixed([min_x, 64, min_z]),
             StructureType::BuriedTreasure | StructureType::OceanRuin => {
                 on_top_of_chunk_center(Heightmap::OceanFloorWg)
             }
-            StructureType::Shipwreck if s.beached => {
+            StructureType::Shipwreck if config.beached => {
                 on_top_of_chunk_center(Heightmap::WorldSurfaceWg)
             }
             StructureType::Shipwreck => on_top_of_chunk_center(Heightmap::OceanFloorWg),
@@ -282,7 +322,7 @@ impl<'a> Starts<'a> {
                 let Some(t) = terrain else {
                     return Found::pending(before);
                 };
-                let (dx, dz) = if s.kind == StructureType::DesertPyramid {
+                let (dx, dz) = if config.kind == StructureType::DesertPyramid {
                     (21, 21)
                 } else {
                     (12, 15)
@@ -340,23 +380,37 @@ impl<'a> Starts<'a> {
                     at: Some([x, y, z]),
                 }
             }
-            // The check is at (midX, 50 + dy, minZ), with dy from the piece layout, which isn't
-            // ported. y is in the level, so the level's column there decides it when its quarts
-            // are all in the set (it passes wherever the layout puts it) or none is.
+            // The check is at (midX, 50 + dy, minZ), with dy from the piece layout. A mesa's
+            // needs terrain; without, y is in the level, so the level's column there decides it
+            // when its quarts are all in the set (it passes wherever the layout puts it) or none
+            // is.
             StructureType::Mineshaft => {
-                let some = self.column(&s.biomes, mid_x, min_z, level_min_y, level_max_y);
-                if some != Check::Rejected
-                    && self.whole_column(&s.biomes, mid_x, min_z, level_min_y, level_max_y)
+                let shaft = config
+                    .mineshaft
+                    .as_ref()
+                    .expect("mineshafts load their type");
+                let mut first_free = |x: i32, z: i32, heightmap: Heightmap| {
+                    terrain.map(|t| t.first_free_height(x, z, heightmap))
+                };
+                let seed = self.placements.seed();
+                if let Some((_, dy)) =
+                    shaft.layout(seed, chunk, &self.mineshaft_heights(), &mut first_free)
+                {
+                    return fixed([mid_x, mineshaft::START_Y.wrapping_add(dy), min_z]);
+                }
+                let any_quart = self.column(&config.biomes, mid_x, min_z, level_min_y, level_max_y);
+                if any_quart != Check::Rejected
+                    && self.whole_column(&config.biomes, mid_x, min_z, level_min_y, level_max_y)
                 {
                     return Found {
                         before: Check::Passes,
                         at: None,
                     };
                 }
-                Found::pending(precondition(some))
+                Found::pending(precondition(any_quart))
             }
             StructureType::Jigsaw => {
-                let jigsaw = s
+                let jigsaw = config
                     .jigsaw
                     .as_ref()
                     .expect("jigsaw structures load their settings");
@@ -380,7 +434,7 @@ impl<'a> Starts<'a> {
                         box_y,
                         heightmap,
                     } => {
-                        let before = self.column(&s.biomes, x, z, level_min_y, level_max_y);
+                        let before = self.column(&config.biomes, x, z, level_min_y, level_max_y);
                         if before == Check::Rejected {
                             return Found::REJECTED;
                         }
@@ -407,9 +461,10 @@ impl<'a> Starts<'a> {
             // none (the Overworld's portals there) it fails.
             StructureType::RuinedPortal => {
                 let Some(t) = terrain else {
-                    let every = self.biomes.source().biome_names().names().len();
-                    let everywhere = (0..every).all(|b| s.biomes.contains(BiomeId(b as u16)));
-                    return if s.biomes.is_empty() {
+                    let biome_count = self.biomes.source().biome_names().names().len();
+                    let everywhere =
+                        (0..biome_count).all(|b| config.biomes.contains(BiomeId(b as u16)));
+                    return if config.biomes.is_empty() {
                         Found::REJECTED
                     } else if everywhere {
                         Found {
@@ -420,7 +475,7 @@ impl<'a> Starts<'a> {
                         Found::pending(Check::Candidate)
                     };
                 };
-                let portal = s
+                let portal = config
                     .ruined_portal
                     .as_ref()
                     .expect("ruined portals load their setups");
@@ -440,11 +495,14 @@ impl<'a> Starts<'a> {
                 let x = min_x.wrapping_add(random.next_int_bounded(16));
                 let z = min_z.wrapping_add(random.next_int_bounded(16));
                 let Some(t) = terrain else {
-                    let column = self.column(&s.biomes, x, z, level_min_y, level_max_y);
+                    let column = self.column(&config.biomes, x, z, level_min_y, level_max_y);
                     return Found::pending(precondition(column));
                 };
-                let height = s.height.expect("nether fossils load their height");
-                let mut y = height.sample(&mut random, heights);
+                let height = config
+                    .height
+                    .as_ref()
+                    .expect("nether fossils load their height");
+                let mut y = height.sample(&mut random, heights.anchors());
                 let column = t.base_column(x, z);
                 let sea_level = sets.sea_level();
                 while y > sea_level {
@@ -478,9 +536,6 @@ impl<'a> Starts<'a> {
         classify(set, &self.biomes.biome_at(x >> 2, y >> 2, z >> 2))
     }
 
-    /// `couldStructureExistInColumn(x, z, minY, maxY)`: whether some quart from `min_y` to
-    /// `max_y` at `(x, z)` has a biome in the set. `Passes` if one certainly does, `Rejected` if
-    /// none can, `Candidate` if it hangs on a tie.
     /// Whether the start piece in `chunk` passes its element's corner constraint, if it has one,
     /// moved to `y`: the projected height, or with `None` its own start height
     /// (`JigsawPlacement.addPieces`). Only constrained starts draw again from the random.
@@ -503,6 +558,9 @@ impl<'a> Starts<'a> {
         )
     }
 
+    /// `couldStructureExistInColumn(x, z, minY, maxY)`: whether some quart from `min_y` to
+    /// `max_y` at `(x, z)` has a biome in the set. `Passes` if one certainly does, `Rejected` if
+    /// none can, `Candidate` if it hangs on a tie.
     fn column(&self, set: &BiomeSet, x: i32, z: i32, min_y: i32, max_y: i32) -> Check {
         let (qx, qz) = (x >> 2, z >> 2);
         let mut result = Check::Rejected;
@@ -572,12 +630,12 @@ fn and(a: Check, b: Check) -> Check {
 /// `WORLD_SURFACE_WG` height of the corners `(x, z)`, `(x, z + dz)`, `(x + dx, z)` and
 /// `(x + dx, z + dz)` (`getCornerHeights`).
 fn lowest_corner(terrain: &Terrain, x: i32, z: i32, dx: i32, dz: i32) -> i32 {
-    let h = |x, z| terrain.first_occupied_height(x, z, Heightmap::WorldSurfaceWg);
+    let height = |x, z| terrain.first_occupied_height(x, z, Heightmap::WorldSurfaceWg);
     let corners = [
-        h(x, z),
-        h(x, z.wrapping_add(dz)),
-        h(x.wrapping_add(dx), z),
-        h(x.wrapping_add(dx), z.wrapping_add(dz)),
+        height(x, z),
+        height(x, z.wrapping_add(dz)),
+        height(x.wrapping_add(dx), z),
+        height(x.wrapping_add(dx), z.wrapping_add(dz)),
     ];
     corners[0].min(corners[1]).min(corners[2].min(corners[3]))
 }

@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-25
+- See also: [0042](0042-the-viewer-extracts-bundles-itself.md), which amends it (the viewer may depend on `spyglass-extract`)
 
 ## Context
 

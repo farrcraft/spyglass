@@ -8,7 +8,9 @@ use crate::perlin::GRADIENT;
 /// `SimplexNoise` (with the state of `GradientNoise`).
 #[derive(Debug, Clone)]
 pub struct SimplexNoise {
+    /// The shuffled `0..=255` that hashes the triangles' corners to gradients.
     perms: [u8; 256],
+    /// Added to the input (`offsetX`, `offsetY`, `offsetZ`; only x and y are used in 2D).
     offset: [f64; 3],
 }
 
@@ -36,6 +38,13 @@ impl SimplexNoise {
     }
 
     /// `get(double, double)`: 2D simplex noise, summed in `f64` and narrowed once.
+    ///
+    /// The plane is tiled with triangles instead of Perlin's squares. Skewing the input by `F2`
+    /// turns the triangles into half-squares, so the floor finds the cell (`i`, `j`), and which
+    /// of the fraction's coordinates is larger picks the triangle. Unskewing by `G2` gives the
+    /// point's offset from each of the triangle's three corners, and each corner adds a
+    /// gradient dot that fades to 0 at a fixed distance, so only those three count. The names
+    /// follow the classic implementation the game's is based on.
     pub fn get(&self, x: f64, y: f64) -> f32 {
         // SQRT_3 = Math.sqrt(3.0); F2 and G2 as the class initializer computes them.
         let sqrt_3 = 3.0_f64.sqrt();
@@ -43,18 +52,22 @@ impl SimplexNoise {
         let g2 = (3.0 - sqrt_3) / 6.0;
         let xx = x + self.offset[0];
         let yy = y + self.offset[1];
+        // The skew: the cell is the floor of the skewed point.
         let s = (xx + yy) * f2;
         let i = mth::floor(xx + s);
         let j = mth::floor(yy + s);
+        // The unskew: (x0, y0) is the offset from the cell's first corner in real space.
         let t = f64::from(i.wrapping_add(j)) * g2;
         let x0 = xx - (f64::from(i) - t);
         let y0 = yy - (f64::from(j) - t);
+        // The middle corner: a step in x for the lower triangle, in y for the upper one.
         // dcmpl/ifle: NaN takes the else branch.
         let (i1, j1) = if x0 > y0 { (1, 0) } else { (0, 1) };
         let x1 = (x0 - f64::from(i1)) + g2;
         let y1 = (y0 - f64::from(j1)) + g2;
         let x2 = (x0 - 1.0) + 2.0 * g2;
         let y2 = (y0 - 1.0) + 2.0 * g2;
+        // Each corner's gradient, one of the first 12 (the cube's edges).
         let (ii, jj) = (i & 255, j & 255);
         let g0 = self.permute(ii + self.permute(jj)) % 12;
         let g1 = self.permute(ii + i1 + self.permute(jj + j1)) % 12;
@@ -62,11 +75,14 @@ impl SimplexNoise {
         let n0 = corner(g0, x0, y0, 0.0, 0.5);
         let n1 = corner(g1, x1, y1, 0.0, 0.5);
         let n2 = corner(g2i, x2, y2, 0.0, 0.5);
+        // 70 brings the sum to about −1 to 1.
         (70.0 * ((n0 + n1) + n2)) as f32
     }
 }
 
-/// `SimplexNoise.getCornerNoise3D`, the same in 26.2 and 26.3.
+/// `SimplexNoise.getCornerNoise3D`, the same in 26.2 and 26.3: one corner's part, gradient
+/// `g`'s dot with the offset `(x, y, z)` from the corner, weighted by `(base − distance²)⁴`,
+/// and 0 beyond `√base`.
 pub(crate) fn corner(g: i32, x: f64, y: f64, z: f64, base: f64) -> f64 {
     let t = ((base - x * x) - y * y) - z * z;
     // dcmpg/ifge: NaN goes on to the else branch.

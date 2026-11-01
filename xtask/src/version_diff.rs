@@ -107,6 +107,7 @@ fn switches(manifest: &Manifest) -> String {
     out
 }
 
+/// A bundle folder, or the version's bundle in `bundles/`.
 fn resolve(arg: &str) -> PathBuf {
     let path = PathBuf::from(arg);
     if path.join(bundle::MANIFEST).is_file() {
@@ -119,18 +120,20 @@ fn resolve(arg: &str) -> PathBuf {
 /// One file's registry and id: `data/minecraft/worldgen/noise/ridge.json` is
 /// `worldgen/noise` and `minecraft:ridge`.
 fn classify(path: &str) -> Option<(String, String)> {
-    let (rest, ns) = if let Some(rest) = path.strip_prefix("data/") {
-        let (ns, rest) = rest.split_once('/')?;
-        (rest, ns)
+    let (rest, namespace) = if let Some(rest) = path.strip_prefix("data/") {
+        let (namespace, rest) = rest.split_once('/')?;
+        (rest, namespace)
     } else if let Some(rest) = path.strip_prefix("reports/biome_parameters/") {
-        let (ns, rest) = rest.split_once('/')?;
+        let (namespace, rest) = rest.split_once('/')?;
         return Some((
             "reports/biome_parameters".into(),
-            format!("{ns}:{}", strip_ext(rest)),
+            format!("{namespace}:{}", strip_ext(rest)),
         ));
     } else {
         return Some(("reports".into(), path.to_string()));
     };
+    // How many folders name the registry: `worldgen/noise`, `tags/block`,
+    // `tags/worldgen/biome`, or one for the rest.
     let depth = if rest.starts_with("tags/worldgen/") {
         3
     } else if rest.starts_with("worldgen/") || rest.starts_with("tags/") {
@@ -141,9 +144,10 @@ fn classify(path: &str) -> Option<(String, String)> {
     let mut parts = rest.splitn(depth + 1, '/');
     let registry: Vec<&str> = parts.by_ref().take(depth).collect();
     let id = parts.next()?;
-    Some((registry.join("/"), format!("{ns}:{}", strip_ext(id))))
+    Some((registry.join("/"), format!("{namespace}:{}", strip_ext(id))))
 }
 
+/// A file name without its `.json` or `.nbt`.
 fn strip_ext(id: &str) -> &str {
     id.strip_suffix(".json")
         .or_else(|| id.strip_suffix(".nbt"))
@@ -152,7 +156,9 @@ fn strip_ext(id: &str) -> &str {
 
 /// What `version-diff` compares in one bundle.
 struct Snapshot {
+    /// The bundle's folder.
     dir: PathBuf,
+    /// Its manifest.
     manifest: Manifest,
     /// Registry → id → file.
     ids: BTreeMap<String, BTreeMap<String, File>>,
@@ -164,11 +170,14 @@ struct Snapshot {
 
 /// One file of a bundle: its path in the bundle and its hash.
 struct File {
+    /// Its path in the bundle.
     path: String,
+    /// Its SHA-1, from the manifest.
     hash: String,
 }
 
 impl Snapshot {
+    /// Reads the bundle in `dir`.
     fn read(dir: &Path) -> Result<Self> {
         let manifest = bundle::read_manifest(dir)
             .with_context(|| format!("reading the bundle at {}", dir.display()))?;
@@ -319,6 +328,7 @@ fn root(at: &str) -> &str {
     }
 }
 
+/// What kind of JSON value it is, for shape facts.
 fn kind(value: &Value) -> &'static str {
     match value {
         Value::Null => "null",
@@ -330,28 +340,34 @@ fn kind(value: &Value) -> &'static str {
     }
 }
 
-fn is_enum(s: &str) -> bool {
-    s.len() <= MAX_ENUM_LEN && !s.contains([':', '/', '#']) && !s.is_empty()
+/// Whether a string looks like an enum's value, not an id or a path: short, without `:`, `/`
+/// or `#`.
+fn is_enum(text: &str) -> bool {
+    text.len() <= MAX_ENUM_LEN && !text.contains([':', '/', '#']) && !text.is_empty()
 }
 
+/// The report of what changed from `old` to `new`.
 fn report(old: &Snapshot, new: &Snapshot) -> String {
     let mut out = String::new();
-    let (o, n) = (&old.manifest, &new.manifest);
+    let (old_manifest, new_manifest) = (&old.manifest, &new.manifest);
     let _ = writeln!(
         out,
         "{} (data version {}) -> {} (data version {})",
-        o.version, o.data_version, n.version, n.data_version
+        old_manifest.version,
+        old_manifest.data_version,
+        new_manifest.version,
+        new_manifest.data_version
     );
     let flipped: Vec<String> = SWITCHES
         .iter()
-        .filter(|s| s.is_on(o.data_version) != s.is_on(n.data_version))
+        .filter(|s| s.is_on(old_manifest.data_version) != s.is_on(new_manifest.data_version))
         .map(|s| {
             let state = |v| if s.is_on(v) { "on" } else { "off" };
             format!(
                 "  {}: {} -> {}  ({})",
                 s.name,
-                state(o.data_version),
-                state(n.data_version),
+                state(old_manifest.data_version),
+                state(new_manifest.data_version),
                 s.spec
             )
         })
@@ -445,6 +461,7 @@ fn report(old: &Snapshot, new: &Snapshot) -> String {
 
 /// Prints up to a screenful of ids, then how many more.
 fn list(out: &mut String, label: &str, ids: &[&String]) {
+    // About a screenful.
     const SHOWN: usize = 30;
     if ids.is_empty() {
         return;

@@ -27,30 +27,30 @@ pub(crate) fn of(binder: &mut Binder<'_>, function: &Df) -> Result<Interval, Loa
             Interval::exact(4.0)?,
         )?,
         DensityFunction::Binary(op, left, right) => {
-            let (a, b) = (binder.range(left)?, binder.range(right)?);
+            let (left, right) = (binder.range(left)?, binder.range(right)?);
             match op {
-                Binary::Add => Interval::add(a, b)?,
-                Binary::Sub => Interval::sub(a, b)?,
-                Binary::Mul => Interval::mul(a, b)?,
-                Binary::Div => Interval::div(a, b)?,
-                Binary::Min => Interval::min_of(a, b)?,
-                Binary::Max => Interval::max_of(a, b)?,
+                Binary::Add => Interval::add(left, right)?,
+                Binary::Sub => Interval::sub(left, right)?,
+                Binary::Mul => Interval::mul(left, right)?,
+                Binary::Div => Interval::div(left, right)?,
+                Binary::Min => Interval::min_of(left, right)?,
+                Binary::Max => Interval::max_of(left, right)?,
             }
         }
         DensityFunction::Unary(op, input) => {
-            let r = binder.range(input)?;
+            let input = binder.range(input)?;
             match op {
-                Unary::Abs => Interval::abs(r)?,
-                Unary::Square => Interval::square(r)?,
-                Unary::Cube => Interval::map_monotonic(r, |v| v * v * v)?,
-                Unary::Sqrt => Interval::pow(r, Interval::exact(0.5)?)?,
-                Unary::HalfNegative => Interval::map_monotonic(r, |v| leaky_relu(0.5, v))?,
-                Unary::QuarterNegative => Interval::map_monotonic(r, |v| leaky_relu(0.25, v))?,
-                Unary::Reciprocal => Interval::reciprocal(r)?,
-                Unary::Negate => Interval::sub(Interval::exact(0.0)?, r)?,
-                Unary::Squeeze => Interval::map_monotonic(r, squeeze)?,
-                Unary::Log => Interval::log(r)?,
-                Unary::Sign => Interval::sign(r)?,
+                Unary::Abs => Interval::abs(input)?,
+                Unary::Square => Interval::square(input)?,
+                Unary::Cube => Interval::map_monotonic(input, |v| v * v * v)?,
+                Unary::Sqrt => Interval::pow(input, Interval::exact(0.5)?)?,
+                Unary::HalfNegative => Interval::map_monotonic(input, |v| leaky_relu(0.5, v))?,
+                Unary::QuarterNegative => Interval::map_monotonic(input, |v| leaky_relu(0.25, v))?,
+                Unary::Reciprocal => Interval::reciprocal(input)?,
+                Unary::Negate => Interval::sub(Interval::exact(0.0)?, input)?,
+                Unary::Squeeze => Interval::map_monotonic(input, squeeze)?,
+                Unary::Log => Interval::log(input)?,
+                Unary::Sign => Interval::sign(input)?,
             }
         }
         // RoundFunction: round(input / multiple) · multiple, the rounding mapped monotonically.
@@ -59,10 +59,10 @@ pub(crate) fn of(binder: &mut Binder<'_>, function: &Df) -> Result<Interval, Loa
             input,
             multiple,
         } => {
-            let m = binder.range(multiple)?;
-            let quotient = Interval::div(binder.range(input)?, m)?;
+            let multiple = binder.range(multiple)?;
+            let quotient = Interval::div(binder.range(input)?, multiple)?;
             let rounded = Interval::map_monotonic(quotient, |v| round_to_integer(v, *kind))?;
-            Interval::mul(rounded, m)?
+            Interval::mul(rounded, multiple)?
         }
         // ClampFunction: the same in every version, however it compiles.
         DensityFunction::Clamp {
@@ -72,11 +72,11 @@ pub(crate) fn of(binder: &mut Binder<'_>, function: &Df) -> Result<Interval, Loa
         DensityFunction::DomainWarp { input, .. } => binder.range(input)?,
         // UpscaleFunction.range: each axis's modifyRange, z, then x, then y.
         DensityFunction::Upscale { input, x, y, z, .. } => {
-            let mut r = binder.range(input)?;
+            let mut range = binder.range(input)?;
             for axis in [z, x, y] {
-                r = upscale_range(r, axis)?;
+                range = upscale_range(range, axis)?;
             }
-            r
+            range
         }
         DensityFunction::Pow { base, exponent } => {
             Interval::pow(binder.range(base)?, binder.range(exponent)?)?
@@ -137,11 +137,11 @@ pub(crate) fn of(binder: &mut Binder<'_>, function: &Df) -> Result<Interval, Loa
 /// `BlendedNoise.computeFbmRange`: the layers' ranges summed, each a smeared Perlin noise's
 /// (`±(|smear| + 2)`) times its amplitude, as `createFbm` lays them out.
 fn fbm_range(first_octave: i32, smear: f64, factor: f64) -> Result<Interval, LoadError> {
-    let n = 1 - first_octave;
+    let octaves = 1 - first_octave;
     let mut frequency = 1.0;
-    let mut amplitude = factor / (exp2i(n) - 1.0);
+    let mut amplitude = factor / (exp2i(octaves) - 1.0);
     let mut range = Interval::exact(0.0)?;
-    for _ in 0..n {
+    for _ in 0..octaves {
         let layer = Interval::symmetric(((smear * frequency).abs() + 2.0) as f32)?;
         let layer = Interval::mul(layer, Interval::exact(amplitude as f32)?)?;
         range = Interval::add(range, layer)?;
@@ -169,7 +169,9 @@ fn upscale_range(range: Interval, axis: &UpscaleAxis) -> Result<Interval, LoadEr
     Ok(Interval::encapsulating(ranges)?)
 }
 
-/// `CubicSpline.range()`.
+/// `CubicSpline.range()`: a bound on the spline's value over its coordinate's range. It holds
+/// every point's value range, the end points' linear extensions where the coordinate reaches
+/// past them, and, between neighbouring points, how far the cubic can overshoot their values.
 fn spline_range(binder: &mut Binder<'_>, spline: &Spline) -> Result<Interval, LoadError> {
     let points = match spline {
         Spline::Constant(v) => return Ok(Interval::exact(*v)?),
@@ -183,12 +185,12 @@ fn spline_range(binder: &mut Binder<'_>, spline: &Spline) -> Result<Interval, Lo
     }
     let (mut lo, mut hi) = (f32::INFINITY, f32::NEG_INFINITY);
     // linearExtend, as sampling does beyond the end points.
-    let extend = |c: f32, value: f32, i: usize| {
-        let d = derivatives[i];
-        if d == 0.0 {
+    let extend = |coordinate: f32, value: f32, i: usize| {
+        let derivative = derivatives[i];
+        if derivative == 0.0 {
             value
         } else {
-            value + d * (c - locations[i])
+            value + derivative * (coordinate - locations[i])
         }
     };
     let ranges = points
@@ -199,26 +201,28 @@ fn spline_range(binder: &mut Binder<'_>, spline: &Spline) -> Result<Interval, Lo
     // The game takes the end points' ranges before the list of all of them; the values are the
     // same either way.
     if coordinate.min() < locations[0] {
-        let (a, b) = (
+        let (from_min, from_max) = (
             extend(coordinate.min(), ranges[0].min(), 0),
             extend(coordinate.min(), ranges[0].max(), 0),
         );
-        lo = java::min(lo, java::min(a, b));
-        hi = java::max(hi, java::max(a, b));
+        lo = java::min(lo, java::min(from_min, from_max));
+        hi = java::max(hi, java::max(from_min, from_max));
     }
     if coordinate.max() > locations[last] {
-        let (a, b) = (
+        let (from_min, from_max) = (
             extend(coordinate.max(), ranges[last].min(), last),
             extend(coordinate.max(), ranges[last].max(), last),
         );
-        lo = java::min(lo, java::min(a, b));
-        hi = java::max(hi, java::max(a, b));
+        lo = java::min(lo, java::min(from_min, from_max));
+        hi = java::max(hi, java::max(from_min, from_max));
     }
-    for r in &ranges {
-        lo = java::min(lo, r.min());
-        hi = java::max(hi, r.max());
+    for range in &ranges {
+        lo = java::min(lo, range.min());
+        hi = java::max(hi, range.max());
     }
-    // Between points, the cubic's overshoot is bounded by a quarter of its tangent terms.
+    // Between points i and i + 1, sampling computes lerp(t, y0, y1) + t(1 − t) · lerp(t, a, b),
+    // with tangent terms a = d0·dx − (y1 − y0) and b = −d1·dx + (y1 − y0). t(1 − t) is at most
+    // ¼, so the overshoot past the two values is at most a quarter of a's or b's bound.
     for i in 0..last {
         let dx = locations[i + 1] - locations[i];
         let (r0, r1) = (ranges[i], ranges[i + 1]);
@@ -226,15 +230,16 @@ fn spline_range(binder: &mut Binder<'_>, spline: &Spline) -> Result<Interval, Lo
         if d0 == 0.0 && d1 == 0.0 {
             continue;
         }
+        // The game's p and q: each end's derivative over the step.
         let (p, q) = (d0 * dx, d1 * dx);
         let low = java::min(r0.min(), r1.min());
         let high = java::max(r0.max(), r1.max());
-        let a = p - r1.max() + r0.min();
-        let b = p - r1.min() + r0.max();
-        let c = -q + r1.min() - r0.max();
-        let d = -q + r1.max() - r0.min();
-        lo = java::min(lo, low + 0.25 * java::min(a, c));
-        hi = java::max(hi, high + 0.25 * java::max(b, d));
+        let a_min = p - r1.max() + r0.min();
+        let a_max = p - r1.min() + r0.max();
+        let b_min = -q + r1.min() - r0.max();
+        let b_max = -q + r1.max() - r0.min();
+        lo = java::min(lo, low + 0.25 * java::min(a_min, b_min));
+        hi = java::max(hi, high + 0.25 * java::max(a_max, b_max));
     }
     Ok(Interval::of(lo, hi)?)
 }

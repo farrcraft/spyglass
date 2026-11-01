@@ -13,9 +13,14 @@ use crate::source::Biomes;
 pub fn spiral_around(radius: i32) -> impl Iterator<Item = [i32; 2]> {
     // East (+x), south (+z), west, north.
     const DIRECTIONS: [[i32; 2]; 4] = [[1, 0], [0, 1], [-1, 0], [0, -1]];
+    // The spiral is legs of growing length, turning a quarter each time: 1 east, 1 south,
+    // 2 west, 2 north, 3 east and so on, the length growing every second leg. Each yield first
+    // steps the cursor in the current leg's direction, then moves on to the next leg when this
+    // one is done, so a new leg's first position is still a step in the old direction.
     let legs = radius.wrapping_mul(4);
     // The cursor starts one step south of the centre, and the first move is north.
     let mut cursor = [0_i32, 1];
+    // The leg in progress, from -1 (the step onto the centre), and how far along it is.
     let mut leg = -1_i32;
     let mut leg_size = 0;
     let mut leg_index = 0;
@@ -47,23 +52,27 @@ pub fn out_from_origin(
 ) -> impl Iterator<Item = i32> {
     let valid = lower <= upper && step >= 1;
     let start = origin.clamp(lower, upper.max(lower));
+    // A value is in the sequence while its distance from the start is still inside the range
+    // on at least one side.
     let has_next = move |value: i32| {
-        let d = start.wrapping_sub(value).wrapping_abs();
-        start.wrapping_sub(d) >= lower || start.wrapping_add(d) <= upper
+        let distance = start.wrapping_sub(value).wrapping_abs();
+        start.wrapping_sub(distance) >= lower || start.wrapping_add(distance) <= upper
     };
+    // From a value above the start, the next is its mirror below; from one at or below, the
+    // next is a step further out above. A side that has left the range is passed over.
     let next = move |&value: &i32| {
         let below = value <= start;
-        let d = start.wrapping_sub(value).wrapping_abs();
-        let can_go_up = start.wrapping_add(d).wrapping_add(step) <= upper;
+        let distance = start.wrapping_sub(value).wrapping_abs();
+        let can_go_up = start.wrapping_add(distance).wrapping_add(step) <= upper;
         if !(below && can_go_up) {
             let down = start
-                .wrapping_sub(d)
+                .wrapping_sub(distance)
                 .wrapping_sub(if below { step } else { 0 });
             if down >= lower {
                 return Some(down);
             }
         }
-        Some(start.wrapping_add(d).wrapping_add(step))
+        Some(start.wrapping_add(distance).wrapping_add(step))
     };
     std::iter::successors(valid.then_some(start), next).take_while(move |&v| has_next(v))
 }
@@ -147,13 +156,18 @@ impl Biomes<'_> {
             horizontal_step > 0 && vertical_step > 0,
             "steps must be positive"
         );
+        // The game walks columns outwards in a square spiral and, in each, heights outwards
+        // from `from`'s, stopping at the first quart whose biome matches. Where the lookup is
+        // tied, the game's biome there depends on its earlier lookups, so a tied cell that
+        // might match is collected as an uncertain hit and the walk goes on, until a cell
+        // that certainly matches.
         let mut search = BiomeSearch::default();
-        let mut hits = Vec::new();
-        let names = self.source().biome_names().names().len();
-        if !(0..names).any(|b| matches(BiomeId(b as u16))) {
+        let mut scratch = Vec::new();
+        let biome_count = self.source().biome_names().names().len();
+        if !(0..biome_count).any(|b| matches(BiomeId(b as u16))) {
             return search;
         }
-        let ys: Vec<i32> = out_from_origin(
+        let heights: Vec<i32> = out_from_origin(
             from[1],
             min_y.wrapping_add(1),
             max_y.wrapping_add(1),
@@ -163,8 +177,8 @@ impl Biomes<'_> {
         for [ox, oz] in spiral_around(radius.div_euclid(horizontal_step)) {
             let x = from[0].wrapping_add(ox.wrapping_mul(horizontal_step));
             let z = from[2].wrapping_add(oz.wrapping_mul(horizontal_step));
-            for &y in &ys {
-                let lookup = self.lookup_at(x >> 2, y >> 2, z >> 2, &mut hits);
+            for &y in &heights {
+                let lookup = self.lookup_at(x >> 2, y >> 2, z >> 2, &mut scratch);
                 let hit = matches(lookup.biome());
                 let disagree = lookup.candidates().iter().any(|&b| matches(b) != hit);
                 if hit || disagree {

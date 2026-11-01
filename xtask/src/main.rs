@@ -9,10 +9,12 @@ use clap::{Parser, Subcommand};
 use spyglass_extract::{java, manifest};
 
 mod ci;
+mod ci_plan;
 mod ci_scope;
 mod code_diff;
 mod dist;
 mod fuzz;
+mod java_report;
 mod links;
 mod linux_check;
 mod locate;
@@ -21,6 +23,7 @@ mod oracle_test;
 mod release;
 mod smoke;
 mod version_diff;
+mod viewer_timing;
 
 #[derive(Parser)]
 #[command(about = "spyglass project commands")]
@@ -41,6 +44,9 @@ enum Cmd {
     /// Run one game version's CI job: extract its bundle, regenerate every oracle output
     /// (goldens, locate and, where it loads, the test pack), and run every comparison.
     Ci(ci::Ci),
+    /// Print CI's oracle jobs, planned from estimated costs to fit the hour, as the matrix line
+    /// for $GITHUB_OUTPUT (docs/adr/0058-oracle-ci-planned-by-cost.md).
+    CiPlan(ci_plan::CiPlan),
     /// Print which CI jobs a pull request needs, from the files it changes, as lines for
     /// $GITHUB_OUTPUT.
     CiScope(ci_scope::CiScope),
@@ -64,6 +70,10 @@ enum Cmd {
         #[arg(long, default_value = "latest")]
         game_version: String,
     },
+    /// Compile the extractor's block behaviour report, `extractor-java/BlockReport.java`, into
+    /// its committed class; with `--check`, fail if the class doesn't match the source
+    /// (docs/adr/0054-block-behaviour-from-the-running-game.md).
+    JavaReport(java_report::JavaReport),
     /// Check a fresh clone, scripts/setup.sh and the extractor on a clean Ubuntu machine, in Docker.
     LinuxCheck(linux_check::LinuxCheck),
     /// Check that every relative link and anchor in the repo's Markdown resolves.
@@ -100,6 +110,9 @@ enum Cmd {
     /// Report what changed between two bundles in the data spyglass reads: ids added and
     /// removed, files changed, and new or gone JSON shapes (types, fields, value kinds).
     VersionDiff(version_diff::VersionDiff),
+    /// Time the dist viewer's cold start in fixed scenarios, from settings of its own: when the
+    /// map covers the window and when it's full, and each kind of tile job's time.
+    ViewerTiming(viewer_timing::ViewerTiming),
 }
 
 fn main() -> ExitCode {
@@ -108,11 +121,13 @@ fn main() -> ExitCode {
         Cmd::Bench { bundle } => bench(bundle.as_deref()),
         Cmd::Check => check(),
         Cmd::Ci(args) => ci::run(&args),
+        Cmd::CiPlan(args) => ci_plan::run(&args),
         Cmd::CiScope(args) => ci_scope::run(&args),
         Cmd::Dist(args) => dist::run(&args),
         Cmd::Doctor { game_version, java } => doctor(&game_version, java.as_deref()),
         Cmd::Fuzz(args) => fuzz::run(&args),
         Cmd::JdkStatus { game_version } => jdk_status(&game_version),
+        Cmd::JavaReport(args) => java_report::run(&args),
         Cmd::LinuxCheck(args) => linux_check::run(&args),
         Cmd::Links => links::run(),
         Cmd::Msrv { print } => msrv(print),
@@ -122,6 +137,7 @@ fn main() -> ExitCode {
         Cmd::ReleaseNotes(args) => release::notes(&args),
         Cmd::Smoke(args) => smoke::run(&args),
         Cmd::VersionDiff(args) => version_diff::run(&args),
+        Cmd::ViewerTiming(args) => viewer_timing::run(&args),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -320,16 +336,16 @@ impl Report {
 }
 
 fn doctor(game_version: &str, explicit_java: Option<&Path>) -> Result<()> {
-    let mut r = Report { failures: 0 };
+    let mut report = Report { failures: 0 };
     let setup = "run scripts/setup.ps1 (Windows) or scripts/setup.sh";
-    rust_checks(&mut r, setup);
-    hook_checks(&mut r, setup);
-    java_checks(&mut r, game_version, explicit_java);
-    bundles_check(&mut r);
-    docker_check(&mut r);
+    rust_checks(&mut report, setup);
+    hook_checks(&mut report, setup);
+    java_checks(&mut report, game_version, explicit_java);
+    bundles_check(&mut report);
+    docker_check(&mut report);
     println!();
-    if r.failures > 0 {
-        bail!("{} check(s) failed", r.failures);
+    if report.failures > 0 {
+        bail!("{} check(s) failed", report.failures);
     }
     println!("Ready.");
     Ok(())

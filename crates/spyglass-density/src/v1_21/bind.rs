@@ -65,7 +65,9 @@ pub struct Function {
 /// A bound function's place in the memo.
 #[derive(Debug)]
 struct MemoSlot {
+    /// The binder that numbered the slot, so another binder's values are never read for it.
     binder: u64,
+    /// The slot's index in the thread's memo.
     slot: u32,
     /// Whether more than one place binds the function, so remembering it can save work. The
     /// binder sets it on the second binding.
@@ -102,6 +104,7 @@ pub(crate) fn reserve_stamps(count: u64) -> u64 {
     })
 }
 
+/// A bound function's operation, with its inputs bound.
 #[derive(Debug)]
 pub(crate) enum Node {
     Constant(f64),
@@ -118,6 +121,7 @@ pub(crate) enum Node {
     /// `MulOrAdd` mul: `input · c`, no zero test.
     MulConstant(Function, f64),
     Mapped(Mapped, Function),
+    /// `Clamp`: the input, then `min` and `max`.
     Clamp(Function, f64, f64),
     Noise {
         noise: Arc<NormalNoise>,
@@ -128,6 +132,7 @@ pub(crate) enum Node {
         noise: Arc<NormalNoise>,
         xz_scale: f64,
         y_scale: f64,
+        /// `shift_x`, `shift_y` and `shift_z`.
         shift: [Function; 3],
     },
     ShiftA(Arc<NormalNoise>),
@@ -178,6 +183,7 @@ pub(crate) enum BoundSpline {
         locations: Vec<f32>,
         values: Vec<BoundSpline>,
         derivatives: Vec<f32>,
+        /// The spline's range, as its constructor computes it ([`spline_range`]).
         min: f32,
         max: f32,
     },
@@ -187,10 +193,13 @@ pub(crate) enum BoundSpline {
 /// evaluated, with what the context is to it.
 #[derive(Clone, Copy)]
 pub(crate) struct Ctx<'c> {
+    /// The block.
     pub(crate) x: i32,
     pub(crate) y: i32,
     pub(crate) z: i32,
+    /// The `NoiseChunk` whose wrapped graph is evaluated, if any.
     pub(crate) chunk: Option<&'c NoiseChunk>,
+    /// What the context is to `chunk`.
     pub(crate) own: Own,
     /// Identifies this context for the memo: unique per context made on a thread.
     pub(crate) stamp: u64,
@@ -380,24 +389,29 @@ impl Function {
             Node::Constant(v) => *v,
             Node::Add(a, b) => a.eval(ctx) + b.eval(ctx),
             Node::Mul(a, b) => {
-                let v = a.eval(ctx);
+                let first = a.eval(ctx);
                 // dcmpl/ifne: −0.0 and +0.0 both give +0.0, without evaluating argument2.
-                if v == 0.0 { 0.0 } else { v * b.eval(ctx) }
-            }
-            Node::Min(a, b) => {
-                let v = a.eval(ctx);
-                if v < b.min {
-                    v
+                if first == 0.0 {
+                    0.0
                 } else {
-                    java::min_f64(v, b.eval(ctx))
+                    first * b.eval(ctx)
+                }
+            }
+            // Min and max skip argument2 when its range can't change the result.
+            Node::Min(a, b) => {
+                let first = a.eval(ctx);
+                if first < b.min {
+                    first
+                } else {
+                    java::min_f64(first, b.eval(ctx))
                 }
             }
             Node::Max(a, b) => {
-                let v = a.eval(ctx);
-                if v > b.max {
-                    v
+                let first = a.eval(ctx);
+                if first > b.max {
+                    first
                 } else {
-                    java::max_f64(v, b.eval(ctx))
+                    java::max_f64(first, b.eval(ctx))
                 }
             }
             Node::AddConstant(input, c) => input.eval(ctx) + c,
@@ -446,8 +460,8 @@ impl Function {
                 when_in_range,
                 when_out_of_range,
             } => {
-                let v = input.eval(ctx);
-                if v >= *min_inclusive && v < *max_exclusive {
+                let value = input.eval(ctx);
+                if value >= *min_inclusive && value < *max_exclusive {
                     when_in_range.eval(ctx)
                 } else {
                     when_out_of_range.eval(ctx)
@@ -458,13 +472,14 @@ impl Function {
                 thresholds,
                 functions,
             } => {
-                let v = input.eval(ctx);
+                let value = input.eval(ctx);
+                // The first function whose threshold is above the value, or the last.
                 // dcmpg/ifge: NaN is below no threshold.
-                let i = thresholds
+                let chosen = thresholds
                     .iter()
-                    .position(|t| v < *t)
+                    .position(|t| value < *t)
                     .unwrap_or(functions.len() - 1);
-                functions[i].eval(ctx)
+                functions[chosen].eval(ctx)
             }
             Node::Spline(spline) => f64::from(spline.sample(ctx)),
             Node::FindTopSurface {
@@ -473,6 +488,8 @@ impl Function {
                 lower_bound,
                 cell_height,
             } => {
+                // Down the column from the upper bound's cell, a cell at a time, to the first
+                // block whose density is positive.
                 let upper = upper_bound.eval(ctx);
                 let start = mth::floor(upper / f64::from(*cell_height)).wrapping_mul(*cell_height);
                 if start <= *lower_bound {
@@ -571,8 +588,8 @@ pub(crate) fn mapped(op: Mapped, x: f64) -> f64 {
         }
         Mapped::Invert => 1.0 / x,
         Mapped::Squeeze => {
-            let c = java::mth_clamp_f64(x, -1.0, 1.0);
-            c / 2.0 - c * c * c / 24.0
+            let clamped = java::mth_clamp_f64(x, -1.0, 1.0);
+            clamped / 2.0 - clamped * clamped * clamped / 24.0
         }
     }
 }
@@ -580,25 +597,37 @@ pub(crate) fn mapped(op: Mapped, x: f64) -> f64 {
 /// `EndIslandDensityFunction.getHeightValue(noise, x, z)`, with `x` and `z` a block's divided by
 /// 8: the central island, then the highest outer island over the 25 × 25 cells around
 /// `(x / 2, z / 2)`, in `f32`.
+///
+/// Each island is a cone, 100 at its peak and falling with distance, clamped to −100..80. The
+/// central island is at the origin; an outer island sits on each cell beyond 64 cells from it
+/// where the simplex noise is below −0.9, with a slope from the cell's position.
 pub(crate) fn end_island_height(noise: &SimplexNoise, x: i32, z: i32) -> f32 {
-    let (xs, zs, xr, zr) = (x / 2, z / 2, x % 2, z % 2);
+    // Java's truncating `/` and `%`, kept for parity: for a negative coordinate the cell rounds
+    // toward zero and the offset is negative, so this is not the cell that holds the position.
+    let (cell_x, cell_z, within_x, within_z) = (x / 2, z / 2, x % 2, z % 2);
     // Mth.sqrt((float)(x·x + z·z)), the squares and sum in wrapping int.
-    let d = x.wrapping_mul(x).wrapping_add(z.wrapping_mul(z)) as f32;
-    let mut height = mth_clamp_f32(100.0 - (f64::from(d).sqrt() as f32) * 8.0, -100.0, 80.0);
+    let distance_sq = x.wrapping_mul(x).wrapping_add(z.wrapping_mul(z)) as f32;
+    let mut height = mth_clamp_f32(
+        100.0 - (f64::from(distance_sq).sqrt() as f32) * 8.0,
+        -100.0,
+        80.0,
+    );
     for dx in -12..=12 {
         for dz in -12..=12 {
-            let px = i64::from(xs.wrapping_add(dx));
-            let pz = i64::from(zs.wrapping_add(dz));
+            let island_x = i64::from(cell_x.wrapping_add(dx));
+            let island_z = i64::from(cell_z.wrapping_add(dz));
             // lcmp/ifle: strictly beyond 64 cells; dcmpg/ifge against (double) −0.9f.
-            if px * px + pz * pz > 4096
-                && noise.get_value_2d(px as f64, pz as f64) < f64::from(-0.9_f32)
+            if island_x * island_x + island_z * island_z > 4096
+                && noise.get_value_2d(island_x as f64, island_z as f64) < f64::from(-0.9_f32)
             {
-                let size = ((px as f32).abs() * 3439.0 + (pz as f32).abs() * 147.0) % 13.0 + 9.0;
-                let fx = xr.wrapping_sub(dx.wrapping_mul(2)) as f32;
-                let fz = zr.wrapping_sub(dz.wrapping_mul(2)) as f32;
-                let length = f64::from(fx * fx + fz * fz).sqrt() as f32;
-                let v = mth_clamp_f32(100.0 - length * size, -100.0, 80.0);
-                height = java::max(height, v);
+                let slope = ((island_x as f32).abs() * 3439.0 + (island_z as f32).abs() * 147.0)
+                    % 13.0
+                    + 9.0;
+                let to_x = within_x.wrapping_sub(dx.wrapping_mul(2)) as f32;
+                let to_z = within_z.wrapping_sub(dz.wrapping_mul(2)) as f32;
+                let length = f64::from(to_x * to_x + to_z * to_z).sqrt() as f32;
+                let island = mth_clamp_f32(100.0 - length * slope, -100.0, 80.0);
+                height = java::max(height, island);
             }
         }
     }
@@ -632,10 +661,14 @@ impl BoundSpline {
                 derivatives,
                 ..
             } => {
-                let c = coordinate.eval(ctx) as f32;
-                sample_multipoint(c, locations, values, derivatives, &mut |v: &BoundSpline| {
-                    v.sample(ctx)
-                })
+                let coordinate_value = coordinate.eval(ctx) as f32;
+                sample_multipoint(
+                    coordinate_value,
+                    locations,
+                    values,
+                    derivatives,
+                    &mut |v: &BoundSpline| v.sample(ctx),
+                )
             }
         }
     }
@@ -657,6 +690,7 @@ impl BoundSpline {
 
 /// `CubicSpline.Multipoint`'s constructor's range: the coordinate's range extended past the end
 /// points, every value's range, and each interval's bound on the cubic's overshoot, in `f32`.
+/// The same bound as 26.3's (`crate::range`, which explains the overshoot term).
 fn spline_range(
     coordinate: (f32, f32),
     locations: &[f32],
@@ -667,30 +701,30 @@ fn spline_range(
     let (mut lo, mut hi) = (f32::INFINITY, f32::NEG_INFINITY);
     let (c_min, c_max) = coordinate;
     // linearExtend.
-    let extend = |c: f32, v: f32, i: usize| {
-        let d = derivatives[i];
-        if d == 0.0 {
-            v
+    let extend = |coordinate: f32, value: f32, i: usize| {
+        let derivative = derivatives[i];
+        if derivative == 0.0 {
+            value
         } else {
-            v + d * (c - locations[i])
+            value + derivative * (coordinate - locations[i])
         }
     };
     // fcmpg/ifge, fcmpl/ifle: a NaN bound extends neither end.
     if c_min < locations[0] {
-        let a = extend(c_min, values[0].min(), 0);
-        let b = extend(c_min, values[0].max(), 0);
-        lo = java::min(lo, java::min(a, b));
-        hi = java::max(hi, java::max(a, b));
+        let from_min = extend(c_min, values[0].min(), 0);
+        let from_max = extend(c_min, values[0].max(), 0);
+        lo = java::min(lo, java::min(from_min, from_max));
+        hi = java::max(hi, java::max(from_min, from_max));
     }
     if c_max > locations[last] {
-        let a = extend(c_max, values[last].min(), last);
-        let b = extend(c_max, values[last].max(), last);
-        lo = java::min(lo, java::min(a, b));
-        hi = java::max(hi, java::max(a, b));
+        let from_min = extend(c_max, values[last].min(), last);
+        let from_max = extend(c_max, values[last].max(), last);
+        lo = java::min(lo, java::min(from_min, from_max));
+        hi = java::max(hi, java::max(from_min, from_max));
     }
-    for v in values {
-        lo = java::min(lo, v.min());
-        hi = java::max(hi, v.max());
+    for value in values {
+        lo = java::min(lo, value.min());
+        hi = java::max(hi, value.max());
     }
     for i in 0..last {
         let (d0, d1) = (derivatives[i], derivatives[i + 1]);
@@ -698,18 +732,19 @@ fn spline_range(
             continue;
         }
         let dx = locations[i + 1] - locations[i];
-        let (a0, b0) = (values[i].min(), values[i].max());
-        let (a1, b1) = (values[i + 1].min(), values[i + 1].max());
+        let (min0, max0) = (values[i].min(), values[i].max());
+        let (min1, max1) = (values[i + 1].min(), values[i + 1].max());
+        // The game's p and q: each end's derivative over the step.
         let p = d0 * dx;
         let q = d1 * dx;
-        let low = java::min(a0, a1);
-        let high = java::max(b0, b1);
-        let e = p - b1 + a0;
-        let f = p - a1 + b0;
-        let g = -q + a1 - b0;
-        let h = -q + b1 - a0;
-        lo = java::min(lo, low + 0.25 * java::min(e, g));
-        hi = java::max(hi, high + 0.25 * java::max(f, h));
+        let low = java::min(min0, min1);
+        let high = java::max(max0, max1);
+        let a_min = p - max1 + min0;
+        let a_max = p - min1 + max0;
+        let b_min = -q + min1 - max0;
+        let b_max = -q + max1 - min0;
+        lo = java::min(lo, low + 0.25 * java::min(a_min, b_min));
+        hi = java::max(hi, high + 0.25 * java::max(a_max, b_max));
     }
     (lo, hi)
 }
@@ -720,16 +755,24 @@ static BINDERS: AtomicU64 = AtomicU64::new(0);
 /// Binds 26.2 functions for one seed, as `RandomState`'s noise wiring does: each noise is made
 /// once (`getOrCreateNoise`), and shared nodes stay shared.
 pub struct Binder<'n> {
+    /// Each noise's parameters, by full id.
     noise_parameters: &'n HashMap<String, NormalNoiseParameters>,
+    /// The world seed.
     seed: i64,
+    /// Whether the settings use the legacy random source (`legacy_random_source`).
     legacy: bool,
+    /// The seed's positional random, which each noise is forked from by its id.
     random: WorldRandom,
+    /// Each noise made so far, by full id.
     noises: HashMap<String, Arc<NormalNoise>>,
+    /// The End islands' simplex noise, once made: the same for every `end_islands`.
     end_islands: Option<Arc<SimplexNoise>>,
     /// Bound functions by loaded function identity and wiring. Each entry keeps its function
     /// alive, so its address can't be reused while the binder holds it.
     bound: HashMap<(*const DensityFunction, Wiring), (Df, Function)>,
+    /// Tells this binder's functions apart from another's ([`BINDERS`]).
     id: u64,
+    /// Marker slots numbered so far: a `NoiseChunk` has a table for each.
     slots: u32,
     /// Memo slots numbered so far ([`Function`]'s `memo`).
     memo_slots: u32,
@@ -777,10 +820,16 @@ impl<'n> Binder<'n> {
         self.slots
     }
 
+    /// `RandomState.getOrCreateNoise(id)`: the seed's noise `id`, made once per binder, for
+    /// code that samples noises itself, such as the surface rules.
+    pub fn normal_noise(&mut self, id: &str) -> Result<Arc<NormalNoise>, LoadError> {
+        self.noise(id)
+    }
+
     /// `visitNoise`: the Nether biome noises by their own rule, others by `getOrCreateNoise`.
     fn noise(&mut self, id: &str) -> Result<Arc<NormalNoise>, LoadError> {
-        if let Some(n) = self.noises.get(id) {
-            return Ok(n.clone());
+        if let Some(noise) = self.noises.get(id) {
+            return Ok(noise.clone());
         }
         let error = |kind| LoadError::new(id, "", kind);
         let parameters = match self.noise_parameters.get(id) {
@@ -803,11 +852,11 @@ impl<'n> Binder<'n> {
                 NormalNoise::create_legacy_nether_biome(&mut random, parameters)
                     .map_err(|e| error(LoadErrorKind::Invalid(e.reason())))?
             }
-            (None, WorldRandom::Xoroshiro(f)) => {
-                NormalNoise::create(&mut f.from_hash_of(id), parameters)
+            (None, WorldRandom::Xoroshiro(positional)) => {
+                NormalNoise::create(&mut positional.from_hash_of(id), parameters)
             }
-            (None, WorldRandom::Legacy(f)) => {
-                NormalNoise::create(&mut f.from_hash_of(id), parameters)
+            (None, WorldRandom::Legacy(positional)) => {
+                NormalNoise::create(&mut positional.from_hash_of(id), parameters)
             }
         };
         let noise = Arc::new(noise);
@@ -840,11 +889,11 @@ impl<'n> Binder<'n> {
         wiring: Wiring,
     ) -> Result<Function, LoadError> {
         let key = (Arc::as_ptr(function), wiring);
-        if let Some((_, f)) = self.bound.get(&key) {
-            if let Some(memo) = &f.memo {
+        if let Some((_, bound)) = self.bound.get(&key) {
+            if let Some(memo) = &bound.memo {
                 memo.shared.store(true, Ordering::Relaxed);
             }
-            return Ok(f.clone());
+            return Ok(bound.clone());
         }
         let mut bound = self.compile(function, wiring)?;
         // A loaded function is what the graph shares; remember its value per context. A
@@ -865,6 +914,7 @@ impl<'n> Binder<'n> {
         Ok(bound)
     }
 
+    /// Binds `function`'s own node, its inputs through [`bind_with`](Self::bind_with).
     fn compile(&mut self, function: &Df, wiring: Wiring) -> Result<Function, LoadError> {
         let mut bind = |f: &Df| self.bind_with(f, wiring);
         Ok(match &**function {
@@ -872,9 +922,9 @@ impl<'n> Binder<'n> {
             // HolderHolder: the referenced function's value and range.
             DensityFunction::Reference { function, .. } => bind(function)?,
             DensityFunction::TwoArgument(op, a, b) => {
-                let (ca, cb) = (Self::constant(a, wiring), Self::constant(b, wiring));
-                let (fa, fb) = (bind(a)?, bind(b)?);
-                two_argument(*op, fa, fb, ca, cb)
+                let constants = (Self::constant(a, wiring), Self::constant(b, wiring));
+                let (bound_a, bound_b) = (bind(a)?, bind(b)?);
+                two_argument(*op, bound_a, bound_b, constants)
             }
             DensityFunction::Mapped(op, input) => {
                 let input = bind(input)?;
@@ -1037,28 +1087,28 @@ impl<'n> Binder<'n> {
                     .clone();
                 Function::new(Node::EndIslands(noise), -0.84375, 0.5625)
             }
-            DensityFunction::OldBlendedNoise(p) => {
+            DensityFunction::OldBlendedNoise(parameters) => {
                 // NoiseWiringHelper: withNewRandom(legacy ? LegacyRandomSource(seed + 0)
                 // : random.fromHashOf("minecraft:terrain")), a fresh random each time.
                 let new = |random: &mut _| {
                     BlendedNoise::new(
                         random,
-                        p.xz_scale,
-                        p.y_scale,
-                        p.xz_factor,
-                        p.y_factor,
-                        p.smear_scale_multiplier,
+                        parameters.xz_scale,
+                        parameters.y_scale,
+                        parameters.xz_factor,
+                        parameters.y_factor,
+                        parameters.smear_scale_multiplier,
                     )
                 };
                 let noise = match (&self.random, self.legacy) {
                     (_, true) => new(&mut LegacyRandomSource::new(self.seed)),
                     (WorldRandom::Xoroshiro(f), false) => BlendedNoise::new(
                         &mut f.from_hash_of("minecraft:terrain"),
-                        p.xz_scale,
-                        p.y_scale,
-                        p.xz_factor,
-                        p.y_factor,
-                        p.smear_scale_multiplier,
+                        parameters.xz_scale,
+                        parameters.y_scale,
+                        parameters.xz_factor,
+                        parameters.y_factor,
+                        parameters.smear_scale_multiplier,
                     ),
                     (WorldRandom::Legacy(_), false) => unreachable!("legacy random is the flag"),
                 };
@@ -1139,16 +1189,16 @@ impl<'n> Binder<'n> {
 /// `TwoArgumentSimpleFunction.create`: the range from the operands', then `MulOrAdd` if
 /// `argument1`, else `argument2`, is a constant (add and mul only), else `Ap2`. Every function
 /// is mapped at least once (by the noise wiring), and `MulOrAdd.mapChildren` computes its range
-/// its own way, which is the one that stays.
+/// its own way, which is the one that stays. `a` and `b` are `argument1` and `argument2`, and
+/// `constants` their values where each is a constant once wired.
 fn two_argument(
     op: TwoArgument,
     a: Function,
     b: Function,
-    ca: Option<f64>,
-    cb: Option<f64>,
+    constants: (Option<f64>, Option<f64>),
 ) -> Function {
     if matches!(op, TwoArgument::Add | TwoArgument::Mul) {
-        let constant = match (ca, cb) {
+        let constant = match constants {
             (Some(c), _) => Some((b.clone(), c)),
             (None, Some(c)) => Some((a.clone(), c)),
             (None, None) => None,

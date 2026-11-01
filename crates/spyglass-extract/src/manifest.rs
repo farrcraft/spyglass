@@ -131,6 +131,7 @@ impl VersionManifest {
     }
 }
 
+/// The body of `url`.
 fn get(url: &str) -> Result<Vec<u8>, ManifestError> {
     Ok(agent().get(url).call()?.body_mut().read_to_vec()?)
 }

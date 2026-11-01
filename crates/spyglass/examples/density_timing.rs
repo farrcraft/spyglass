@@ -51,6 +51,17 @@ fn scenarios(world: &World, session: &spyglass::Session<'_>, pass: i32) {
         ))
         .unwrap();
     });
+    // A sixteenth of a viewer tile at 1:4: 64 × 64 columns, 4 blocks apart.
+    scenario("64 x 64 pixels at 1:4", 3, || {
+        origin += 100_000;
+        let area = spyglass::MapArea {
+            min: [origin, away],
+            size: [64, 64],
+            scale: 4,
+            y: 64,
+        };
+        black_box(session.height_map(&area).unwrap());
+    });
     // A village's layout cold (a new session each time) and warm (the same session again).
     let seeds = 1000 * i64::from(pass);
     let mut seed = seeds;

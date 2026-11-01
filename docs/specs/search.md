@@ -1,48 +1,55 @@
 # Seed search
 
-Status: stable. Implemented in `spyglass-search` and `spyglass`, and checked by tests (these are spyglass's semantics, not the game's). Covers the query language, how each constraint is evaluated and scored, seed sources and their order, and what makes results deterministic. The language is [ADR 0020](../adr/0020-search-query-language.md), with dimensions from [ADR 0024](../adr/0024-dimensions-in-the-search-language.md) and [ADR 0025](../adr/0025-inferring-dimensions-in-search-queries.md) ([below](#dimensions)); the engine is [ADR 0021](../adr/0021-search-engine.md).
+Status: stable. Implemented in `spyglass-search` and `spyglass`, and checked by tests (these are spyglass's semantics, not the game's). Covers the query language, how each constraint is evaluated and scored, seed sources and their order, searching within one seed with `find` queries ([below](#searching-within-a-seed), [ADR 0047](../adr/0047-search-within-a-seed.md)), and what makes results deterministic. The language is [ADR 0020](../adr/0020-search-query-language.md), with dimensions from [ADR 0024](../adr/0024-dimensions-in-the-search-language.md) and [ADR 0025](../adr/0025-inferring-dimensions-in-search-queries.md) ([below](#dimensions)) and features from [ADR 0057](../adr/0057-features-in-the-search-language.md); the engine is [ADR 0021](../adr/0021-search-engine.md).
 
 A query describes a world as a list of constraints. A **required** constraint must be met for a seed to be reported; a **preferred** one adds to the seed's score. A search evaluates seeds from a source in a fixed order and keeps the best ones.
 
-These are spyglass's own semantics, not the game's: the game has no seed search. They're built on answers that are the game's: structure starts and their certainty ([structure-placement.md](structure-placement.md)), `/locate` positions ([locate.md](locate.md)), biomes and ties ([biome-lookup.md](biome-lookup.md)), the spawn origin ([spawn.md](spawn.md)) and slime chunks.
+These are spyglass's own semantics, not the game's: the game has no seed search. They're built on answers that are the game's: structure starts and their certainty ([structure-placement.md](structure-placement.md)), `/locate` positions ([locate.md](locate.md)), features and their certainty ([features.md](features.md)), biomes and ties ([biome-lookup.md](biome-lookup.md)), the spawn origin ([spawn.md](spawn.md)) and slime chunks.
 
 ## The language
 
-UTF-8 text, one constraint per line. Blank lines are ignored.
+UTF-8 text, one constraint per line, after an optional `find` line ([below](#searching-within-a-seed)). Blank lines are ignored.
 
 ### Tokens
 
 - Tokens are separated by spaces or tabs.
 - A **comment** runs from a `#` to the end of the line when the `#` is the first non-blank character of the line, or is followed by a space, a tab or the end of the line. Otherwise `#` begins a structure tag.
-- **Keywords** are lowercase: `require`, `prefer`, `weight`, `no`, `cluster`, `within`, `of`, `each`, `other`, `in`, `to`, `spawn`, `slime`, `biome`, `covers`, `at`, `y`, `step`, and the dimensions `overworld`, `nether` and `end`. A keyword is never read as an id; write such an id with its namespace (`minecraft:spawn`).
+- **Keywords** are lowercase: `require`, `prefer`, `weight`, `no`, `cluster`, `within`, `of`, `each`, `other`, `in`, `to`, `spawn`, `slime`, `biome`, `feature`, `covers`, `at`, `y`, `step`, `height`, `flat`, `find`, `here`, `apart`, `point`, and the dimensions `overworld`, `nether` and `end`. A keyword is never read as an id; write such an id with its namespace (`minecraft:spawn`).
 - An **integer** is decimal digits, with a leading `-` where a signed value is allowed (coordinates and `y`).
 - A **point** is `X,Z`: two integers and a comma, no spaces.
 - A **percentage** is an integer followed by `%`.
-- An **id** is a resource location, `namespace:path` or just `path` (namespace `minecraft`). A **structure** is an id or a `#`-prefixed tag, as `/locate structure` takes them. A **biome** is an id.
+- An **id** is a resource location, `namespace:path` or just `path` (namespace `minecraft`). A **structure** is an id or a `#`-prefixed tag, as `/locate structure` takes them. A **biome** is an id or a `#`-prefixed biome tag, as `/locate biome` takes them. A **feature** is an id: a placed feature, or a configured feature naming every placed feature of it, as `spyglass locate feature` takes them ([locate.md](locate.md#features)).
 
 ### Grammar
 
 ```text
-line        = statement
+query       = [ find ] { statement }
+find        = "find" target [ find-place ] [ sampling ] [ "apart" INT ]
+target      = STRUCTURE | "biome" BIOME | "feature" FEATURE | "point"
+find-place  = "within" INT | place
 statement   = "require" [ dimension ] constraint
             | "prefer" [ dimension ] constraint [ "weight" INT ]
 dimension   = "overworld" | "nether" | "end"
 
 constraint  = [ count ] STRUCTURE region
+            | [ count ] "feature" FEATURE place
             | "cluster" INT STRUCTURE "within" INT "of" "each" "other" place
+            | "cluster" INT "feature" FEATURE "within" INT "of" "each" "other" place
             | [ count ] "slime" region
             | [ "no" ] "biome" BIOME place [ sampling ]
             | "biome" BIOME "covers" PERCENT place [ sampling ]
             | "spawn" point-place
+            | "height" INT "to" INT place [ "step" INT ]
+            | "flat" INT place [ "step" INT ]
 
 count       = INT | "no"
 region      = place | "within" INT "of" STRUCTURE place
-place       = "within" INT "of" ( "spawn" | POINT ) | "in" POINT "to" POINT
-point-place = "within" INT "of" POINT | "in" POINT "to" POINT
+place       = "within" INT "of" ( "spawn" | POINT | "here" ) | "in" POINT "to" POINT
+point-place = "within" INT "of" ( POINT | "here" ) | "in" POINT "to" POINT
 sampling    = [ "at" "y" INT ] [ "step" INT ]
 ```
 
-A missing count means 1. Structure anchors (`within R of STRUCTURE place`) are allowed only in structure and slime counts, and don't nest.
+A missing count means 1. Structure anchors (`within R of STRUCTURE place`) are allowed only in structure and slime counts, and don't nest. A query has at most one `find` line, before every constraint; `here` is allowed only after one, and never in the `find` line itself. Sampling in a `find` line is for biome and point targets only.
 
 ### Limits
 
@@ -50,14 +57,17 @@ A missing count means 1. Structure anchors (`within R of STRUCTURE place`) are a
 - Places: a box at most 65,536 blocks on a side, a radius at most 32,767 (so a disc's bounding box fits the same limit), including the radius around a structure anchor. Every count a query asks for is then over a bounded area.
 - Counts: 1 to 10,000. Cluster sizes: 2 to 64. Weights: 1 to 1,000. Percentages: 1 to 100. `step`: 1 to 4,096.
 - `y`: within the dimension's build height (−64 to 319 in the 26.3 Overworld).
-- A biome constraint's grid, counted over its place's bounding box, has at most 1,048,576 points.
-- A query has at least one constraint.
+- A biome constraint's grid, and a `find` line's biome or point grid, counted over its place's bounding box, has at most 1,048,576 points.
+- Terrain conditions: heights at most 4,096 in magnitude, `flat` 0 to 4,096, and a grid of at most 16,384 points (a column's height costs far more than its biome).
+- Features: a feature count's, a feature cluster's and a `find` line's feature place is at most 1,024 blocks on a side (a radius at most 511). Placing features takes tens of milliseconds a chunk ([features.md](features.md#ruling-out)), so 4,096 chunks already take minutes.
+- `apart`: as a distance, at most 30,000,000.
+- A query has at least one constraint, or a `find` line.
 
 Anything else is an error naming the line and column.
 
 ### Canonical form
 
-Every query has a canonical text, which parses back to the same query: one constraint per line in the original order, single spaces, no comments, ids with their namespace, the count only when it isn't 1, `at y` and `step` only when they aren't the defaults, `weight` only when it isn't 1, the dimension only when it isn't the [inferred](#dimensions) one, and a newline after each line. Front ends show this text where they echo a query (`--json`, the viewer's results).
+Every query has a canonical text, which parses back to the same query: the `find` line first (`within R` without `of` when it's around the origin, `apart` only when it isn't the target's default), then one constraint per line in the original order, single spaces, no comments, ids with their namespace, the count only when it isn't 1, `at y` and `step` only when they aren't the defaults, `weight` only when it isn't 1, the dimension only when it isn't the [inferred](#dimensions) one, and a newline after each line. Front ends show this text where they echo a query (`--json`, the viewer's results).
 
 ### Example
 
@@ -77,12 +87,21 @@ prefer biome minecraft:plains within 0 of spawn
 
 The last line asks for the spawn to be in plains: a disc of radius 0 holds only its centre.
 
+Features are counted as structures are ([below](#outcomes), [ADR 0057](../adr/0057-features-in-the-search-language.md)):
+
+```text
+# Two dungeons whose spawners are at most 16 blocks apart, near the spawn.
+require cluster 2 feature minecraft:monster_room within 16 of each other within 96 of spawn
+prefer 3 feature minecraft:monster_room within 96 of spawn
+```
+
 ## Dimensions
 
 Every constraint is in one dimension: the Overworld, the Nether or the End of the Default preset. `Game::search_query` resolves a query across them; `SearchQuery::dimension` says which each constraint is in.
 
-- **Inferred.** A structure or tag's dimension is the first of the Overworld, the Nether and the End that places any of its structures: some structure it names has biomes in that dimension's biome source ([structure-placement.md](structure-placement.md)). A biome's is the first whose source has it. A target that no dimension places is the Overworld's, and is never found there. Slime counts and `spawn` constraints are the Overworld's. Inference reads each dimension's data until one places the target, so a Nether target loads the Overworld's too.
+- **Inferred.** A structure or tag's dimension is the first of the Overworld, the Nether and the End that places any of its structures: some structure it names has biomes in that dimension's biome source ([structure-placement.md](structure-placement.md)). A biome's is the first whose source has it. A feature's is the first where spyglass places it (every target's is the Overworld's). A target that no dimension places is the Overworld's, and is never found there. Slime counts and `spawn` constraints are the Overworld's. Inference reads each dimension's data until one places the target, so a Nether target loads the Overworld's too.
 - **Explicit.** A dimension written after `require` or `prefer` sets it, and must place some of the target, or it's an error ("minecraft:tower isn't placed in the Nether"). That's how the rest of a tag that spans dimensions is reached: the Overworld places some of `#minecraft:ruined_portal`, so it infers the Overworld, and `nether` picks the Nether's portal.
+- **Terrain conditions** are the Overworld's unless a dimension is written, and are errors in a dimension with a ceiling (the Nether), whose surface heights are the ceiling's.
 - **Overworld only.** Slime chunks and `spawn` constraints in another dimension are errors. Structures on concentric rings (strongholds) aren't placed anywhere else, so naming them in another dimension is the error above.
 
 Points, boxes, `at y` and every position a constraint counts are in its dimension's coordinates. `at y` must be within that dimension's build height.
@@ -114,10 +133,11 @@ The first two lines are in the Nether, which fortresses and bastions infer, and 
 Each feature is a point, in blocks, horizontal only:
 
 - A **structure start**: its `/locate` position, the chunk's minimum block plus the set's locate offset.
+- A **feature**: the position the game calls it with ([locate.md](locate.md#features)), which has a height too. It's in the chunk being decorated: every target spreads its tries over the chunk (`in_square`), and the desert well's offset moves only y.
 - A **slime chunk**: its centre, `(16x + 8, 16z + 8)`.
 - The **spawn**: the spawn origin's climate position, or the origin chunk's centre when the dimension has no spawn targets (`SpawnOrigin::map_block`). The game's final spawn block is somewhere in the 11 × 11 chunks around the origin chunk ([spawn.md](spawn.md)).
 
-**Distance** between points is `d = isqrt(dx² + dz²)`, the integer square root rounded down, with `dx` and `dz` computed in 64-bit integers.
+**Distance** between points is `d = isqrt(dx² + dz²)`, the integer square root rounded down, with `dx` and `dz` computed in 64-bit integers. Features in a cluster are apart in three dimensions, `dx² + dy² + dz²`: two dungeons 10 blocks apart across but 70 down are no use to a farm. Everything else is horizontal, a feature in a place included: places have no height.
 
 A **place** is a set of points:
 
@@ -138,7 +158,9 @@ Its **outcome** is **met** if it holds in the worst case, **possibly met** if it
 What's certain:
 
 - A structure start is certain when `StructureStart::certain` is true; otherwise it's a candidate. A pair of a start and a structure anchor is certain when both are.
-- A biome sample **certainly matches** when its cell isn't tied and its biome is the target, and **possibly matches** when the target is its biome or among its tied biomes.
+- A feature is certain when `FoundFeature::certain` is: it placed on spyglass's blocks, and nothing in its chunk spyglass can't know could change that, for the chunk decorated before its neighbours ([ADR 0056](../adr/0056-two-certainties-on-its-own-and-whatever-the-neighbours.md)). A likely candidate (one that placed on spyglass's blocks, but something could change it) is uncertain. An unlikely one (one that declined on spyglass's blocks) isn't counted in either case: nearly every try is one (1,531 of 1,541 dungeon answers in two of 26.3's golden squares), so counting them would make nearly every count possibly met, and every chunk would have to be placed ([features.md](features.md#ruling-out)). Confirming doesn't change features: they're always decided with the blocks.
+- A biome sample **certainly matches** when every candidate of its cell (its biome, or all its tied biomes) is the target, or in the target tag, and **possibly matches** when any is. For a single biome, only an untied cell can certainly match.
+- Terrain heights are certain.
 - Slime chunks are always certain.
 - If the spawn origin is platform-dependent, every constraint that uses the spawn (as an anchor, or `spawn` itself) is possibly met, and scores 0 in the worst case.
 
@@ -149,11 +171,16 @@ Evaluating counts in each case:
 | `N S region` (at least) | every start, certain or candidate  | certain starts                    |
 | `no S region`           | certain starts                     | every start                       |
 | `cluster N S …`         | groups among every start           | groups among certain starts       |
+| `N feature F place`     | certain and likely features        | certain features                  |
+| `no feature F place`    | certain features                   | certain and likely features       |
+| `cluster N feature F …` | groups among certain and likely    | groups among certain features     |
 | `N slime region`        | slime chunks (both cases the same) | slime chunks                      |
 | `biome B place`         | possibly matching samples          | certainly matching samples        |
 | `no biome B place`      | certainly matching samples         | possibly matching samples         |
 | `biome B covers P% …`   | possibly matching samples          | certainly matching samples        |
 | `spawn place`           | the spawn                          | the spawn (none if platform-dep.) |
+| `height A to B place`   | the heights (both cases the same)  | the heights                       |
+| `flat D place`          | the heights (both cases the same)  | the heights                       |
 
 A constraint **holds** in a case when:
 
@@ -163,6 +190,12 @@ A constraint **holds** in a case when:
 - **Biome presence**: at least one sample matches.
 - **Coverage**: `100 × matching ≥ P × samples`.
 - **Spawn**: the spawn is in the place.
+- **Height**: every sample's height is in `A..=B`.
+- **Flat**: the highest and lowest samples differ by at most D.
+
+### Terrain sampling
+
+Terrain conditions sample `WORLD_SURFACE_WG` heights (`Session::height_at`, [terrain.md](terrain.md)) on the same grid as biomes, at spacing `step` (default 16). These are the generator's heights before structures, carvers and features, as structures see them: "flat" is flat terrain, and water counts as the surface.
 
 ### Biome sampling
 
@@ -179,7 +212,8 @@ Each preferred constraint has a **satisfaction** from 0 to 1,000, in the case th
 
 Every division below rounds down.
 
-- **At least N** (structures, slime chunks, biome presence, the spawn): the matching features in that case, nearest first, earn points each:
+- **At least N** (structures, features, slime chunks, biome presence, the spawn): the matching features in that case, nearest first, earn points each:
+
   - in `within R of …`: `500 + 500 × (R − d) / R`, with `d` the distance to the anchor (the nearest qualifying anchor start for structure anchors, the nearest matching sample for biomes); 1,000 when R is 0;
   - in a box: 1,000.
 
@@ -188,18 +222,53 @@ Every division below rounds down.
 - **`no`**: 1,000 if it holds in that case, else 0.
 - **Cluster**: `1000 × min(G, N) / N`, where G is the size of the largest group whose members are every two at most D apart.
 - **Coverage**: `min(1000, 100000 × matching / (P × samples))`.
+- **Height**: `1000 × in range / samples`.
+- **Flat**: 1,000 if it holds, else `1000 × D / (highest − lowest)`.
 
 ### Confirmed mode
 
-`confirm` (in `SearchOptions`, and an argument of `Session::evaluate`) decides structure starts with each seed's terrain, as [locate](locate.md#confirmed-mode) does. The query language doesn't change. Confirmed, a start is a candidate only behind a tied biome cell, a platform-dependent ring position, or a mineshaft whose check spyglass can't place in a column that's partly in its biomes; ties, a platform-dependent spawn and those starts are what keeps a constraint possibly met.
+`confirm` (in `SearchOptions`, and an argument of `Session::evaluate`) decides structure starts with each seed's terrain, as [locate](locate.md#confirmed-mode) does. The query language doesn't change. Confirmed, a start is a candidate only behind a tied biome cell or a platform-dependent ring position; those and a platform-dependent spawn are what keeps a constraint possibly met.
 
 Terrain only removes candidates or makes them certain, so it only narrows each constraint: its confirmed best case is no better than its unconfirmed one, and its confirmed worst case no worse, in what holds and in satisfaction (cluster sizes included, since the largest group of a subset is no larger). The fast path relies on this. Confirmed, it first checks the required constraints unconfirmed, in their best case; a seed that fails there fails confirmed, and its terrain is never bound. The rest runs confirmed, and gives the same answer as the plain confirmed evaluation.
+
+### Feature cost
+
+Features are the costliest constraints, so they're checked last, after terrain, smallest place first. A feature count or cluster places every chunk of its place that its features' tries reach and the terrain doesn't rule out (`Session::features_in`, [features.md](features.md#ruling-out)); one evaluation places each chunk once, however many constraints ask for it. The fast path places a required one's chunks only until it's decided in the case the search keeps (z, then x): at least N found, a group of N, or a feature that breaks `no`. A spawn that may differ by platform decides it without placing.
+
+Pairs of tries aren't filtered before placing. After a dungeon's first try that the terrain doesn't rule out, the next tries' positions depend on what it drew, so a chunk that's kept could hold a pair anywhere in it: tries rule out only what ruling out chunks already does.
 
 ## Verdict and ranking
 
 A seed's **verdict** is failed if any required constraint failed, possibly met if any is possibly met and none failed, and met otherwise (including when there are no required constraints). A search reports a seed when its verdict is met, or possibly met outside certain mode.
 
 Reported seeds are ranked by score, highest first, then by their index in the seed source, lowest first. This is a total order. A search keeps the first `top` seeds in it.
+
+## Searching within a seed
+
+A query with a `find` line searches one seed for places, not seeds for a world ([ADR 0047](../adr/0047-search-within-a-seed.md)). `Session::find` and `GameSession::find` run it; `spyglass find` and the viewer's Search tab ("This seed") are its front ends. A `find` query is an error in the seed search and in `Session::evaluate`, and a query without one is an error in `find`.
+
+```text
+# Two witch huts close enough to share an AFK spot.
+find minecraft:swamp_hut within 4096
+require minecraft:swamp_hut within 200 of here
+```
+
+**Targets.** The `find` line names what's looked for, in its place:
+
+- **A structure or tag**: each start of it in the place (its `/locate` position), confirmed with terrain if the search is. A candidate start is an uncertain target.
+- **`biome B`**: each point of the place's grid (`at y`, `step`, as [biome sampling](#biome-sampling)) whose sample possibly matches. One that only possibly matches is an uncertain target.
+- **`feature F`**: each feature of it in the place that is certain or likely, as [features are counted](#outcomes). A likely one is an uncertain target.
+- **`point`**: each point of the place's grid. Every point is certain.
+
+Its dimension is the target's, inferred as for constraints ([Dimensions](#dimensions)); a point target is the Overworld's in a game, and the world's own in a world. The place is in that dimension's coordinates. `within R` with no `of` is around the **origin** the search is given (`FindOptions::origin`: `--from` in the command, the view's centre in the viewer); `spawn` is the Overworld spawn, converted. A place has at most 1,048,576 targets.
+
+**`here`.** Each target is judged by evaluating every constraint with `here` set to its position: an anchor like a point, converted into a constraint's dimension as `spawn` is, and an error between the End and another dimension. A structure target's own start (the same dimension, set and chunk) is never counted by a structure count whose region is a place around `here`, as a structure anchor never counts itself; so "another hut within 200 of here" doesn't count the target. Nor is a feature target (the same dimension, placed feature and position) counted by a feature count or cluster whose place is around `here`.
+
+**Matches.** A target is a match when its verdict would make a seed search report it: met, or possibly met outside certain mode. An uncertain target's verdict is at most possibly met, and certain mode skips uncertain targets. Its score is the seed search's, in the case the search ranks by. A target within `apart` blocks (`distance ≤ apart`, when `apart` is above 0) of an earlier match is skipped: `apart` defaults to 0 for structures and features, and to 256 for biome and point targets, so one biome patch isn't a match per sample.
+
+**Order.** Targets are judged nearest first: by distance squared from the place's centre (a disc's anchor, or a box's centre rounded down), then by z, then by x. Matches are reported in that order, up to `top`, with their evaluations; scores don't reorder them.
+
+**Running.** Targets are judged in parallel batches whose results are kept in order, so the matches are the same for any thread count. A stop, a time limit or the progress callback's `Break` ends the search between targets; the matches are then those among the targets judged, a prefix of the full answer, and `complete` is false. `SearchThrottle` limits the threads at work, as in the seed search.
 
 ## Seed sources
 
@@ -215,9 +284,9 @@ A search starts at index `from` and runs until its **budget** is spent:
 - **A time limit**: until the time is up.
 - Both: whichever comes first.
 
-A search can also be **stopped** from another thread (`SearchStop`): Ctrl-C in the command, Stop in the viewer.
+A search can also be **stopped** from another thread (`SearchStop`): Ctrl-C in the command, Stop in the viewer. And it can be **throttled** (`SearchThrottle`): limited, while it runs, to a number of threads at work at once, taken up before each batch of seeds: up to 16, fewer where checks are slow, so a batch takes about 10 ms (a feature search's take seconds a seed, one to a batch). The viewer limits its search to one thread while the map has tiles to compute ([ADR 0046](../adr/0046-the-viewers-search-yields-to-the-map.md)). The seeds reported don't depend on it.
 
-Work goes in rounds of about half a second, with progress reported between them. A time limit, a stop, or a round that has run for a second cuts the round short before its next seed, however many seeds it was sized for. So a search stops within one seed's check of being asked. What a cut round keeps is every index below the first one not finished; seeds checked past that point are dropped and checked again by the next round, if there is one.
+Work goes in rounds of about half a second, at least a batch for each thread, with progress reported between them. A time limit, a stop, or a round that has run for a second cuts the round short before its next seed, however many seeds it was sized for. So a search stops within one seed's check of being asked. What a cut round keeps is every index below the first one not finished; seeds checked past that point are dropped and checked again by the next round, if there is one.
 
 Every search reports `next`, the first index it didn't evaluate, or that the source is finished. Every index below `next` has been evaluated. Starting again from `next` continues where it stopped.
 
@@ -236,3 +305,5 @@ Nothing in the semantics depends on floating point: positions, distances and sco
 - **The fast path**: for every seed in test ranges, the placement prefilter never rejects a seed the plain evaluation reports, and the fast check's verdict and score equal the plain evaluation's, confirmed or not. Confirming must narrow every result, as above.
 - **Dimensions**: on a fixture bundle with an Overworld and a Nether, inference, written dimensions and canonical text, every error above, a world's queries against a game's, and a `spawn` anchor in the Nether counting exactly the starts around the Overworld spawn divided by 8. The fast path and prefilter checks above run over queries that span both dimensions, with anchors converted both ways; an ignored test repeats them on the real 26.3 game, Nether and End queries included, confirmed or not.
 - **Determinism**: equal results for 1, 2 and 8 threads, and for a range run whole or in two parts.
+- **Features** (ignored, on the real bundle): `crates/spyglass/tests/feature_search.rs` checks a feature count's and a cluster's answers against `features_in`, the fast path against `evaluate` in both modes, and a `find` query's feature targets against a plain loop that never counts a target around itself. `crates/spyglass/tests/features.rs` runs the seed search for two dungeons near the spawn, in certain mode, and checks each pair against the game's decoration in the feature golden files ([oracle.md](oracle.md#feature-golden-files)).
+- **Within a seed** (`crates/spyglass/tests/find.rs`): on fixture bundles, matches equal a plain loop over the targets worked out by hand (a structure never counted around itself), the same at 1 and 8 threads, a stopped search's matches are a prefix, `apart`, terrain conditions against `Session::height_at`, biome tags (nested, optional, missing and cyclic) in `/locate biome` and the seed search, and every misuse an error. An ignored test runs the viewer's presets on the real bundles, confirmed, and checks each first match against the same constraints anchored at its block, and by hand against `structures_in`, `biome_at` and `height_at`.

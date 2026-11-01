@@ -63,12 +63,12 @@ impl VerticalAnchor {
     pub fn resolve(self, heights: AnchorHeights) -> i32 {
         match self {
             VerticalAnchor::Absolute(y) => y,
-            VerticalAnchor::AboveBottom(o) => heights.min_y.wrapping_add(o),
-            VerticalAnchor::BelowTop(o) => heights
+            VerticalAnchor::AboveBottom(offset) => heights.min_y.wrapping_add(offset),
+            VerticalAnchor::BelowTop(offset) => heights
                 .height
                 .wrapping_sub(1)
                 .wrapping_add(heights.min_y)
-                .wrapping_sub(o),
+                .wrapping_sub(offset),
         }
     }
 
@@ -79,12 +79,12 @@ impl VerticalAnchor {
             .filter(|o| o.len() == 1)
             .ok_or_else(|| at.error(LoadErrorKind::Shape("a vertical anchor")))?;
         let (key, value) = obj.iter().next().expect("one entry");
-        let n = codec::int_of(value)
+        let y = codec::int_of(value)
             .ok_or_else(|| at.child(key).error(LoadErrorKind::Shape("an integer")))?;
         match key.as_str() {
-            "absolute" => Ok(VerticalAnchor::Absolute(n)),
-            "above_bottom" => Ok(VerticalAnchor::AboveBottom(n)),
-            "below_top" => Ok(VerticalAnchor::BelowTop(n)),
+            "absolute" => Ok(VerticalAnchor::Absolute(y)),
+            "above_bottom" => Ok(VerticalAnchor::AboveBottom(y)),
+            "below_top" => Ok(VerticalAnchor::BelowTop(y)),
             _ => Err(at.error(LoadErrorKind::Shape("a vertical anchor"))),
         }
     }

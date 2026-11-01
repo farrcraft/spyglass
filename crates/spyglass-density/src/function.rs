@@ -552,8 +552,8 @@ impl Points {
         values: Vec<Spline>,
         derivatives: Vec<f32>,
     ) -> Option<Self> {
-        let n = locations.len();
-        (n > 0 && values.len() == n && derivatives.len() == n).then_some(Points {
+        let count = locations.len();
+        (count > 0 && values.len() == count && derivatives.len() == count).then_some(Points {
             coordinate,
             locations,
             values,

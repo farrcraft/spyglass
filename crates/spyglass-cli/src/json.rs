@@ -113,6 +113,8 @@ pub struct Xyz {
 #[derive(Serialize)]
 pub struct StructureAnswer<'a> {
     pub target: &'a str,
+    /// `locate` (the game's `/locate` answer) or `nearest`.
+    pub mode: &'static str,
     pub from: [i32; 3],
     pub radius: i32,
     pub confirmed: bool,
@@ -129,11 +131,12 @@ pub struct StructureHit<'a> {
     pub structures: &'a [String],
     pub certain: bool,
     pub blocks_away: i32,
-    /// With `--bounds`, where the structure that starts is known and is a jigsaw.
+    /// With `--bounds`, where the structure that starts is known and is a jigsaw or a
+    /// mineshaft.
     pub bounds: Option<Bounds>,
 }
 
-/// A jigsaw structure's bounds.
+/// A jigsaw structure's or a mineshaft's bounds.
 #[derive(Serialize)]
 pub struct Bounds {
     pub min: [i32; 3],
@@ -147,6 +150,56 @@ impl Bounds {
             min: layout.bounds.min,
             max: layout.bounds.max,
             pieces: layout.pieces.len(),
+        }
+    }
+}
+
+/// `blocks --at`: one block.
+#[derive(Serialize)]
+pub struct BlockAnswer<'a> {
+    pub carvers: bool,
+    pub position: [i32; 3],
+    pub block: &'a str,
+    pub certain: bool,
+}
+
+/// `blocks --column` and `--chunk`: columns of blocks.
+#[derive(Serialize)]
+pub struct BlocksAnswer {
+    pub carvers: bool,
+    pub min_y: i32,
+    pub columns: Vec<BlockColumn>,
+}
+
+/// A column's blocks from `min_y` up, as runs of one state, and the y of each block that
+/// depends on a tied biome.
+#[derive(Serialize)]
+pub struct BlockColumn {
+    pub x: i32,
+    pub z: i32,
+    pub blocks: Vec<(String, usize)>,
+    pub uncertain: Vec<i32>,
+}
+
+impl BlockColumn {
+    pub fn new([x, z]: [i32; 2], column: &spyglass::BlockColumn) -> Self {
+        let mut blocks: Vec<(String, usize)> = Vec::new();
+        for b in &column.blocks {
+            match blocks.last_mut() {
+                Some((block, n)) if *block == b.block => *n += 1,
+                _ => blocks.push((b.block.clone(), 1)),
+            }
+        }
+        let uncertain = (column.min_y..)
+            .zip(&column.blocks)
+            .filter(|(_, b)| !b.certain)
+            .map(|(y, _)| y)
+            .collect();
+        BlockColumn {
+            x,
+            z,
+            blocks,
+            uncertain,
         }
     }
 }
@@ -175,6 +228,58 @@ pub struct BiomeHit<'a> {
     pub tied: &'a [String],
     pub certain: bool,
     pub blocks_away: i32,
+}
+
+#[derive(Serialize)]
+pub struct FeatureLocateAnswer<'a> {
+    pub target: &'a str,
+    pub from: [i32; 3],
+    pub radius: i32,
+    pub complete: bool,
+    pub hits: Vec<FeatureHit<'a>>,
+}
+
+#[derive(Serialize)]
+pub struct FeaturesInAnswer<'a> {
+    pub target: &'a str,
+    pub min: [i32; 2],
+    pub max: [i32; 2],
+    pub features: Vec<FeatureHit<'a>>,
+}
+
+#[derive(Serialize)]
+pub struct FeatureHit<'a> {
+    pub feature: &'a str,
+    pub position: Xyz,
+    pub certain: bool,
+    pub likely: bool,
+    pub reason: Option<&'a str>,
+    pub neighbours_checked: bool,
+    pub neighbours: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocks_away: Option<i32>,
+}
+
+impl<'a> FeatureHit<'a> {
+    pub fn new(f: &'a spyglass::FoundFeature, from: Option<[i32; 3]>) -> Self {
+        let [x, y, z] = f.position;
+        FeatureHit {
+            feature: &f.feature,
+            position: Xyz { x, y, z },
+            certain: f.certain,
+            likely: f.likely,
+            reason: f.reason.as_deref(),
+            neighbours_checked: f.neighbours != spyglass::Neighbours::NotChecked,
+            neighbours: match &f.neighbours {
+                spyglass::Neighbours::Could(why) => Some(why),
+                _ => None,
+            },
+            blocks_away: from.map(|o| {
+                let (dx, dz) = (i64::from(x - o[0]), i64::from(z - o[2]));
+                ((dx * dx + dz * dz) as f64).sqrt() as i32
+            }),
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -208,8 +313,31 @@ pub struct RenderAnswer<'a> {
     pub area: Area,
     pub layers: RenderLayers<'a>,
     pub structures: Vec<StructureMark<'a>>,
+    pub features: Vec<FeatureHit<'a>>,
     pub slime_chunks: Vec<[i32; 2]>,
     pub spawn: Option<SpawnAnswer>,
+    pub pins: Vec<PinMark>,
+}
+
+/// A pin on a map.
+#[derive(Serialize)]
+pub struct PinMark {
+    pub position: Xz,
+    /// `#rrggbb`.
+    pub colour: String,
+}
+
+impl PinMark {
+    pub fn new(pin: &spyglass::Pin) -> PinMark {
+        let [r, g, b] = pin.colour;
+        PinMark {
+            position: Xz {
+                x: pin.position[0],
+                z: pin.position[1],
+            },
+            colour: format!("#{r:02x}{g:02x}{b:02x}"),
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -226,11 +354,15 @@ pub struct RenderLayers<'a> {
     pub ties: bool,
     pub highlight: &'a [String],
     pub structures: &'a [String],
+    pub features: &'a [String],
     pub slime_chunks: bool,
     pub spawn: bool,
     pub confirm: bool,
     pub relief: bool,
     pub surface: bool,
+    pub veins: bool,
+    pub noise_caves: bool,
+    pub carvers: bool,
 }
 
 /// A structure marker on a map.
@@ -355,6 +487,33 @@ pub struct SearchAnswer<'a> {
     pub warnings: Option<Vec<Warning>>,
 }
 
+/// `find`'s answer.
+#[derive(Serialize)]
+pub struct FindAnswer<'a> {
+    #[serde(flatten)]
+    pub header: Header<'a>,
+    pub query: &'a str,
+    pub origin: Xz,
+    pub certain: bool,
+    pub confirm: bool,
+    pub top: usize,
+    pub targets: usize,
+    pub judged: usize,
+    pub complete: bool,
+    pub elapsed_seconds: f64,
+    pub matches: Vec<FindMatch<'a>>,
+}
+
+#[derive(Serialize)]
+pub struct FindMatch<'a> {
+    pub position: Xz,
+    pub distance: u32,
+    pub target: Option<FeatureAnswer<'a>>,
+    pub score: u64,
+    pub verdict: &'static str,
+    pub constraints: Vec<ConstraintAnswer<'a>>,
+}
+
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Source {
@@ -387,6 +546,7 @@ pub struct ConstraintAnswer<'a> {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum FeatureAnswer<'a> {
     Structure(StructureMark<'a>),
+    Feature(FeatureHit<'a>),
     SlimeChunk {
         chunk: [i32; 2],
     },

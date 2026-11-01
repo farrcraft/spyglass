@@ -3,17 +3,21 @@
 //! `spyglass render` both draw through here, so they make the same image.
 
 mod palette;
+mod underground;
 
 use std::collections::BTreeMap;
 use std::io;
 
 use spyglass_biome::{BiomeId, Lookup};
 
-pub use palette::{biome_colour, structure_colour};
+pub use palette::{biome_colour, display_name, feature_colour, structure_colour};
+pub use underground::{
+    CarverKind, CarvingMap, MAX_UNDERGROUND_SCALE, UndergroundMap, Vein, VeinPart, vein_colour,
+};
 
 use crate::{
-    BiomeAt, BiomeQuery, Dimension, Error, Heightmap, Result, Session, SpawnOrigin, StructureQuery,
-    StructureStart, World,
+    BiomeAt, BiomeQuery, Dimension, Error, FeatureOptions, FeatureQuery, FoundFeature, Heightmap,
+    Result, Session, SpawnOrigin, StructureQuery, StructureStart, World,
 };
 
 /// The height biomes are sampled at unless asked otherwise.
@@ -29,11 +33,16 @@ pub const MAX_SLIME_SCALE: u32 = 16;
 /// The largest scale terrain layers (relief, surface biomes) are drawn at: each pixel needs a
 /// column's height, and a chunk's heights take milliseconds.
 pub const MAX_TERRAIN_SCALE: u32 = 4;
+/// The largest scale features (dungeons, geodes and the rest) are drawn at: each chunk they
+/// could be in is placed, at about 30 ms a chunk (`docs/specs/render.md#layers`).
+pub const MAX_FEATURE_SCALE: u32 = 2;
 /// How many pixels a marker reaches from its centre. An area includes the features whose
 /// centre is within this of it.
 pub const MARKER_REACH: u32 = 5;
 
 const BACKGROUND: [u8; 3] = [0x20, 0x20, 0x20];
+/// A column with no blocks, where heights are drawn: the void (`docs/specs/render.md#layers`).
+const VOID: [u8; 3] = [0x0b, 0x0b, 0x12];
 const SLIME: [u8; 3] = [0x40, 0xe0, 0x40];
 const SLIME_ALPHA: u32 = 128;
 const BLACK: [u8; 3] = [0, 0, 0];
@@ -70,10 +79,12 @@ impl MapArea {
     /// The area of `size` pixels with block `centre` in pixel `size / 2`, on the scale's grid.
     pub fn centred_on(centre: [i32; 2], size: [u32; 2], scale: u32, y: i32) -> Result<MapArea> {
         check_scale(scale)?;
-        let s = i64::from(scale);
+        let blocks_per_pixel = i64::from(scale);
+        // The corner, rounded down onto the scale's grid so the area's pixels are the
+        // world-aligned ones every area at this scale shares.
         let min = |d: usize| {
-            let corner = i64::from(centre[d]) - i64::from(size[d] / 2) * s;
-            i32::try_from(corner.div_euclid(s) * s)
+            let corner = i64::from(centre[d]) - i64::from(size[d] / 2) * blocks_per_pixel;
+            i32::try_from(corner.div_euclid(blocks_per_pixel) * blocks_per_pixel)
                 .map_err(|_| invalid("the area goes past the edge of the world's coordinates"))
         };
         let area = MapArea {
@@ -100,11 +111,11 @@ impl MapArea {
                 "{w} × {h} pixels is more than {MAX_PIXELS}"
             )));
         }
-        let s = i64::from(self.scale);
+        let blocks_per_pixel = i64::from(self.scale);
         for d in 0..2 {
-            if i64::from(self.min[d]) % s != 0 {
+            if i64::from(self.min[d]) % blocks_per_pixel != 0 {
                 return Err(invalid(format!(
-                    "the corner {:?} isn't a multiple of the scale {s}",
+                    "the corner {:?} isn't a multiple of the scale {blocks_per_pixel}",
                     self.min
                 )));
             }
@@ -124,19 +135,19 @@ impl MapArea {
 
     /// The block at pixel `(i, j)`'s corner, which its biome is sampled at.
     pub fn block(&self, [i, j]: [u32; 2]) -> [i32; 2] {
-        let s = i64::from(self.scale);
+        let blocks_per_pixel = i64::from(self.scale);
         [
-            (i64::from(self.min[0]) + i64::from(i) * s) as i32,
-            (i64::from(self.min[1]) + i64::from(j) * s) as i32,
+            (i64::from(self.min[0]) + i64::from(i) * blocks_per_pixel) as i32,
+            (i64::from(self.min[1]) + i64::from(j) * blocks_per_pixel) as i32,
         ]
     }
 
     /// The pixel containing block `(x, z)`, which may be outside the area.
     pub fn pixel(&self, [x, z]: [i32; 2]) -> [i64; 2] {
-        let s = i64::from(self.scale);
+        let blocks_per_pixel = i64::from(self.scale);
         [
-            (i64::from(x) - i64::from(self.min[0])).div_euclid(s),
-            (i64::from(z) - i64::from(self.min[1])).div_euclid(s),
+            (i64::from(x) - i64::from(self.min[0])).div_euclid(blocks_per_pixel),
+            (i64::from(z) - i64::from(self.min[1])).div_euclid(blocks_per_pixel),
         ]
     }
 
@@ -167,6 +178,9 @@ pub struct Layers {
     pub highlight: Vec<BiomeQuery>,
     /// Structures to mark, by id or tag.
     pub structures: Vec<StructureQuery>,
+    /// Features to mark, at scales up to [`MAX_FEATURE_SCALE`]: their certain and likely
+    /// answers.
+    pub features: Vec<FeatureQuery>,
     /// Slime chunks, at scales up to [`MAX_SLIME_SCALE`].
     pub slime_chunks: bool,
     /// The world spawn's origin.
@@ -180,6 +194,27 @@ pub struct Layers {
     /// Sample biomes at the surface rather than at the area's `y`. Scales up to
     /// [`MAX_TERRAIN_SCALE`].
     pub surface: bool,
+    /// Ore veins at the area's `y`, in dimensions that have them. Scales up to
+    /// [`MAX_UNDERGROUND_SCALE`].
+    pub veins: bool,
+    /// Noise caves at the area's `y`: the density graph's caves, before carvers. Scales up to
+    /// [`MAX_UNDERGROUND_SCALE`].
+    pub noise_caves: bool,
+    /// The caves and ravines carvers cut, at the area's `y`. Scales up to
+    /// [`MAX_UNDERGROUND_SCALE`].
+    pub carvers: bool,
+    /// Pins a front end puts on the map, drawn last, in this order.
+    pub pins: Vec<Pin>,
+}
+
+/// A pin on the map: a block and a colour, for places a front end keeps, such as its user's
+/// markers (`docs/specs/render.md#layers`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Pin {
+    /// The block x and z.
+    pub position: [i32; 2],
+    /// Its colour, as red, green and blue.
+    pub colour: [u8; 3],
 }
 
 impl Default for Layers {
@@ -190,11 +225,16 @@ impl Default for Layers {
             ties: false,
             highlight: Vec::new(),
             structures: Vec::new(),
+            features: Vec::new(),
             slime_chunks: false,
             spawn: false,
             confirm: false,
             relief: false,
             surface: false,
+            veins: false,
+            noise_caves: false,
+            carvers: false,
+            pins: Vec::new(),
         }
     }
 }
@@ -206,8 +246,8 @@ impl Layers {
     }
 
     /// Fails unless `world`'s dimension has every layer asked for
-    /// (`docs/specs/render.md#dimensions`): slime chunks and the spawn are the Overworld's, and
-    /// a dimension with a ceiling has no terrain layers.
+    /// (`docs/specs/render.md#dimensions`): slime chunks and the spawn are the Overworld's, a
+    /// dimension with a ceiling has no terrain layers, and one without ore veins no vein layer.
     pub fn check(&self, world: &World) -> Result<()> {
         let overworld = world.dimension_kind() == Dimension::Overworld;
         let refuse = |layer: &str| {
@@ -225,6 +265,9 @@ impl Layers {
         if self.need_heights() && world.has_ceiling() {
             return refuse("terrain layers (relief, surface biomes)");
         }
+        if self.veins && !world.block_settings()?.has_veins() {
+            return refuse("ore veins");
+        }
         Ok(())
     }
 }
@@ -234,10 +277,15 @@ impl Layers {
 pub struct MapFeatures {
     /// Structure starts and candidates, in drawing order: by set id, then chunk z, then x.
     pub structures: Vec<StructureStart>,
+    /// Features, certain and likely, in drawing order: by z, then x, then y, then placed
+    /// feature.
+    pub features: Vec<FoundFeature>,
     /// Slime chunks overlapping the area, by z, then x.
     pub slime_chunks: Vec<[i32; 2]>,
     /// The spawn's origin, if its marker reaches the area.
     pub spawn: Option<SpawnOrigin>,
+    /// The pins whose marker reaches the area, in the order given.
+    pub pins: Vec<Pin>,
 }
 
 impl SpawnOrigin {
@@ -254,11 +302,15 @@ impl SpawnOrigin {
 /// The biome under each pixel of an area, from [`Session::biome_map`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BiomeMap {
+    /// The world it was drawn in, so it isn't coloured with another's palette.
     world: u64,
+    /// The area it covers.
     area: MapArea,
-    /// Each pixel column's grid column, and each pixel row's grid row.
+    /// Each pixel column's grid column: at scales under 4, several pixels share a quart.
     columns: Vec<u32>,
+    /// Each pixel row's grid row.
     rows: Vec<u32>,
+    /// How many quarts a grid row has.
     grid_width: usize,
     /// Each sampled quart's biome (a tied cell's first), x fastest.
     cells: Vec<BiomeId>,
@@ -305,20 +357,22 @@ impl BiomeMap {
             if query.world != world.id {
                 return Err(Error::OtherWorld(query.id.clone()));
             }
-            if let Some(BiomeId(b)) = query.biome {
+            for &BiomeId(b) in &query.biomes {
                 bright[usize::from(b)] = true;
             }
         }
         let dim = !highlight.is_empty();
         let [w, h] = self.area.size;
-        let s = i64::from(self.area.scale);
-        let [gx0, gz0] = self.area.min.map(|m| i64::from(m) / s);
+        let blocks_per_pixel = i64::from(self.area.scale);
+        // The checker is counted from the world's pixel grid, not the area's corner, so two
+        // areas side by side draw a tie with the same pattern across their edge.
+        let [first_column, first_row] = self.area.min.map(|m| i64::from(m) / blocks_per_pixel);
         let mut image = Image::filled(self.area.size, BACKGROUND);
         for j in 0..h {
             for i in 0..w {
                 let candidates = self.cell([i, j]);
                 let shown = if ties && candidates.len() > 1 {
-                    let parity = (gx0 + i64::from(i) + gz0 + i64::from(j))
+                    let parity = (first_column + i64::from(i) + first_row + i64::from(j))
                         .rem_euclid(candidates.len() as i64);
                     candidates[parity as usize]
                 } else {
@@ -340,7 +394,9 @@ impl BiomeMap {
 /// relief shading compares against.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HeightMap {
+    /// The world it was computed in.
     world: u64,
+    /// The area it covers.
     area: MapArea,
     /// `(width + 1) × (height + 1)` heights from pixel `(−1, −1)`, x fastest.
     heights: Vec<i32>,
@@ -377,6 +433,12 @@ impl HeightMap {
         (rise * 32)
             .div_euclid(self.area.scale as i32)
             .clamp(-SHADE_LIMIT, SHADE_LIMIT)
+    }
+
+    /// Whether pixel `(i, j)`'s column has no blocks: its height is the level's lowest y, as an
+    /// empty column's is (`docs/specs/terrain.md`). The End's void.
+    fn is_void(&self, i: u32, j: u32) -> bool {
+        self.height([i, j]) <= self.level[0]
     }
 
     /// The image of the heights alone: each pixel grey by its height above the level's bottom.
@@ -420,7 +482,9 @@ fn dimmed([r, g, b]: [u8; 3]) -> [u8; 3] {
 /// An 8-bit RGBA image, rows top to bottom, always opaque.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Image {
+    /// Width and height in pixels.
     size: [u32; 2],
+    /// Four bytes a pixel, rows top to bottom.
     rgba: Vec<u8>,
 }
 
@@ -489,6 +553,15 @@ impl Image {
         }
     }
 
+    /// Blends `colour` at `alpha` over one pixel (`docs/specs/render.md#colours`).
+    fn blend(&mut self, pixel: [u32; 2], colour: [u8; 3], alpha: u32) {
+        let below = self.pixel(pixel);
+        let mixed = [0, 1, 2].map(|c| {
+            ((u32::from(colour[c]) * alpha + u32::from(below[c]) * (255 - alpha) + 127) / 255) as u8
+        });
+        self.set(pixel, mixed);
+    }
+
     /// Blends `colour` at `alpha` over pixels `min..=max`, clipped.
     fn blend_rect(&mut self, min: [i64; 2], max: [i64; 2], colour: [u8; 3], alpha: u32) {
         let clip = |v: i64, n: u32| v.clamp(0, i64::from(n) - 1) as u32;
@@ -501,12 +574,7 @@ impl Image {
         }
         for j in clip(min[1], self.size[1])..=clip(max[1], self.size[1]) {
             for i in clip(min[0], self.size[0])..=clip(max[0], self.size[0]) {
-                let below = self.pixel([i, j]);
-                let mixed = [0, 1, 2].map(|c| {
-                    ((u32::from(colour[c]) * alpha + u32::from(below[c]) * (255 - alpha) + 127)
-                        / 255) as u8
-                });
-                self.set([i, j], mixed);
+                self.blend([i, j], colour, alpha);
             }
         }
     }
@@ -519,6 +587,20 @@ impl Image {
             for i in 0..self.size[0] {
                 let shade = heights.shade(i64::from(i), i64::from(j));
                 self.set([i, j], shaded(self.pixel([i, j]), shade));
+            }
+        }
+    }
+
+    /// Draws the columns of `heights`' area that have no blocks as the void, so islands stand out
+    /// from the space around them (`docs/specs/render.md#layers`). The image must be the area's
+    /// size.
+    pub fn mark_void(&mut self, heights: &HeightMap) {
+        assert_eq!(self.size, heights.area.size, "an image of the area");
+        for j in 0..self.size[1] {
+            for i in 0..self.size[0] {
+                if heights.is_void(i, j) {
+                    self.set([i, j], VOID);
+                }
             }
         }
     }
@@ -546,6 +628,16 @@ fn structure_marker(colour: [u8; 3], certain: bool) -> impl Fn(i64, i64) -> Opti
     }
 }
 
+/// A feature marker: a diamond 9 pixels across with a black border, hollow for a candidate.
+fn feature_marker(colour: [u8; 3], certain: bool) -> impl Fn(i64, i64) -> Option<[u8; 3]> {
+    move |dx, dy| match dx.abs() + dy.abs() {
+        4 => Some(BLACK),
+        2 | 3 => Some(colour),
+        0 | 1 if certain => Some(colour),
+        _ => None,
+    }
+}
+
 /// The spawn marker: a white cross over a wider black one.
 fn spawn_marker(dx: i64, dy: i64) -> Option<[u8; 3]> {
     let (ax, ay) = (dx.abs(), dy.abs());
@@ -558,6 +650,15 @@ fn spawn_marker(dx: i64, dy: i64) -> Option<[u8; 3]> {
     }
 }
 
+/// A pin: a disc of radius 3 in its colour, ringed in black out to radius √20.
+fn pin_marker(colour: [u8; 3]) -> impl Fn(i64, i64) -> Option<[u8; 3]> {
+    move |dx, dy| match dx * dx + dy * dy {
+        0..=9 => Some(colour),
+        10..=20 => Some(BLACK),
+        _ => None,
+    }
+}
+
 /// `i64` to `i32`, saturating.
 fn saturate(v: i64) -> i32 {
     v.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
@@ -567,14 +668,18 @@ impl Session<'_> {
     /// The biome under each pixel of `area` (`docs/specs/render.md#biomes`).
     pub fn biome_map(&self, area: &MapArea) -> Result<BiomeMap> {
         area.check()?;
-        let s = i64::from(area.scale);
+        // Each pixel samples the quart holding its corner block. The corner is a multiple of
+        // the scale, so a grid of quarts `step` apart from it is aligned to the world: every
+        // area samples the same quarts at the same blocks, and tiles drawn apart meet without
+        // a seam. At scales under 4 a quart spans several pixels, which share its sample.
+        let blocks_per_pixel = i64::from(area.scale);
         let step = (area.scale / 4).max(1);
         let origin = area.min.map(|m| m >> 2);
         // Each pixel's sample quart, as a grid index along one axis.
         let axis = |d: usize| -> Vec<u32> {
             (0..area.size[d])
                 .map(|i| {
-                    let block = i64::from(area.min[d]) + i64::from(i) * s;
+                    let block = i64::from(area.min[d]) + i64::from(i) * blocks_per_pixel;
                     (((block >> 2) - i64::from(origin[d])) / i64::from(step)) as u32
                 })
                 .collect()
@@ -619,11 +724,13 @@ impl Session<'_> {
                 area.scale
             )));
         }
-        let s = i64::from(area.scale);
-        // From one pixel before the area, which saturates at the edge of the coordinates.
+        let blocks_per_pixel = i64::from(area.scale);
+        // From one pixel before the area, which saturates at the edge of the coordinates: the
+        // relief shade compares each pixel with its west and north neighbours, so a tile's
+        // edge is shaded as the tile beside it would shade it.
         let axis = |d: usize| -> Vec<i32> {
             (-1..i64::from(area.size[d]))
-                .map(|i| saturate(i64::from(area.min[d]) + i * s))
+                .map(|i| saturate(i64::from(area.min[d]) + i * blocks_per_pixel))
                 .collect()
         };
         let (xs, zs) = (axis(0), axis(1));
@@ -696,9 +803,10 @@ impl Session<'_> {
         self.biome_at([x, y, z])
     }
 
-    /// The structure starts, slime chunks and spawn that `area` draws with `layers`
-    /// (`docs/specs/render.md#layers`): structures and the spawn whose marker reaches the
-    /// area, and slime chunks that overlap it.
+    /// The structure starts, features, slime chunks, spawn and pins that `area` draws with
+    /// `layers` (`docs/specs/render.md#layers`): structures, features, the spawn and pins whose
+    /// marker reaches the area, and slime chunks that overlap it. Features place every chunk
+    /// their markers could come from, which takes a while ([`Session::features_in`]).
     pub fn map_features(&self, area: &MapArea, layers: &Layers) -> Result<MapFeatures> {
         area.check()?;
         layers.check(self.world)?;
@@ -707,18 +815,23 @@ impl Session<'_> {
             let mut targets = Vec::new();
             for query in &layers.structures {
                 self.check_world(query.world, &query.argument)?;
-                for &t in &query.targets {
-                    if !targets.contains(&t) {
-                        targets.push(t);
+                for &target in &query.targets {
+                    if !targets.contains(&target) {
+                        targets.push(target);
                     }
                 }
             }
+            // Markers reach past the area, so starts are looked for in the blocks within reach
+            // of it, then kept if their marker reaches it: a marker cut by a tile's edge is drawn
+            // in both tiles.
             let [[x0, x1], [z0, z1]] = area.reach_blocks();
             let mut starts = self.starts_by_set(
                 &targets,
                 |offset| {
                     // The chunks whose position, chunk·16 + offset, is in reach.
-                    let chunk = |b: i64, o: i32| saturate((b - i64::from(o)).div_euclid(16));
+                    let chunk = |block: i64, offset: i32| {
+                        saturate((block - i64::from(offset)).div_euclid(16))
+                    };
                     (
                         [chunk(x0, offset[0]), chunk(z0, offset[2])],
                         [chunk(x1, offset[0]), chunk(z1, offset[2])],
@@ -731,6 +844,31 @@ impl Session<'_> {
                 (&a.set, a.chunk[1], a.chunk[0]).cmp(&(&b.set, b.chunk[1], b.chunk[0]))
             });
             features.structures = starts;
+        }
+        if !layers.features.is_empty() {
+            if area.scale > MAX_FEATURE_SCALE {
+                return Err(invalid(format!(
+                    "features are drawn at scales up to {MAX_FEATURE_SCALE}, not {}",
+                    area.scale
+                )));
+            }
+            // The chunks a reaching marker's position can be in.
+            let [[x0, x1], [z0, z1]] = area.reach_blocks();
+            let min = [saturate(x0 >> 4), saturate(z0 >> 4)];
+            let max = [saturate(x1 >> 4), saturate(z1 >> 4)];
+            for query in &layers.features {
+                for found in self.features_in(query, min, max, FeatureOptions::default())? {
+                    if area.reaches([found.position[0], found.position[2]])
+                        && !features.features.contains(&found)
+                    {
+                        features.features.push(found);
+                    }
+                }
+            }
+            features.features.sort_by(|a, b| {
+                let key = |f: &FoundFeature| (f.position[2], f.position[0], f.position[1]);
+                key(a).cmp(&key(b)).then_with(|| a.feature.cmp(&b.feature))
+            });
         }
         if layers.slime_chunks {
             if area.scale > MAX_SLIME_SCALE {
@@ -750,12 +888,33 @@ impl Session<'_> {
                 features.spawn = Some(origin);
             }
         }
+        features.pins = layers
+            .pins
+            .iter()
+            .filter(|p| area.reaches(p.position))
+            .copied()
+            .collect();
         Ok(features)
     }
 
-    /// `area` drawn with `layers` (`docs/specs/render.md`).
+    /// `area` drawn with `layers` (`docs/specs/render.md`). With an underground layer on,
+    /// [`Session::underground_map`] carves each chunk again: front ends that change the height
+    /// can keep a [`CarvingMap`] and draw the steps themselves.
     pub fn render(&self, area: &MapArea, layers: &Layers) -> Result<Image> {
         let features = self.map_features(area, layers)?;
+        self.render_with(area, layers, &features)
+    }
+
+    /// [`render`](Self::render) with `features` already found for the same area and layers
+    /// ([`Session::map_features`]), for a front end that lists them too.
+    pub fn render_with(
+        &self,
+        area: &MapArea,
+        layers: &Layers,
+        features: &MapFeatures,
+    ) -> Result<Image> {
+        area.check()?;
+        layers.check(self.world)?;
         let heights = if layers.need_heights() {
             Some(self.height_map(area)?)
         } else {
@@ -770,12 +929,19 @@ impl Session<'_> {
                     .colorize(self.world, layers.ties, &layers.highlight)?
             }
             Some(heights) => heights.elevation(),
+            None if layers.need_underground() => Image::underground_background(area.size),
             None => Image::background(area.size),
         };
         if let (Some(heights), true) = (&heights, layers.relief) {
             image.shade(heights);
         }
-        image.draw_features(area, &features);
+        if let Some(heights) = &heights {
+            image.mark_void(heights);
+        }
+        if layers.need_underground() {
+            image.draw_underground(&self.underground_map(area, layers, None)?, layers);
+        }
+        image.draw_features(area, features);
         Ok(image)
     }
 }
@@ -786,8 +952,14 @@ impl Image {
         Image::filled(size, BACKGROUND)
     }
 
+    /// The background drawn when the biome layer and relief are off but an underground layer
+    /// is on: a mid grey the layers' tints show on.
+    pub fn underground_background(size: [u32; 2]) -> Image {
+        Image::filled(size, underground::UNDERGROUND_BACKGROUND)
+    }
+
     /// Draws `features` over the image of `area`, which must be the image's size: slime chunks,
-    /// then structure markers, then the spawn. [`Session::render`] is
+    /// then structure markers, then feature markers, then the spawn, then pins. [`Session::render`] is
     /// [`BiomeMap::colorize`] (or [`background`](Self::background)), then this, with
     /// [`Session::map_features`]; front ends that cache biome maps can do the steps
     /// themselves, and leave out features they draw another way.
@@ -806,8 +978,19 @@ impl Image {
             let marker = structure_marker(structure_colour(&start.set), start.certain);
             self.stamp(centre, 4, marker);
         }
+        for found in &features.features {
+            let centre = area.pixel([found.position[0], found.position[2]]);
+            self.stamp(
+                centre,
+                4,
+                feature_marker(feature_colour(&found.feature), found.certain),
+            );
+        }
         if let Some(origin) = &features.spawn {
             self.stamp(area.pixel(origin.map_block()), 5, spawn_marker);
+        }
+        for pin in &features.pins {
+            self.stamp(area.pixel(pin.position), 4, pin_marker(pin.colour));
         }
     }
 }
@@ -892,6 +1075,14 @@ mod tests {
         assert_eq!(image.pixel([4, 4]), [1, 1, 1]);
         image.stamp([4, 4], 4, structure_marker([9, 9, 9], true));
         assert_eq!(image.pixel([4, 4]), [9, 9, 9]);
+        let mut image = Image::filled([9, 9], [1, 1, 1]);
+        image.stamp([4, 4], 4, feature_marker([9, 9, 9], false));
+        assert_eq!(image.pixel([0, 0]), [1, 1, 1]);
+        assert_eq!(image.pixel([0, 4]), BLACK);
+        assert_eq!(image.pixel([2, 4]), [9, 9, 9]);
+        assert_eq!(image.pixel([4, 5]), [1, 1, 1]);
+        image.stamp([4, 4], 4, feature_marker([9, 9, 9], true));
+        assert_eq!(image.pixel([4, 5]), [9, 9, 9]);
         // Clipped at the edges without panicking.
         image.stamp([-3, 10], 5, spawn_marker);
         let mut image = Image::filled([11, 11], [1, 1, 1]);

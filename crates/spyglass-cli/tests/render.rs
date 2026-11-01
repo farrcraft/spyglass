@@ -6,7 +6,7 @@ use std::path::Path;
 use std::process::{Command, Output};
 
 use serde_json::{Value, json};
-use spyglass::{Layers, MapArea, World};
+use spyglass::{Layers, MapArea, Pin, World};
 use spyglass_oracle::fixtures::{self, TestBundle, resource};
 
 fn bundle() -> TestBundle {
@@ -22,7 +22,7 @@ fn bundle() -> TestBundle {
             resource(
                 "worldgen/structure",
                 "tower",
-                json!({"type": "minecraft:stronghold", "biomes": "minecraft:plains"}),
+                json!({"type": "minecraft:stronghold", "biomes": "minecraft:plains", "step": "surface_structures"}),
             ),
         ],
         true,
@@ -73,6 +73,12 @@ fn the_command_writes_the_same_image_as_the_library() {
             "--slime",
             "--spawn",
             "--ties",
+            "--pin",
+            "-40,8",
+            "--pin",
+            "-100,-60,#4C8FF0",
+            "--pin",
+            "5000,0,#e05050",
             "-o",
             file.to_str().unwrap(),
             "--json",
@@ -90,6 +96,21 @@ fn the_command_writes_the_same_image_as_the_library() {
         structures: vec![world.structure_query("minecraft:tower").unwrap()],
         slime_chunks: true,
         spawn: true,
+        // Amber when no colour is given.
+        pins: vec![
+            Pin {
+                position: [-40, 8],
+                colour: [0xf0, 0xb0, 0x30],
+            },
+            Pin {
+                position: [-100, -60],
+                colour: [0x4c, 0x8f, 0xf0],
+            },
+            Pin {
+                position: [5000, 0],
+                colour: [0xe0, 0x50, 0x50],
+            },
+        ],
         ..Layers::default()
     };
     let mut expected = Vec::new();
@@ -120,6 +141,14 @@ fn the_command_writes_the_same_image_as_the_library() {
     assert_eq!(
         answer["spawn"]["chunk"],
         json!(session.spawn_origin().chunk)
+    );
+    // The pins in view, in order; the one at x = 5000 is out of it.
+    assert_eq!(
+        answer["pins"],
+        json!([
+            {"position": {"x": -40, "z": 8}, "colour": "#f0b030"},
+            {"position": {"x": -100, "z": -60}, "colour": "#4c8ff0"},
+        ])
     );
 }
 
@@ -228,10 +257,55 @@ fn bad_requests_fail_without_writing() {
         &["--seed", "1", "--size", "big", "-o", path],
         &["--seed", "1", "--centre", "player", "-o", path],
         &["--seed", "1", "--centre", "0,0", "--min", "0,0", "-o", path],
+        &["--seed", "1", "--pin", "1", "-o", path],
+        &["--seed", "1", "--pin", "1,2,#12345", "-o", path],
+        &["--seed", "1", "--pin", "1,2,red", "-o", path],
     ] {
         let out = spyglass(&fixture.path(), args);
         assert!(!out.status.success(), "{args:?}");
         assert!(out.stdout.is_empty());
         assert!(!file.exists(), "{args:?}");
     }
+}
+
+#[test]
+fn underground_layers_are_the_library_s() {
+    let fixture = bundle();
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("map.png");
+    let args = |extra: &[&'static str]| {
+        let mut args = vec!["--seed", "3", "--size", "24x16", "--scale", "1", "--y", "0"];
+        args.extend_from_slice(extra);
+        args.extend_from_slice(&["-o", file.to_str().unwrap(), "--json"]);
+        args
+    };
+    let out = spyglass(
+        &fixture.path(),
+        &args(&["--caves", "--carvers", "--no-biomes"]),
+    );
+    let answer: Value = serde_json::from_slice(ok(&out)).unwrap();
+    let world = World::open(fixture.path()).unwrap();
+    let layers = Layers {
+        biomes: false,
+        noise_caves: true,
+        carvers: true,
+        ..Layers::default()
+    };
+    let area = MapArea::centred_on([0, 0], [24, 16], 1, 0).unwrap();
+    let mut expected = Vec::new();
+    world
+        .session(3)
+        .unwrap()
+        .render(&area, &layers)
+        .unwrap()
+        .write_png(&mut expected)
+        .unwrap();
+    assert_eq!(std::fs::read(&file).unwrap(), expected);
+    for (layer, on) in [("veins", false), ("noise_caves", true), ("carvers", true)] {
+        assert_eq!(answer["layers"][layer], on, "{layer}");
+    }
+    // The fixture's material rule has no ore veins.
+    let out = spyglass(&fixture.path(), &args(&["--veins"]));
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("ore veins"));
 }

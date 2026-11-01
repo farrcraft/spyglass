@@ -28,11 +28,12 @@ use crate::sampler::{
     java_pow, round_to_integer, round_to_multiple, unary,
 };
 
-/// One volume evaluation's state: the point memo, for samplers that evaluate their inputs at
-/// points, and each node's last volume and values, by slot.
+/// One volume evaluation's state, passed down the graph as `state`.
 struct Fill<'m> {
+    /// The point memo, for samplers that evaluate their inputs at points.
     point: &'m mut Memo,
-    cells: Vec<Option<(Volume, Vec<f32>)>>,
+    /// Each shared node's last volume and its values there, by slot.
+    computed: Vec<Option<(Volume, Vec<f32>)>>,
 }
 
 impl Sampler {
@@ -48,7 +49,7 @@ impl Sampler {
         let _t = crate::timing::span("volume: call");
         let mut fill = Fill {
             point: memo,
-            cells: Vec::new(),
+            computed: Vec::new(),
         };
         let mut out = vec![0.0; volume.len()];
         self.fill(&mut fill, volume, &mut out);
@@ -56,13 +57,13 @@ impl Sampler {
     }
 
     /// Writes the value over `volume` into `out`, reusing what this call already computed.
-    fn fill(&self, f: &mut Fill, volume: &Volume, out: &mut [f32]) {
+    fn fill(&self, state: &mut Fill, volume: &Volume, out: &mut [f32]) {
         let slot = self.slot as usize;
         // Only a node the graph shares can be asked for again in one call.
         let remembered = self.slot != NO_SLOT && self.shared.load(Ordering::Relaxed);
         if remembered
-            && let Some(Some((v, values))) = f.cells.get(slot)
-            && v == volume
+            && let Some(Some((last_volume, values))) = state.computed.get(slot)
+            && last_volume == volume
         {
             #[cfg(feature = "timing")]
             let _t = crate::timing::detail("volume: memo hit");
@@ -77,35 +78,35 @@ impl Sampler {
                 volume.step,
             );
             let mut values = vec![0.0; flat.len()];
-            self.fill(f, &flat, &mut values);
+            self.fill(state, &flat, &mut values);
             #[cfg(feature = "timing")]
             let _t = crate::timing::detail("volume: spread y");
             spread_y(&values, volume, out);
         } else {
             #[cfg(feature = "timing")]
             let _t = crate::timing::detail(self.node.kind());
-            self.node.fill(f, volume, out);
+            self.node.fill(state, volume, out);
         }
         #[cfg(feature = "timing")]
         let _t = crate::timing::detail("volume: memo store");
         if remembered {
-            if f.cells.len() <= slot {
-                f.cells.resize_with(slot + 1, || None);
+            if state.computed.len() <= slot {
+                state.computed.resize_with(slot + 1, || None);
             }
-            f.cells[slot] = Some((*volume, out.to_vec()));
+            state.computed[slot] = Some((*volume, out.to_vec()));
         }
     }
 
     /// The value over `volume`, in a new buffer.
-    fn values(&self, f: &mut Fill, volume: &Volume) -> Vec<f32> {
+    fn values(&self, state: &mut Fill, volume: &Volume) -> Vec<f32> {
         let mut out = vec![0.0; volume.len()];
-        self.fill(f, volume, &mut out);
+        self.fill(state, volume, &mut out);
         out
     }
 }
 
 impl Node {
-    fn fill(&self, f: &mut Fill, volume: &Volume, out: &mut [f32]) {
+    fn fill(&self, state: &mut Fill, volume: &Volume, out: &mut [f32]) {
         match self {
             Node::Constant(v) => out.fill(*v),
             // NoiseFunction.Sampler: the stack's own volume path, from zero.
@@ -134,12 +135,12 @@ impl Node {
                 sx,
                 sz,
             } => {
-                let (a, b) = (sx.values(f, volume), sz.values(f, volume));
+                let (shift_x, shift_z) = (sx.values(state, volume), sz.values(state, volume));
                 for_each(volume, |i, x, y, z| {
                     out[i] = noise.get(
-                        f64::from(x) * xz_scale + f64::from(a[i]),
+                        f64::from(x) * xz_scale + f64::from(shift_x[i]),
                         f64::from(y) * y_scale,
-                        f64::from(z) * xz_scale + f64::from(b[i]),
+                        f64::from(z) * xz_scale + f64::from(shift_z[i]),
                     );
                 });
             }
@@ -151,14 +152,14 @@ impl Node {
                 sy,
                 sz,
             } => {
-                let a = sx.values(f, volume);
-                let b = sy.values(f, volume);
-                let c = sz.values(f, volume);
+                let shift_x = sx.values(state, volume);
+                let shift_y = sy.values(state, volume);
+                let shift_z = sz.values(state, volume);
                 for_each(volume, |i, x, y, z| {
                     out[i] = noise.get(
-                        f64::from(x) * xz_scale + f64::from(a[i]),
-                        f64::from(y) * y_scale + f64::from(b[i]),
-                        f64::from(z) * xz_scale + f64::from(c[i]),
+                        f64::from(x) * xz_scale + f64::from(shift_x[i]),
+                        f64::from(y) * y_scale + f64::from(shift_y[i]),
+                        f64::from(z) * xz_scale + f64::from(shift_z[i]),
                     );
                 });
             }
@@ -189,41 +190,51 @@ impl Node {
                     .collect();
                 spread_y(&flat, volume, out);
             }
-            Node::Add(a, b) => binary(f, volume, out, a, b, |l, r| l + r),
+            Node::Add(a, b) => binary(state, volume, out, a, b, |l, r| l + r),
             // SubSampler: left + (−right), the same float as left − right.
-            Node::Sub(a, b) => binary(f, volume, out, a, b, |l, r| l + -r),
+            Node::Sub(a, b) => binary(state, volume, out, a, b, |l, r| l + -r),
             // MulSampler and DivSampler: no zero test here, unlike the point path.
-            Node::Mul(a, b) => binary(f, volume, out, a, b, |l, r| l * r),
-            Node::Div(a, b) => binary(f, volume, out, a, b, |l, r| l / r),
-            Node::MulConst(a, c) => map(f, volume, out, a, |v| v * c),
-            Node::ConstDiv(c, b) => map(f, volume, out, b, |v| c / v),
+            Node::Mul(a, b) => binary(state, volume, out, a, b, |l, r| l * r),
+            Node::Div(a, b) => binary(state, volume, out, a, b, |l, r| l / r),
+            Node::MulConst(a, c) => map(state, volume, out, a, |v| v * c),
+            Node::ConstDiv(c, b) => map(state, volume, out, b, |v| c / v),
             // MinSampler and MaxSampler: the right value replaces the left only if it's below
             // (above) it, not Math.min (Math.max), and the right's range isn't consulted.
-            Node::Min(a, b, _) => binary(f, volume, out, a, b, |l, r| if r < l { r } else { l }),
-            Node::Max(a, b, _) => binary(f, volume, out, a, b, |l, r| if r > l { r } else { l }),
-            Node::MinConst(a, c) => map(f, volume, out, a, |v| if *c < v { *c } else { v }),
-            Node::MaxConst(a, c) => map(f, volume, out, a, |v| if *c > v { *c } else { v }),
-            Node::Unary(op, a) => map(f, volume, out, a, |v| unary(*op, v)),
+            Node::Min(a, b, _) => {
+                binary(state, volume, out, a, b, |l, r| if r < l { r } else { l })
+            }
+            Node::Max(a, b, _) => {
+                binary(state, volume, out, a, b, |l, r| if r > l { r } else { l })
+            }
+            Node::MinConst(a, c) => map(state, volume, out, a, |v| if *c < v { *c } else { v }),
+            Node::MaxConst(a, c) => map(state, volume, out, a, |v| if *c > v { *c } else { v }),
+            Node::Unary(op, a) => map(state, volume, out, a, |v| unary(*op, v)),
             Node::Round(kind, input, multiple) => {
-                binary(f, volume, out, input, multiple, |v, m| {
+                binary(state, volume, out, input, multiple, |v, m| {
                     round_to_multiple(v, m, *kind)
                 });
             }
             Node::RoundInteger(kind, input) => {
-                map(f, volume, out, input, |v| round_to_integer(v, *kind));
+                map(state, volume, out, input, |v| round_to_integer(v, *kind));
             }
-            Node::Clamp(input, min, max) => map(f, volume, out, input, |v| clamp(v, *min, *max)),
+            Node::Clamp(input, min, max) => {
+                map(state, volume, out, input, |v| clamp(v, *min, *max))
+            }
             Node::MathClamp(input, min, max) => {
-                map(f, volume, out, input, |v| java::clamp(v, *min, *max));
+                map(state, volume, out, input, |v| java::clamp(v, *min, *max));
             }
-            Node::Pow(base, exponent) => binary(f, volume, out, base, exponent, |b, e| {
+            Node::Pow(base, exponent) => binary(state, volume, out, base, exponent, |b, e| {
                 java_pow(f64::from(b), f64::from(e))
             }),
             Node::PowConstBase(base, exponent) => {
-                map(f, volume, out, exponent, |e| java_pow(*base, f64::from(e)));
+                map(state, volume, out, exponent, |e| {
+                    java_pow(*base, f64::from(e))
+                });
             }
             Node::PowConstExponent(base, exponent) => {
-                map(f, volume, out, base, |b| java_pow(f64::from(b), *exponent));
+                map(state, volume, out, base, |b| {
+                    java_pow(f64::from(b), *exponent)
+                });
             }
             // LerpFunction.Sampler: all three over the volume, then the point path's choice.
             Node::Lerp {
@@ -231,16 +242,17 @@ impl Node {
                 first,
                 second,
             } => {
-                alpha.fill(f, volume, out);
-                let a = first.values(f, volume);
-                let b = second.values(f, volume);
+                alpha.fill(state, volume, out);
+                let firsts = first.values(state, volume);
+                let seconds = second.values(state, volume);
+                // `out` holds the alphas, each replaced by its lerp.
                 for (i, t) in out.iter_mut().enumerate() {
                     *t = if *t == 0.0 {
-                        a[i]
+                        firsts[i]
                     } else if *t == 1.0 {
-                        b[i]
+                        seconds[i]
                     } else {
-                        mth::lerp(*t, a[i], b[i])
+                        mth::lerp(*t, firsts[i], seconds[i])
                     };
                 }
             }
@@ -252,12 +264,12 @@ impl Node {
                 when_in_range,
                 when_out_of_range,
             } => {
-                when_in_range.fill(f, volume, out);
-                let v = input.values(f, volume);
-                let other = when_out_of_range.values(f, volume);
+                when_in_range.fill(state, volume, out);
+                let inputs = input.values(state, volume);
+                let out_of_range = when_out_of_range.values(state, volume);
                 for i in 0..out.len() {
-                    if !(v[i] >= *min_inclusive && v[i] < *max_exclusive) {
-                        out[i] = other[i];
+                    if !(inputs[i] >= *min_inclusive && inputs[i] < *max_exclusive) {
+                        out[i] = out_of_range[i];
                     }
                 }
             }
@@ -267,14 +279,17 @@ impl Node {
                 thresholds,
                 samplers,
             } => {
-                input.fill(f, volume, out);
-                let values: Vec<Vec<f32>> = samplers.iter().map(|s| s.values(f, volume)).collect();
+                input.fill(state, volume, out);
+                let values: Vec<Vec<f32>> =
+                    samplers.iter().map(|s| s.values(state, volume)).collect();
+                // `out` holds the inputs, each replaced by the value of the first function whose
+                // threshold is above it, or the last.
                 for (i, v) in out.iter_mut().enumerate() {
-                    let k = thresholds
+                    let chosen = thresholds
                         .iter()
                         .position(|t| *v < *t)
                         .unwrap_or(samplers.len() - 1);
-                    *v = values[k][i];
+                    *v = values[chosen][i];
                 }
             }
             // SliceFunction's samplers: the input over the volume flattened onto the
@@ -283,7 +298,7 @@ impl Node {
                 axis,
                 coordinate,
                 input,
-            } => slice(f, volume, out, *axis, *coordinate, input),
+            } => slice(state, volume, out, *axis, *coordinate, input),
             Node::Interpolated {
                 input,
                 cell_xz,
@@ -292,15 +307,17 @@ impl Node {
                 inv_y,
                 corners,
             } => interpolate(
-                f,
+                state,
                 volume,
                 out,
                 (input, corners),
                 [*cell_xz, *cell_y],
                 [*inv_xz, *inv_y],
             ),
-            Node::Upscale(u) => upscale(f, volume, out, u),
-            Node::UpscaleNearest { input, cell } => upscale_nearest(f, volume, out, input, *cell),
+            Node::Upscale(u) => upscale(state, volume, out, u),
+            Node::UpscaleNearest { input, cell } => {
+                upscale_nearest(state, volume, out, input, *cell)
+            }
             // FindTopSurfaceFunction.Sampler, which the game only samples one y deep (it's
             // inside a slice): the upper bound over the volume, then findSurfaceFrom per column.
             Node::FindTopSurface {
@@ -314,11 +331,18 @@ impl Node {
                     [volume.min[0], 0, volume.min[2]],
                     volume.step,
                 );
-                let upper = upper_bound.values(f, &flat);
+                let upper = upper_bound.values(state, &flat);
                 let mut surfaces = vec![0.0; flat.len()];
                 for_each(&flat, |i, x, _, z| {
-                    surfaces[i] =
-                        find_surface(f.point, density, x, z, upper[i], *lower_bound, *cell_height);
+                    surfaces[i] = find_surface(
+                        state.point,
+                        density,
+                        x,
+                        z,
+                        upper[i],
+                        *lower_bound,
+                        *cell_height,
+                    );
                 });
                 spread_y(&surfaces, volume, out);
             }
@@ -326,7 +350,7 @@ impl Node {
                 input,
                 offsets,
                 axes,
-            } => domain_warp(f, volume, out, input, offsets, *axes),
+            } => domain_warp(state, volume, out, input, offsets, *axes),
             // GradientFunction's, DistanceToPointFunction's and EndIslandFunction's samplers
             // compute each position's value as the point path does.
             Node::Gradient { .. }
@@ -334,7 +358,7 @@ impl Node {
             | Node::DistanceToPoint { .. }
             | Node::EndIslands(_) => {
                 for_each(volume, |i, x, y, z| {
-                    out[i] = self.compute(f.point, Pos::new(x, y, z));
+                    out[i] = self.compute(state.point, Pos::new(x, y, z));
                 });
             }
             // SplineFunction.Sampler: every coordinate over the volume, then the spline per
@@ -345,7 +369,7 @@ impl Node {
                 let mut values: HashMap<*const Node, Vec<f32>> = HashMap::new();
                 for c in coordinates {
                     if let Entry::Vacant(e) = values.entry(Arc::as_ptr(&c.node)) {
-                        e.insert(c.values(f, volume));
+                        e.insert(c.values(state, volume));
                     }
                 }
                 for (i, v) in out.iter_mut().enumerate() {
@@ -391,10 +415,10 @@ const MAX_KEPT_COLUMNS: usize = 4096;
 
 impl CornerCache {
     /// `input` over `corners`, from the columns kept if every one is, else computed (and kept).
-    fn values(&self, f: &mut Fill, input: &Sampler, corners: &Volume) -> Vec<f32> {
-        let [sx, sy, sz] = corners.size;
-        if !input.position_only || sx * sz > MAX_CACHED_VOLUME_COLUMNS {
-            return input.values(f, corners);
+    fn values(&self, state: &mut Fill, input: &Sampler, corners: &Volume) -> Vec<f32> {
+        let [count_x, count_y, count_z] = corners.size;
+        if !input.position_only || count_x * count_z > MAX_CACHED_VOLUME_COLUMNS {
+            return input.values(state, corners);
         }
         let key = |ix: i32, iz: i32| {
             (
@@ -402,16 +426,16 @@ impl CornerCache {
                 corners.block_z(iz),
                 corners.min[1],
                 corners.step[1],
-                sy,
+                count_y,
             )
         };
-        let height = sy as usize;
+        let height = count_y as usize;
         {
             // A panic while holding the lock leaves only whole entries behind.
             let kept = self.0.lock().unwrap_or_else(|e| e.into_inner());
             let mut out = Vec::with_capacity(corners.len());
-            'columns: for iz in 0..sz {
-                for ix in 0..sx {
+            'columns: for iz in 0..count_z {
+                for ix in 0..count_x {
                     match kept.get(&key(ix, iz)) {
                         Some(column) => out.extend_from_slice(column),
                         None => break 'columns,
@@ -422,15 +446,15 @@ impl CornerCache {
                 return out;
             }
         }
-        let values = input.values(f, corners);
+        let values = input.values(state, corners);
         let mut kept = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        if kept.len() + (sx * sz) as usize > MAX_KEPT_COLUMNS {
+        if kept.len() + (count_x * count_z) as usize > MAX_KEPT_COLUMNS {
             kept.clear();
         }
-        for iz in 0..sz {
-            for ix in 0..sx {
+        for iz in 0..count_z {
+            for ix in 0..count_x {
                 // Index order is y fastest, then x, then z, so a column is contiguous.
-                let first = (iz * sx + ix) as usize * height;
+                let first = (iz * count_x + ix) as usize * height;
                 kept.insert(key(ix, iz), values[first..first + height].into());
             }
         }
@@ -462,22 +486,22 @@ fn spread_y(flat: &[f32], volume: &Volume, out: &mut [f32]) {
 }
 
 /// An elementwise operation on one input: the input into `out`, then `op` in place.
-fn map(f: &mut Fill, volume: &Volume, out: &mut [f32], a: &Sampler, op: impl Fn(f32) -> f32) {
-    a.fill(f, volume, out);
+fn map(state: &mut Fill, volume: &Volume, out: &mut [f32], a: &Sampler, op: impl Fn(f32) -> f32) {
+    a.fill(state, volume, out);
     out.iter_mut().for_each(|v| *v = op(*v));
 }
 
 /// An elementwise operation on two inputs, left into `out` first, as the binary samplers do.
 fn binary(
-    f: &mut Fill,
+    state: &mut Fill,
     volume: &Volume,
     out: &mut [f32],
     a: &Sampler,
     b: &Sampler,
     op: impl Fn(f32, f32) -> f32,
 ) {
-    a.fill(f, volume, out);
-    let right = b.values(f, volume);
+    a.fill(state, volume, out);
+    let right = b.values(state, volume);
     for (v, r) in out.iter_mut().zip(right) {
         *v = op(*v, r);
     }
@@ -485,25 +509,25 @@ fn binary(
 
 /// `SliceFunction`'s `XSampler`, `YSampler` and `ZSampler.sampleVolume`.
 fn slice(
-    f: &mut Fill,
+    state: &mut Fill,
     volume: &Volume,
     out: &mut [f32],
     axis: Axis,
     coordinate: i32,
     input: &Sampler,
 ) {
-    let a = match axis {
+    let sliced = match axis {
         Axis::X => 0,
         Axis::Y => 1,
         Axis::Z => 2,
     };
     let mut flat = *volume;
-    flat.size[a] = 1;
-    flat.min[a] = coordinate;
-    let values = input.values(f, &flat);
-    for_each_index(volume, |i, mut p| {
-        p[a] = 0;
-        out[i] = values[flat.index(p[0], p[1], p[2])];
+    flat.size[sliced] = 1;
+    flat.min[sliced] = coordinate;
+    let values = input.values(state, &flat);
+    for_each_index(volume, |i, mut position| {
+        position[sliced] = 0;
+        out[i] = values[flat.index(position[0], position[1], position[2])];
     });
 }
 
@@ -512,7 +536,7 @@ fn slice(
 /// already, by [`Sampler::fill`]), then copied back along it. What follows depends on the
 /// volume's size, so the flattening has to match the game's.
 fn domain_warp(
-    f: &mut Fill,
+    state: &mut Fill,
     volume: &Volume,
     out: &mut [f32],
     input: &Sampler,
@@ -527,11 +551,11 @@ fn domain_warp(
         }
     }
     if flat == *volume {
-        warp(f, volume, out, input, offsets);
+        warp(state, volume, out, input, offsets);
         return;
     }
     let mut values = vec![0.0; flat.len()];
-    warp(f, &flat, &mut values, input, offsets);
+    warp(state, &flat, &mut values, input, offsets);
     for_each_index(volume, |i, [ix, iy, iz]| {
         let at = |a: usize, n: i32| if flat.size[a] == 1 { 0 } else { n };
         out[i] = values[flat.index(at(0, ix), iy, at(2, iz))];
@@ -543,40 +567,41 @@ fn domain_warp(
 /// sampled over the volume, truncated), and the input is sampled either at each one on the point
 /// path or, when the box they span is at most 16 times the volume, over that box on the volume
 /// path (`shouldSampleNaively`).
-fn warp(f: &mut Fill, volume: &Volume, out: &mut [f32], input: &Sampler, offsets: &Warp) {
-    let (ox, oy, oz) = match offsets {
+fn warp(state: &mut Fill, volume: &Volume, out: &mut [f32], input: &Sampler, offsets: &Warp) {
+    let (offset_x, offset_y, offset_z) = match offsets {
         Warp::Const(o) => {
             let moved = Volume::new(
                 volume.size,
                 std::array::from_fn(|a| volume.min[a].wrapping_add(o[a])),
                 volume.step,
             );
-            input.fill(f, &moved, out);
+            input.fill(state, &moved, out);
             return;
         }
-        Warp::FlatXz { x, z } => (x.values(f, volume), None, z.values(f, volume)),
+        Warp::FlatXz { x, z } => (x.values(state, volume), None, z.values(state, volume)),
         Warp::General { x, y, z } => (
-            x.values(f, volume),
-            Some(y.values(f, volume)),
-            z.values(f, volume),
+            x.values(state, volume),
+            Some(y.values(state, volume)),
+            z.values(state, volume),
         ),
     };
+    // Each position's moved block, and the box they span.
     let mut blocks = Vec::with_capacity(volume.len());
     let (mut min, mut max) = ([i32::MAX; 3], [i32::MIN; 3]);
     for_each(volume, |i, x, y, z| {
-        let b = [
-            x.wrapping_add(ox[i] as i32),
-            match &oy {
-                Some(oy) => y.wrapping_add(oy[i] as i32),
+        let moved = [
+            x.wrapping_add(offset_x[i] as i32),
+            match &offset_y {
+                Some(offset_y) => y.wrapping_add(offset_y[i] as i32),
                 None => 0,
             },
-            z.wrapping_add(oz[i] as i32),
+            z.wrapping_add(offset_z[i] as i32),
         ];
         for a in 0..3 {
-            min[a] = min[a].min(b[a]);
-            max[a] = max[a].max(b[a]);
+            min[a] = min[a].min(moved[a]);
+            max[a] = max[a].max(moved[a]);
         }
-        blocks.push(b);
+        blocks.push(moved);
     });
     // shouldSampleNaively: the box's volume in exact long arithmetic. On overflow the game
     // returns false and then fails to make the box; spyglass samples naively instead.
@@ -590,14 +615,14 @@ fn warp(f: &mut Fill, volume: &Volume, out: &mut [f32], input: &Sampler, offsets
     };
     if naive {
         for (v, [x, y, z]) in out.iter_mut().zip(&blocks) {
-            *v = input.eval_at(f.point, *x, *y, *z);
+            *v = input.eval_at(state.point, *x, *y, *z);
         }
         return;
     }
     let shape = Volume::blocks(std::array::from_fn(|a| span(a) as i32), min);
-    let values = input.values(f, &shape);
-    for (v, b) in out.iter_mut().zip(&blocks) {
-        *v = values[shape.index(b[0] - min[0], b[1] - min[1], b[2] - min[2])];
+    let values = input.values(state, &shape);
+    for (v, moved) in out.iter_mut().zip(&blocks) {
+        *v = values[shape.index(moved[0] - min[0], moved[1] - min[1], moved[2] - min[2])];
     }
 }
 
@@ -619,24 +644,24 @@ fn for_each_index(volume: &Volume, mut visit: impl FnMut(usize, [i32; 3])) {
 /// every cell the volume touches and interpolated block by block; a volume with steps above 1
 /// is interpolated over all its blocks and then picked from.
 fn interpolate(
-    f: &mut Fill,
+    state: &mut Fill,
     volume: &Volume,
     out: &mut [f32],
     (input, cache): (&Sampler, &CornerCache),
-    [cxz, cy]: [i32; 2],
+    [cell_xz, cell_y]: [i32; 2],
     inv: [f32; 2],
 ) {
-    let cell = [cxz, cy, cxz];
+    let cell = [cell_xz, cell_y, cell_xz];
     let aligned = (0..3).all(|a| {
         (volume.step[a] == cell[a] || volume.size[a] == 1)
             && java::floor_mod(volume.min[a], cell[a]) == 0
     });
     if aligned {
-        input.fill(f, volume, out);
+        input.fill(state, volume, out);
         return;
     }
     if volume.step == [1, 1, 1] {
-        interpolate_blocks(f, volume, out, (input, cache), cell, inv);
+        interpolate_blocks(state, volume, out, (input, cache), cell, inv);
         return;
     }
     // sampleWithNonBlockStep: every block the volume spans, then each position's.
@@ -645,7 +670,7 @@ fn interpolate(
         volume.min,
     );
     let mut all = vec![0.0; blocks.len()];
-    interpolate_blocks(f, &blocks, &mut all, (input, cache), cell, inv);
+    interpolate_blocks(state, &blocks, &mut all, (input, cache), cell, inv);
     for_each_index(volume, |i, [ix, iy, iz]| {
         out[i] = all[blocks.index(
             ix * volume.step[0],
@@ -655,9 +680,11 @@ fn interpolate(
     });
 }
 
-/// `sampleWithBlockStep` and `fillCell`, for a volume of steps 1.
+/// `sampleWithBlockStep` and `fillCell`, for a volume of steps 1. The input is sampled once,
+/// over the corners of every cell the volume touches; then each cell's blocks are filled from
+/// its eight corners. Within a column of cells, a cell's top corners are the next one's bottom.
 fn interpolate_blocks(
-    f: &mut Fill,
+    state: &mut Fill,
     volume: &Volume,
     out: &mut [f32],
     (input, cache): (&Sampler, &CornerCache),
@@ -680,9 +707,10 @@ fn interpolate_blocks(
         std::array::from_fn(|a| first[a].wrapping_mul(cell[a])),
         cell,
     );
-    let c = cache.values(f, input, &corners);
-    let at = |x, y, z| c[corners.index(x, y, z)];
+    let corner_values = cache.values(state, input, &corners);
+    let at = |x, y, z| corner_values[corners.index(x, y, z)];
     for iz in 0..cells[2] {
+        // The far corner, or the near one again when the volume ends on a corner.
         let iz1 = (iz + 1).min(corners.size[2] - 1);
         for ix in 0..cells[0] {
             let ix1 = (ix + 1).min(corners.size[0] - 1);
@@ -713,7 +741,8 @@ fn interpolate_blocks(
 }
 
 /// `fillCell`: one cell's blocks inside the volume, z outermost, then x, then y. Per z, the four
-/// z lerps; per x, the two x lerps; then y accumulates a step from the first block.
+/// z lerps; per x, the two x lerps; then y accumulates a step from the first block. `origin` is
+/// the cell's first block relative to the volume, and `c` + x, y, z offsets names each corner.
 fn fill_cell(
     volume: &Volume,
     out: &mut [f32],
@@ -722,6 +751,7 @@ fn fill_cell(
     [inv_xz, inv_y]: [f32; 2],
     [c000, c100, c010, c110, c001, c101, c011, c111]: [f32; 8],
 ) {
+    // The cell's offsets that are inside the volume: a cell can start before it or end past it.
     let start: [i32; 3] = std::array::from_fn(|a| 0.max(-origin[a]));
     let end: [i32; 3] = std::array::from_fn(|a| cell[a].min(volume.size[a] - origin[a]) - 1);
     for dz in start[2]..=end[2] {
@@ -734,10 +764,11 @@ fn fill_cell(
         for dx in start[0]..=end[0] {
             let x = origin[0] + dx;
             let tx = dx as f32 * inv_xz;
-            let b0 = mth::lerp(tx, x0y0, x1y0);
-            let b1 = mth::lerp(tx, x0y1, x1y1);
-            let step = (b1 - b0) * inv_y;
-            let mut value = b0 + step * start[1] as f32;
+            // The column's values at the cell's bottom and top.
+            let bottom = mth::lerp(tx, x0y0, x1y0);
+            let top = mth::lerp(tx, x0y1, x1y1);
+            let step = (top - bottom) * inv_y;
+            let mut value = bottom + step * start[1] as f32;
             let first = volume.index(x, origin[1] + start[1], z);
             let blocks = (end[1] - start[1] + 1) as usize;
             for v in &mut out[first..first + blocks] {
@@ -751,7 +782,7 @@ fn fill_cell(
 /// `UpscaleFunction.Sampler.sampleVolume`: each axis planned (`planUpsample`); if any can't be,
 /// the block-step box the volume spans is upscaled and every `step`th value picked
 /// (`sampleAndUpscaleFallback`).
-fn upscale(f: &mut Fill, volume: &Volume, out: &mut [f32], u: &BoundUpscale) {
+fn upscale(state: &mut Fill, volume: &Volume, out: &mut [f32], u: &BoundUpscale) {
     let plans: [Option<AxisPlan>; 3] = std::array::from_fn(|a| {
         AxisPlan::new(
             u.axes[a],
@@ -762,7 +793,7 @@ fn upscale(f: &mut Fill, volume: &Volume, out: &mut [f32], u: &BoundUpscale) {
         )
     });
     if let [Some(x), Some(y), Some(z)] = plans {
-        sample_and_upscale(f, volume, out, u, [x, y, z]);
+        sample_and_upscale(state, volume, out, u, [x, y, z]);
         return;
     }
     let blocks = Volume::blocks(
@@ -784,7 +815,7 @@ fn upscale(f: &mut Fill, volume: &Volume, out: &mut [f32], u: &BoundUpscale) {
         .expect("an axis with step 1 always has a plan")
     });
     let mut all = vec![0.0; blocks.len()];
-    sample_and_upscale(f, &blocks, &mut all, u, plans);
+    sample_and_upscale(state, &blocks, &mut all, u, plans);
     for_each_index(volume, |i, [ix, iy, iz]| {
         out[i] = all[blocks.index(
             ix * volume.step[0],
@@ -798,14 +829,14 @@ fn upscale(f: &mut Fill, volume: &Volume, out: &mut [f32], u: &BoundUpscale) {
 /// aligned; else the input over the corner volume the plans give, upscaled by the upscaler for
 /// the plans' modes and cell sizes (`Upscaler.upscale`).
 fn sample_and_upscale(
-    f: &mut Fill,
+    state: &mut Fill,
     volume: &Volume,
     out: &mut [f32],
     u: &BoundUpscale,
     plans: [AxisPlan; 3],
 ) {
     if plans.iter().all(|p| p.exactly_aligned) {
-        u.input.fill(f, volume, out);
+        u.input.fill(state, volume, out);
         return;
     }
     let corners = Volume::new(
@@ -813,7 +844,7 @@ fn sample_and_upscale(
         plans.map(|p| p.sample_min),
         plans.map(|p| p.sample_step),
     );
-    let samples = u.corners.values(f, &u.input, &corners);
+    let samples = u.corners.values(state, &u.input, &corners);
     let (modes, cells) = (plans.map(|p| p.mode), plans.map(|p| p.cell));
     if modes == u.upscaler.modes && cells == u.upscaler.cells {
         u.upscaler.upscale(&plans, out, volume, &samples, &corners);
@@ -826,7 +857,7 @@ fn sample_and_upscale(
 /// (`DensityVolume.fitsOnGrid`); else the corners of every cell from the volume's minimum to its
 /// last position, each position taking its cell's corner.
 fn upscale_nearest(
-    f: &mut Fill,
+    state: &mut Fill,
     volume: &Volume,
     out: &mut [f32],
     input: &Sampler,
@@ -837,7 +868,7 @@ fn upscale_nearest(
             && java::floor_mod(volume.min[a], cell[a]) == 0
     });
     if fits {
-        input.fill(f, volume, out);
+        input.fill(state, volume, out);
         return;
     }
     // getCellSampleVolume, with 26.4's maxBlock: the last position, min + (size − 1)·step.
@@ -851,7 +882,7 @@ fn upscale_nearest(
         std::array::from_fn(|a| first[a].wrapping_mul(cell[a])),
         cell,
     );
-    let corners = input.values(f, &grid);
+    let corners = input.values(state, &grid);
     let at = |a: usize, block: i32| java::floor_div(block, cell[a]) - first[a];
     for_each(volume, |i, x, y, z| {
         out[i] = corners[grid.index(at(0, x), at(1, y), at(2, z))];
@@ -863,13 +894,21 @@ fn upscale_nearest(
 /// is exactly aligned.
 #[derive(Debug, Clone, Copy)]
 struct AxisPlan {
+    /// How the axis is upscaled: the axis's mode, or nearest when exactly aligned.
     mode: UpscaleMode,
+    /// Whether the volume's positions are themselves the samples, so nothing is upscaled.
     exactly_aligned: bool,
+    /// How many corners the input is sampled at along the axis.
     sample_count: i32,
+    /// The first corner's block.
     sample_min: i32,
+    /// The blocks between corners.
     sample_step: i32,
+    /// How many cells of output the axis has.
     output_count: i32,
+    /// Where the first cell starts, in the volume's positions: 0 or before it.
     min_output: i32,
+    /// The upscaler's cell size along the axis, in the volume's positions.
     cell: i32,
 }
 
@@ -904,11 +943,14 @@ impl AxisPlan {
         if !multiple(cell, step) {
             return None;
         }
+        // The cells holding the first and last positions, and the corners sampled around them
+        // (in cells): the mode's samples before the first, and after the last unless the last
+        // position is on a corner the mode passes through.
         let first = java::floor_div(min, cell);
         let last = java::floor_div(max, cell);
-        let s0 = first - mode.samples_before();
+        let first_sample = first - mode.samples_before();
         let on_corner = i32::from(mode.exact_on_corner() && multiple(max, cell));
-        let s1 = last + (mode.samples_after() - on_corner).max(0);
+        let last_sample = last + (mode.samples_after() - on_corner).max(0);
         // Where the first cell starts, relative to the volume: never after it.
         let offset = first.wrapping_mul(cell).wrapping_sub(min);
         let (min_output, cell_steps) = if step == 1 || size == 1 {
@@ -924,8 +966,8 @@ impl AxisPlan {
         Some(AxisPlan {
             mode,
             exactly_aligned: false,
-            sample_count: s1 - s0 + 1,
-            sample_min: s0.wrapping_mul(cell),
+            sample_count: last_sample - first_sample + 1,
+            sample_min: first_sample.wrapping_mul(cell),
             sample_step: cell,
             output_count: last - first + 1,
             min_output,
@@ -979,8 +1021,8 @@ impl Coefficients {
         }
     }
 
-    /// `multiply(samples, i, stride)`: the weighted samples `i`, `i + stride`, …, summed left to
-    /// right.
+    /// `multiply(samples, i, stride)`: the weighted samples `s[i]`, `s[i + stride]`, …, summed
+    /// left to right.
     fn multiply(self, s: &[f32], i: usize, stride: usize) -> f32 {
         match self {
             Coefficients::Nearest => s[i],
@@ -1033,15 +1075,19 @@ fn sin_table(i: usize) -> f32 {
 /// as a volume's, y fastest, then x, then z.
 #[derive(Debug)]
 pub(crate) struct Upscaler {
+    /// Each axis's mode, x, y, z.
     pub(crate) modes: [UpscaleMode; 3],
+    /// Each axis's cell size, x, y, z.
     pub(crate) cells: [i32; 3],
     /// `sampleCount` per axis.
     counts: [usize; 3],
-    /// `sampleStrideX` (the y count) and `sampleStrideZ` (x count times y count); y's is 1.
+    /// `sampleStrideX`, the y count: y's stride is 1.
     stride_x: usize,
+    /// `sampleStrideZ`, the x count times the y count.
     stride_z: usize,
-    /// `1.0f / (float) cellSizeX` and `cellSizeY`.
+    /// `1.0f / (float) cellSizeX`.
     inv_x: f32,
+    /// `1.0f / (float) cellSizeY`.
     inv_y: f32,
     /// `computeTable(cellSize, mode)` per axis.
     tables: [Vec<Coefficients>; 3],
@@ -1064,15 +1110,17 @@ impl Upscaler {
     }
 
     /// `upscaleValue(fx, fy, fz, buffer)`: the point path's value at offsets `f` in the cell,
-    /// from the `sampleCount` corners per axis in `samples`: z, then x, then y.
+    /// from the `sampleCount` corners per axis in `samples`: z, then x, then y. `tz` is the
+    /// samples weighed along z, one per x and y sample, and `tx` those weighed along x, one per
+    /// y sample.
     pub(crate) fn value(&self, [fx, fy, fz]: [i32; 3], samples: &[f32]) -> f32 {
-        let z = self.tables[2][fz as usize];
+        let z_weights = self.tables[2][fz as usize];
         let tz: Vec<f32> = (0..self.stride_z)
-            .map(|i| z.multiply(samples, i, self.stride_z))
+            .map(|i| z_weights.multiply(samples, i, self.stride_z))
             .collect();
-        let x = self.tables[0][fx as usize];
+        let x_weights = self.tables[0][fx as usize];
         let tx: Vec<f32> = (0..self.stride_x)
-            .map(|j| x.multiply(&tz, j, self.stride_x))
+            .map(|j| x_weights.multiply(&tz, j, self.stride_x))
             .collect();
         self.tables[1][fy as usize].multiply(&tx, 0, 1)
     }
@@ -1080,6 +1128,10 @@ impl Upscaler {
     /// `doUpscale`: for each output cell, z outer, then x, the samples around it (indices
     /// clamped to the corner volume) are gathered, then each y cell is filled, the y samples
     /// sliding down one corner per cell.
+    ///
+    /// `window` holds the samples one cell reads, `count` per axis, in the layout
+    /// [`value`](Self::value) reads. `cx`, `cy` and `cz` count output cells, `ox`, `oy` and `oz`
+    /// are a cell's first position in the volume, and `xi`, `yi` and `zi` index the corners.
     fn upscale(
         &self,
         plans: &[AxisPlan; 3],
@@ -1094,11 +1146,11 @@ impl Upscaler {
         let mut window = vec![0.0; count_x * count_y * count_z];
         let mut tx = vec![0.0; self.stride_x];
         let mut tz = vec![0.0; self.stride_z];
-        let [px, py, pz] = plans;
-        for cz in 0..pz.output_count {
-            let oz = pz.min_output + cz * self.cells[2];
-            for cx in 0..px.output_count {
-                let ox = px.min_output + cx * self.cells[0];
+        let [plan_x, plan_y, plan_z] = plans;
+        for cz in 0..plan_z.output_count {
+            let oz = plan_z.min_output + cz * self.cells[2];
+            for cx in 0..plan_x.output_count {
+                let ox = plan_x.min_output + cx * self.cells[0];
                 for k in 0..count_z {
                     let zi = (cz + k as i32).min(size[2] - 1);
                     for j in 0..count_x {
@@ -1110,10 +1162,11 @@ impl Upscaler {
                         }
                     }
                 }
-                let o = [ox, py.min_output, oz];
-                self.fill_cell(out, volume, o, &window, &mut tx, &mut tz);
-                for cy in 1..py.output_count {
-                    let oy = py.min_output + cy * self.cells[1];
+                let origin = [ox, plan_y.min_output, oz];
+                self.fill_cell(out, volume, origin, &window, &mut tx, &mut tz);
+                // Up the column, each cell drops its lowest y sample and reads one more above.
+                for cy in 1..plan_y.output_count {
+                    let oy = plan_y.min_output + cy * self.cells[1];
                     let yi = (cy + last_y as i32).min(size[1] - 1);
                     for k in 0..count_z {
                         let zi = (cz + k as i32).min(size[2] - 1);
@@ -1130,33 +1183,39 @@ impl Upscaler {
         }
     }
 
-    /// `fillCell`: the cell at output position `o`, its offsets outside the volume skipped
+    /// `fillCell`: the cell at output position `origin`, its offsets outside the volume skipped
     /// (an axis of cell 1 always takes offset 0). Per z offset, `tz` from the z coefficients.
     fn fill_cell(
         &self,
         out: &mut [f32],
         volume: &Volume,
-        o: [i32; 3],
+        origin: [i32; 3],
         samples: &[f32],
         tx: &mut [f32],
         tz: &mut [f32],
     ) {
-        let lo: [i32; 3] =
-            std::array::from_fn(|a| if self.cells[a] == 1 { 0 } else { 0.max(-o[a]) });
+        let lo: [i32; 3] = std::array::from_fn(|a| {
+            if self.cells[a] == 1 {
+                0
+            } else {
+                0.max(-origin[a])
+            }
+        });
         let hi: [i32; 3] = std::array::from_fn(|a| {
             if self.cells[a] == 1 {
                 0
             } else {
-                self.cells[a].min(volume.size[a] - o[a]) - 1
+                self.cells[a].min(volume.size[a] - origin[a]) - 1
             }
         });
+        // The volume's strides, not the samples'.
         let (stride_x, stride_z) = (volume.size[1], volume.size[0] * volume.size[1]);
-        let mut index =
-            (o[1] + lo[1]) + ((o[0] + lo[0]) + (o[2] + lo[2]) * volume.size[0]) * volume.size[1];
+        let mut index = (origin[1] + lo[1])
+            + ((origin[0] + lo[0]) + (origin[2] + lo[2]) * volume.size[0]) * volume.size[1];
         for dz in lo[2]..=hi[2] {
-            let z = self.tables[2][dz as usize];
+            let z_weights = self.tables[2][dz as usize];
             for (i, t) in tz.iter_mut().enumerate() {
-                *t = z.multiply(samples, i, self.stride_z);
+                *t = z_weights.multiply(samples, i, self.stride_z);
             }
             self.fill_cell_xy(out, tz, tx, [lo[0], hi[0]], [lo[1], hi[1]], index, stride_x);
             index += stride_z;
@@ -1189,9 +1248,9 @@ impl Upscaler {
             return;
         }
         for dx in x_lo..=x_hi {
-            let x = self.tables[0][dx as usize];
+            let x_weights = self.tables[0][dx as usize];
             for (j, t) in tx.iter_mut().enumerate() {
-                *t = x.multiply(tz, j, self.stride_x);
+                *t = x_weights.multiply(tz, j, self.stride_x);
             }
             self.fill_cell_y(out, tx, y, index);
             index += stride_x;

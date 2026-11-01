@@ -1,6 +1,7 @@
 //! `NoiseStack`: a weighted sum of noise layers at different frequencies.
 
 use crate::perlin::{PerlinNoise, SmearedPerlinNoise};
+use crate::simplex::SimplexNoise;
 use crate::volume::Volume;
 
 /// `Noise`: one octave a stack can hold.
@@ -25,8 +26,8 @@ impl Noise for PerlinNoise {
         PerlinNoise::get(self, x, y, z)
     }
 
-    fn add_to_volume(&self, b: &mut [f32], v: &Volume, xz: f64, y: f64, factor: f32) {
-        PerlinNoise::add_to_volume(self, b, v, xz, y, factor);
+    fn add_to_volume(&self, buffer: &mut [f32], volume: &Volume, xz: f64, y: f64, factor: f32) {
+        PerlinNoise::add_to_volume(self, buffer, volume, xz, y, factor);
     }
 }
 
@@ -35,8 +36,8 @@ impl Noise for SmearedPerlinNoise {
         SmearedPerlinNoise::get(self, x, y, z)
     }
 
-    fn add_to_volume(&self, b: &mut [f32], v: &Volume, xz: f64, y: f64, factor: f32) {
-        SmearedPerlinNoise::add_to_volume(self, b, v, xz, y, factor);
+    fn add_to_volume(&self, buffer: &mut [f32], volume: &Volume, xz: f64, y: f64, factor: f32) {
+        SmearedPerlinNoise::add_to_volume(self, buffer, volume, xz, y, factor);
     }
 }
 
@@ -56,6 +57,7 @@ pub struct Layer<N = PerlinNoise> {
 /// of one kind, which is all this port supports. Both sum the same way.
 #[derive(Debug, Clone)]
 pub struct NoiseStack<N = PerlinNoise> {
+    /// The layers, in the order they're summed.
     layers: Vec<Layer<N>>,
 }
 
@@ -115,6 +117,23 @@ impl NoiseStack<PerlinNoise> {
         self.layers.iter().fold(0.0, |sum, layer| {
             let f = layer.frequency;
             sum + layer.amplitude * layer.noise.get_2d(x * f, z * f)
+        })
+    }
+}
+
+impl NoiseStack<SimplexNoise> {
+    /// A stack of 2D simplex layers, as `NoiseStack.builder()` builds one from `SimplexNoise`s:
+    /// `Biome`'s frozen-temperature noise.
+    pub fn simplex(layers: Vec<Layer<SimplexNoise>>) -> Self {
+        NoiseStack { layers }
+    }
+
+    /// `get(double, double)`: `sum += amplitude * noise.get(x * f, z * f)` in layer order,
+    /// accumulated in `f32`.
+    pub fn get_2d(&self, x: f64, z: f64) -> f32 {
+        self.layers.iter().fold(0.0, |sum, layer| {
+            let f = layer.frequency;
+            sum + layer.amplitude * layer.noise.get(x * f, z * f)
         })
     }
 }

@@ -12,10 +12,15 @@ pub fn structure(
     from: [i32; 3],
     options: &LocateOptions,
     bounds: bool,
+    nearest: bool,
 ) -> Result<()> {
     let session = out.session;
     let query = session.world().structure_query(target)?;
-    let found = session.locate_structure(&query, from, options)?;
+    let found = if nearest {
+        session.nearest_structure(&query, from, options)?
+    } else {
+        session.locate_structure(&query, from, options)?
+    };
     // Each hit's layout, where asked for and known.
     let layouts = found
         .hits
@@ -47,6 +52,7 @@ pub fn structure(
             "locate structure",
             json::StructureAnswer {
                 target,
+                mode: if nearest { "nearest" } else { "locate" },
                 from,
                 radius: options.radius,
                 confirmed: options.confirm,
@@ -56,7 +62,8 @@ pub fn structure(
             },
         );
     }
-    out!("{target}{}", out.context(Some(from)));
+    let mode = if nearest { "nearest " } else { "" };
+    out!("{mode}{target}{}", out.context(Some(from)));
     if found.hits.is_empty() {
         out!("  none within {} rings", options.radius);
         return Ok(());
@@ -103,17 +110,123 @@ pub fn structure(
             ", or further out."
         };
         let why = if options.confirm {
-            "Candidates are behind a tied biome, a platform-dependent ring position or a \
-             mineshaft spyglass can't place."
+            "Candidates are behind a tied biome or a platform-dependent ring position."
         } else {
             "Candidates depend on terrain, which --unconfirmed leaves undecided, or a tied biome."
         };
-        out!(
-            "{why} The game's answer is the first of these it generates, usually the first \
-             listed{rest}"
-        );
+        if nearest {
+            out!("{why} The nearest is the first of these that generates{rest}");
+        } else {
+            out!(
+                "{why} The game's answer is the first of these it generates, usually the first \
+                 listed{rest}"
+            );
+        }
     }
     Ok(())
+}
+
+pub fn feature(
+    out: &Out<'_>,
+    target: &str,
+    from: [i32; 3],
+    radius: i32,
+    all: bool,
+    neighbours: bool,
+) -> Result<()> {
+    let session = out.session;
+    let query = session.world().feature_query(target)?;
+    let options = spyglass::FeatureOptions {
+        neighbours,
+        unlikely: all,
+    };
+    let found = session.nearest_feature(&query, from, radius, options)?;
+    let hits: Vec<&spyglass::FoundFeature> = found
+        .hits
+        .iter()
+        .filter(|f| all || f.certain || f.likely)
+        .collect();
+    if out.json {
+        return out.print(
+            "locate feature",
+            json::FeatureLocateAnswer {
+                target,
+                from,
+                radius,
+                complete: found.complete,
+                hits: hits
+                    .iter()
+                    .map(|f| json::FeatureHit::new(f, Some(from)))
+                    .collect(),
+            },
+        );
+    }
+    out!("nearest {target}{}", out.context(Some(from)));
+    if hits.is_empty() {
+        out!("  none within {radius} chunks");
+        return Ok(());
+    }
+    for f in hits.iter().take(SHOWN) {
+        feature_line(f, Some(from));
+    }
+    if hits.len() > SHOWN {
+        out!("  ... and {} more (--json lists all)", hits.len() - SHOWN);
+    }
+    feature_notes(&hits, all);
+    Ok(())
+}
+
+/// One feature, as text.
+pub fn feature_line(feature: &spyglass::FoundFeature, from: Option<[i32; 3]>) {
+    let [x, y, z] = feature.position;
+    let away = from.map_or(String::new(), |origin| {
+        let (dx, dz) = (f64::from(x - origin[0]), f64::from(z - origin[2]));
+        format!(" {:>7} blocks", (dx * dx + dz * dz).sqrt() as i32)
+    });
+    let kind = match (feature.certain, feature.likely) {
+        (true, _) => "certain",
+        (false, true) => "candidate",
+        (false, false) => "unlikely",
+    };
+    let why = feature
+        .reason
+        .as_deref()
+        .map_or(String::new(), |r| format!(" ({r})"));
+    out!(
+        "  {x:>9} {y:>4} {z:<9}{away}  {kind:<10} {}{why}",
+        feature.feature
+    );
+}
+
+/// What the answers mean, after them.
+pub fn feature_notes(hits: &[&spyglass::FoundFeature], all: bool) {
+    if hits
+        .iter()
+        .all(|f| f.neighbours == spyglass::Neighbours::NotChecked)
+        && !hits.is_empty()
+    {
+        out!(
+            "Certain is for the chunk decorated before its neighbours (--neighbours checks whether each holds whatever they do)."
+        );
+    }
+    if hits.iter().any(|f| !f.certain) {
+        out!(
+            "Candidates are where something spyglass can't know could change the answer: listed likely if they placed on spyglass's blocks{}.",
+            if all {
+                ", unlikely if not"
+            } else {
+                " (--all lists the unlikely ones too)"
+            }
+        );
+    }
+    if hits
+        .iter()
+        .any(|f| matches!(f.neighbours, spyglass::Neighbours::Could(_)))
+    {
+        out!(
+            "Certain is for the chunk decorated before its neighbours; neighbours decorated first could change these."
+        );
+    }
 }
 
 pub fn biome(out: &Out<'_>, biome: &str, from: [i32; 3], radius: i32) -> Result<()> {

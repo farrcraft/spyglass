@@ -3,7 +3,10 @@
 
 use std::path::PathBuf;
 
-use spyglass::{Dimension, MAX_SLIME_SCALE, MAX_TERRAIN_SCALE, MapArea};
+use spyglass::{
+    Dimension, MAX_FEATURE_SCALE, MAX_SLIME_SCALE, MAX_TERRAIN_SCALE, MAX_UNDERGROUND_SCALE,
+    MapArea, Pin,
+};
 
 use crate::view::View;
 
@@ -26,20 +29,41 @@ pub enum Source {
 /// An image of the map: what to draw, as `spyglass render` takes it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Export {
+    /// The blocks drawn, at the map's scale and height.
     pub area: MapArea,
+    /// The world: a seed or a save.
     pub source: Source,
     /// The dimension drawn.
     pub dimension: Dimension,
     /// The bundles folder, if it isn't `spyglass render`'s default.
     pub bundles: Option<PathBuf>,
+    /// Structure ids and `#tags` to mark.
     pub structures: Vec<String>,
+    /// Placed feature ids, drawn up close.
+    pub features: Vec<String>,
+    /// Biome ids to keep bright.
     pub highlight: Vec<String>,
+    // The layers, as the library's `Layers` names them.
+    /// Tied biome cells as a checker.
     pub ties: bool,
+    /// Slime chunks.
     pub slime_chunks: bool,
+    /// The world spawn.
     pub spawn: bool,
+    /// Structure starts decided with the seed's terrain.
     pub confirm: bool,
+    /// Shading by terrain height.
     pub relief: bool,
+    /// Biomes at the surface.
     pub surface: bool,
+    /// Ore veins at the area's height.
+    pub veins: bool,
+    /// Noise caves at the area's height.
+    pub noise_caves: bool,
+    /// Carvers' caves and canyons at the area's height.
+    pub carvers: bool,
+    /// The user's markers in view.
+    pub pins: Vec<Pin>,
 }
 
 /// `text` as one shell argument: quoted if it has spaces or quotes.
@@ -76,15 +100,19 @@ impl Export {
             Dimension::End => add("--dimension", "end".to_string()),
         }
         let [w, h] = self.area.size;
-        let s = i64::from(self.area.scale);
-        let centre =
-            [0, 1].map(|d| i64::from(self.area.min[d]) + i64::from(self.area.size[d] / 2) * s);
+        let scale = i64::from(self.area.scale);
+        let centre = [0, 1].map(|axis| {
+            i64::from(self.area.min[axis]) + i64::from(self.area.size[axis] / 2) * scale
+        });
         add("--centre", format!("{},{}", centre[0], centre[1]));
         add("--size", format!("{w}x{h}"));
         add("--scale", self.area.scale.to_string());
         add("--y", self.area.y.to_string());
         if !self.structures.is_empty() {
             add("--structures", self.structures.join(","));
+        }
+        if !self.features.is_empty() && self.area.scale <= MAX_FEATURE_SCALE {
+            add("--features", self.features.join(","));
         }
         if !self.highlight.is_empty() {
             add("--highlight", self.highlight.join(","));
@@ -107,6 +135,23 @@ impl Export {
         }
         if self.surface && terrain {
             args.push("--surface".to_string());
+        }
+        if self.area.scale <= MAX_UNDERGROUND_SCALE {
+            for (on, flag) in [
+                (self.veins, "--veins"),
+                (self.noise_caves, "--caves"),
+                (self.carvers, "--carvers"),
+            ] {
+                if on {
+                    args.push(flag.to_string());
+                }
+            }
+        }
+        for pin in &self.pins {
+            let [r, g, b] = pin.colour;
+            let [x, z] = pin.position;
+            args.push("--pin".to_string());
+            args.push(format!("{x},{z},#{r:02x}{g:02x}{b:02x}"));
         }
         args.push("-o".to_string());
         args.push(output.to_string());
@@ -155,6 +200,7 @@ mod tests {
                 "minecraft:village_plains".into(),
                 "minecraft:stronghold".into(),
             ],
+            features: vec!["minecraft:monster_room".into()],
             highlight: vec!["minecraft:river".into()],
             ties: true,
             slime_chunks: true,
@@ -162,8 +208,13 @@ mod tests {
             confirm: true,
             relief: true,
             surface: false,
+            veins: true,
+            noise_caves: true,
+            carvers: true,
+            pins: Vec::new(),
         };
-        // Terrain layers aren't drawn past scale 4, so the command doesn't ask for them.
+        // Terrain and underground layers aren't drawn past scale 4, so the command doesn't ask
+        // for them.
         assert_eq!(
             export.command("map.png"),
             "spyglass render --seed -5 --game-version 26.3 --centre 1000,-336 --size 1013x775 \
@@ -176,11 +227,9 @@ mod tests {
             surface: true,
             ..export.clone()
         };
-        assert!(
-            close
-                .command("map.png")
-                .ends_with("--ties --slime --spawn --relief --surface -o map.png")
-        );
+        assert!(close.command("map.png").ends_with(
+            "--ties --slime --spawn --relief --surface --veins --caves --carvers -o map.png"
+        ));
         // The CLI centres --centre with `centred_on`, which gives back the same area.
         assert_eq!(
             MapArea::centred_on([1000, -336], area.size, 8, 70).unwrap(),
@@ -195,6 +244,7 @@ mod tests {
             dimension: Dimension::Overworld,
             bundles: Some(PathBuf::from("D:/bundles")),
             structures: Vec::new(),
+            features: Vec::new(),
             highlight: Vec::new(),
             ties: false,
             slime_chunks: true,
@@ -202,11 +252,25 @@ mod tests {
             confirm: false,
             relief: false,
             surface: false,
+            veins: false,
+            noise_caves: false,
+            carvers: false,
+            pins: vec![
+                Pin {
+                    position: [-3, 4],
+                    colour: [0xf0, 0xb0, 0x30],
+                },
+                Pin {
+                    position: [10, -20],
+                    colour: [0x4c, 0x8f, 0xf0],
+                },
+            ],
         };
         assert_eq!(
             export.command("out dir/map.png"),
             "spyglass render --world \"C:/saves/My World\" --bundles D:/bundles --centre 0,0 \
-             --size 10x10 --scale 32 --y 64 -o \"out dir/map.png\""
+             --size 10x10 --scale 32 --y 64 --pin \"-3,4,#f0b030\" --pin \"10,-20,#4c8ff0\" \
+             -o \"out dir/map.png\""
         );
         let nether = Export {
             dimension: Dimension::Nether,

@@ -29,9 +29,12 @@ pub struct Named<'a> {
 /// The placement prefilter for one query.
 #[derive(Debug, Clone)]
 pub struct Prefilter {
+    /// One per required constraint the lower 48 bits can refute; a seed must pass them all.
     filters: Vec<Filter>,
 }
 
+/// One necessary condition. Every count is of placement chunks, or of slime chunks, which a seed
+/// with these lower 48 bits has, so the constraint's own count can't be higher.
 #[derive(Debug, Clone)]
 enum Filter {
     /// At least `count` placement chunks of `sets` in the region.
@@ -51,8 +54,10 @@ enum Filter {
     Slime { count: usize, area: Area },
 }
 
+/// Where a [`Filter::Starts`] counts.
 #[derive(Debug, Clone)]
 enum Within {
+    /// In `area`.
     Area(Area),
     /// Within `radius` of a placement chunk of `sets` in `area`, other than itself.
     Near {
@@ -62,33 +67,39 @@ enum Within {
     },
 }
 
+/// A place on the map, in block x and z, widened for the spawn.
 #[derive(Debug, Clone, Copy)]
 enum Area {
+    /// Within `radius` blocks of `centre`.
     Disc { centre: [i32; 2], radius: u32 },
+    /// From `min` to `max`, inclusive.
     Box { min: [i32; 2], max: [i32; 2] },
 }
 
 impl Area {
     /// The place, with a spawn anchor widened to every place the spawn can be: within
-    /// `spawn_reach` of (0, 0).
-    fn new(place: &Place, spawn_reach: u32) -> Area {
+    /// `spawn_reach` of (0, 0). `None` for a place around a `find` query's target or origin,
+    /// which a seed's lower 48 bits don't decide.
+    fn new(place: &Place, spawn_reach: u32) -> Option<Area> {
         match *place {
             Place::Within { radius, anchor } => match anchor {
-                Anchor::Spawn => Area::Disc {
+                Anchor::Spawn => Some(Area::Disc {
                     centre: [0, 0],
                     radius: radius + spawn_reach,
-                },
-                Anchor::Point(centre) => Area::Disc { centre, radius },
+                }),
+                Anchor::Point(centre) => Some(Area::Disc { centre, radius }),
+                Anchor::Here | Anchor::Origin => None,
             },
-            Place::Box { min, max } => Area::Box { min, max },
+            Place::Box { min, max } => Some(Area::Box { min, max }),
         }
     }
 
+    /// The box around the area: its minimum and maximum corners.
     fn bounds(self) -> ([i32; 2], [i32; 2]) {
         match self {
             Area::Disc { centre, radius } => {
-                let r = radius as i32; // at most 32,767 + a spawn reach
-                (centre.map(|c| c - r), centre.map(|c| c + r))
+                let radius = radius as i32; // at most 32,767 + a spawn reach
+                (centre.map(|c| c - radius), centre.map(|c| c + radius))
             }
             Area::Box { min, max } => (min, max),
         }
@@ -160,21 +171,21 @@ impl Prefilter {
         let area = |place: &Place| Area::new(place, spawn_reach);
         match kind {
             Kind::Structures {
-                count: Count::AtLeast(n),
+                count: Count::AtLeast(at_least),
                 region,
                 ..
             } => {
                 let target = sets_of(sets, named.target?)?;
                 let region = match region {
-                    Region::Place(place) => Within::Area(area(place)),
+                    Region::Place(place) => Within::Area(area(place)?),
                     Region::NearStructure { radius, place, .. } => Within::Near {
                         radius: *radius,
                         sets: sets_of(sets, named.anchor?)?,
-                        area: area(place),
+                        area: area(place)?,
                     },
                 };
                 Some(Filter::Starts {
-                    count: *n as usize,
+                    count: *at_least as usize,
                     sets: target,
                     region,
                 })
@@ -185,16 +196,16 @@ impl Prefilter {
                 size: *size as usize,
                 sets: sets_of(sets, named.target?)?,
                 apart: *apart,
-                area: area(place),
+                area: area(place)?,
             }),
             // Widened to the spawn's reach, a slime count would almost never fail and costs
             // tens of thousands of chunks, so only fixed places are checked.
             Kind::Slime {
-                count: Count::AtLeast(n),
+                count: Count::AtLeast(at_least),
                 region: Region::Place(place),
             } if !spawn_anchored(place) => Some(Filter::Slime {
-                count: *n as usize,
-                area: area(place),
+                count: *at_least as usize,
+                area: area(place)?,
             }),
             _ => None,
         }
@@ -207,6 +218,11 @@ impl Prefilter {
 
     /// Whether `seed` may meet every required constraint, as far as its lower 48 bits tell. The
     /// same for every seed with the same lower 48 bits.
+    ///
+    /// Each filter counts the possible placement chunks whose `/locate` position is in its area,
+    /// and stops at the `count`th: fewer, and the constraint can't hold. A "near" count first
+    /// gathers its anchors' possible chunks, then counts only targets in the box they reach. A
+    /// cluster needs a group of `size` possible chunks, since any real group is made of them.
     pub fn accepts(&self, sets: &StructureSets, seed: i64) -> bool {
         let placements = sets.seed_placements(seed);
         self.filters.iter().all(|f| match f {
@@ -264,6 +280,7 @@ impl Prefilter {
             }
             Filter::Slime { count, area } => {
                 let (min, max) = area.bounds();
+                // The chunks whose centre, `16 · chunk + 8`, is in the bounds.
                 let lo = min.map(|b| (b - 8 + 15).div_euclid(16));
                 let hi = max.map(|b| (b - 8).div_euclid(16));
                 (lo[1]..=hi[1])
@@ -281,8 +298,11 @@ impl Prefilter {
 /// A placement chunk and its `/locate` position.
 #[derive(Debug, Clone, Copy)]
 struct Start {
+    /// The structure set.
     set: usize,
+    /// The placement chunk.
     chunk: [i32; 2],
+    /// Its `/locate` position's x and z.
     position: [i32; 2],
 }
 
@@ -296,11 +316,11 @@ fn possible_starts<'a>(
 ) -> impl Iterator<Item = Start> + 'a {
     targets.iter().flat_map(move |&set| {
         let offset = sets.sets()[set].placement.locate_offset;
-        let o = [offset[0], offset[2]];
+        let offset_xz = [offset[0], offset[2]];
         // position = chunk · 16 + offset, so the chunks run from ceil((min − offset) / 16) to
         // floor((max − offset) / 16).
-        let lo = [0, 1].map(|i| (min[i] - o[i] + 15).div_euclid(16));
-        let hi = [0, 1].map(|i| (max[i] - o[i]).div_euclid(16));
+        let lo = [0, 1].map(|i| (min[i] - offset_xz[i] + 15).div_euclid(16));
+        let hi = [0, 1].map(|i| (max[i] - offset_xz[i]).div_euclid(16));
         placements
             .possible_chunks_in(set, lo, hi)
             .unwrap_or_default()
@@ -308,21 +328,21 @@ fn possible_starts<'a>(
             .map(move |chunk| Start {
                 set,
                 chunk,
-                position: [chunk[0] * 16 + o[0], chunk[1] * 16 + o[1]],
+                position: [chunk[0] * 16 + offset_xz[0], chunk[1] * 16 + offset_xz[1]],
             })
     })
 }
 
 /// The box `radius` around every anchor, or `None` if there are none.
 fn reach(anchors: &[Start], radius: u32) -> Option<([i32; 2], [i32; 2])> {
-    let r = radius as i32; // at most 32,767
+    let radius = radius as i32; // at most 32,767
     let (first, rest) = anchors.split_first()?;
     let (mut min, mut max) = (first.position, first.position);
-    for a in rest {
+    for anchor in rest {
         for i in 0..2 {
-            min[i] = min[i].min(a.position[i]);
-            max[i] = max[i].max(a.position[i]);
+            min[i] = min[i].min(anchor.position[i]);
+            max[i] = max[i].max(anchor.position[i]);
         }
     }
-    Some((min.map(|c| c - r), max.map(|c| c + r)))
+    Some((min.map(|c| c - radius), max.map(|c| c + radius)))
 }

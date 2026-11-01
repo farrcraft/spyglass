@@ -71,6 +71,7 @@ These are correctness bugs, not style issues.
 - Library crates use `thiserror` error types; `anyhow` belongs only in binaries. No `unwrap`/`expect` in library code on input that can fail (malformed bundles, I/O); fine for real invariants, with the invariant stated in the `expect` message.
 - `unsafe` needs a `// SAFETY:` comment and a reason safe code wasn't enough.
 - Public items get doc comments. For ported functions, name the Java class and method they correspond to.
+- **Readability** (CLAUDE.md, "Readable over terse"): flag names that don't say what a value means (`d9`, `s`, `t`, `r`, `ns`, `q` for anything but coordinates, indices and short closures), a game name kept for parity without a comment saying what it is, an algorithm whose idea isn't stated before its loops, and configuration fields without a doc comment. Close ports of noise and RNG math may keep the game's short names when the function's doc says what it computes. A rename must not change arithmetic or draw order.
 - Prefer newtypes for coordinate spaces (block vs quart vs chunk) where mixing them is a plausible bug.
 
 ### 5. Performance (hot paths only)

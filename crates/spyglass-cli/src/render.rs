@@ -50,14 +50,23 @@ pub fn run(args: &Render) -> Result<()> {
             .iter()
             .map(|s| world.structure_query(s))
             .collect::<spyglass::Result<_>>()?,
+        features: args
+            .features
+            .iter()
+            .map(|f| world.feature_query(f))
+            .collect::<spyglass::Result<_>>()?,
         slime_chunks: args.slime,
         spawn: args.spawn,
         confirm: args.confirm,
         relief: args.relief,
         surface: args.surface,
+        veins: args.veins,
+        noise_caves: args.caves,
+        carvers: args.carvers,
+        pins: args.pins.clone(),
     };
     let features = session.map_features(&area, &layers)?;
-    let image = session.render(&area, &layers)?;
+    let image = session.render_with(&area, &layers, &features)?;
     let path = &args.output;
     let file = File::create(path).with_context(|| format!("creating {}", path.display()))?;
     image
@@ -94,22 +103,35 @@ pub fn run(args: &Render) -> Result<()> {
                     ties: layers.ties,
                     highlight: &args.highlight,
                     structures: &args.structures,
+                    features: &args.features,
                     slime_chunks: layers.slime_chunks,
                     spawn: layers.spawn,
                     confirm: layers.confirm,
                     relief: layers.relief,
                     surface: layers.surface,
+                    veins: layers.veins,
+                    noise_caves: layers.noise_caves,
+                    carvers: layers.carvers,
                 },
                 structures,
-                slime_chunks: features.slime_chunks,
+                features: features
+                    .features
+                    .iter()
+                    .map(|f| json::FeatureHit::new(f, None))
+                    .collect(),
+                slime_chunks: features.slime_chunks.clone(),
                 spawn: features.spawn.map(|s| json::SpawnAnswer::new(&s)),
+                pins: features.pins.iter().map(json::PinMark::new).collect(),
             },
         );
     }
     let [w, h] = area.size;
-    let s = i64::from(area.scale);
+    let blocks_per_pixel = i64::from(area.scale);
     let [x0, z0] = area.min.map(i64::from);
-    let (x1, z1) = (x0 + i64::from(w) * s - 1, z0 + i64::from(h) * s - 1);
+    let (x1, z1) = (
+        x0 + i64::from(w) * blocks_per_pixel - 1,
+        z0 + i64::from(h) * blocks_per_pixel - 1,
+    );
     let biomes = match (layers.biomes, layers.surface) {
         (false, _) => String::new(),
         (true, true) => ", biomes at the surface".to_string(),
@@ -122,6 +144,13 @@ pub fn run(args: &Render) -> Result<()> {
         area.scale,
         out.context(None),
     );
+    if !layers.pins.is_empty() {
+        out!(
+            "  {} of {} pins in view",
+            features.pins.len(),
+            layers.pins.len()
+        );
+    }
     if layers.spawn || !layers.structures.is_empty() || layers.slime_chunks {
         let certain = features.structures.iter().filter(|s| s.certain).count();
         out!(
@@ -134,6 +163,14 @@ pub fn run(args: &Render) -> Result<()> {
             } else {
                 "not in view"
             },
+        );
+    }
+    if !layers.features.is_empty() {
+        let certain = features.features.iter().filter(|f| f.certain).count();
+        out!(
+            "  {} features ({certain} certain, {} likely candidates)",
+            features.features.len(),
+            features.features.len() - certain,
         );
     }
     out.warn();

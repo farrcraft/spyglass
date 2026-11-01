@@ -365,6 +365,7 @@ type Presets = Vec<(String, [Option<Value>; 3])>;
 /// Assesses saves against one bundles folder. Each bundle's world presets are read once, the
 /// first time a save needs them.
 pub struct SaveInspector {
+    /// The bundles in the folder, newest first.
     bundles: Vec<BundleInfo>,
     /// Each bundle's generators by preset id, normalized, by bundle folder.
     presets: Mutex<HashMap<PathBuf, Arc<Presets>>>,
@@ -390,11 +391,11 @@ impl SaveInspector {
         let mut presets = Vec::new();
         for id in opened.registry_ids("worldgen/world_preset") {
             let preset = opened.resource("worldgen/world_preset", &id)?;
-            let generators = Dimension::ALL.map(|d| {
+            let generators = Dimension::ALL.map(|dimension| {
                 preset
                     .get("dimensions")
-                    .and_then(|ds| ds.get(d.id()))
-                    .and_then(|d| d.get("generator"))
+                    .and_then(|dimensions| dimensions.get(dimension.id()))
+                    .and_then(|entry| entry.get("generator"))
                     .map(normalize)
             });
             presets.push((id, generators));
@@ -502,6 +503,7 @@ fn inspect(inspector: &SaveInspector, dir: &Path, scan: Scan) -> Result<SaveRepo
 fn normalize(value: &Value) -> Value {
     match value {
         Value::Bool(b) => normalize(&Value::from(u8::from(*b))),
+        // Every number as a double, so NBT's typed numbers and JSON's compare by value.
         Value::Number(n) => n
             .as_f64()
             .and_then(serde_json::Number::from_f64)
@@ -532,8 +534,8 @@ fn generator_warnings(save: &spyglass_world::Save, presets: &Presets) -> Vec<Sav
     };
     let mut warnings = Vec::new();
     for dimension in Dimension::ALL {
-        let i = dimension.index();
-        let Some(expected) = &supported[i] else {
+        let index = dimension.index();
+        let Some(expected) = &supported[index] else {
             continue;
         };
         let Some(generator) = save.generators.get(dimension.id()) else {
@@ -553,7 +555,7 @@ fn generator_warnings(save: &spyglass_world::Save, presets: &Presets) -> Vec<Sav
         // name a mismatch.
         let preset = presets
             .iter()
-            .find(|(_, theirs)| theirs[i].as_ref() == Some(&ours))
+            .find(|(_, theirs)| theirs[index].as_ref() == Some(&ours))
             .map(|(id, _)| id.clone());
         warnings.push(SaveWarning::UnsupportedGenerator {
             dimension,

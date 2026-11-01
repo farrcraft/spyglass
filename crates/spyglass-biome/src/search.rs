@@ -4,6 +4,13 @@
 //! which one depends on the thread's previous search. This search is exact instead: it finds
 //! every point at the minimum, and answers with the first of them in list order, which is what
 //! `Climate.ParameterList.findValueBruteForce` returns.
+//!
+//! Ties are common because each point is a box of parameter ranges and the fitness is an
+//! integer: a target inside two overlapping boxes is at distance 0 from both, and one between
+//! boxes on a coarse grid is often exactly as far from each.
+//!
+//! The tree is a bounding-volume hierarchy: each node's box encloses its points, and no point
+//! in a box can be nearer than the box itself, so a box farther than the best so far is skipped.
 
 use crate::parameters::{BiomeId, ParameterList, ParameterPoint, TargetPoint};
 
@@ -49,17 +56,19 @@ const LEAF_SIZE: usize = 8;
 /// allow for, so the search falls back to brute force. Climate values never come near it.
 const TREE_LIMIT: i64 = 1 << 30;
 
+/// A box: the lowest and highest value in each dimension.
 type Bounds = ([i64; DIMENSIONS], [i64; DIMENSIONS]);
 
+/// A point's box: its six ranges, and its offset as a range of one value.
 fn bounds(p: &ParameterPoint) -> Bounds {
-    let mut b = ([0; DIMENSIONS], [0; DIMENSIONS]);
+    let mut point_box = ([0; DIMENSIONS], [0; DIMENSIONS]);
     for (d, range) in p.parameters.iter().enumerate() {
-        b.0[d] = range.min;
-        b.1[d] = range.max;
+        point_box.0[d] = range.min;
+        point_box.1[d] = range.max;
     }
-    b.0[6] = p.offset;
-    b.1[6] = p.offset;
-    b
+    point_box.0[6] = p.offset;
+    point_box.1[6] = p.offset;
+    point_box
 }
 
 /// The sum of squared per-dimension distances from `target` to a box. For a single point that
@@ -67,25 +76,31 @@ fn bounds(p: &ParameterPoint) -> Bounds {
 fn distance(target: &[i64; DIMENSIONS], (min, max): &Bounds) -> i64 {
     let mut sum = 0i64;
     for d in 0..DIMENSIONS {
-        let v = target[d];
-        let above = v.wrapping_sub(max[d]);
-        let below = min[d].wrapping_sub(v);
+        let value = target[d];
+        let above = value.wrapping_sub(max[d]);
+        let below = min[d].wrapping_sub(value);
+        // 0 inside the range, else how far outside.
         let dist = if above > 0 { above } else { below.max(0) };
         sum = sum.wrapping_add(dist.wrapping_mul(dist));
     }
     sum
 }
 
+/// What a node holds.
 #[derive(Debug, Clone)]
 enum Children {
     /// A range of [`SearchTree::points`].
     Leaf(usize, usize),
+    /// Two nodes, as indices into [`SearchTree::nodes`].
     Inner(usize, usize),
 }
 
+/// A node of the tree.
 #[derive(Debug, Clone)]
 struct Node {
+    /// The box around every point below it.
     bounds: Bounds,
+    /// Its points or its two halves.
     children: Children,
 }
 
@@ -94,6 +109,7 @@ struct Node {
 pub struct SearchTree {
     /// Point bounds and list index, in tree order.
     points: Vec<(Bounds, u32)>,
+    /// The nodes, the root first.
     nodes: Vec<Node>,
     /// Each list index's biome.
     biomes: Vec<BiomeId>,
@@ -138,10 +154,11 @@ impl SearchTree {
         {
             self.brute_force_hits(target, hits);
         } else {
-            let mut t = [0; DIMENSIONS];
-            t[..6].copy_from_slice(&target.0);
+            // The offset's dimension is measured against 0.
+            let mut target_with_offset = [0; DIMENSIONS];
+            target_with_offset[..6].copy_from_slice(&target.0);
             let mut best = i64::MAX;
-            self.visit(0, &t, &mut best, hits);
+            self.visit(0, &target_with_offset, &mut best, hits);
         }
         self.resolve(hits)
     }
@@ -162,20 +179,22 @@ impl SearchTree {
         }
     }
 
+    /// Offers every point under `node` that could be at or below `best`, the nearer half first
+    /// so that `best` falls early and prunes more.
     fn visit(&self, node: usize, target: &[i64; DIMENSIONS], best: &mut i64, hits: &mut Vec<u32>) {
         match self.nodes[node].children {
             Children::Leaf(start, end) => {
-                for (b, i) in &self.points[start..end] {
-                    offer(*i, distance(target, b), best, hits);
+                for (point_box, index) in &self.points[start..end] {
+                    offer(*index, distance(target, point_box), best, hits);
                 }
             }
-            Children::Inner(l, r) => {
-                let dl = distance(target, &self.nodes[l].bounds);
-                let dr = distance(target, &self.nodes[r].bounds);
-                let (first, second, near, far) = if dl <= dr {
-                    (l, r, dl, dr)
+            Children::Inner(left, right) => {
+                let left_distance = distance(target, &self.nodes[left].bounds);
+                let right_distance = distance(target, &self.nodes[right].bounds);
+                let (first, second, near, far) = if left_distance <= right_distance {
+                    (left, right, left_distance, right_distance)
                 } else {
-                    (r, l, dr, dl)
+                    (right, left, right_distance, left_distance)
                 };
                 // Prune only strictly farther boxes: a box at exactly the best can hold a tie.
                 if near <= *best {
@@ -194,17 +213,18 @@ impl SearchTree {
         if let [only] = hits {
             return Lookup::Unique(biome(only));
         }
+        // Each distinct biome once, in list order of its first tied point.
         hits.sort_unstable();
-        let mut set: Vec<BiomeId> = Vec::with_capacity(hits.len());
+        let mut tied: Vec<BiomeId> = Vec::with_capacity(hits.len());
         for b in hits.iter().map(biome) {
-            if !set.contains(&b) {
-                set.push(b);
+            if !tied.contains(&b) {
+                tied.push(b);
             }
         }
-        if set.len() == 1 {
-            Lookup::Unique(set[0])
+        if tied.len() == 1 {
+            Lookup::Unique(tied[0])
         } else {
-            Lookup::Tied(set.into_boxed_slice())
+            Lookup::Tied(tied.into_boxed_slice())
         }
     }
 }
@@ -222,14 +242,14 @@ fn offer(i: u32, fitness: i64, best: &mut i64, hits: &mut Vec<u32>) {
 
 /// The box around `points`.
 fn enclose(points: &[(Bounds, u32)]) -> Bounds {
-    let mut b = ([i64::MAX; DIMENSIONS], [i64::MIN; DIMENSIONS]);
+    let mut enclosing = ([i64::MAX; DIMENSIONS], [i64::MIN; DIMENSIONS]);
     for ((min, max), _) in points {
         for d in 0..DIMENSIONS {
-            b.0[d] = b.0[d].min(min[d]);
-            b.1[d] = b.1[d].max(max[d]);
+            enclosing.0[d] = enclosing.0[d].min(min[d]);
+            enclosing.1[d] = enclosing.1[d].max(max[d]);
         }
     }
-    b
+    enclosing
 }
 
 /// Total span of a box, over all dimensions.
@@ -248,19 +268,21 @@ fn build(points: &mut [(Bounds, u32)], from: usize, to: usize, nodes: &mut Vec<N
         return node;
     }
     let mid = (from + to) / 2;
+    // Twice the box's centre along `d` (no halving needed to compare), then the list index,
+    // so the order is total and the build deterministic.
     let by_center = |d: usize| move |p: &(Bounds, u32)| (p.0.0[d] + p.0.1[d], p.1);
-    let mut best = (i64::MAX, 0);
+    let (mut best_cost, mut best_dimension) = (i64::MAX, 0);
     for d in 0..DIMENSIONS {
         points[from..to].sort_by_key(by_center(d));
-        let c = cost(&enclose(&points[from..mid])) + cost(&enclose(&points[mid..to]));
-        if c < best.0 {
-            best = (c, d);
+        let split_cost = cost(&enclose(&points[from..mid])) + cost(&enclose(&points[mid..to]));
+        if split_cost < best_cost {
+            (best_cost, best_dimension) = (split_cost, d);
         }
     }
-    points[from..to].sort_by_key(by_center(best.1));
-    let l = build(points, from, mid, nodes);
-    let r = build(points, mid, to, nodes);
-    nodes[node].children = Children::Inner(l, r);
+    points[from..to].sort_by_key(by_center(best_dimension));
+    let left = build(points, from, mid, nodes);
+    let right = build(points, mid, to, nodes);
+    nodes[node].children = Children::Inner(left, right);
     node
 }
 

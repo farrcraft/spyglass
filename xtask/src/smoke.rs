@@ -159,10 +159,11 @@ fn user_env() -> Vec<(OsString, OsString)> {
         .collect()
 }
 
+/// Whether `dir` is in rustup's or cargo's folders.
 fn is_rust_dir(dir: &Path) -> bool {
-    dir.components().any(|c| {
-        let c = c.as_os_str().to_string_lossy().to_lowercase();
-        c == ".cargo" || c == ".rustup"
+    dir.components().any(|component| {
+        let name = component.as_os_str().to_string_lossy().to_lowercase();
+        name == ".cargo" || name == ".rustup"
     })
 }
 

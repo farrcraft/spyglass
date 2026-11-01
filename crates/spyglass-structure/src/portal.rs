@@ -104,10 +104,10 @@ impl RuinedPortal {
         // StructureTemplate.getBoundingBox(chunk origin, rotation, pivot, mirror).
         let (min_x, min_z) = (chunk[0].wrapping_shl(4), chunk[1].wrapping_shl(4));
         let pivot = [size[0] / 2, size[2] / 2];
-        let a = transform([0, 0], front_back, rotation, pivot);
-        let b = transform([size[0] - 1, size[2] - 1], front_back, rotation, pivot);
-        let box_min = [min_x + a[0].min(b[0]), min_z + a[1].min(b[1])];
-        let box_max = [min_x + a[0].max(b[0]), min_z + a[1].max(b[1])];
+        let near = transform([0, 0], front_back, rotation, pivot);
+        let far = transform([size[0] - 1, size[2] - 1], front_back, rotation, pivot);
+        let box_min = [min_x + near[0].min(far[0]), min_z + near[1].min(far[1])];
+        let box_max = [min_x + near[0].max(far[0]), min_z + near[1].max(far[1])];
         // BoundingBox.getCenter.
         let centre = [
             box_min[0] + (box_max[0] - box_min[0] + 1) / 2,
@@ -139,11 +139,11 @@ impl RuinedPortal {
             return *only;
         }
         let total: f32 = self.setups.iter().fold(0.0, |t, s| t + s.weight);
-        let mut f = random.next_float();
-        for s in &self.setups {
-            f -= s.weight / total;
-            if f < 0.0 {
-                return *s;
+        let mut draw = random.next_float();
+        for setup in &self.setups {
+            draw -= setup.weight / total;
+            if draw < 0.0 {
+                return *setup;
             }
         }
         // The game throws here; weights that sum to their total can't get here.

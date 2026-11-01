@@ -1,4 +1,5 @@
-//! Block tags (`tags/block/*.json`), resolved to the block ids they hold.
+//! Tags (`tags/<registry>/*.json`), resolved to the ids they hold: block tags here, and any
+//! other registry's for the crates above.
 
 use std::collections::HashSet;
 
@@ -10,23 +11,40 @@ use spyglass_density::Resources;
 /// The registry path of block tags.
 const BLOCK_TAG: &str = "tags/block";
 
-/// The block ids in tag `id`, nested tags included (`TagEntry.CODEC`: an id, a `#tag`, or
-/// `{"id": ..., "required": bool}`). There's no block registry in a bundle to check ids
-/// against, so every id is kept; only a missing optional tag is skipped.
+/// The block ids in tag `id`, as [`tag`] resolves them.
 pub(crate) fn block_tag<R: Resources + ?Sized>(
     resources: &R,
     id: &str,
 ) -> Result<HashSet<String>, LoadError> {
-    let mut blocks = HashSet::new();
-    resolve(resources, &full_id(id), &mut Vec::new(), &mut blocks)?;
-    Ok(blocks)
+    Ok(tag(resources, BLOCK_TAG, id)?.into_iter().collect())
+}
+
+/// The ids in tag `id` of `registry` (a tag registry path, e.g. `tags/block`), nested tags
+/// included (`TagEntry.CODEC`: an id, a `#tag`, or `{"id": ..., "required": bool}`), each once,
+/// in the order the entries first name them. There's no registry in a bundle to check ids
+/// against, so every id is kept; only a missing optional tag is skipped.
+pub fn tag<R: Resources + ?Sized>(
+    resources: &R,
+    registry: &str,
+    id: &str,
+) -> Result<Vec<String>, LoadError> {
+    let mut values = Vec::new();
+    resolve(
+        resources,
+        registry,
+        &full_id(id),
+        &mut Vec::new(),
+        &mut values,
+    )?;
+    Ok(values)
 }
 
 fn resolve<R: Resources + ?Sized>(
     resources: &R,
+    registry: &str,
     id: &str,
     loading: &mut Vec<String>,
-    blocks: &mut HashSet<String>,
+    blocks: &mut Vec<String>,
 ) -> Result<(), LoadError> {
     let resource = format!("#{id}");
     let root = At::root(&resource);
@@ -35,9 +53,9 @@ fn resolve<R: Resources + ?Sized>(
         cycle.push(id.to_string());
         return Err(root.error(LoadErrorKind::Cycle(cycle)));
     }
-    let json = resources.resource(BLOCK_TAG, id).map_err(|e| match e {
+    let json = resources.resource(registry, id).map_err(|e| match e {
         BundleError::NotFound(_) if loading.is_empty() => root.error(LoadErrorKind::Invalid(
-            "the bundle has no such block tag; extract it again with this version of spyglass",
+            "the bundle has no such tag; extract it again with this version of spyglass",
         )),
         e => root.error(e.into()),
     })?;
@@ -67,13 +85,16 @@ fn resolve<R: Resources + ?Sized>(
         match entry_id.strip_prefix('#') {
             Some(tag) => {
                 let tag = full_id(tag);
-                if !required && resources.resource(BLOCK_TAG, &tag).is_err() {
+                if !required && resources.resource(registry, &tag).is_err() {
                     continue;
                 }
-                resolve(resources, &tag, loading, blocks)?;
+                resolve(resources, registry, &tag, loading, blocks)?;
             }
             None => {
-                blocks.insert(full_id(entry_id));
+                let id = full_id(entry_id);
+                if !blocks.contains(&id) {
+                    blocks.push(id);
+                }
             }
         }
     }

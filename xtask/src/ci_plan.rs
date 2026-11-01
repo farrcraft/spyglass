@@ -196,7 +196,8 @@ impl fmt::Display for Unit {
 struct Costs {
     version: &'static str,
     /// Checkout, the JDK, building xtask and the tests, extracting the bundle and compiling the
-    /// harness: what every job pays.
+    /// harness, and the comparisons every job runs on the seeds it made (`features_in`,
+    /// `placing`): what every job pays.
     setup: f64,
     probe: f64,
     biomes: f64,
@@ -218,50 +219,52 @@ struct Costs {
 }
 
 /// Estimates, oldest version first. A version without its own uses the newest older version's,
-/// or the oldest's. 26.2's game computes heights about five times slower than later versions'.
+/// or the oldest's. Per-seed figures are the slowest runner's, so the budget's slack covers
+/// drift. 26.2 computes heights about five times slower than later versions, in the game and in
+/// spyglass, so its dungeon search takes about 22 minutes against 4.
 const COSTS: &[Costs] = &[
     Costs {
         version: "26.2",
-        setup: 7.0,
-        probe: 0.3,
-        biomes: 2.5,
-        structures: 1.5,
-        spawn: 0.5,
-        heights: 6.0,
-        blocks: 0.3,
-        features: 3.8,
-        dungeon: 5.0,
-        locate: 3.5,
-        bundle: 12.0,
+        setup: 10.0,
+        probe: 0.2,
+        biomes: 3.0,
+        structures: 2.1,
+        spawn: 0.3,
+        heights: 5.0,
+        blocks: 0.5,
+        features: 5.0,
+        dungeon: 22.0,
+        locate: 6.0,
+        bundle: 14.0,
     },
     Costs {
         version: "26.3",
-        setup: 8.0,
-        probe: 0.3,
-        biomes: 2.5,
-        structures: 1.5,
-        spawn: 0.5,
-        heights: 1.2,
+        setup: 7.0,
+        probe: 0.2,
+        biomes: 1.6,
+        structures: 1.1,
+        spawn: 0.4,
+        heights: 1.0,
         blocks: 0.3,
-        features: 3.2,
-        dungeon: 5.0,
-        locate: 2.5,
-        bundle: 6.0,
+        features: 3.1,
+        dungeon: 4.5,
+        locate: 2.0,
+        bundle: 3.0,
     },
     // The test pack loads from here on.
     Costs {
         version: "26.4-snapshot-6",
-        setup: 8.0,
-        probe: 0.3,
-        biomes: 2.5,
-        structures: 1.5,
-        spawn: 0.5,
-        heights: 1.2,
+        setup: 7.0,
+        probe: 0.2,
+        biomes: 1.6,
+        structures: 1.1,
+        spawn: 0.4,
+        heights: 1.0,
         blocks: 0.3,
-        features: 3.2,
-        dungeon: 5.0,
+        features: 3.1,
+        dungeon: 4.8,
         locate: 2.5,
-        bundle: 13.0,
+        bundle: 11.0,
     },
 ];
 

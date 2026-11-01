@@ -1021,10 +1021,9 @@ impl Coefficients {
         }
     }
 
-    /// `multiply(samples, i, stride)`: the weighted samples `i`, `i + stride`, …, summed left to
-    /// right.
-    fn multiply(self, samples: &[f32], i: usize, stride: usize) -> f32 {
-        let s = samples;
+    /// `multiply(samples, i, stride)`: the weighted samples `s[i]`, `s[i + stride]`, …, summed
+    /// left to right.
+    fn multiply(self, s: &[f32], i: usize, stride: usize) -> f32 {
         match self {
             Coefficients::Nearest => s[i],
             Coefficients::Linear(c1, c2) => c1 * s[i] + c2 * s[i + stride],

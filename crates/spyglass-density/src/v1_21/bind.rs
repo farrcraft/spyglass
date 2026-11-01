@@ -602,7 +602,8 @@ pub(crate) fn mapped(op: Mapped, x: f64) -> f64 {
 /// central island is at the origin; an outer island sits on each cell beyond 64 cells from it
 /// where the simplex noise is below −0.9, with a slope from the cell's position.
 pub(crate) fn end_island_height(noise: &SimplexNoise, x: i32, z: i32) -> f32 {
-    // The cell the position is in, and its offset in the cell.
+    // Java's truncating `/` and `%`, kept for parity: for a negative coordinate the cell rounds
+    // toward zero and the offset is negative, so this is not the cell that holds the position.
     let (cell_x, cell_z, within_x, within_z) = (x / 2, z / 2, x % 2, z % 2);
     // Mth.sqrt((float)(x·x + z·z)), the squares and sum in wrapping int.
     let distance_sq = x.wrapping_mul(x).wrapping_add(z.wrapping_mul(z)) as f32;

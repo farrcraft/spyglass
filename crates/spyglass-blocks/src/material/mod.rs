@@ -510,9 +510,9 @@ impl Source {
 
 /// `MaterialSystem.generateBands`: the 192 clay bands of badlands, from `fromHashOf("clay_bands")`.
 ///
-/// Plain terracotta with single orange bands, 1 to 5 apart; then runs of yellow, brown and
-/// red laid over it at random; then 9 to 15 white bands, 4 to 19 apart, each with a light
-/// grey band either side at even odds.
+/// Plain terracotta with single orange bands, 2 to 6 apart (the first 1 to 5 in); then runs of
+/// yellow, brown and red laid over it at random; then 9 to 15 white bands, 4 to 19 apart, each
+/// with a light grey band either side at even odds.
 fn bands(random: &mut Source, fixed: &Fixed) -> Vec<State> {
     const LEN: usize = 192;
     let mut bands = vec![fixed.terracotta; LEN];

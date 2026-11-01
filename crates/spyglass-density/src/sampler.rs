@@ -861,13 +861,13 @@ impl<'n> Binder<'n> {
     }
 
     /// [`compile_blended`](Self::compile_blended) with its random: the two limit noises and
-    /// the main noise, drawn in that order.
+    /// the main noise, drawn in that order. `p` is the noise's parameters, short for the many
+    /// uses below.
     fn compile_blended_with(
         &mut self,
-        parameters: &BlendedNoise,
+        p: &BlendedNoise,
         random: &mut impl RandomSource,
     ) -> Result<Compiled, LoadError> {
-        let p = parameters;
         let xz_multiplier = 684.412 * p.xz_scale;
         let y_multiplier = 684.412 * p.y_scale;
         let smear = y_multiplier * p.smear_scale_multiplier;
@@ -937,7 +937,8 @@ fn distance(metric: DistanceMetric, point: [i32; 3], pos: [i32; 3]) -> f32 {
 /// island sits on each cell beyond 64 cells from the origin where the simplex noise is below
 /// −0.9, with a slope from the cell's position.
 fn end_island_height(noise: &SimplexNoise, x: i32, z: i32) -> f32 {
-    // The cell the position is in, and its offset in the cell.
+    // Java's truncating `/` and `%`, kept for parity: for a negative coordinate the cell rounds
+    // toward zero and the offset is negative, so this is not the cell that holds the position.
     let (cell_x, cell_z, within_x, within_z) = (x / 2, z / 2, x % 2, z % 2);
     let mut height = -100.0_f32;
     for dx in -12..=12 {

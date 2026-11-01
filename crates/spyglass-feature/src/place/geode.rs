@@ -36,8 +36,8 @@ pub struct Geode {
     middle: State,
     /// The outer layer (smooth basalt in vanilla).
     outer: State,
-    /// The buds a budding block grows (in vanilla, small to large buds and clusters), each by direction (in
-    /// [`DIRECTIONS`]' order), then waterlogged (false, true).
+    /// The buds a budding block grows (in vanilla, small to large buds and clusters), each by
+    /// direction (in [`DIRECTIONS`]' order), then waterlogged (false, true).
     placements: Vec<[[State; 2]; 6]>,
     /// Blocks no write replaces.
     cannot_replace: Tag,

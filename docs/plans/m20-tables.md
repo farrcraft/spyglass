@@ -45,9 +45,9 @@ No entry has a `quality` and no pool has `bonus_rolls`, so the opener's luck cha
 - [x] **Spike:** `LootTable.fill` and everything it calls, in 26.2, 26.3 and 26.4-snapshot-7: draw order, the splitter, slot shuffles, each modifier, number provider and condition above, `selectEnchantment`. Where the versions differ. Whether `reports/items.json` has the components rolling reads, in every version. Findings in the notes, reconstructions kept locally. _The same draws in all three; the JSON differs; item components are per-item reports._
 - [x] **ADR:** loot in the bundle: the new directories and where item properties come from. _[ADR 0059](../adr/0059-loot-data-in-the-bundle.md); the crate is [ADR 0060](../adr/0060-loot-in-its-own-crate.md)._
 - [x] **Extractor:** the directories and item properties; bundle-format.md updated. _26.2 and 26.3 re-extracted; tag resolution moved down to `spyglass-density`, beside `Resources`._
-- [ ] **`spyglass-loot`:** loading 26.2's and 26.3's forms; items; the random; pools, entries and conditions; the splitter, the slots and the shuffles.
-- [ ] **Modifiers:** each one above, hand-worked tests for each, without game data.
-- [ ] **Enchanting:** `enchant_with_levels`, `enchant_randomly`, `set_enchantments`, from the enchantment data.
+- [x] **`spyglass-loot`:** loading 26.2's and 26.3's forms; items; the random; pools, entries and conditions; the splitter, the slots and the shuffles. _Every container table of 26.2, 26.3 and 26.4-snapshot-7 loads; a fill takes about 15 µs._
+- [x] **Modifiers:** each one above, hand-worked tests for each, without game data. _`tests/fill.rs`; the game's own answers come with the comparison._
+- [x] **Enchanting:** `enchant_with_levels`, `enchant_randomly`, `set_enchantments`, from the enchantment data. _Without `options` (the whole registry in its order) and `set_enchantments` with several random levels are refused: vanilla has neither._
 - [ ] **Oracle:** `oracle loot` and its golden file, and the CI unit for it ([ADR 0058](../adr/0058-oracle-ci-planned-by-cost.md)): a new `Unit` kind and its `COSTS`.
 - [ ] **Comparison:** every table, every seed, every version: slot for slot the game's.
 - [ ] **Spec:** loot.md: filling, each modifier and condition, the versions' forms.

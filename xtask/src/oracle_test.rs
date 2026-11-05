@@ -194,6 +194,11 @@ pub(crate) const TESTS: &[(&str, &str, &[Input])] = &[
         &[Input::Features, Input::Bundle],
     ),
     (
+        "spyglass-loot",
+        "every_container_table_loads_and_fills",
+        &[Input::Bundle],
+    ),
+    (
         "spyglass",
         "blocks_through_the_api_are_the_game_s",
         &[Input::Blocks, Input::BlocksNoCarvers, Input::Bundle],

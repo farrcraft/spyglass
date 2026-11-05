@@ -23,6 +23,7 @@ pub const JAR_DIRS: &[&str] = &[
     "data/minecraft/instrument/",
     "data/minecraft/tags/item/",
     "data/minecraft/tags/enchantment/",
+    "data/minecraft/tags/instrument/",
 ];
 
 /// Data-generator reports copied into a bundle, relative to the generator's output directory and
@@ -347,6 +348,10 @@ mod tests {
                 ("data/minecraft/enchantment/mending.json", b"{}"),
                 ("data/minecraft/instrument/ponder_goat_horn.json", b"{}"),
                 ("data/minecraft/tags/enchantment/on_random_loot.json", b"{}"),
+                (
+                    "data/minecraft/tags/instrument/regular_goat_horns.json",
+                    b"{}",
+                ),
                 ("data/minecraft/dimension_type/overworld.json", b"{}"),
                 ("data/minecraft/structure/igloo/top.nbt", b"\x1f\x8b"),
                 ("data/minecraft/recipe/bread.json", b"not copied"),
@@ -407,6 +412,7 @@ mod tests {
                 "data/minecraft/structure/igloo/top.nbt",
                 "data/minecraft/tags/block/logs.json",
                 "data/minecraft/tags/enchantment/on_random_loot.json",
+                "data/minecraft/tags/instrument/regular_goat_horns.json",
                 "data/minecraft/tags/item/logs.json",
                 "data/minecraft/tags/worldgen/biome/is_ocean.json",
                 "data/minecraft/worldgen/biome/plains.json",

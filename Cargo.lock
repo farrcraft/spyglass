@@ -3737,6 +3737,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "spyglass-loot"
+version = "0.2.0"
+dependencies = [
+ "serde_json",
+ "spyglass-data",
+ "spyglass-density",
+ "spyglass-oracle",
+ "spyglass-rng",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "spyglass-noise"
 version = "0.2.0"
 dependencies = [

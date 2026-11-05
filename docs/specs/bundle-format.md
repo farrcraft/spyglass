@@ -42,6 +42,7 @@ A bundle is a directory, `<bundles folder>/<version id>/`:
 | `data/minecraft/instrument/**`        | The inner game jar, same path: goat horns' instruments, for loot.                                                                               | 8          |
 | `data/minecraft/tags/item/**`         | The inner game jar, same path: item tags, for loot.                                                                                             | 236        |
 | `data/minecraft/tags/enchantment/**`  | The inner game jar, same path: enchantment tags, for loot.                                                                                      | 22         |
+| `data/minecraft/tags/instrument/**`   | The inner game jar, same path: instrument tags, for loot.                                                                                       | 3          |
 | `reports/biome_parameters/minecraft/` | The data generator's `--reports` output: `overworld.json` and `nether.json`.                                                                    | 2          |
 | `reports/blocks.json`                 | The data generator's `--reports` output: every block's states and defaults.                                                                     | 1          |
 | `reports/block_behaviour.json`        | The [block report](data-sources.md#block-report): each state's behaviour.                                                                       | 1          |
@@ -54,7 +55,7 @@ Rules:
 - Paths use `/` and are relative to the bundle root, both on disk and in `bundle.json`.
 - Nothing else is in the bundle directory. A file that isn't listed in `bundle.json` makes the bundle invalid.
 
-The set of included directories is part of the format. Adding one changes this spec and the extractor's version, but not `format`. Structure templates were added this way ([ADR 0013](../adr/0013-structure-templates-and-nbt.md)), then block tags, then `reports/blocks.json`, then `reports/block_behaviour.json`, then loot's tables, enchantments, instruments, item and enchantment tags and item components ([ADR 0059](../adr/0059-loot-data-in-the-bundle.md)). A bundle extracted before then has none, and loaders that need them say so and ask for it to be extracted again.
+The set of included directories is part of the format. Adding one changes this spec and the extractor's version, but not `format`. Structure templates were added this way ([ADR 0013](../adr/0013-structure-templates-and-nbt.md)), then block tags, then `reports/blocks.json`, then `reports/block_behaviour.json`, then loot's tables, enchantments, instruments, item, enchantment and instrument tags and item components ([ADR 0059](../adr/0059-loot-data-in-the-bundle.md)). A bundle extracted before then has none, and loaders that need them say so and ask for it to be extracted again.
 
 ## `bundle.json`
 

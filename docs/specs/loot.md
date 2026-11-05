@@ -6,7 +6,7 @@ Ported from the 26.2, 26.3 and 26.4-snapshot-7 bytecode. The draws are the same 
 
 ## Data
 
-From the bundle: tables in `loot_table/`, enchantments in `enchantment/`, instruments in `instrument/`, the item and enchantment tags in `tags/item/` and `tags/enchantment/`, and each item's default components in `reports/minecraft/components/item/<id>.json` ([bundle-format.md](bundle-format.md#layout)). Of the components, filling reads `max_stack_size`, `enchantable` and `max_damage`.
+From the bundle: tables in `loot_table/`, enchantments in `enchantment/`, instruments in `instrument/`, the item, enchantment and instrument tags in `tags/item/`, `tags/enchantment/` and `tags/instrument/`, and each item's default components in `reports/minecraft/components/item/<id>.json` ([bundle-format.md](bundle-format.md#layout)). Of the components, filling reads `max_stack_size`, `enchantable` and `max_damage`.
 
 A tag's members are in its file's `values` order, a nested `#tag` expanded in place, a repeat kept only where it first appears, and an optional entry (`{"id": ..., "required": false}`) skipped if it names nothing (`TagLoader`). Vanilla's container tables use these orders: `enchant_randomly`'s and `enchant_with_levels`'s `options`, and `set_instrument`'s tag.
 
@@ -69,7 +69,7 @@ Each modifier's condition is tested first; false leaves the stack. Where a list 
 - **`set_count`:** the count is `count` as an int, plus the old count with `add`. It isn't clamped: the splitter cuts it.
 - **`set_damage`:** on an item that can't be damaged (without `max_damage` and `damage` components, or with `unbreakable`), nothing, and `damage` isn't evaluated. Else `damage` as a float `d`, and the stack's damage is `floor((1 − clamp(d, 0, 1)) × max_damage)` in `f32`, clamped to `0..max_damage`. With `add`, `d` is added to the share of durability left first.
 - **`set_potion`, `set_name`:** no draws.
-- **`set_stew_effect`:** on suspicious stew only, with a list that isn't empty: `nextInt(effects)` picks one, then its `duration` as an int, in seconds, times 20 unless the effect is instant.
+- **`set_stew_effect`:** on suspicious stew only, with a list that isn't empty: `nextInt(effects)` picks one, then its `duration` as an int, in seconds, times 20 unless the effect is instant (the game's instant effects, `instant_health`, `instant_damage` and `saturation`, which are code in every supported version).
 - **`set_instrument`:** `nextInt(size)` of the tag's members in order ([Data](#data)); no draw for an empty tag.
 - **`set_ominous_bottle_amplifier`:** `amplifier` as an int, clamped to `0..4`.
 - **`set_enchantments`:** each of `enchantments` in the file's key order, its level as an int clamped to `0..255` (with `add`, plus the stack's level), level 0 removing it. A book becomes an enchanted book, keeping its count.
@@ -106,4 +106,4 @@ The draws above are the same in every supported version; the JSON differs, and t
 
 ## Testing
 
-To come: the oracle's loot golden files, every container table of every supported version rolled with the game's `LootTable.fill` for a fixed list of seeds, compared slot for slot.
+Hand-worked tests in `spyglass-loot` (`tests/fill.rs`): both forms of one table fill alike, and single draws checked by hand. `every_container_table_loads_and_fills` loads every container table of a bundle and fills each for 1,000 seeds. To come: the oracle's loot golden files, every container table of every supported version rolled with the game's `LootTable.fill` for a fixed list of seeds, compared slot for slot.

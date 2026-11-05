@@ -1,0 +1,21 @@
+[package]
+name = "spyglass-loot"
+description = "Loot: a container's contents from its loot table and seed, as the game fills it (ADR 0060)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde_json.workspace = true
+spyglass-data.workspace = true
+spyglass-density.workspace = true
+spyglass-rng.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+spyglass-oracle.workspace = true

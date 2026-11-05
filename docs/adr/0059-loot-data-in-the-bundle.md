@@ -6,7 +6,7 @@
 
 ## Context
 
-Rolling a container's loot ([loot.md](../specs/loot.md)) reads data no bundle has yet: the loot tables themselves, the enchantments `enchant_randomly` and `enchant_with_levels` choose from, the instruments `set_instrument` picks, the item and enchantment tags those name, and three properties of each item. Splitting a stack needs its maximum stack size, enchanting its enchantability, and `set_damage` its maximum damage. All of them change between versions: 26.3 and 26.4-snapshot-7 add items and tables, and 26.3 reshaped the tables' JSON. So by "algorithms in code, parameters in data" they belong in the bundle.
+Rolling a container's loot ([loot.md](../specs/loot.md)) reads data no bundle has yet: the loot tables themselves, the enchantments `enchant_randomly` and `enchant_with_levels` choose from, the instruments `set_instrument` picks, the item, enchantment and instrument tags those name, and three properties of each item. Splitting a stack needs its maximum stack size, enchanting its enchantability, and `set_damage` its maximum damage. All of them change between versions: 26.3 and 26.4-snapshot-7 add items and tables, and 26.3 reshaped the tables' JSON. So by "algorithms in code, parameters in data" they belong in the bundle.
 
 The tables, enchantments, instruments and tags are JSON files in the server jar, as worldgen's are. The item properties aren't in any data file: they're item components, set in the game's code (`Items`). The data generator's `--reports`, which the extractor already runs, writes each item's default components to `reports/minecraft/components/item/<id>.json` in every supported version (26.2's 1,537 items, 26.3's 1,658, 26.4-snapshot-7's 1,686). `reports/items.json`, which older versions had, doesn't exist in any of them.
 
@@ -14,7 +14,7 @@ The tables, enchantments, instruments and tags are JSON files in the server jar,
 
 We will copy into every bundle, byte for byte as the format requires ([ADR 0006](0006-bundle-format-raw-json-tree.md)):
 
-- from the jar, `data/minecraft/loot_table/`, `enchantment/`, `instrument/`, `tags/item/` and `tags/enchantment/`, whole;
+- from the jar, `data/minecraft/loot_table/`, `enchantment/`, `instrument/`, `tags/item/`, `tags/enchantment/` and `tags/instrument/`, whole;
 - from the generator's reports, `reports/minecraft/components/item/`.
 
 `format` stays 1: adding directories is how bundles grow ([bundle-format.md](../specs/bundle-format.md#layout)). Loaders that need them, and bundles extracted before them, ask for the bundle to be extracted again.

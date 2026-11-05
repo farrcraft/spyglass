@@ -8,6 +8,10 @@ Code must not reference plans. Anything durable a plan produces belongs in a spe
 
 - [m08-ci-plan](m08-ci-plan.md): oracle CI planned by cost, for milestone [08](../roadmap/completed/08-dimensions-and-versions.md)'s versions.
 
-No milestone is in progress. The next is [20](../roadmap/20-loot.md).
+Drafted for milestone [20](../roadmap/20-loot.md), in order:
+
+- [m20-tables](m20-tables.md): a container's contents from its loot table and seed.
+- [m20-containers](m20-containers.md): where each container is, with its table and seed, certain or not.
+- [m20-queries](m20-queries.md): loot in the API, the CLI, the viewer and both searches.
 
 The follow-ups of milestones 08 and 11 ([roadmap](../roadmap/README.md#follow-ups)) need no plan of their own.

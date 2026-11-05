@@ -19,7 +19,7 @@ Cover all three dimensions and more than one game version.
 
 - [x] Nether and End outputs match the oracle.
 - [x] At least two versions pass the full oracle suite in CI. All four supported versions passed on GitHub on 2026-10-29, in CI on `main` and in the v0.1.0 release run.
-- [ ] A spec or guide documents how to add a version, and has been followed at least once. [adding-a-version.md](../../adding-a-version.md) exists, written from 26.2's and the first two snapshots' additions; it's met when the next snapshot is added from it.
+- [x] A spec or guide documents how to add a version, and has been followed at least once. [adding-a-version.md](../../adding-a-version.md) exists, written from 26.2's and the first two snapshots' additions; 26.4-snapshot-7 was added from it on 2026-11-04, with no change to the guide.
 
 ## Follow-ups
 

@@ -110,6 +110,10 @@ pub struct Structure {
     /// `step`: the decoration step it places its pieces in, before that step's features, as
     /// an index into [`STEPS`].
     pub step: usize,
+    /// Its place among every structure of the registry in its step, which the registry orders
+    /// by id (path, then namespace): the index its random is seeded with when decorating
+    /// (`setFeatureSeed`).
+    pub step_index: usize,
 }
 
 /// `GenerationStep.Decoration`, in order.
@@ -248,6 +252,27 @@ impl StructureSets {
         } else {
             None
         };
+        // Each structure's index in its step, among every structure of the registry, near or not.
+        let mut registry: Vec<(String, String, usize)> = Vec::new();
+        for id in bundle.registry_ids(STRUCTURE) {
+            let json = bundle
+                .resource(STRUCTURE, &id)
+                .map_err(|e| At::root(&id).error(e.into()))?;
+            let name = json.get("step").and_then(Value::as_str).unwrap_or_default();
+            if let Some(step) = STEPS.iter().position(|s| *s == name) {
+                let (namespace, path) = id.split_once(':').unwrap_or(("minecraft", &id));
+                registry.push((path.to_string(), namespace.to_string(), step));
+            }
+        }
+        registry.sort();
+        for structure in &mut loader.structures {
+            let (namespace, path) = structure.id.split_once(':').unwrap_or(("minecraft", ""));
+            structure.step_index = registry
+                .iter()
+                .filter(|(_, _, step)| *step == structure.step)
+                .position(|(p, n, _)| p == path && n == namespace)
+                .unwrap_or(0);
+        }
         let sets = StructureSets {
             spawn,
             sets,
@@ -553,6 +578,8 @@ impl SetLoader<'_> {
             height,
             mineshaft,
             step,
+            // Set once every structure is loaded.
+            step_index: 0,
         });
         let index = self.structures.len() - 1;
         self.structure_index.insert(id, index);

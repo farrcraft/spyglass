@@ -76,6 +76,8 @@ public final class Main {
                         intOption(args, "--threads", Runtime.getRuntime().availableProcessors()));
                 case "features" -> Features.run(game, Path.of(args[1]), dimension(args), positional(args),
                         intOption(args, "--threads", Runtime.getRuntime().availableProcessors()));
+                case "containers" -> Containers.run(game, Path.of(args[1]), dimension(args), positional(args),
+                        intOption(args, "--threads", Runtime.getRuntime().availableProcessors()));
                 default -> {
                     usage();
                     yield 2;
@@ -170,7 +172,8 @@ public final class Main {
                 + " | probe <out dir> <seed>... | structures <out dir> [--dimension ID] <seed>..."
                 + " | spawn <out dir> [--dimension ID] <seed>... | heights <out dir> [--dimension ID] [--threads N]"
                 + " <seed>... | blocks <out dir> [--dimension ID] [--threads N] <seed>..."
-                + " | features <out dir> [--dimension ID] [--threads N] <seed>... | loot <out dir>");
+                + " | features <out dir> [--dimension ID] [--threads N] <seed>..."
+                + " | containers <out dir> [--dimension ID] [--threads N] <seed>... | loot <out dir>");
         System.exit(2);
     }
 }

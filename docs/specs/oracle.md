@@ -13,6 +13,7 @@ A standalone Java harness in `oracle/`, compiled against the user's own server j
 - the spawn origin and the climate search behind it ([below](#spawn-golden-files));
 - the generator's heights and block columns ([below](#height-golden-files));
 - the blocks of whole chunks before features, with and without carvers ([below](#block-golden-files));
+- decoration's calls to target features ([below](#feature-golden-files)), and the containers structures and features place ([below](#container-golden-files));
 - `/locate` answers, from the real dedicated server ([below](#locate-answers)).
 
 CI runs the Rust crates against these for a fixed set of seeds per supported version. Golden files are generated locally into `/oracle-out` (gitignored), since they are derived from the game. No game-derived values are committed, not even small test sets ([ADR 0008](../adr/0008-game-derived-test-values-stay-local.md)).
@@ -21,21 +22,22 @@ CI runs the Rust crates against these for a fixed set of seeds per supported ver
 
 `cargo xtask oracle` builds and runs the harness. Every subcommand takes `--game-version` (default `latest`), `--cache-dir` and `--java`.
 
-| Command                                                         | Does                                                                                                                                    |
-| --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `build`                                                         | Fetch and verify the server jar, unpack its libraries, compile the harness.                                                             |
-| `biomes <seed> [--dimension] [--x] [--z] [--size] --out <file>` | Write one golden biome file. Block coordinates; x, z and size must be multiples of 16.                                                  |
-| `check-save <world> [--dimension]`                              | Compare the harness with the biomes stored in a real save. Fails on any unexplained cell.                                               |
-| `probe`                                                         | Write the [probe files](#probe-files) into `oracle-out/<version>/probe/`.                                                               |
-| `structures`                                                    | Write the [structure golden files](#structure-golden-files) for the golden seeds and dimensions.                                        |
-| `spawn`                                                         | Write the [spawn golden files](#spawn-golden-files) for the golden seeds and dimensions.                                                |
-| `heights [--threads N]`                                         | Write the [height golden files](#height-golden-files) for the golden seeds and dimensions.                                              |
-| `blocks [--threads N] [--seed S]…`                              | Write the [block golden files](#block-golden-files), with and without carvers, for the golden seeds (or those given).                   |
-| `features [--threads N] [--seed S]…`                            | Write the [feature golden files](#feature-golden-files) for the golden seeds and seed 56 (or those given).                              |
-| `column <seed> <x> <z> [--dimension]`                           | Print a generated chunk's column beside `getBaseColumn`'s, marking where they differ. For debugging.                                    |
-| `locate`                                                        | Ask a real dedicated server `/locate` questions ([below](#locate-answers)). Not part of `golden`.                                       |
-| `test-pack`                                                     | Write probe and structure files with the [test pack](#the-test-pack) loaded, into `oracle-out/<version>+testpack/`.                     |
-| `golden`                                                        | Regenerate the whole golden set below, probe, structure, spawn, height, block and feature files included, into `oracle-out/<version>/`. |
+| Command                                                         | Does                                                                                                                                               |
+| --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `build`                                                         | Fetch and verify the server jar, unpack its libraries, compile the harness.                                                                        |
+| `biomes <seed> [--dimension] [--x] [--z] [--size] --out <file>` | Write one golden biome file. Block coordinates; x, z and size must be multiples of 16.                                                             |
+| `check-save <world> [--dimension]`                              | Compare the harness with the biomes stored in a real save. Fails on any unexplained cell.                                                          |
+| `probe`                                                         | Write the [probe files](#probe-files) into `oracle-out/<version>/probe/`.                                                                          |
+| `structures`                                                    | Write the [structure golden files](#structure-golden-files) for the golden seeds and dimensions.                                                   |
+| `spawn`                                                         | Write the [spawn golden files](#spawn-golden-files) for the golden seeds and dimensions.                                                           |
+| `heights [--threads N]`                                         | Write the [height golden files](#height-golden-files) for the golden seeds and dimensions.                                                         |
+| `blocks [--threads N] [--seed S]…`                              | Write the [block golden files](#block-golden-files), with and without carvers, for the golden seeds (or those given).                              |
+| `features [--threads N] [--seed S]…`                            | Write the [feature golden files](#feature-golden-files) for the golden seeds and seed 56 (or those given).                                         |
+| `containers [--threads N] [--seed S]…`                          | Write the [container golden files](#container-golden-files) for the golden seeds (or those given).                                                 |
+| `column <seed> <x> <z> [--dimension]`                           | Print a generated chunk's column beside `getBaseColumn`'s, marking where they differ. For debugging.                                               |
+| `locate`                                                        | Ask a real dedicated server `/locate` questions ([below](#locate-answers)). Not part of `golden`.                                                  |
+| `test-pack`                                                     | Write probe and structure files with the [test pack](#the-test-pack) loaded, into `oracle-out/<version>+testpack/`.                                |
+| `golden`                                                        | Regenerate the whole golden set below, probe, structure, spawn, height, block, feature and container files included, into `oracle-out/<version>/`. |
 
 `build` runs automatically before the others, and does nothing when nothing changed:
 
@@ -415,6 +417,53 @@ Each chunk decorated on its own, and every call decoration makes to a target fea
 **Checks:** spyglass's order, and its tries in sequence for each placed feature until one isn't exact ([features.md](features.md#tries)). A dungeon's declined calls are replayed, so its tries are compared up to the first that placed. Then placing: every call's position, result and containers on the carved chunks, compared with `tries` ([features.md](features.md#placing), [loot.md](loot.md#containers)). **Determinism:** a second run writes the same bytes.
 
 `cargo xtask oracle features` takes 25 to 55 seconds per seed on 16 cores, most of it the second run. In 26.3's golden area, `after_neighbours` differs from `tries` in 4 of 2,684 chunks.
+
+## Container golden files
+
+The nearest start of each structure to the origin, and every chunk it reaches decorated on its own with structures, recording each container with a loot table that decoration made and what made it ([loot.md](loot.md#containers)). One UTF-8 JSON file per golden seed and dimension, `oracle-out/<version>/containers/<dimension path>/<seed>.json`. Seed 0's Overworld in 26.3, cut to one start, one piece and one container:
+
+```json
+{
+  "format": 1,
+  "harness": 1,
+  "version": "26.3",
+  "data_version": 5023,
+  "seed": 0,
+  "dimension": "minecraft:overworld",
+  "starts": [
+    {
+      "structure": "minecraft:village_plains",
+      "chunk": [17, 59],
+      "bounds": [188, 50, 857, 354, 98, 1025],
+      "pieces": [[262, 67, 934, 272, 75, 944]]
+    }
+  ],
+  "chunks": [
+    {
+      "chunk": [17, 59],
+      "containers": [
+        {
+          "by": "minecraft:village_plains",
+          "pos": [283, 69, 944],
+          "block": "minecraft:chest",
+          "table": "minecraft:chests/village/village_cartographer",
+          "seed": 839954437439742537
+        }
+      ]
+    }
+  ]
+}
+```
+
+- **`starts`:** for each structure with a start whose start chunk is within 64 chunks of the origin on each axis, and whose box stays within that square, the nearest (by squared chunk distance, the first of equals in z then x order): its start chunk, its box (`StructureStart.getBoundingBox`, least corner then greatest) and its pieces' boxes, before any is placed. Sorted by structure id.
+- **`chunks`:** every chunk a start's box meets, in z then x order, each decorated on its own in full (every step), with every container made: a block entity that's a `RandomizableContainer` with a loot table, in the chunk or its 8 neighbours, new or with a new table or seed since the last label; or an entity in the chunk with `LootTable` in its NBT (a chest minecart). `by` is what the region was generating when it appeared (`setCurrentlyGenerating`): a structure's id or a placed feature's. Block containers under one label are by position (y, then z, then x); `pos` of an entity is the block it's in.
+
+**How the harness makes them** ([ADR 0062](../adr/0062-the-oracle-places-structures-for-containers.md)):
+
+- **Starts:** a fresh proto chunk for every chunk within 72 of the origin on each axis, each given its starts by the generator's own `createStructures` (`ChunkGeneratorStructureState` as the server makes it), through a real `StructureManager` built without its constructor, whose `level` is a stand-in handing out those chunks, the registries and the heights, and failing on anything else. Where a fortress or an end city can generate (a set among `possibleStructureSets` has one), starts are made one at a time: their piece generators keep state in static fields (a fortress's piece weights, an end city's ship), which starts made at once on several threads race over. Then `createReferences` for each chunk decorated.
+- **Decorating:** as the first run of [feature golden files](#feature-golden-files), with a manager in place of one without structures: the 3 × 3 chunks generated without structures, the region and `applyBiomeDecoration`. Each chunk's manager reads the references made above, and starts made again for that chunk alone: some pieces settle their state in the first chunk that places them (an ocean ruin its height), so each chunk sees its starts as made, as if it were the first decorated. The stand-in level also answers what structures' mobs ask (a structure manager, its dimension, a fresh world's difficulty: the mob's own draws, not the chunk's) and hears no sounds, and each thread has its own structure templates, whose palettes cache in plain maps.
+- **Determinism:** a second run writes the same bytes.
+- **Not the game's:** the terrain is generated without structures, so without their terrain adaptation (`Beardifier`), as [block golden files](#block-golden-files) are. Containers placed after something that reads the blocks a structure would have changed (a village's trees, a mineshaft corridor near one) may differ from a real world's.
 
 ## Loot golden files
 

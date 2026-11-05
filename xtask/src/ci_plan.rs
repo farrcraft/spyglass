@@ -49,6 +49,7 @@ pub(crate) enum Kind {
     Heights,
     Blocks,
     Features,
+    Containers,
     Locate,
     Loot,
     Bundle,
@@ -56,7 +57,7 @@ pub(crate) enum Kind {
 
 impl Kind {
     /// Every kind, in the order a job makes them.
-    pub(crate) const ALL: [Kind; 10] = [
+    pub(crate) const ALL: [Kind; 11] = [
         Kind::Probe,
         Kind::Biomes,
         Kind::Structures,
@@ -64,6 +65,7 @@ impl Kind {
         Kind::Heights,
         Kind::Blocks,
         Kind::Features,
+        Kind::Containers,
         Kind::Locate,
         Kind::Loot,
         Kind::Bundle,
@@ -78,6 +80,7 @@ impl Kind {
             Kind::Heights => "heights",
             Kind::Blocks => "blocks",
             Kind::Features => "features",
+            Kind::Containers => "containers",
             Kind::Locate => "locate",
             Kind::Loot => "loot",
             Kind::Bundle => "bundle",
@@ -87,7 +90,7 @@ impl Kind {
     /// The seeds it's made for one at a time, or `None` if it's made for all at once.
     pub(crate) fn seeds(self) -> Option<Vec<&'static str>> {
         match self {
-            Kind::Heights | Kind::Blocks => Some(GOLDEN_SEEDS.to_vec()),
+            Kind::Heights | Kind::Blocks | Kind::Containers => Some(GOLDEN_SEEDS.to_vec()),
             Kind::Features => Some(oracle::feature_seeds()),
             _ => None,
         }
@@ -104,6 +107,7 @@ impl Kind {
             // `oracle blocks` makes both runs.
             Kind::Blocks => &[Input::Blocks, Input::BlocksNoCarvers],
             Kind::Features => &[Input::Features],
+            Kind::Containers => &[Input::Containers],
             Kind::Locate => &[Input::Locate],
             Kind::Loot => &[Input::Loot],
             Kind::Bundle => &[],
@@ -156,6 +160,7 @@ impl Unit {
             Kind::Blocks => costs.blocks,
             Kind::Features if self.seed == Some(DUNGEON_SEED) => costs.features + costs.dungeon,
             Kind::Features => costs.features,
+            Kind::Containers => costs.containers,
             Kind::Locate => costs.locate,
             Kind::Loot => costs.loot,
             Kind::Bundle => costs.bundle,
@@ -217,6 +222,9 @@ struct Costs {
     /// The test that searches for [`DUNGEON_SEED`] and checks its dungeons, on top of the seed's
     /// features.
     dungeon: f64,
+    /// A seed's containers, with their comparison. Estimated from local runs (16 threads) at
+    /// four times as long, until CI's logs have them.
+    containers: f64,
     /// `oracle locate`'s server, and its comparison.
     locate: f64,
     /// `oracle loot`'s fills, and their comparison.
@@ -241,6 +249,7 @@ const COSTS: &[Costs] = &[
         blocks: 0.5,
         features: 5.0,
         dungeon: 22.0,
+        containers: 6.0,
         locate: 8.5,
         loot: 1.0,
         bundle: 14.0,
@@ -256,6 +265,7 @@ const COSTS: &[Costs] = &[
         blocks: 0.3,
         features: 3.1,
         dungeon: 4.5,
+        containers: 3.0,
         locate: 2.0,
         loot: 1.0,
         bundle: 3.0,
@@ -272,6 +282,7 @@ const COSTS: &[Costs] = &[
         blocks: 0.3,
         features: 3.1,
         dungeon: 4.8,
+        containers: 3.0,
         locate: 2.5,
         loot: 1.0,
         bundle: 11.0,

@@ -91,7 +91,7 @@ It runs `SharedConstants.tryDetectVersion` and `Bootstrap.bootStrap`, then write
 
 ```json
 {
-  "format": 1,
+  "format": 2,
   "states": [
     { "id": 0, "air": true, "replaceable": true },
     {
@@ -104,7 +104,7 @@ It runs `SharedConstants.tryDetectVersion` and `Bootstrap.bootStrap`, then write
 }
 ```
 
-Only the flags that are true are written: `air` (`isAir`), `liquid`, `solid` (`isSolid`, the legacy solid flag), `replaceable` (`canBeReplaced()`), `solid_render` (`isSolidRender`), `blocks_motion` (`blocksMotion`, a method only 26.2 has: written where the version has it) and `leaves` (the block is a `LeavesBlock`). `shape_updater` is the simple name of the first class from the block's up to `BlockBehaviour` that declares `updateShape`, when one does: which override a neighbour's change runs. `fluid` is the state's fluid when it isn't empty: its id, `getAmount` and `isSource`. For 26.3 it takes about 5 seconds and lists 35,723 states (1.8 MB).
+Only the flags that are true are written: `air` (`isAir`), `liquid`, `solid` (`isSolid`, the legacy solid flag), `replaceable` (`canBeReplaced()`), `solid_render` (`isSolidRender`), `blocks_motion` (`blocksMotion`, a method only 26.2 has: written where the version has it) `leaves` (the block is a `LeavesBlock`) and, from format 2, `loot_container` (the block is an `EntityBlock` whose `newBlockEntity` is a `RandomizableContainer`: it takes a loot table and seed, [loot.md](loot.md#containers)). `shape_updater` is the simple name of the first class from the block's up to `BlockBehaviour` that declares `updateShape`, when one does: which override a neighbour's change runs. `fluid` is the state's fluid when it isn't empty: its id, `getAmount` and `isSource`. For 26.3 it takes about 5 seconds and lists 35,723 states (1.8 MB).
 
 `cargo xtask java-report` rebuilds the class with a JDK 25's `javac --release 21`; `--check`, a commit hook, fails when the committed class isn't what the source compiles to, and skips on machines without a JDK 25.
 

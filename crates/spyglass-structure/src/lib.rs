@@ -18,10 +18,13 @@ mod placement;
 mod portal;
 mod slime;
 
-pub use assembly::{Assembly, JigsawPools, Layout};
+pub use assembly::{Assembly, JigsawPools, LaidPiece, Layout};
 pub use biomes::BiomeSet;
 pub use check::{Check, Selection, Starts};
-pub use jigsaw::{BoundingBox, GenerationHeights, HeightProvider, Jigsaw, JigsawCheck};
+pub use jigsaw::{
+    BoundingBox, GenerationHeights, HeightProvider, Jigsaw, JigsawCheck, NbtBlock, PoolElement,
+    Processors, Projection, Rotation, Template,
+};
 pub use load::{Entry, STEPS, Structure, StructureSet, StructureSets, StructureType};
 pub use locate::{LOCATE_RADIUS, MAX_UNCERTAIN, StructureHit, StructureSearch};
 pub use mineshaft::Mineshaft;

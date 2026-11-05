@@ -2,7 +2,12 @@
 //! pieces in the chunk being decorated before that step's features
 //! (`docs/specs/features.md#structures`).
 
-use spyglass_structure::{Assembly, Check, Starts, StructureSets, StructureType};
+use spyglass_rng::WorldgenRandom;
+use spyglass_structure::{Assembly, BoundingBox, Check, Starts, StructureSets, StructureType};
+
+use crate::blocks::Blocks;
+use crate::containers::{ContainerDoubt, StructureContainer, StructureContainers};
+use crate::region::{Doubt, Region};
 
 /// Blocks a structure's pieces could write.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,6 +118,93 @@ pub fn pieces(
                         step: info.step,
                         structure,
                     }),
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The containers with loot tables the jigsaw structures' pieces place in the region's chunk,
+/// in the order they place them (`docs/specs/loot.md#containers`), for world `seed`. Each step's
+/// structures place in registry order, each from the decoration random seeded with its index in
+/// the step, and each start referencing the chunk places its pieces from that random. `reads`
+/// says why a block a processor reads might not be the region's for a structure, by index:
+/// what placed before it could have written there.
+pub fn containers(
+    starts: &Starts<'_>,
+    sets: &StructureSets,
+    containers: &StructureContainers,
+    blocks: &Blocks,
+    region: &mut Region<'_>,
+    seed: i64,
+    reads: &dyn Fn([i32; 3], usize) -> Option<Doubt>,
+) -> Vec<StructureContainer> {
+    let [cx, cz] = region.center();
+    let chunk = BoundingBox {
+        min: [cx * 16, i32::MIN, cz * 16],
+        max: [cx * 16 + 15, i32::MAX, cz * 16 + 15],
+    };
+    let mut random = WorldgenRandom::new(0);
+    let decoration = random.set_decoration_seed(seed, cx.wrapping_shl(4), cz.wrapping_shl(4));
+    let mut order: Vec<usize> = (0..sets.structures().len())
+        .filter(|&s| sets.structures()[s].kind == StructureType::Jigsaw)
+        .collect();
+    order.sort_by_key(|&s| (sets.structures()[s].step, sets.structures()[s].step_index));
+    let mut out = Vec::new();
+    for structure in order {
+        // The starts whose box reaches the chunk (`createReferences`), each with whether it's
+        // surely there.
+        let mut referencing = Vec::new();
+        for (set, structure_set) in sets.sets().iter().enumerate() {
+            if !structure_set.possible
+                || !structure_set
+                    .entries
+                    .iter()
+                    .any(|e| e.structure == structure)
+            {
+                continue;
+            }
+            let reach = REACH_CHUNKS;
+            for (start, selection) in
+                starts.starts_in(set, [cx - reach, cz - reach], [cx + reach, cz + reach])
+            {
+                let Some(i) = selection.tries.iter().position(|&(s, _)| s == structure) else {
+                    continue;
+                };
+                if selection.tries[i].1 == Check::Rejected {
+                    continue;
+                }
+                // Certain only if it's the set's one try here and it passes.
+                let sure = selection.tries.len() == 1 && selection.tries[i].1 == Check::Passes;
+                if let Some(Assembly::Built(layout)) = starts.assemble(structure, start)
+                    && layout.bounds.intersects(&chunk)
+                {
+                    referencing.push((layout, sure));
+                }
+            }
+        }
+        if referencing.is_empty() {
+            continue;
+        }
+        let info = &sets.structures()[structure];
+        random.set_feature_seed(decoration, info.step_index as i32, info.step as i32);
+        let mut unknown = (referencing.len() > 1).then_some(ContainerDoubt::StartOrder);
+        for (layout, sure) in &referencing {
+            let first = out.len();
+            containers.jigsaw(
+                blocks,
+                region,
+                layout,
+                structure,
+                &mut random,
+                &mut unknown,
+                reads,
+                &mut out,
+            );
+            if !sure {
+                for c in &mut out[first..] {
+                    c.doubt.get_or_insert(ContainerDoubt::Start);
                 }
             }
         }

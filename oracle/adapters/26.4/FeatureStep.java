@@ -29,6 +29,15 @@ import net.minecraft.world.level.storage.LevelData;
 final class FeatureStep {
     private FeatureStep() {}
 
+    /** {@code ChunkGenerator.createStructures}, which 26.4 runs as a future, joined here. */
+    static void createStructures(net.minecraft.world.level.chunk.ChunkGenerator generator, Game game,
+            net.minecraft.world.level.chunk.ChunkGeneratorStructureState state,
+            net.minecraft.world.level.StructureManager structures, ChunkAccess chunk,
+            net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplateManager templates,
+            net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level> level) {
+        generator.createStructures(game.access, state, structures, chunk, templates, level).join();
+    }
+
     /**
      * The rest of {@code ChunkStatusTasks.buildTerrain}, after the generator's: no retrogen in a
      * new chunk, then the heightmaps features read.
@@ -71,6 +80,46 @@ final class FeatureStep {
         LevelHeightAccessor height;
         Decoration.Cache cache;
         int entities;
+        /** The decoration's structures, which mobs' variants test for (a village's cats). */
+        net.minecraft.world.level.StructureManager structures;
+        /** Its dimension, which mobs remember places by (a piglin brute's home). */
+        net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level> dimension;
+
+        @Override
+        public net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level> dimension() {
+            return dimension;
+        }
+
+        /** Structures' entities make sounds (an end city's item frame); no one hears them. */
+        @Override
+        public void playSound(net.minecraft.world.entity.Entity source, double x, double y, double z,
+                net.minecraft.sounds.SoundEvent sound, net.minecraft.sounds.SoundSource category, float volume,
+                float pitch) {}
+
+        @Override
+        public void playSound(net.minecraft.world.entity.Entity source, double x, double y, double z,
+                net.minecraft.core.Holder<net.minecraft.sounds.SoundEvent> sound,
+                net.minecraft.sounds.SoundSource category, float volume, float pitch) {}
+
+        @Override
+        public void playSound(net.minecraft.world.entity.Entity except, net.minecraft.world.entity.Entity source,
+                net.minecraft.core.Holder<net.minecraft.sounds.SoundEvent> sound,
+                net.minecraft.sounds.SoundSource category, float volume, float pitch) {}
+
+        @Override
+        public void playSeededSound(net.minecraft.world.entity.Entity source, double x, double y, double z,
+                net.minecraft.core.Holder<net.minecraft.sounds.SoundEvent> sound,
+                net.minecraft.sounds.SoundSource category, float volume, float pitch, long seed) {}
+
+        @Override
+        public void playSeededSound(net.minecraft.world.entity.Entity except, net.minecraft.world.entity.Entity source,
+                net.minecraft.core.Holder<net.minecraft.sounds.SoundEvent> sound,
+                net.minecraft.sounds.SoundSource category, float volume, float pitch, long seed) {}
+
+        @Override
+        public net.minecraft.world.level.StructureManager structureManager() {
+            return structures;
+        }
 
         @Override
         public long getSeed() {

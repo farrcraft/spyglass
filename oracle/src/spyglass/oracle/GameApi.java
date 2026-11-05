@@ -10,12 +10,14 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LevelHeightAccessor;
+import net.minecraft.world.level.StructureManager;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.BiomeSource;
 import net.minecraft.world.level.biome.Climate;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.ChunkGenerator;
+import net.minecraft.world.level.chunk.ChunkGeneratorStructureState;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator;
 import net.minecraft.world.level.levelgen.RandomState;
@@ -142,8 +144,18 @@ interface GameApi {
      * {@code WorldGenRegion} over them; the generator's own {@code applyBiomeDecoration}. The
      * region reports what it's generating to {@link Features#generating}. With
      * {@code neighboursFirst}, each of the 8 neighbours is first decorated in full, z then x
-     * ascending, inside {@link Features#quiet}; otherwise none is.
+     * ascending, inside {@link Features#quiet}; otherwise none is. Structures place through
+     * {@code structures}, or none do if it's null. The region also reports to
+     * {@link Containers#generating}, and to {@link Containers#finish} when done.
      */
     void decorate(Game game, NoiseBasedChunkGenerator generator, LevelHeightAccessor height, RandomState random,
-            long seed, ChunkPos pos, boolean neighboursFirst);
+            long seed, ChunkPos pos, boolean neighboursFirst, StructureManager structures);
+
+    /**
+     * {@code ChunkGenerator.createStructures} for {@code chunk}, a fresh proto chunk: the starts
+     * of every structure set placing there, set on the chunk through {@code structures}.
+     */
+    void createStructures(Game game, ChunkGenerator generator, ChunkGeneratorStructureState state,
+            StructureManager structures, ChunkAccess chunk, StructureTemplateManager templates,
+            ResourceKey<Level> level);
 }

@@ -313,8 +313,18 @@ final class Adapter implements GameApi {
 
     @Override
     public void decorate(Game game, NoiseBasedChunkGenerator generator, LevelHeightAccessor height,
-            RandomState random, long seed, ChunkPos pos, boolean neighboursFirst) {
-        Decoration.decorate(game, generator, height, random, seed, pos, neighboursFirst);
+            RandomState random, long seed, ChunkPos pos, boolean neighboursFirst,
+            net.minecraft.world.level.StructureManager structures) {
+        Decoration.decorate(game, generator, height, random, seed, pos, neighboursFirst, structures);
+    }
+
+    @Override
+    public void createStructures(Game game, net.minecraft.world.level.chunk.ChunkGenerator generator,
+            net.minecraft.world.level.chunk.ChunkGeneratorStructureState state,
+            net.minecraft.world.level.StructureManager structures, net.minecraft.world.level.chunk.ChunkAccess chunk,
+            StructureTemplateManager templates,
+            net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level> level) {
+        FeatureStep.createStructures(generator, game, state, structures, chunk, templates, level);
     }
 
     @Override

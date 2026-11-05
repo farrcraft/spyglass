@@ -2,6 +2,7 @@
 //! modifiers and the features themselves. See `docs/specs/features.md`.
 
 pub mod blocks;
+pub mod containers;
 mod decorate;
 mod modifier;
 pub mod neighbours;

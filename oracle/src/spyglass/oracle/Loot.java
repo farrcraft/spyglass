@@ -131,7 +131,7 @@ final class Loot {
      * resources, then with the items' default components bound, which every stack reads. The
      * static registries' tags are bound already ({@link Game}).
      */
-    private static ReloadableServerRegistries.Holder holder(Game game) {
+    static ReloadableServerRegistries.Holder holder(Game game) {
         ReloadableServerResources resources = ReloadableServerResources.loadResources(game.resources, game.layers,
                 List.of(), FeatureFlags.DEFAULT_FLAGS, Commands.CommandSelection.DEDICATED,
                 PermissionSet.NO_PERMISSIONS, Runnable::run, Runnable::run).join();

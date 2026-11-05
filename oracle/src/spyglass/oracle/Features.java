@@ -283,7 +283,7 @@ final class Features {
         TRIES.set(tries);
         STEPS.set(early);
         try {
-            GameApi.get().decorate(game, generator, height, random, seed, pos, neighboursFirst);
+            GameApi.get().decorate(game, generator, height, random, seed, pos, neighboursFirst, null);
         } catch (RuntimeException e) {
             if (!stopped(e)) {
                 throw e;

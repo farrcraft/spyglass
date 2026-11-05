@@ -530,7 +530,14 @@ impl Mineshaft {
         if self.adapts_terrain {
             bounds = bounds.inflated(12);
         }
-        Some((Layout { pieces, bounds }, dy))
+        Some((
+            Layout {
+                pieces,
+                placed: Vec::new(),
+                bounds,
+            },
+            dy,
+        ))
     }
 
     /// [`layout`](Self::layout) as an [`Assembly`].

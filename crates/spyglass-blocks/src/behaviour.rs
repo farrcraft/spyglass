@@ -54,6 +54,9 @@ pub struct Behaviour {
     pub blocks_motion: bool,
     /// The block is a `LeavesBlock`.
     pub leaves: bool,
+    /// Its block entity is a `RandomizableContainer`: it takes a loot table and seed. Only in
+    /// reports of format 2 on ([`BlockBehaviour::knows_loot_containers`]).
+    pub loot_container: bool,
     /// A neighbour's change can change the block (`updateShape`): a fence joins, a plant
     /// breaks. False for blocks whose override only schedules a tick ([`TICK_ONLY`]).
     pub updates_shape: bool,
@@ -65,6 +68,8 @@ pub struct Behaviour {
 #[derive(Debug, Clone, Default)]
 pub struct BlockBehaviour {
     states: HashMap<String, Behaviour>,
+    /// Whether the report says which blocks are loot containers: format 2 on.
+    loot_containers: bool,
 }
 
 impl BlockBehaviour {
@@ -85,6 +90,13 @@ impl BlockBehaviour {
         })?;
         let names = state_names(resources)?;
         let report = object(&report, &root)?;
+        let format = report.get("format").and_then(Value::as_u64);
+        if !matches!(format, Some(1 | 2)) {
+            return Err(root.child("format").error(LoadErrorKind::Unsupported {
+                what: "block behaviour report format",
+                name: format!("{format:?}"),
+            }));
+        }
         let list = report
             .get("states")
             .and_then(Value::as_array)
@@ -117,6 +129,7 @@ impl BlockBehaviour {
                     solid_render: flag("solid_render"),
                     blocks_motion: flag("blocks_motion"),
                     leaves: flag("leaves"),
+                    loot_container: flag("loot_container"),
                     updates_shape: o
                         .get("shape_updater")
                         .and_then(Value::as_str)
@@ -125,7 +138,16 @@ impl BlockBehaviour {
                 },
             );
         }
-        Ok(BlockBehaviour { states })
+        Ok(BlockBehaviour {
+            states,
+            loot_containers: format == Some(2),
+        })
+    }
+
+    /// Whether [`Behaviour::loot_container`] is known: false for a bundle extracted before the
+    /// report had it.
+    pub fn knows_loot_containers(&self) -> bool {
+        self.loot_containers
     }
 
     /// The behaviour of the state named `name`, as a palette names it.

@@ -110,6 +110,7 @@ pub fn run(args: &Ci) -> Result<()> {
                     Kind::Heights => harness.heights(args.threads, &seeds),
                     Kind::Blocks => oracle::blocks(&mut harness, args.threads, &seeds),
                     Kind::Features => harness.features(args.threads, &seeds),
+                    Kind::Containers => harness.containers(args.threads, &seeds),
                     Kind::Loot => harness.loot(),
                     Kind::Locate | Kind::Bundle => Ok(()),
                 })?;

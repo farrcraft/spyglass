@@ -13,7 +13,7 @@ import java.nio.file.Path;
 
 public final class BlockReport {
     /** The report's format; bump it when its shape changes. */
-    private static final int FORMAT = 1;
+    private static final int FORMAT = 2;
 
     /** Flags every version has: the name in the report, then the `BlockState` method. */
     private static final String[][] FLAGS = {
@@ -47,6 +47,13 @@ public final class BlockReport {
         Object fluids =
                 Class.forName("net.minecraft.core.registries.BuiltInRegistries").getField("FLUID").get(null);
         Method fluidKey = fluids.getClass().getMethod("getKey", Object.class);
+        Class<?> entityBlock = Class.forName("net.minecraft.world.level.block.EntityBlock");
+        Class<?> blockPos = Class.forName("net.minecraft.core.BlockPos");
+        Class<?> blockState = Class.forName("net.minecraft.world.level.block.state.BlockState");
+        Method newBlockEntity = entityBlock.getMethod("newBlockEntity", blockPos, blockState);
+        Object origin = blockPos.getField("ZERO").get(null);
+        Class<?> randomizable = Class.forName("net.minecraft.world.RandomizableContainer");
+        java.util.Set<Object> unmade = new java.util.HashSet<>();
 
         StringBuilder out = new StringBuilder();
         out.append("{\"format\":").append(FORMAT).append(",\"states\":[");
@@ -67,6 +74,20 @@ public final class BlockReport {
             }
             Object block = c.getMethod("getBlock").invoke(state);
             flag(out, "leaves", leaves.isInstance(block));
+            // Whether its block entity takes a loot table and seed: what a template's block draws
+            // a seed for. A block entity that can't be made outside a world (a vault, whose
+            // config makes items) is named on stderr and taken as no container.
+            boolean container = false;
+            if (entityBlock.isInstance(block)) {
+                try {
+                    container = randomizable.isInstance(newBlockEntity.invoke(block, origin, state));
+                } catch (InvocationTargetException e) {
+                    if (unmade.add(block)) {
+                        System.err.println("no block entity for " + block + ": " + e.getCause());
+                    }
+                }
+            }
+            flag(out, "loot_container", container);
             String updater = declaring(block.getClass(), behaviour, "updateShape");
             if (updater != null) {
                 out.append(",\"shape_updater\":\"").append(updater).append('"');

@@ -12,6 +12,7 @@ Drafted for milestone [20](../roadmap/20-loot.md), in order:
 
 - [m20-tables](m20-tables.md): a container's contents from its loot table and seed.
 - [m20-containers](m20-containers.md): where each container is, with its table and seed, certain or not.
+- [m20-layouts](m20-layouts.md): piece layouts and containers for strongholds, fortresses, end cities, mansions and ocean ruins.
 - [m20-queries](m20-queries.md): loot in the API, the CLI, the viewer and both searches.
 
 The follow-ups of milestones 08 and 11 ([roadmap](../roadmap/README.md#follow-ups)) need no plan of their own.

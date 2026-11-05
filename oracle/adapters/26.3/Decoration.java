@@ -27,6 +27,7 @@ import net.minecraft.world.flag.FeatureFlags;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.LevelHeightAccessor;
 import net.minecraft.world.level.StructureManager;
+import net.minecraft.world.level.WorldGenLevel;
 import net.minecraft.world.level.biome.BiomeResolver;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkAccess;
@@ -88,15 +89,17 @@ final class Decoration {
     private static Feature wrap(Feature feature) {
         return (Feature) Proxy.newProxyInstance(Feature.class.getClassLoader(), new Class<?>[] {Feature.class},
                 (proxy, method, args) -> {
+                    boolean place = method.getName().equals("place") && args != null && args.length == 4
+                            && args[0] instanceof WorldGenLevel && args[3] instanceof BlockPos;
+                    var before = place ? Features.containers((WorldGenLevel) args[0], (BlockPos) args[3]) : null;
                     Object result;
                     try {
                         result = method.invoke(feature, args);
                     } catch (InvocationTargetException e) {
                         throw e.getCause();
                     }
-                    if (method.getName().equals("place") && args != null && args.length == 4
-                            && args[3] instanceof BlockPos pos) {
-                        Features.record(pos, (Boolean) result);
+                    if (place) {
+                        Features.record((WorldGenLevel) args[0], (BlockPos) args[3], (Boolean) result, before);
                     }
                     return result;
                 });

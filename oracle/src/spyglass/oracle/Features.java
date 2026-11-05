@@ -6,6 +6,7 @@ import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -23,7 +24,9 @@ import com.google.gson.stream.JsonWriter;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.Registries;
+import net.minecraft.world.RandomizableContainer;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.LevelReader;
 import net.minecraft.world.level.LevelHeightAccessor;
 import net.minecraft.world.level.biome.FeatureSorter;
 import net.minecraft.world.level.chunk.ChunkGenerator;
@@ -72,8 +75,17 @@ final class Features {
     /** How far from the origin, in chunks, rare features are looked for. */
     static final int RARE_RADIUS = 256;
 
-    /** A call to a target feature: the placed feature running, the origin, and the result. */
-    record Try(String feature, int x, int y, int z, boolean placed) {}
+    /** How far from a call's origin, on each axis, the containers it makes are looked for. */
+    static final int CONTAINER_REACH = 8;
+
+    /** A container with a loot table: where, the table, and its loot seed. */
+    record Container(BlockPos pos, String table, long seed) {}
+
+    /**
+     * A call to a target feature: the placed feature running, the origin, the result, and the
+     * containers it made or changed.
+     */
+    record Try(String feature, int x, int y, int z, boolean placed, List<Container> containers) {}
 
     private static final ThreadLocal<List<Try>> TRIES = new ThreadLocal<>();
     private static final ThreadLocal<Supplier<String>> GENERATING = new ThreadLocal<>();
@@ -130,14 +142,55 @@ final class Features {
         return false;
     }
 
-    /** A target feature was called at {@code pos}, and placed or not. */
-    static void record(BlockPos pos, boolean placed) {
+    /**
+     * The containers with a loot table within {@link #CONTAINER_REACH} of {@code origin}, by
+     * position, from the block entities of the chunks the box meets; none while not recording.
+     * Taken before and after a call, so {@link #record} knows which the call made.
+     */
+    static Map<BlockPos, Container> containers(LevelReader level, BlockPos origin) {
+        Map<BlockPos, Container> found = new HashMap<>();
+        if (TRIES.get() == null) {
+            return found;
+        }
+        BlockPos min = origin.offset(-CONTAINER_REACH, -CONTAINER_REACH, -CONTAINER_REACH);
+        BlockPos max = origin.offset(CONTAINER_REACH, CONTAINER_REACH, CONTAINER_REACH);
+        for (int cz = min.getZ() >> 4; cz <= max.getZ() >> 4; cz++) {
+            for (int cx = min.getX() >> 4; cx <= max.getX() >> 4; cx++) {
+                var chunk = level.getChunk(cx, cz);
+                for (BlockPos pos : chunk.getBlockEntitiesPos()) {
+                    boolean inside = pos.getX() >= min.getX() && pos.getX() <= max.getX()
+                            && pos.getY() >= min.getY() && pos.getY() <= max.getY()
+                            && pos.getZ() >= min.getZ() && pos.getZ() <= max.getZ();
+                    if (inside && chunk.getBlockEntity(pos) instanceof RandomizableContainer container
+                            && container.getLootTable() != null) {
+                        found.put(pos.immutable(), new Container(pos.immutable(),
+                                container.getLootTable().identifier().toString(), container.getLootTableSeed()));
+                    }
+                }
+            }
+        }
+        return found;
+    }
+
+    /**
+     * A target feature was called at {@code pos}, and placed or not; {@code before} is
+     * {@link #containers} before the call, so the containers new or changed since are its own.
+     */
+    static void record(LevelReader level, BlockPos pos, boolean placed, Map<BlockPos, Container> before) {
         List<Try> tries = TRIES.get();
         if (tries == null) {
             return;
         }
+        var made = new ArrayList<Container>();
+        for (Container c : containers(level, pos).values()) {
+            if (!c.equals(before.get(c.pos()))) {
+                made.add(c);
+            }
+        }
+        made.sort(java.util.Comparator.comparing(Container::pos));
         Supplier<String> what = GENERATING.get();
-        tries.add(new Try(placedId(what == null ? "" : what.get()), pos.getX(), pos.getY(), pos.getZ(), placed));
+        tries.add(new Try(placedId(what == null ? "" : what.get()), pos.getX(), pos.getY(), pos.getZ(), placed,
+                made));
     }
 
     /**
@@ -246,6 +299,17 @@ final class Features {
             j.addProperty("feature", t.feature());
             j.add("pos", ints(t.x(), t.y(), t.z()));
             j.addProperty("placed", t.placed());
+            if (!t.containers().isEmpty()) {
+                var containers = new JsonArray();
+                for (Container c : t.containers()) {
+                    var o = new JsonObject();
+                    o.add("pos", ints(c.pos().getX(), c.pos().getY(), c.pos().getZ()));
+                    o.addProperty("table", c.table());
+                    o.addProperty("seed", c.seed());
+                    containers.add(o);
+                }
+                j.add("containers", containers);
+            }
             list.add(j);
         }
         return list;

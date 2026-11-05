@@ -1,6 +1,6 @@
 //! Feature golden files (`docs/specs/oracle.md#feature-golden-files`): each chunk decorated on
-//! its own, every call to a target feature with where and whether it placed, and each step's
-//! feature order.
+//! its own, every call to a target feature with where and whether it placed and the containers it
+//! made, and each step's feature order.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -43,6 +43,20 @@ pub struct GoldenTry {
     pub pos: [i32; 3],
     /// Whether it placed.
     pub placed: bool,
+    /// The containers with a loot table it made, by position; empty in files made before the
+    /// harness recorded them.
+    pub containers: Vec<GoldenContainer>,
+}
+
+/// A container a feature made, with its loot table and seed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GoldenContainer {
+    /// Where.
+    pub pos: [i32; 3],
+    /// The loot table's id.
+    pub table: String,
+    /// The loot seed.
+    pub seed: i64,
 }
 
 impl FeatureFile {
@@ -86,6 +100,21 @@ impl FeatureFile {
             let calls = |list: &Value| -> Result<Vec<GoldenTry>, String> {
                 let mut tries = Vec::new();
                 for t in list.as_array().ok_or("no tries")? {
+                    let mut containers = Vec::new();
+                    for c in t["containers"].as_array().into_iter().flatten() {
+                        containers.push(GoldenContainer {
+                            pos: [
+                                int(&c["pos"][0], "pos")? as i32,
+                                int(&c["pos"][1], "pos")? as i32,
+                                int(&c["pos"][2], "pos")? as i32,
+                            ],
+                            table: c["table"]
+                                .as_str()
+                                .ok_or("a container has no table")?
+                                .to_string(),
+                            seed: int(&c["seed"], "seed")?,
+                        });
+                    }
                     tries.push(GoldenTry {
                         feature: t["feature"]
                             .as_str()
@@ -97,6 +126,7 @@ impl FeatureFile {
                             int(&t["pos"][2], "pos")? as i32,
                         ],
                         placed: t["placed"].as_bool().ok_or("placed isn't a bool")?,
+                        containers,
                     });
                 }
                 Ok(tries)
@@ -148,7 +178,9 @@ mod tests {
             "dimension": "minecraft:overworld",
             "order": [[], ["minecraft:a", null]],
             "chunks": [{"chunk": [-1, 2], "tries": [
-                {"feature": "minecraft:a", "pos": [-12, 40, 33], "placed": true}],
+                {"feature": "minecraft:a", "pos": [-12, 40, 33], "placed": true, "containers": [
+                    {"pos": [-13, 40, 33], "table": "minecraft:chests/simple_dungeon",
+                     "seed": -9007199254740993}]}],
                 "after_neighbours": []}]}"#;
         let file = FeatureFile::parse(text.as_bytes()).unwrap();
         assert_eq!(
@@ -165,7 +197,12 @@ mod tests {
             [GoldenTry {
                 feature: "minecraft:a".into(),
                 pos: [-12, 40, 33],
-                placed: true
+                placed: true,
+                containers: vec![GoldenContainer {
+                    pos: [-13, 40, 33],
+                    table: "minecraft:chests/simple_dungeon".into(),
+                    seed: -9007199254740993,
+                }],
             }]
         );
         assert_eq!(file.chunks[0].after_neighbours, Some(vec![]));

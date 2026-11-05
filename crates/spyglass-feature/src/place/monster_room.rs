@@ -11,6 +11,9 @@ use crate::outline::Outline;
 use crate::place::Written;
 use crate::region::Region;
 
+/// `BuiltInLootTables.SIMPLE_DUNGEON`, the chests' loot table.
+const LOOT_TABLE: &str = "minecraft:chests/simple_dungeon";
+
 /// `Direction.Plane.HORIZONTAL`: north, east, south, west, as offsets.
 const HORIZONTAL: [[i32; 3]; 4] = [[0, 0, -1], [1, 0, 0], [0, 0, 1], [-1, 0, 0]];
 
@@ -192,9 +195,11 @@ impl MonsterRoom {
                 }
                 let chest = self.reorient(region, spot);
                 self.safe_set(region, spot, chest);
-                // The region's chest block entity takes its loot table's seed.
+                // `RandomizableContainer.setBlockEntityLootTable`: the chest block entity there
+                // takes the table, and a seed from the feature's random.
                 if id(region.get(spot)) == "minecraft:chest" {
-                    random.next_long();
+                    let seed = random.next_long();
+                    region.container(spot, LOOT_TABLE, seed);
                 }
                 break;
             }

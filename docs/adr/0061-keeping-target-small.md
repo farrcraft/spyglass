@@ -1,6 +1,6 @@
 # 0061. Keeping `target/` small: line tables and a sweep of stale outputs
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-04
 - See also: [0005](0005-extra-rust-checks.md), [0058](0058-oracle-ci-planned-by-cost.md)
 

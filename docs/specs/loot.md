@@ -97,6 +97,12 @@ An enchantment's cost at a level is `base + per_level_above_first × (level − 
 
 _Versions:_ 26.2 needs a `map`, and gives a new `filled_map` (count 1, earlier components dropped), or the plain map if nothing is found. From 26.3 the destination is a holder set (`#tag`), the stack itself is marked (so a `set_name` before it stays), and nothing found leaves it as it was, which vanilla's `filtered` then discards; with `skip_existing_chunks`, a destination structure whose box holds the container is claimed first.
 
+## Containers
+
+A container's loot seed is a `nextLong()` from the random that places it, drawn when its block entity takes the table (`RandomizableContainer.setBlockEntityLootTable`, `setLootTable(table, seed)`). Each container spyglass places is certain or a candidate, as the placement that drew it is ([features.md](features.md#certainty)).
+
+- **Dungeons:** each chest a placed `monster_room` puts down takes `chests/simple_dungeon` and the feature random's next long ([features.md](features.md#monster-room)). Checked against the oracle's [feature golden files](oracle.md#feature-golden-files): every certain dungeon's chests, positions, tables and seeds.
+
 ## Forms
 
 The draws above are the same in every supported version; the JSON differs, and the loaders tell the forms apart by their shape ([ADR 0026](../adr/0026-how-game-versions-coexist.md)).

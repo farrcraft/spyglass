@@ -127,7 +127,7 @@ _Versions:_ (switch `geode_noise_v1_21`) 26.2's noise is the 1.21 family's `Norm
 
 1. Half sizes `xr` and `zr`, each `nextInt(2) + 2`. The box is x from `−xr − 1` to `xr + 1`, y from −1 to 4, and z like x. A scan of the whole box (x, y, z) declines on a floor or ceiling cell that isn't solid, and counts **openings**: wall cells at y 0 that are air with air above. Fewer than 1 or more than 5 declines. A declining room has drawn two numbers.
 2. Carving, x ascending, y from 3 down to −1, z ascending: a boundary cell (floor or wall) becomes cave air if the block below isn't solid, whatever it was; else cobblestone if it's solid and not a chest, mossy where it's the floor and `nextInt(4)` isn't 0. Inside, every block but chests and spawners becomes cave air. The ceiling isn't written. Every write but the boundary's air keeps `#features_cannot_replace`.
-3. Two chests, each with up to three tries: `x = ox + nextInt(2xr + 1) − xr`, z likewise, at the origin's y. A try needs air with exactly one solid horizontal neighbour. It places a chest facing away from its one solid-render side (`StructurePiece.reorient`), and draws `nextLong()` for its loot seed.
+3. Two chests, each with up to three tries: `x = ox + nextInt(2xr + 1) − xr`, z likewise, at the origin's y. A try needs air with exactly one solid horizontal neighbour. It places a chest facing away from its one solid-render side (`StructurePiece.reorient`), and if a chest is there (`#features_cannot_replace` can keep it out) draws `nextLong()` for its loot seed, with table `chests/simple_dungeon` ([loot.md](loot.md#containers)).
 4. The spawner goes at the origin, with `nextInt(4)` for its mob if it's there (a chest drawn at the origin keeps it out).
 
 ### Templates

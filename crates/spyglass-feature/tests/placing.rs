@@ -1,7 +1,7 @@
 //! Placing on the blocks, against the oracle's feature golden files
 //! (`docs/specs/oracle.md#feature-golden-files`): every chunk decorated on its own, on its 3 × 3
 //! carved chunks, with every feature of the steps up to the last target's, compared call by
-//! call with the game's: every certain answer must be the game's.
+//! call with the game's: every certain answer must be the game's, with the containers it placed.
 //!
 //! Needs `cargo xtask oracle features` and a bundle for the same version. Run with
 //! `cargo test --release -p spyglass-feature --test placing -- --ignored`.
@@ -29,6 +29,8 @@ struct Report {
     matched: usize,
     /// Of those, the calls that hold whatever the neighbours do.
     robust: usize,
+    /// The containers of the calls matched: position, table and seed.
+    containers: usize,
     /// Calls not compared: from a chunk's first candidate on, by its reason.
     skipped: BTreeMap<String, usize>,
     chunks: usize,
@@ -212,6 +214,29 @@ fn check(path: &Path) -> Report {
                     ));
                     break;
                 }
+                // Their containers, whose seeds are draws placing made: in any order.
+                let key = |pos: [i32; 3], table: &str, seed: i64| (pos, table.to_string(), seed);
+                let mut theirs: Vec<_> = g
+                    .containers
+                    .iter()
+                    .map(|c| key(c.pos, &c.table, c.seed))
+                    .collect();
+                let mut ours: Vec<_> = p
+                    .containers
+                    .iter()
+                    .map(|c| key(c.pos, &c.table, c.seed))
+                    .collect();
+                theirs.sort();
+                ours.sort();
+                if ours != theirs {
+                    report.failures.push(format!(
+                        "seed {} chunk {:?} {feature} call {i} at {:?}: the game's containers \
+                         {theirs:?}, spyglass's {ours:?}",
+                        file.seed, chunk.chunk, g.pos
+                    ));
+                    break;
+                }
+                report.containers += ours.len();
                 compared += 1;
             }
             report.matched += compared;
@@ -283,6 +308,7 @@ fn placing_matches_the_game() {
     let reports: Vec<Report> = files.par_iter().map(|p| check(p)).collect();
     let matched: usize = reports.iter().map(|r| r.matched).sum();
     let robust: usize = reports.iter().map(|r| r.robust).sum();
+    let containers: usize = reports.iter().map(|r| r.containers).sum();
     let failures: Vec<&String> = reports.iter().flat_map(|r| &r.failures).collect();
     let chunks: usize = reports.iter().map(|r| r.chunks).sum();
     let time: std::time::Duration = reports.iter().map(|r| r.time).sum();
@@ -296,8 +322,8 @@ fn placing_matches_the_game() {
         println!("  not compared, {k}: {v}");
     }
     println!(
-        "{} files: {matched} calls match ({robust} whatever the neighbours do), {} not compared, \
-         {} differences; {:.2} ms a chunk",
+        "{} files: {matched} calls match ({robust} whatever the neighbours do) with {containers} \
+         containers, {} not compared, {} differences; {:.2} ms a chunk",
         files.len(),
         skipped.values().sum::<usize>(),
         failures.len(),

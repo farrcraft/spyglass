@@ -19,5 +19,5 @@ pub use decorate::{Decorator, Drawn, Ground, Try, TryBox, Wanted};
 pub use modifier::{Modifier, Read, Reading};
 pub use neighbours::{Foreign, NeighbourBounds};
 pub use place::{Outcome, Placement, Placer, Written};
-pub use region::{Doubt, Region};
+pub use region::{Container, Doubt, Region};
 pub use settings::{FeatureSettings, Placed};

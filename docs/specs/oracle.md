@@ -366,18 +366,30 @@ Each chunk decorated on its own, and every call decoration makes to a target fea
   ],
   "chunks": [
     {
-      "chunk": [-8, -8],
+      "chunk": [6, -7],
       "tries": [
         {
-          "feature": "minecraft:monster_room",
-          "pos": [-121, 47, -125],
+          "feature": "minecraft:monster_room_deep",
+          "pos": [109, -25, -104],
           "placed": false
+        },
+        {
+          "feature": "minecraft:monster_room_deep",
+          "pos": [111, -42, -101],
+          "placed": true,
+          "containers": [
+            {
+              "pos": [112, -42, -104],
+              "table": "minecraft:chests/simple_dungeon",
+              "seed": -4202396320530732365
+            }
+          ]
         }
       ],
       "after_neighbours": [
         {
-          "feature": "minecraft:monster_room",
-          "pos": [-121, 47, -125],
+          "feature": "minecraft:monster_room_deep",
+          "pos": [109, -25, -104],
           "placed": false
         }
       ]
@@ -389,7 +401,7 @@ Each chunk decorated on its own, and every call decoration makes to a target fea
 - **`order`:** the generator's own `featuresPerStep`: each step's placed features in decoration order, by id, `null` for one written inline in a biome.
 - **The targets** are the placed features `monster_room`, `monster_room_deep`, `amethyst_geode`, `desert_well`, `fossil_upper`, `fossil_lower`, `lake_lava_underground` and `lake_lava_surface`. Every call to their configured features is recorded, under the placed feature running then.
 - **`chunks`:** none in a dimension where no target runs (the Nether and the End). In the Overworld, a 16 × 16 square around the origin (chunks −8 to 7), then, for the rare targets, chunks near the origin (rings outwards, up to 256 chunks away) where the feature's rarity filter passes, by the game's own `WorldgenRandom`, and the biome at the chunk's quart (2, 16, 2) lists it: 8 for the desert well, 4 for each fossil. The rarity and biome only pick chunks; their decoration is the game's.
-- **`tries`:** in the order they happened: `feature` (the placed feature's id), `pos` (the origin the feature was called with) and `placed`.
+- **`tries`:** in the order they happened: `feature` (the placed feature's id), `pos` (the origin the feature was called with), `placed`, and `containers` where the call made any: each container with a loot table (a `RandomizableContainer` block entity) within 8 blocks of the origin on each axis that the call made or changed, by position (y, then z, then x), with its `pos`, `table` and loot `seed`. Files from before the harness recorded containers have none.
 - **`after_neighbours`:** the same, from a second run with the chunk's 8 neighbours decorated in full first. Files from before the second run have none.
 
 **How the harness makes them** ([ADR 0053](../adr/0053-the-oracle-decorates-chunks-on-their-own.md)):
@@ -400,7 +412,7 @@ Each chunk decorated on its own, and every call decoration makes to a target fea
 - **Stopping:** at the first feature past `surface_structures`, the last step with a target, since later steps can't change what earlier ones did in the chunk.
 - **The second run:** the 5 × 5 chunks around the chunk generated, then each of its 8 neighbours decorated in full (all steps, z then x ascending, each over its own 3 × 3), recording nothing, then the chunk as in the first run. No chunk is lit during features, so the stand-in light engine answers what the game's does for a column it has no light for: sky light 15 (where the dimension has it), block light 0.
 
-**Checks:** spyglass's order, and its tries in sequence for each placed feature until one isn't exact ([features.md](features.md#tries)). A dungeon's declined calls are replayed, so its tries are compared up to the first that placed. Then placing: every call's position and result on the carved chunks, compared with `tries` ([features.md](features.md#placing)). **Determinism:** a second run writes the same bytes.
+**Checks:** spyglass's order, and its tries in sequence for each placed feature until one isn't exact ([features.md](features.md#tries)). A dungeon's declined calls are replayed, so its tries are compared up to the first that placed. Then placing: every call's position, result and containers on the carved chunks, compared with `tries` ([features.md](features.md#placing), [loot.md](loot.md#containers)). **Determinism:** a second run writes the same bytes.
 
 `cargo xtask oracle features` takes 25 to 55 seconds per seed on 16 cores, most of it the second run. In 26.3's golden area, `after_neighbours` differs from `tries` in 4 of 2,684 chunks.
 

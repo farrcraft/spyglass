@@ -1,6 +1,6 @@
 # 0060. Loot in a crate of its own, below worldgen
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-04
 - See also: [0052](0052-features-in-their-own-crate.md), [0059](0059-loot-data-in-the-bundle.md)
 

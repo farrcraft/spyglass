@@ -35,7 +35,7 @@ Where each loot container is, with its loot table and loot seed, certain or a ca
 ## Tasks
 
 - [x] **Spike:** where each laid-out structure draws in `postProcess` and `placeInWorld`, in 26.2, 26.3 and 26.4-snapshot-7; every caller of `createChest`, `createDispenser`, `setLootTable` and `setBlockEntityLootTable`; feature elements in each jigsaw pool and where they fall in piece order. Findings in the notes. _Every structure's draws are the same in 26.2, 26.3 and 26.4-snapshot-7; reconstructions in `target/spike/containers/`._
-- [ ] **Dungeons:** each placed dungeon's chests: position, table and seed.
+- [x] **Dungeons:** each placed dungeon's chests: position, table and seed. _`Placement::containers`; the feature golden files record each call's containers, and `placing` compares them: 93 certain chests in 26.2, 93 in 26.3, 95 in 26.4-snapshot-7, all the game's._
 - [ ] **Jigsaw containers:** the template blocks with loot tables, their order within a piece and across pieces, clipped to the chunk; certainty by earlier feature elements.
 - [ ] **Single-piece structures:** buried treasure, desert pyramid, jungle temple (chests and dispensers), igloo, shipwreck, ruined portal: each one's draws up to its containers.
 - [ ] **Mineshafts:** measure how many golden containers are minecart chests; port the corridors' `postProcess` over the carved blocks.
@@ -58,6 +58,8 @@ Where each loot container is, with its loot table and loot seed, certain or a ca
 - [ ] An ADR if the chunk oracle's design changes.
 
 ## Notes
+
+- 2026-11-05: dungeons are checked through the feature golden files, not `oracle containers`: each call to a target feature records the containers with a loot table it made or changed within 8 blocks of its origin, from the block entities before and after the call. An optional field, so the format stays 1. `oracle containers` remains for structures.
 
 - 2026-11-04: **Spike: the structure random** (26.2, 26.3, 26.4-snapshot-7, the same in all three).
   - **Seeding:** each step's structures in registry order, which is by file name; `setFeatureSeed(decorationSeed, index, step)` with `index` counting every structure of the step, near or not. `underground_structures`: buried treasure 0, mineshaft 1, mesa mineshaft 2, trail ruins 3, trial chambers 4. In `surface_structures` 26.3's 18 abandoned camps take 0 to 17 and move the rest up 18: data, not a switch.

@@ -108,8 +108,9 @@ final class Decoration {
 
         @Override
         public boolean place(FeaturePlaceContext<FC> context) {
+            var before = Features.containers(context.level(), context.origin());
             boolean placed = inner.place(context);
-            Features.record(context.origin(), placed);
+            Features.record(context.level(), context.origin(), placed, before);
             return placed;
         }
     }

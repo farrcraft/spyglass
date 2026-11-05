@@ -1,6 +1,6 @@
 # 0059. Loot data in the bundle, with item components from the data generator
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-04
 - See also: [0006](0006-bundle-format-raw-json-tree.md), [0054](0054-block-behaviour-from-the-running-game.md)
 

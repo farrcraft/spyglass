@@ -21,7 +21,7 @@ use crate::neighbours::Foreign;
 use crate::order::PlacedRef;
 use crate::outline::Outline;
 use crate::reach::Changes;
-use crate::region::{Doubt, Region};
+use crate::region::{Container, Doubt, Region};
 use crate::settings::FeatureSettings;
 use crate::structures::Piece;
 
@@ -55,7 +55,7 @@ pub enum Outcome {
 }
 
 /// A target feature's try in a chunk and what it did.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Placement {
     /// The try.
     pub at: Try,
@@ -64,6 +64,9 @@ pub struct Placement {
     /// Why neighbours decorated first could change it, if they could; `None` where it holds
     /// whatever the neighbours do (`docs/specs/features.md#certainty`).
     pub neighbours: Option<Doubt>,
+    /// The containers it placed with loot tables, in the order it placed them: as certain as
+    /// `outcome` (`docs/specs/loot.md#containers`).
+    pub containers: Vec<Container>,
 }
 
 /// A box an earlier feature could write, for [`MonsterRoom::declines_on`], and whether it could
@@ -351,6 +354,7 @@ impl Placer {
         let mut unsure_anyway: Vec<(PlacedRef, Doubt)> = Vec::new();
         let mut place = |attempt: &Try, random: &mut WorldgenRandom, region: &mut Region<'_>| {
             region.take_doubt();
+            region.take_containers();
             let ours = self.reads(attempt.placed);
             if ours.is_none() || !attempt.exact {
                 // Not placed here, or where isn't known: what it writes isn't.
@@ -447,6 +451,7 @@ impl Placer {
                 at: *attempt,
                 outcome,
                 neighbours: anyway,
+                containers: region.take_containers(),
             });
             Drawn::Known
         };

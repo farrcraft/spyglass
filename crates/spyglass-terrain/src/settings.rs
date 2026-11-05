@@ -14,7 +14,6 @@ use spyglass_rng::{
 };
 
 use crate::aquifer::{AquiferSamplers, Block, FluidPicker};
-use crate::tags::block_tag;
 
 /// `DimensionType.MIN_Y` and `MAX_Y`: the range every noise setting's y must stay in.
 const DIMENSION_MIN_Y: i32 = -2032;
@@ -191,9 +190,12 @@ impl TerrainSettings {
                 }
                 true
             }
-            Some(block) => {
-                block_tag(resources, "minecraft:blocks_motion_in_heightmap")?.contains(block)
-            }
+            Some(block) => spyglass_density::tag(
+                resources,
+                "tags/block",
+                "minecraft:blocks_motion_in_heightmap",
+            )?
+            .contains(block),
             None => return Err(root.error(LoadErrorKind::Missing("default_block"))),
         };
         let (level_min_y, level_height) = level_range(resources, dimension_type)?;

@@ -7,7 +7,6 @@
 mod aquifer;
 mod column;
 mod settings;
-mod tags;
 mod v1_21;
 
 pub use aquifer::{
@@ -16,6 +15,6 @@ pub use aquifer::{
 };
 pub use column::{BlockColumn, Heightmap, Probe, Substances, Terrain};
 pub use settings::{BoundTerrain, TerrainSettings};
+pub use spyglass_density::tag;
 #[cfg(feature = "timing")]
 pub use spyglass_density::timing;
-pub use tags::tag;

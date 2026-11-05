@@ -18,6 +18,11 @@ pub const JAR_DIRS: &[&str] = &[
     "data/minecraft/tags/block/",
     "data/minecraft/dimension_type/",
     "data/minecraft/structure/",
+    "data/minecraft/loot_table/",
+    "data/minecraft/enchantment/",
+    "data/minecraft/instrument/",
+    "data/minecraft/tags/item/",
+    "data/minecraft/tags/enchantment/",
 ];
 
 /// Data-generator reports copied into a bundle, relative to the generator's output directory and
@@ -28,6 +33,10 @@ pub const REPORTS: &[&str] = &[
     "reports/blocks.json",
     crate::datagen::BLOCK_BEHAVIOUR,
 ];
+
+/// Data-generator report directories copied into a bundle whole, like [`REPORTS`]: each item's
+/// default components, one file an item, which loot reads (ADR 0059).
+pub const REPORT_DIRS: &[&str] = &["reports/minecraft/components/item/"];
 
 /// Why a bundle couldn't be written.
 #[derive(Debug, thiserror::Error)]
@@ -144,6 +153,9 @@ pub fn write(dest: &Path, sources: &Sources<'_>, replace: bool) -> Result<Manife
         })?;
         put(staging.path(), report, &bytes, &mut files)?;
     }
+    for dir in REPORT_DIRS {
+        copy_report_dir(sources.reports_dir, dir, staging.path(), &mut files)?;
+    }
 
     let manifest = Manifest {
         format: FORMAT,
@@ -227,6 +239,55 @@ fn copy_jar(
     Ok(version.world_version)
 }
 
+/// Copies every file under the report directory `dir` (a bundle path ending in `/`) from the
+/// generator's output, at the same path. A directory that's missing or empty is an error, as a
+/// missing report is.
+fn copy_report_dir(
+    reports_dir: &Path,
+    dir: &str,
+    root: &Path,
+    files: &mut BTreeMap<String, String>,
+) -> Result<(), WriteError> {
+    let missing = || {
+        WriteError::Layout(format!(
+            "the data generator didn't write {}",
+            reports_dir.join(dir).display()
+        ))
+    };
+    let mut pending = vec![dir.trim_end_matches('/').to_string()];
+    let mut copied = 0;
+    while let Some(rel) = pending.pop() {
+        let from = reports_dir.join(&rel);
+        let entries = match fs::read_dir(&from) {
+            Ok(entries) => entries,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => return Err(missing()),
+            Err(err) => return Err(io_err(&from)(err)),
+        };
+        for entry in entries {
+            let entry = entry.map_err(io_err(&from))?;
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                return Err(WriteError::Layout(format!(
+                    "a report file name isn't UTF-8: {}",
+                    entry.path().display()
+                )));
+            };
+            let path = format!("{rel}/{name}");
+            if entry.file_type().map_err(io_err(&entry.path()))?.is_dir() {
+                pending.push(path);
+            } else {
+                let bytes = fs::read(entry.path()).map_err(io_err(&entry.path()))?;
+                put(root, &path, &bytes, files)?;
+                copied += 1;
+            }
+        }
+    }
+    if copied == 0 {
+        return Err(missing());
+    }
+    Ok(())
+}
+
 /// Writes `bytes` to `root/<path>` and records its hash.
 fn put(
     root: &Path,
@@ -278,7 +339,14 @@ mod tests {
                 ("data/minecraft/worldgen/biome/plains.json", b"{}"),
                 ("data/minecraft/tags/worldgen/biome/is_ocean.json", b"[]"),
                 ("data/minecraft/tags/block/logs.json", b"{}"),
-                ("data/minecraft/tags/item/logs.json", b"not copied"),
+                ("data/minecraft/tags/item/logs.json", b"{}"),
+                (
+                    "data/minecraft/loot_table/chests/simple_dungeon.json",
+                    b"{}",
+                ),
+                ("data/minecraft/enchantment/mending.json", b"{}"),
+                ("data/minecraft/instrument/ponder_goat_horn.json", b"{}"),
+                ("data/minecraft/tags/enchantment/on_random_loot.json", b"{}"),
                 ("data/minecraft/dimension_type/overworld.json", b"{}"),
                 ("data/minecraft/structure/igloo/top.nbt", b"\x1f\x8b"),
                 ("data/minecraft/recipe/bread.json", b"not copied"),
@@ -294,7 +362,15 @@ mod tests {
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(path, format!("{{\"report\": \"{report}\"}}\n")).unwrap();
         }
-        fs::write(out.join("reports/items.json"), "not copied").unwrap();
+        let items = out.join("reports/minecraft/components/item");
+        fs::create_dir_all(&items).unwrap();
+        fs::write(
+            items.join("book.json"),
+            "{\"components\": {}}
+",
+        )
+        .unwrap();
+        fs::write(out.join("reports/commands.json"), "not copied").unwrap();
         out
     }
 
@@ -325,8 +401,13 @@ mod tests {
             manifest.files.keys().collect::<Vec<_>>(),
             [
                 "data/minecraft/dimension_type/overworld.json",
+                "data/minecraft/enchantment/mending.json",
+                "data/minecraft/instrument/ponder_goat_horn.json",
+                "data/minecraft/loot_table/chests/simple_dungeon.json",
                 "data/minecraft/structure/igloo/top.nbt",
                 "data/minecraft/tags/block/logs.json",
+                "data/minecraft/tags/enchantment/on_random_loot.json",
+                "data/minecraft/tags/item/logs.json",
                 "data/minecraft/tags/worldgen/biome/is_ocean.json",
                 "data/minecraft/worldgen/biome/plains.json",
                 "data/minecraft/worldgen/noise/a.json",
@@ -334,6 +415,7 @@ mod tests {
                 "reports/biome_parameters/minecraft/overworld.json",
                 "reports/block_behaviour.json",
                 "reports/blocks.json",
+                "reports/minecraft/components/item/book.json",
             ]
         );
         assert_eq!(

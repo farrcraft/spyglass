@@ -1,6 +1,6 @@
 # 0062. The oracle places structures when decorating, for containers
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-05
 - See also: [0053](0053-the-oracle-decorates-chunks-on-their-own.md), [0049](0049-the-oracle-generates-chunks-with-stand-ins.md)
 

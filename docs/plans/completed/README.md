@@ -33,3 +33,4 @@ Plans that have been fully implemented. See [development-process.md](../../devel
 | [m18-carvers](m18-carvers.md)                                 | 18. Surface rules, ore veins, caves and carvers | 2026-10-30 |
 | [m18-layers](m18-layers.md)                                   | 18. Surface rules, ore veins, caves and carvers | 2026-10-30 |
 | [m19-decoration](m19-decoration.md)                           | 19. Features                                    | 2026-10-30 |
+| [m20-tables](m20-tables.md)                                   | 20. Loot                                        | 2026-11-04 |

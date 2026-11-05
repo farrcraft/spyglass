@@ -1,13 +1,13 @@
 # m20. Loot tables
 
-- Status: In progress
-- Milestone: [20. Loot](../roadmap/20-loot.md)
+- Status: Completed
+- Milestone: [20. Loot](../../roadmap/20-loot.md)
 - Started: 2026-11-04
-- Completed:
+- Completed: 2026-11-04
 
 ## Goal
 
-A container's contents from its loot table and loot seed, slot by slot, exactly as the game fills it. This is the half of the milestone that needs no worldgen: given a table id, a seed and the container's position, spyglass gives the game's items, counts, enchantments and other components, in the game's slots. [m20-containers](m20-containers.md) finds the tables and seeds; [m20-queries](m20-queries.md) asks about them. It meets the first exit criterion's rolling half: for every container table of every supported version, the game's contents for any seed.
+A container's contents from its loot table and loot seed, slot by slot, exactly as the game fills it. This is the half of the milestone that needs no worldgen: given a table id, a seed and the container's position, spyglass gives the game's items, counts, enchantments and other components, in the game's slots. [m20-containers](../m20-containers.md) finds the tables and seeds; [m20-queries](../m20-queries.md) asks about them. It meets the first exit criterion's rolling half: for every container table of every supported version, the game's contents for any seed.
 
 ## Approach
 
@@ -28,31 +28,31 @@ A container's contents from its loot table and loot seed, slot by slot, exactly 
 
 No entry has a `quality` and no pool has `bonus_rolls`, so the opener's luck changes nothing in vanilla. Tables keyed to the opener stay out of scope, as the milestone says.
 
-**The format changed in 26.3.** 26.2 has `functions` and `conditions` lists with `function` and `condition` ids; 26.3 has a `modifier` (one, or a list) whose objects have a `type`, and a `condition` object. Loaders tell them apart by shape, as everywhere ([ADR 0026](../adr/0026-how-game-versions-coexist.md)). A loot spec section lists both.
+**The format changed in 26.3.** 26.2 has `functions` and `conditions` lists with `function` and `condition` ids; 26.3 has a `modifier` (one, or a list) whose objects have a `type`, and a `condition` object. Loaders tell them apart by shape, as everywhere ([ADR 0026](../../adr/0026-how-game-versions-coexist.md)). A loot spec section lists both.
 
-**Data the bundle needs.** Today's bundle has none of this. It gains `data/minecraft/loot_table/`, `enchantment/`, `instrument/`, `tags/item/` and `tags/enchantment/` from the jar, and the item properties rolling reads: each item's maximum stack size (splitting), its enchantability and enchantable tags (enchanting), and its maximum damage (`set_damage`). Those are default item components, which the data generator's reports write one item a file, `reports/minecraft/components/item/<id>.json`, in every supported version; the bundle copies them. Adding directories doesn't change `format` ([bundle-format.md](../specs/bundle-format.md)); loaders that need them ask for the bundle to be extracted again.
+**Data the bundle needs.** Today's bundle has none of this. It gains `data/minecraft/loot_table/`, `enchantment/`, `instrument/`, `tags/item/` and `tags/enchantment/` from the jar, and the item properties rolling reads: each item's maximum stack size (splitting), its enchantability and enchantable tags (enchanting), and its maximum damage (`set_damage`). Those are default item components, which the data generator's reports write one item a file, `reports/minecraft/components/item/<id>.json`, in every supported version; the bundle copies them. Adding directories doesn't change `format` ([bundle-format.md](../../specs/bundle-format.md)); loaders that need them ask for the bundle to be extracted again.
 
 **Enchanting** is the hard part: `EnchantmentHelper.selectEnchantment` (levels, the item's enchantability, the cost ranges, weights and exclusive sets of the enchantments in `options` or the tag), and `enchant_randomly`'s pick from the compatible ones. Its order of draws is ported from each version's bytecode. Enchantments are data from 1.21, so this is algorithms over the bundle's `enchantment/` files.
 
-**Exploration maps** search for the nearest structure from the container (`findNearestMapStructure`), whose answer spyglass's locate can give, and whose `skip_existing_chunks` depends on what the world has explored. Rolling gives the map's destination tag, decoration and zoom and leaves its target to the caller. [m20-containers](m20-containers.md) fills it in for a fresh world, and says why a save's can differ.
+**Exploration maps** search for the nearest structure from the container (`findNearestMapStructure`), whose answer spyglass's locate can give, and whose `skip_existing_chunks` depends on what the world has explored. Rolling gives the map's destination tag, decoration and zoom and leaves its target to the caller. [m20-containers](../m20-containers.md) fills it in for a fresh world, and says why a save's can differ.
 
 **Where it lives.** A new crate, `spyglass-loot`, above `spyglass-data` and `spyglass-rng`, beside `spyglass-feature`: loading tables, items and enchantments, and `roll(table, seed, origin) -> Contents`. It needs no worldgen except the container's biome for `location_check`, which the caller passes in.
 
-**The oracle.** A new `cargo xtask oracle loot` run fills a stand-in container for each container table of the version, for a fixed list of seeds (1,000 a table, including `i64::MIN`, `−1`, `1` and `i64::MAX`), with the origin in a few biomes for the tables that check one. It records each slot's item, count and components as the game serializes them. The golden file stays local ([ADR 0008](../adr/0008-game-derived-test-values-stay-local.md)). The comparison is an ignored test in `spyglass-loot`. Maps are compared without their target.
+**The oracle.** A new `cargo xtask oracle loot` run fills a stand-in container for each container table of the version, for a fixed list of seeds (1,000 a table, including `i64::MIN`, `−1`, `1` and `i64::MAX`), with the origin in a few biomes for the tables that check one. It records each slot's item, count and components as the game serializes them. The golden file stays local ([ADR 0008](../../adr/0008-game-derived-test-values-stay-local.md)). The comparison is an ignored test in `spyglass-loot`. Maps are compared without their target.
 
 ## Tasks
 
 - [x] **Spike:** `LootTable.fill` and everything it calls, in 26.2, 26.3 and 26.4-snapshot-7: draw order, the splitter, slot shuffles, each modifier, number provider and condition above, `selectEnchantment`. Where the versions differ. Whether `reports/items.json` has the components rolling reads, in every version. Findings in the notes, reconstructions kept locally. _The same draws in all three; the JSON differs; item components are per-item reports._
-- [x] **ADR:** loot in the bundle: the new directories and where item properties come from. _[ADR 0059](../adr/0059-loot-data-in-the-bundle.md); the crate is [ADR 0060](../adr/0060-loot-in-its-own-crate.md)._
+- [x] **ADR:** loot in the bundle: the new directories and where item properties come from. _[ADR 0059](../../adr/0059-loot-data-in-the-bundle.md); the crate is [ADR 0060](../../adr/0060-loot-in-its-own-crate.md)._
 - [x] **Extractor:** the directories and item properties; bundle-format.md updated. _26.2 and 26.3 re-extracted; tag resolution moved down to `spyglass-density`, beside `Resources`._
 - [x] **`spyglass-loot`:** loading 26.2's and 26.3's forms; items; the random; pools, entries and conditions; the splitter, the slots and the shuffles. _Every container table of 26.2, 26.3 and 26.4-snapshot-7 loads; a fill takes about 15 µs._
 - [x] **Modifiers:** each one above, hand-worked tests for each, without game data. _`tests/fill.rs`; the game's own answers come with the comparison._
 - [x] **Enchanting:** `enchant_with_levels`, `enchant_randomly`, `set_enchantments`, from the enchantment data. _Without `options` (the whole registry in its order) and `set_enchantments` with several random levels are refused: vanilla has neither._
-- [x] **Oracle:** `oracle loot` and its golden file, and the CI unit for it ([ADR 0058](../adr/0058-oracle-ci-planned-by-cost.md)): a new `Unit` kind and its `COSTS`. _One file a table, 500 fills each; `loot` estimated at a minute until CI's logs say otherwise._
+- [x] **Oracle:** `oracle loot` and its golden file, and the CI unit for it ([ADR 0058](../../adr/0058-oracle-ci-planned-by-cost.md)): a new `Unit` kind and its `COSTS`. _One file a table, 500 fills each; `loot` estimated at a minute until CI's logs say otherwise._
 - [x] **Comparison:** every table, every seed, every version: slot for slot the game's. _All match in 26.2, 26.3 and 26.4-snapshot-5 to 7, on the first run but for two components the game's patch leaves out at their defaults._
 - [x] **Spec:** loot.md: filling, each modifier and condition, the versions' forms.
 - [ ] **Cost:** a roll in `cargo xtask bench`. _Comes with the API in m20-queries, as features' did: the bench runs the public API, which doesn't reach loot yet. A fill takes about 15 µs in the bundle test._
-- [ ] `cargo xtask check` and `cargo xtask oracle-test`. Complete the plan.
+- [x] `cargo xtask check` and `cargo xtask oracle-test`. Complete the plan. _Every version passes, the loot comparisons included._
 
 ## Verification
 
@@ -74,7 +74,7 @@ No entry has a `quality` and no pool has `bonus_rolls`, so the opener's luck cha
   - **Entries:** `empty` makes nothing and its modifiers never run; `item` a stack of 1; `loot_table` rolls the other table with the same random, without its sequence or the splitter. From 26.3 its `value` is a set with `expand`; vanilla gives one id, which acts as 26.2's.
   - **Modifiers** run innermost first (entry, pool, table), then the splitter, which only the outer table has. It drops a stack whose item a feature flag disables, after its draws, and cuts one at or over its maximum into pieces of at most the maximum.
   - **Numbers:** `Mth.nextInt(r, min, max)` is `min` without a draw when `min ≥ max`, else `nextInt(max − min + 1) + min`; the float uniform is `nextFloat() × (max − min) + min` in `f32`, likewise. `min` is evaluated before `max`. 26.2 has one float provider (an int is `Math.round` of it; an object without `type` is uniform); 26.3 has int and float providers apart, and a bare number is a constant. JSON floats are `Float.parseFloat` of the literal: parse to `f32` directly.
-  - **Conditions:** `random_chance` evaluates its chance, then `nextFloat() < chance`. `location_check` is the container's block plus an offset (0 in vanilla); false if the chunk isn't loaded, else the biome by `BiomeManager.getBiome`, the zoomed lookup ([biome-lookup.md](../specs/biome-lookup.md)), not the quart's. `inverted` is `!term`. 26.2 ANDs a `conditions` list in order; 26.3 has one `condition`.
+  - **Conditions:** `random_chance` evaluates its chance, then `nextFloat() < chance`. `location_check` is the container's block plus an offset (0 in vanilla); false if the chunk isn't loaded, else the biome by `BiomeManager.getBiome`, the zoomed lookup ([biome-lookup.md](../../specs/biome-lookup.md)), not the quart's. `inverted` is `!term`. 26.2 ANDs a `conditions` list in order; 26.3 has one `condition`.
   - **Slots:** `Util.shuffle` from `i = size` down to 2: `j = nextInt(i)`, swap `i − 1` and `j`. Then the split: empties dropped; stacks over 1 moved to a split list in order; while free slots exceed the stacks and the split list isn't empty, take one at `Mth.nextInt(0, size − 1)`, split off `Mth.nextInt(1, count / 2)`, and for the rest, then the piece, a count over 1 draws `nextBoolean` (true back to the split list, false to the items) and a count of 1 goes to the items. The split list's rest is appended and the whole shuffled.
   - **The random** is `java.util.Random`'s in every method used, all in `spyglass-rng`'s `LegacyRandom` already. `Mth.nextInt` and `Util.shuffle` exist privately in `spyglass-data` and `spyglass-structure`; the loot crate shares or repeats them.
 - 2026-11-04: **Spike: enchanting.** The same in all three versions. `nextInt(1)` still draws.

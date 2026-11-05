@@ -8,10 +8,9 @@ Code must not reference plans. Anything durable a plan produces belongs in a spe
 
 - [m08-ci-plan](m08-ci-plan.md): oracle CI planned by cost, for milestone [08](../roadmap/completed/08-dimensions-and-versions.md)'s versions.
 
-Drafted for milestone [20](../roadmap/20-loot.md), in order:
+For milestone [20](../roadmap/20-loot.md), after [m20-tables](completed/m20-tables.md), in order:
 
-- [m20-tables](m20-tables.md): a container's contents from its loot table and seed.
-- [m20-containers](m20-containers.md): where each container is, with its table and seed, certain or not.
+- [m20-containers](m20-containers.md) (in progress): where each container is, with its table and seed, certain or not.
 - [m20-layouts](m20-layouts.md): piece layouts and containers for strongholds, fortresses, end cities, mansions and ocean ruins.
 - [m20-queries](m20-queries.md): loot in the API, the CLI, the viewer and both searches.
 

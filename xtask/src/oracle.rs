@@ -57,6 +57,9 @@ pub enum OracleCmd {
     /// Write spawn golden files (the spawn origin and the climate search behind it) for the
     /// golden seeds and dimensions into `oracle-out/<version>/spawn/`.
     Spawn(Common),
+    /// Write loot golden files (every container loot table filled by the game for a fixed list
+    /// of seeds) into `oracle-out/<version>/loot/`.
+    Loot(Common),
     /// Write height golden files (the generator's worldgen heightmaps and block columns) for the
     /// golden seeds and dimensions into `oracle-out/<version>/heights/`.
     Heights {
@@ -271,6 +274,10 @@ pub fn run(cmd: OracleCmd) -> Result<()> {
             let harness = build(&common)?;
             harness.spawn()
         }
+        OracleCmd::Loot(common) => {
+            let harness = build(&common)?;
+            harness.loot()
+        }
         OracleCmd::Heights { common, threads } => {
             let harness = build(&common)?;
             harness.heights(threads, GOLDEN_SEEDS)
@@ -469,7 +476,8 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-/// Every golden file: probes, structures, spawn, heights, blocks, features, and the biome grids.
+/// Every golden file: probes, structures, spawn, heights, blocks, features, the biome grids and
+/// loot.
 fn golden(common: &Common, threads: Option<usize>) -> Result<()> {
     let mut harness = build(common)?;
     harness.probe()?;
@@ -479,6 +487,7 @@ fn golden(common: &Common, threads: Option<usize>) -> Result<()> {
     blocks(&mut harness, threads, GOLDEN_SEEDS)?;
     harness.features(threads, &feature_seeds())?;
     harness.golden_biomes(threads)?;
+    harness.loot()?;
     println!(
         "golden files in {}",
         repo_root()
@@ -605,6 +614,18 @@ impl Harness {
     /// what was there.
     pub(crate) fn spawn(&self) -> Result<()> {
         self.per_dimension("spawn", &[], GOLDEN_SEEDS)
+    }
+
+    /// Writes `oracle-out/<version>/loot/`, replacing what was there.
+    pub(crate) fn loot(&self) -> Result<()> {
+        let dir = repo_root()
+            .join("oracle-out")
+            .join(&self.version)
+            .join("loot");
+        if dir.exists() {
+            fs::remove_dir_all(&dir)?;
+        }
+        self.run(&["loot".into(), dir.into()])
     }
 
     /// Writes `oracle-out/<version>/heights/<dimension>/` for each golden dimension, replacing

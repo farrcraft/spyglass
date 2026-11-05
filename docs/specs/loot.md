@@ -1,6 +1,6 @@
 # Loot
 
-Status: draft. Covers filling a container from its loot table and loot seed (`LootTable.fill`), as the game does when a container is first opened, broken or emptied by a hopper: the tables' forms, pools, entries, number providers, conditions, modifiers and enchanting, and how the items go into slots. Implemented in `spyglass-loot` ([ADR 0060](../adr/0060-loot-in-its-own-crate.md)), with the random in `spyglass-rng` ([rng.md](rng.md)) and the data from the bundle ([ADR 0059](../adr/0059-loot-data-in-the-bundle.md)).
+Status: draft. Covers filling a container from its loot table and loot seed (`LootTable.fill`), as the game does when a container is first opened, broken or emptied by a hopper: the tables' forms, pools, entries, number providers, conditions, modifiers and enchanting, and how the items go into slots. Implemented in `spyglass-loot` ([ADR 0060](../adr/0060-loot-in-its-own-crate.md)), with the random in `spyglass-rng` ([rng.md](rng.md)) and the data from the bundle ([ADR 0059](../adr/0059-loot-data-in-the-bundle.md)). Checked against the oracle's [loot golden files](oracle.md#loot-golden-files) in 26.2, 26.3 and 26.4-snapshot-5 to 7: every fill of every container table matches.
 
 Ported from the 26.2, 26.3 and 26.4-snapshot-7 bytecode. The draws are the same in all three; the JSON differs ([Forms](#forms)).
 
@@ -106,4 +106,4 @@ The draws above are the same in every supported version; the JSON differs, and t
 
 ## Testing
 
-Hand-worked tests in `spyglass-loot` (`tests/fill.rs`): both forms of one table fill alike, and single draws checked by hand. `every_container_table_loads_and_fills` loads every container table of a bundle and fills each for 1,000 seeds. To come: the oracle's loot golden files, every container table of every supported version rolled with the game's `LootTable.fill` for a fixed list of seeds, compared slot for slot.
+Hand-worked tests in `spyglass-loot` (`tests/fill.rs`): both forms of one table fill alike, and single draws checked by hand. `every_container_table_loads_and_fills` loads every container table of a bundle and fills each for 1,000 seeds. `every_fill_matches_the_game` compares 500 fills of every container table with the game's, slot for slot, from the oracle's [loot golden files](oracle.md#loot-golden-files): all match in every supported version.

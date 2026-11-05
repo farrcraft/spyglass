@@ -50,12 +50,13 @@ pub(crate) enum Kind {
     Blocks,
     Features,
     Locate,
+    Loot,
     Bundle,
 }
 
 impl Kind {
     /// Every kind, in the order a job makes them.
-    pub(crate) const ALL: [Kind; 9] = [
+    pub(crate) const ALL: [Kind; 10] = [
         Kind::Probe,
         Kind::Biomes,
         Kind::Structures,
@@ -64,6 +65,7 @@ impl Kind {
         Kind::Blocks,
         Kind::Features,
         Kind::Locate,
+        Kind::Loot,
         Kind::Bundle,
     ];
 
@@ -77,6 +79,7 @@ impl Kind {
             Kind::Blocks => "blocks",
             Kind::Features => "features",
             Kind::Locate => "locate",
+            Kind::Loot => "loot",
             Kind::Bundle => "bundle",
         }
     }
@@ -102,6 +105,7 @@ impl Kind {
             Kind::Blocks => &[Input::Blocks, Input::BlocksNoCarvers],
             Kind::Features => &[Input::Features],
             Kind::Locate => &[Input::Locate],
+            Kind::Loot => &[Input::Loot],
             Kind::Bundle => &[],
         }
     }
@@ -153,6 +157,7 @@ impl Unit {
             Kind::Features if self.seed == Some(DUNGEON_SEED) => costs.features + costs.dungeon,
             Kind::Features => costs.features,
             Kind::Locate => costs.locate,
+            Kind::Loot => costs.loot,
             Kind::Bundle => costs.bundle,
         }
     }
@@ -214,6 +219,8 @@ struct Costs {
     dungeon: f64,
     /// `oracle locate`'s server, and its comparison.
     locate: f64,
+    /// `oracle loot`'s fills, and their comparison.
+    loot: f64,
     /// The tests that read only the bundle, and the test pack where it loads.
     bundle: f64,
 }
@@ -235,6 +242,7 @@ const COSTS: &[Costs] = &[
         features: 5.0,
         dungeon: 22.0,
         locate: 8.5,
+        loot: 1.0,
         bundle: 14.0,
     },
     Costs {
@@ -249,6 +257,7 @@ const COSTS: &[Costs] = &[
         features: 3.1,
         dungeon: 4.5,
         locate: 2.0,
+        loot: 1.0,
         bundle: 3.0,
     },
     // The test pack loads from here on.
@@ -264,6 +273,7 @@ const COSTS: &[Costs] = &[
         features: 3.1,
         dungeon: 4.8,
         locate: 2.5,
+        loot: 1.0,
         bundle: 11.0,
     },
 ];

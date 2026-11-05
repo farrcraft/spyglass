@@ -67,6 +67,7 @@ public final class Main {
                 case "probe" -> Probe.run(game, Path.of(args[1]), List.of(args).subList(2, args.length));
                 case "structures" -> Structures.run(game, Path.of(args[1]), dimension(args), positional(args));
                 case "spawn" -> Spawn.run(game, Path.of(args[1]), dimension(args), positional(args));
+                case "loot" -> Loot.run(game, Path.of(args[1]));
                 case "heights" -> Heights.run(game, Path.of(args[1]), dimension(args), positional(args),
                         intOption(args, "--threads", Runtime.getRuntime().availableProcessors()));
                 case "column" -> Blocks.column(game, args[1], dimension(args), Integer.parseInt(args[2]),
@@ -169,7 +170,7 @@ public final class Main {
                 + " | probe <out dir> <seed>... | structures <out dir> [--dimension ID] <seed>..."
                 + " | spawn <out dir> [--dimension ID] <seed>... | heights <out dir> [--dimension ID] [--threads N]"
                 + " <seed>... | blocks <out dir> [--dimension ID] [--threads N] <seed>..."
-                + " | features <out dir> [--dimension ID] [--threads N] <seed>...");
+                + " | features <out dir> [--dimension ID] [--threads N] <seed>... | loot <out dir>");
         System.exit(2);
     }
 }

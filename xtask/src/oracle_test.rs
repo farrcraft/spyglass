@@ -40,6 +40,8 @@ pub(crate) enum Input {
     Features,
     /// The Overworld feature file of `oracle::DUNGEON_SEED`, which a test needs in particular.
     DungeonSeed,
+    /// The loot files.
+    Loot,
 }
 
 impl Input {
@@ -66,6 +68,7 @@ impl Input {
             Input::Heights => "heights",
             Input::Blocks => "blocks",
             Input::Features => "features",
+            Input::Loot => "loot",
             Input::DungeonSeed => {
                 return root
                     .join("oracle-out")
@@ -98,6 +101,7 @@ impl Input {
             Input::Heights => "cargo xtask oracle heights",
             Input::Blocks | Input::BlocksNoCarvers => "cargo xtask oracle blocks",
             Input::Features | Input::DungeonSeed => "cargo xtask oracle features",
+            Input::Loot => "cargo xtask oracle loot",
         }
     }
 }
@@ -197,6 +201,11 @@ pub(crate) const TESTS: &[(&str, &str, &[Input])] = &[
         "spyglass-loot",
         "every_container_table_loads_and_fills",
         &[Input::Bundle],
+    ),
+    (
+        "spyglass-loot",
+        "every_fill_matches_the_game",
+        &[Input::Loot, Input::Bundle],
     ),
     (
         "spyglass",

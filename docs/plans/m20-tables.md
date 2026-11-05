@@ -48,10 +48,10 @@ No entry has a `quality` and no pool has `bonus_rolls`, so the opener's luck cha
 - [x] **`spyglass-loot`:** loading 26.2's and 26.3's forms; items; the random; pools, entries and conditions; the splitter, the slots and the shuffles. _Every container table of 26.2, 26.3 and 26.4-snapshot-7 loads; a fill takes about 15 µs._
 - [x] **Modifiers:** each one above, hand-worked tests for each, without game data. _`tests/fill.rs`; the game's own answers come with the comparison._
 - [x] **Enchanting:** `enchant_with_levels`, `enchant_randomly`, `set_enchantments`, from the enchantment data. _Without `options` (the whole registry in its order) and `set_enchantments` with several random levels are refused: vanilla has neither._
-- [ ] **Oracle:** `oracle loot` and its golden file, and the CI unit for it ([ADR 0058](../adr/0058-oracle-ci-planned-by-cost.md)): a new `Unit` kind and its `COSTS`.
-- [ ] **Comparison:** every table, every seed, every version: slot for slot the game's.
-- [ ] **Spec:** loot.md: filling, each modifier and condition, the versions' forms.
-- [ ] **Cost:** a roll in `cargo xtask bench`.
+- [x] **Oracle:** `oracle loot` and its golden file, and the CI unit for it ([ADR 0058](../adr/0058-oracle-ci-planned-by-cost.md)): a new `Unit` kind and its `COSTS`. _One file a table, 500 fills each; `loot` estimated at a minute until CI's logs say otherwise._
+- [x] **Comparison:** every table, every seed, every version: slot for slot the game's. _All match in 26.2, 26.3 and 26.4-snapshot-5 to 7, on the first run but for two components the game's patch leaves out at their defaults._
+- [x] **Spec:** loot.md: filling, each modifier and condition, the versions' forms.
+- [ ] **Cost:** a roll in `cargo xtask bench`. _Comes with the API in m20-queries, as features' did: the bench runs the public API, which doesn't reach loot yet. A fill takes about 15 µs in the bundle test._
 - [ ] `cargo xtask check` and `cargo xtask oracle-test`. Complete the plan.
 
 ## Verification
@@ -62,9 +62,9 @@ No entry has a `quality` and no pool has `bonus_rolls`, so the opener's luck cha
 
 ## Durable outputs
 
-- [ ] loot.md: filling a container, the tables' forms per version, each modifier and condition.
+- [x] loot.md: filling a container, the tables' forms per version, each modifier and condition.
 - [x] bundle-format.md: the loot, enchantment, instrument and tag directories; item properties.
-- [ ] oracle.md: `oracle loot`, its golden file and comparison.
+- [x] oracle.md: `oracle loot`, its golden file and comparison.
 - [x] An ADR for loot data in the bundle.
 
 ## Notes

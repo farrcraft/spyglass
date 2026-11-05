@@ -62,7 +62,7 @@ The Rust tests that compare spyglass with these files are `#[ignore]`d, since th
 3. runs `oracle test-pack` if [the test pack](#the-test-pack) loads in the version;
 4. runs `oracle-test` for `<id>`, then for `<id>+testpack` if step 3 ran.
 
-CI divides a version's work between jobs with `--units`, a comma-separated list of what to make: `probe`, `biomes`, `structures`, `spawn`, `locate`, `bundle`, or `heights`, `blocks` or `features` for one seed (`features:56`). `bundle` stands for the tests that read only the bundle, and the test pack. A job runs the comparisons whose oracle inputs it made all of; one that reads a per-seed output compares the seeds the job made. A bundle-only test runs in the job with `bundle`. Without `--units`, the job does everything. `cargo xtask ci-plan` picks each job's units from estimated minutes per unit, so each job fits its hour, and prints them as the workflow's matrix ([ADR 0058](../adr/0058-oracle-ci-planned-by-cost.md)). Each unit's actual time is printed as a `ci: ... took` line, to compare with the estimates.
+CI divides a version's work between jobs with `--units`, a comma-separated list of what to make: `probe`, `biomes`, `structures`, `spawn`, `locate`, `loot`, `bundle`, or `heights`, `blocks` or `features` for one seed (`features:56`). `bundle` stands for the tests that read only the bundle, and the test pack. A job runs the comparisons whose oracle inputs it made all of; one that reads a per-seed output compares the seeds the job made. A bundle-only test runs in the job with `bundle`. Without `--units`, the job does everything. `cargo xtask ci-plan` picks each job's units from estimated minutes per unit, so each job fits its hour, and prints them as the workflow's matrix ([ADR 0058](../adr/0058-oracle-ci-planned-by-cost.md)). Each unit's actual time is printed as a `ci: ... took` line, to compare with the estimates.
 
 Unlike a plain `oracle-test`, a comparison that can't run because an input the job just made is missing is an error, not a skip, and so is a version with no comparison at all. A skip would hide a broken step. The tests pinned to another version are still left out. The workflow, `.github/workflows/ci.yml`, calls only this command, `cargo xtask ci-plan`, `cargo xtask ci-scope` and `cargo xtask check`.
 
@@ -403,6 +403,50 @@ Each chunk decorated on its own, and every call decoration makes to a target fea
 **Checks:** spyglass's order, and its tries in sequence for each placed feature until one isn't exact ([features.md](features.md#tries)). A dungeon's declined calls are replayed, so its tries are compared up to the first that placed. Then placing: every call's position and result on the carved chunks, compared with `tries` ([features.md](features.md#placing)). **Determinism:** a second run writes the same bytes.
 
 `cargo xtask oracle features` takes 25 to 55 seconds per seed on 16 cores, most of it the second run. In 26.3's golden area, `after_neighbours` differs from `tries` in 4 of 2,684 chunks.
+
+## Loot golden files
+
+Every container loot table of the version filled by the game's own `LootTable.fill`, slot by slot ([loot.md](loot.md)). One UTF-8 JSON file per table, `oracle-out/<version>/loot/<table path>.json` (`chests/simple_dungeon.json`), its header on one line and then one fill a line:
+
+```json
+{
+  "format": 1,
+  "harness": 1,
+  "version": "26.3",
+  "data_version": 5023,
+  "table": "minecraft:chests/simple_dungeon",
+  "slots": 27,
+  "at": [0, 64, 0],
+  "fills": [
+    {
+      "seed": -1,
+      "biome": "minecraft:bamboo_jungle",
+      "slots": [
+        {
+          "id": "minecraft:enchanted_book",
+          "count": 1,
+          "components": {
+            "minecraft:stored_enchantments": {
+              "minecraft:projectile_protection": 3
+            }
+          },
+          "slot": 9
+        }
+      ]
+    }
+  ]
+}
+```
+
+- **The tables:** every `minecraft:` table under `chests/`, `barrels/` and `dispensers/`, and `pots/`, filling a container of 27, 27, 9 and 1 slots.
+- **`fills`:** 500 a table, with the seeds 1, −1, 2, `i64::MIN`, `i64::MAX`, 12,345 and −6,789,012,345, then 493 from `java.util.Random(20261104).nextLong()`, skipping 0. Each fill's `biome` is the next of the biome registry's ids in sorted order, cycling, so `location_check` meets every biome.
+- **`slots`:** the filled ones, each as `ItemStack.CODEC` writes it: `id`, `count`, and `components`, only those that differ from the item's defaults, plus the `slot`.
+
+**How the harness makes them:** the server's resources loaded as `WorldLoader` loads a dedicated server's (`ReloadableServerResources.loadResources`, then `updateComponentsAndStaticRegistryTags`, which binds the items' default components), and each table filled into a `SimpleContainer` with `LootParams` holding only `ORIGIN`, the centre of block (0, 64, 0), as `RandomizableContainer.unpackLootTable` gives it. The level is a stand-in: its server gives the loot registries, every chunk is loaded, every biome is the fill's, and an exploration map finds no structure. So 26.2's maps stay plain maps, and 26.3's are discarded.
+
+**Checks:** `spyglass-loot`'s `every_fill_matches_the_game`, every fill slot for slot. A component equal to the item's default, which the game's patch leaves out (a goat horn's `ponder_goat_horn`, an ominous bottle's amplifier 0), compares as left out. In every supported version all 30,000 (26.2) or 31,500 fills match. **Determinism:** repeated runs of one harness build write the same bytes.
+
+`cargo xtask oracle loot` takes about 15 seconds, most of it loading the game; the files are 17 to 18 MB a version.
 
 ## Locate answers
 

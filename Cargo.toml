@@ -79,7 +79,16 @@ zip = { version = "9.1.0", default-features = false, features = ["deflate-flate2
 
 # Hashing and inflating the 62 MB server jar is several times slower unoptimized, and the extractor
 # and xtask usually run as debug builds.
+# Line tables only: panics and backtraces keep their files and lines, and the many test binaries,
+# each linking the whole stack, are several times smaller than with full debug info, most of all
+# their .pdb files on Windows (ADR 0061). For a debugger session, set
+# CARGO_PROFILE_DEV_DEBUG=full.
+[profile.dev]
+debug = "line-tables-only"
+
 [profile.dev.package]
+# Dependencies with no debug info at all: nobody steps through them.
+"*".debug = false
 sha1.opt-level = 3
 block-buffer.opt-level = 3
 zlib-rs.opt-level = 3

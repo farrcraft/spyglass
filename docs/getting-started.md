@@ -144,7 +144,7 @@ Project-level commands live in the `xtask` crate and run as `cargo xtask <comman
 | Command                     | What it does                                                                                                              |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | `cargo xtask bench`         | Times the public API's main operations (`dist` build).                                                                    |
-| `cargo xtask check`         | Every check in the pre-commit config, on all files.                                                                       |
+| `cargo xtask check`         | Every check in the pre-commit config, on all files, then a sweep of stale build outputs.                                  |
 | `cargo xtask ci`            | One game version's CI job, from extraction to comparison.                                                                 |
 | `cargo xtask ci-plan`       | CI's oracle jobs, planned from estimated costs ([ADR 0058](adr/0058-oracle-ci-planned-by-cost.md)).                       |
 | `cargo xtask ci-scope`      | Which CI jobs a pull request needs, from the files it changes ([ADR 0041](adr/0041-ci-runs-what-a-change-can-affect.md)). |
@@ -157,6 +157,7 @@ Project-level commands live in the `xtask` crate and run as `cargo xtask <comman
 | `cargo xtask oracle`        | Builds and runs the oracle harness (below).                                                                               |
 | `cargo xtask oracle-test`   | Runs the ignored comparisons with the game (below).                                                                       |
 | `cargo xtask release`       | Sets the version and dates the changelog for a release ([releasing](releasing.md)).                                       |
+| `cargo xtask sweep`         | Deletes stale build outputs from `target/` ([ADR 0061](adr/0061-keeping-target-small.md)).                                |
 | `cargo xtask version-diff`  | Reports what changed between two bundles ([adding a version](adding-a-version.md)).                                       |
 | `cargo xtask viewer-timing` | Times the viewer's cold start in five fixed scenarios (`dist` build; [the viewer](#10-the-viewer)).                       |
 

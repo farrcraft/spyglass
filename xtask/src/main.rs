@@ -22,6 +22,7 @@ mod oracle;
 mod oracle_test;
 mod release;
 mod smoke;
+mod sweep;
 mod version_diff;
 mod viewer_timing;
 
@@ -39,7 +40,8 @@ enum Cmd {
         /// The bundle to use: a directory or a version in `bundles/` [default: the newest release].
         bundle: Option<PathBuf>,
     },
-    /// Run every check in .pre-commit-config.yaml against the whole repo, as CI does.
+    /// Run every check in .pre-commit-config.yaml against the whole repo, as CI does, then sweep
+    /// stale build outputs from `target/`.
     Check,
     /// Run one game version's CI job: extract its bundle, regenerate every oracle output
     /// (goldens, locate and, where it loads, the test pack), and run every comparison.
@@ -107,6 +109,9 @@ enum Cmd {
     /// Unpack a release archive outside the repo and run what's in it, as a user without Rust
     /// would; with `--extract`, also extract a game version and answer from it.
     Smoke(smoke::Smoke),
+    /// Delete stale build outputs from `target/`: each name's copies but the newest and those
+    /// written in the last week (docs/adr/0061-keeping-target-small.md).
+    Sweep(sweep::Sweep),
     /// Report what changed between two bundles in the data spyglass reads: ids added and
     /// removed, files changed, and new or gone JSON shapes (types, fields, value kinds).
     VersionDiff(version_diff::VersionDiff),
@@ -136,6 +141,7 @@ fn main() -> ExitCode {
         Cmd::Release(args) => release::run(&args),
         Cmd::ReleaseNotes(args) => release::notes(&args),
         Cmd::Smoke(args) => smoke::run(&args),
+        Cmd::Sweep(args) => sweep::run(&args),
         Cmd::VersionDiff(args) => version_diff::run(&args),
         Cmd::ViewerTiming(args) => viewer_timing::run(&args),
     };
@@ -234,7 +240,8 @@ fn check() -> Result<()> {
             bail!("{stage} checks failed");
         }
     }
-    Ok(())
+    // The checks build in several ways (clippy, nextest, doc, MSRV), each leaving outputs.
+    sweep::run(&sweep::Sweep::default())
 }
 
 /// `rust-version` from the workspace Cargo.toml's `[workspace.package]`.
@@ -342,6 +349,7 @@ fn doctor(game_version: &str, explicit_java: Option<&Path>) -> Result<()> {
     hook_checks(&mut report, setup);
     java_checks(&mut report, game_version, explicit_java);
     bundles_check(&mut report);
+    target_check(&mut report);
     docker_check(&mut report);
     println!();
     if report.failures > 0 {
@@ -377,6 +385,32 @@ fn bundles_check(r: &mut Report) {
         Some("cargo run -p spyglass-extract"),
     );
 }
+
+/// Stale build outputs in `target/`, which `cargo xtask sweep` deletes. A warning past
+/// [`STALE_WARNING`], never a failure.
+fn target_check(r: &mut Report) {
+    let target = sweep::target_dir();
+    match sweep::stale(&target, sweep::DEFAULT_DAYS) {
+        Ok(stale) => {
+            let bytes: u64 = stale.iter().map(|s| s.bytes).sum();
+            let detail = format!(
+                "{} of stale build outputs in {}",
+                sweep::human(bytes),
+                target.display()
+            );
+            let status = if bytes > STALE_WARNING {
+                Status::Warn
+            } else {
+                Status::Ok
+            };
+            r.line(status, "build outputs", &detail, Some("cargo xtask sweep"));
+        }
+        Err(err) => r.line(Status::Warn, "build outputs", &format!("{err:#}"), None),
+    }
+}
+
+/// Stale build outputs past which `doctor` warns: 5 GB.
+const STALE_WARNING: u64 = 5 * 1024 * 1024 * 1024;
 
 /// The toolchain, its components, the cargo tools the hooks need, and the MSRV toolchain.
 fn rust_checks(r: &mut Report, setup: &str) {

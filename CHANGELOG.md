@@ -6,6 +6,10 @@ Changes go under **Unreleased** as they're made. `cargo xtask release` turns tha
 
 ## [Unreleased]
 
+### Added
+
+- **26.4-snapshot-7**, checked against the game.
+
 ## [0.2.0] - 2026-11-01
 
 ### Game versions

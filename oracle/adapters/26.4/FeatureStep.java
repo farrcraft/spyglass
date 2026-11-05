@@ -6,7 +6,6 @@ import java.util.EnumSet;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerChunkCache;
-import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.flag.FeatureFlagSet;
 import net.minecraft.world.flag.FeatureFlags;
 import net.minecraft.world.level.LevelHeightAccessor;
@@ -63,7 +62,7 @@ final class FeatureStep {
     }
 
     /** The server level, for what the region asks of it. */
-    static class Server extends ServerLevel {
+    static class Server extends ServerLevelStandIn {
         long seed;
         NoiseBasedChunkGenerator generator;
         RandomState random;
@@ -72,11 +71,6 @@ final class FeatureStep {
         LevelHeightAccessor height;
         Decoration.Cache cache;
         int entities;
-
-        /** Never run: instances are made by {@link StandIns#allocate}. */
-        Server() {
-            super(null, null, null, null, null, null, false, null, false);
-        }
 
         @Override
         public long getSeed() {

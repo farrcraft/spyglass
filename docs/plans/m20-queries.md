@@ -7,7 +7,7 @@
 
 ## Goal
 
-Loot in every front end: a container's contents, the containers in an area holding an item, and the nearest one, in the API and as `spyglass loot`; contents and an item highlight in the viewer; loot as a constraint in both searches. It meets the milestone's second exit criterion, and builds on [m20-tables](completed/m20-tables.md), [m20-containers](m20-containers.md) and [m20-layouts](m20-layouts.md).
+Loot in every front end: a container's contents, the containers in an area holding an item, and the nearest one, in the API and as `spyglass loot`; contents and an item highlight in the viewer; loot as a constraint in both searches. It meets the milestone's second exit criterion, and builds on [m20-tables](completed/m20-tables.md), [m20-containers](completed/m20-containers.md) and [m20-layouts](m20-layouts.md).
 
 ## Approach
 

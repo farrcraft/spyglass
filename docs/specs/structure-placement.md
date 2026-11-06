@@ -329,6 +329,10 @@ Without terrain, a normal mineshaft's layout and check are exact; a mesa's need 
 
 _Versions:_ the same in 26.2, 26.3 and 26.4-snapshot-6 but for the mesa's height query ([above](#with-terrain)). 26.2's pieces take a `StructurePieceAccessor` (which `StructurePiecesBuilder` implements) where 26.3 takes the builder itself, with the same calls, and 26.4-snapshot-6's room keeps its entrance boxes in an `ArrayList` rather than a `LinkedList`. Neither changes a piece or a draw.
 
+## Placing pieces
+
+The layouts above are what a start holds. Placing them happens in decoration, each step's structures before its features, all of a structure's pieces in a chunk from one random ([features.md](features.md#structures)). What each piece writes and draws as it's placed, and so each container's position and loot seed, is in [loot.md](loot.md#containers): jigsaw templates, the single-piece structures, shipwrecks' and igloos' templates with their markers, ruined portals and mineshafts. Those are the pieces spyglass places; strongholds, fortresses, end cities, mansions and ocean-ruin clusters aren't laid out or placed yet.
+
 ## Bounds
 
 A start's box (`StructureStart.getBoundingBox`) is the box around its pieces' boxes, grown by 12 on every side if the structure's `terrain_adaptation` isn't `none` (`Structure.adjustBoundingBox`). In 26.3's Overworld that's strongholds and every jigsaw. Boxes are as generated, before placement moves any piece. spyglass gives them for jigsaw structures and mineshafts (`Layout`), and, for the box that holds an exploration map's container ([loot.md](loot.md#maps)), for single-piece structures: from `makeBoundingBox`, the pyramid's 21 × 15 × 21 at y 64, the temple's 12 × 10 × 15 and the swamp hut's 7 × 7 × 9, turned by the piece's random direction; the buried treasure's one block at `(minX + 9, 90, minZ + 9)`; the monument's 58 × 23 × 58 from `(minX − 29, 39, minZ − 29)`; a shipwreck's or igloo's templates at y 90 as laid out; a ruined portal's template.

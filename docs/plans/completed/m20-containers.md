@@ -1,23 +1,23 @@
 # m20. Loot containers
 
-- Status: In progress
-- Milestone: [20. Loot](../roadmap/20-loot.md)
+- Status: Completed
+- Milestone: [20. Loot](../../roadmap/20-loot.md)
 - Started: 2026-11-04
-- Completed:
+- Completed: 2026-11-05
 
 ## Goal
 
-Where each loot container is, with its loot table and loot seed, certain or a candidate, for the structures and features spyglass places. With [m20-tables](completed/m20-tables.md)'s rolls, that's what's in the chests. It meets the first exit criterion for the structures spyglass lays out and for dungeons: the golden seeds' nearest of each kind, their containers' contents the game's, in every supported version. [m20-layouts](m20-layouts.md) adds the rest.
+Where each loot container is, with its loot table and loot seed, certain or a candidate, for the structures and features spyglass places. With [m20-tables](m20-tables.md)'s rolls, that's what's in the chests. It meets the first exit criterion for the structures spyglass lays out and for dungeons: the golden seeds' nearest of each kind, their containers' contents the game's, in every supported version. [m20-layouts](../m20-layouts.md) adds the rest.
 
 ## Approach
 
 **Where a loot seed comes from.** Every container's seed is a `nextLong()` from the random that places it, drawn when its block entity exists (26.3 bytecode):
 
-- **Features:** `RandomizableContainer.setBlockEntityLootTable(level, random, pos, table)` with the feature's random. Dungeons (`monster_room`) already draw it in placing ([features.md](../specs/features.md#monster-room)); the try just needs to keep the position, the table and the seed. The bonus chest is a feature only in new worlds with the option, and out of scope.
+- **Features:** `RandomizableContainer.setBlockEntityLootTable(level, random, pos, table)` with the feature's random. Dungeons (`monster_room`) already draw it in placing ([features.md](../../specs/features.md#monster-room)); the try just needs to keep the position, the table and the seed. The bonus chest is a feature only in new worlds with the option, and out of scope.
 - **Templates:** `StructureTemplate.placeInWorld` puts `LootTableSeed` from its random parameter into each block's NBT whose block entity is a `RandomizableContainer`, in the template's block order, for blocks inside the box being placed. A jigsaw piece (`SinglePoolElement.place`) passes the chunk's structure random; its processors use a random from the position (`Mth.getSeed`), never that one. So within a jigsaw piece, the loot seeds are that random's only draws.
 - **Legacy pieces:** `StructurePiece.createChest` and `createDispenser`, inside the box and not already a chest, set the block and draw. Mineshaft corridors place a minecart with a chest (`MinecartChest.setLootTable(table, random.nextLong())`) where the floor holds. Shipwrecks, ocean ruins, igloos, end cities and mansions place templates and then set chests at data markers with the same random.
 
-**The structure random.** Decorating a chunk, each step places its structures before its features: for each structure of the step in the registry's order, the decoration random is reseeded with `setFeatureSeed(decorationSeed, index, step)` and every start of that structure reaching the chunk places its pieces in the chunk, in piece order, all from that one random ([features.md](../specs/features.md#structures)). A container's seed is certain when every earlier draw from that random in that chunk is: the earlier containers, and whatever else the pieces draw.
+**The structure random.** Decorating a chunk, each step places its structures before its features: for each structure of the step in the registry's order, the decoration random is reseeded with `setFeatureSeed(decorationSeed, index, step)` and every start of that structure reaching the chunk places its pieces in the chunk, in piece order, all from that one random ([features.md](../../specs/features.md#structures)). A container's seed is certain when every earlier draw from that random in that chunk is: the earlier containers, and whatever else the pieces draw.
 
 **What else the pieces draw**, by structure, to be confirmed in the spike:
 
@@ -26,11 +26,11 @@ Where each loot container is, with its loot table and loot seed, certain or a ca
 - **Template structures with data markers** (shipwrecks, igloos, ocean ruins, ruined portals): the template's draws, then the markers'.
 - **Mineshafts:** corridors draw per block for cobwebs, rails and supports, and read the blocks (`isInInvalidLocation`, air below a minecart). Their containers need each corridor's `postProcess` ported over carved blocks. They're the most common container underground, so this is a task of its own, measured first.
 
-**Structures spyglass doesn't lay out** (strongholds, fortresses, end cities, mansions and ocean-ruin clusters, [structure-placement.md](../specs/structure-placement.md#bounds)) get their layouts and containers in [m20-layouts](m20-layouts.md), after this plan, with its rules.
+**Structures spyglass doesn't lay out** (strongholds, fortresses, end cities, mansions and ocean-ruin clusters, [structure-placement.md](../../specs/structure-placement.md#bounds)) get their layouts and containers in [m20-layouts](../m20-layouts.md), after this plan, with its rules.
 
-**Certainty.** As for features ([ADR 0056](../adr/0056-two-certainties-on-its-own-and-whatever-the-neighbours.md)), each container is certain or a candidate with a reason: an earlier draw spyglass doesn't know (a feature element, a piece it can't place), a block read it can't decide (a tie, a feature placed earlier, a neighbour decorated first), or the start itself being a candidate. A container in a chunk whose decoration spyglass can't settle has a position and table but no seed.
+**Certainty.** As for features ([ADR 0056](../../adr/0056-two-certainties-on-its-own-and-whatever-the-neighbours.md)), each container is certain or a candidate with a reason: an earlier draw spyglass doesn't know (a feature element, a piece it can't place), a block read it can't decide (a tie, a feature placed earlier, a neighbour decorated first), or the start itself being a candidate. A container in a chunk whose decoration spyglass can't settle has a position and table but no seed.
 
-**The oracle.** The chunk oracle generates chunks without structures today ([ADR 0053](../adr/0053-the-oracle-decorates-chunks-on-their-own.md)). For containers it needs structure starts and references and their pieces placed during decoration. A new run, `cargo xtask oracle containers`, generates every chunk of the golden seeds' nearest start of each kind and records each loot container: position, block or entity, table and seed. A second run rolls them with the game's tables, giving contents, so the end-to-end comparison doesn't depend on m20-tables' own comparison. If adding structures to the chunk oracle is a design change, it gets an ADR.
+**The oracle.** The chunk oracle generates chunks without structures today ([ADR 0053](../../adr/0053-the-oracle-decorates-chunks-on-their-own.md)). For containers it needs structure starts and references and their pieces placed during decoration. A new run, `cargo xtask oracle containers`, generates every chunk of the golden seeds' nearest start of each kind and records each loot container: position, block or entity, table and seed. A second run rolls them with the game's tables, giving contents, so the end-to-end comparison doesn't depend on m20-tables' own comparison. If adding structures to the chunk oracle is a design change, it gets an ADR.
 
 ## Tasks
 
@@ -43,7 +43,7 @@ Where each loot container is, with its loot table and loot seed, certain or a ca
 - [x] **Maps:** the exploration map's target from locate, from the container, for a fresh world. _`Starts::map_target`, with references carried from map to map and 26.3's claim of the container's own structure (switch `map_claims_nothing` for 26.2). The locate oracle's map cases fill each of the version's maps on the real server, from its origins and from golden containers; `map_targets_match_the_game` replays them in order. 26.3: 316 of 316 certain, all the game's; 26.2 52 of 52 (it has only the treasure maps); 26.4-snapshot-7 316 of 316._
 - [x] **Comparison:** every certain container's position, table, seed and contents are the game's; every game's container is an answer, certain or a candidate. _The containers oracle fills each container with the game's table at its block and the region's biomes (format 2), and the block report gives containers' slots (format 4). `container_contents_match_the_game` fills every one of them with spyglass's slots, biomes and tables: 2051 of 2051 the game's in 26.3 (14,896 stacks), 1870 of 1870 in 26.2, 2048 of 2048 in 26.4-snapshot-7, no biome ties. Maps' targets stay the map cases'._
 - [x] **Spec:** loot.md's containers section, and features.md's monster room. _loot.md gains contents; the monster room already gave its chests._
-- [ ] `cargo xtask check` and `cargo xtask oracle-test`. Complete the plan.
+- [x] `cargo xtask check` and `cargo xtask oracle-test`. Complete the plan. _Every version passes: 26.2, 26.3 and 26.4-snapshot-5 to 7, the older snapshots after regenerating their features, containers and locate files._
 
 ## Verification
 
@@ -54,8 +54,8 @@ Where each loot container is, with its loot table and loot seed, certain or a ca
 
 - [x] loot.md: containers, their seeds and certainty.
 - [x] oracle.md: `oracle containers`, structures in generated chunks.
-- [ ] structure-placement.md: what each piece draws, where ported.
-- [ ] An ADR if the chunk oracle's design changes.
+- [x] structure-placement.md: what each piece draws, where ported. _A section pointing to loot.md, where each piece's draws are._
+- [x] An ADR if the chunk oracle's design changes. _[ADR 0062](../../adr/0062-the-oracle-places-structures-for-containers.md)._
 
 ## Notes
 
@@ -80,5 +80,5 @@ Where each loot container is, with its loot table and loot seed, certain or a ca
   - **Census (26.3):** villages 80 containers in 67 of 478 templates (18 fisher barrels without a table); outposts 2; bastions 37; ancient cities 15; trial chambers 29 (chests, dispensers, pots, barrels, a hopper); trail ruins none; abandoned camps 414 in all 297 templates.
   - **Piece state is decided by the first chunk decorated:** a pyramid's height, a wreck's height and its beached draw, a spider corridor's spawner. Only the beached draw changes a seed.
 
-- 2026-11-04: structures with no layout get [m20-layouts](m20-layouts.md), a plan of their own, rather than a narrower exit criterion.
+- 2026-11-04: structures with no layout get [m20-layouts](../m20-layouts.md), a plan of their own, rather than a narrower exit criterion.
 - 2026-11-04: from the survey that wrote this plan (26.3): templates with loot tables are in 7 jigsaw structures' pools: villages, outposts, bastions, ancient cities, ruined portals, trial chambers and abandoned camps. Trial chambers' vaults are rolled per player and stay out of scope; their decorated pots and dispensers have tables. Desert pyramids', trail ruins' and the well's suspicious blocks are archaeology, out of scope.

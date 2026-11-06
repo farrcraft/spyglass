@@ -7,7 +7,7 @@
 
 ## Goal
 
-Lay out the pieces of the structures with loot that spyglass doesn't lay out yet: strongholds, nether fortresses, end cities, woodland mansions and ocean-ruin clusters. Then place their containers, as [m20-containers](m20-containers.md) does for the others. With them, the milestone's first exit criterion holds for every kind of structure with loot, not only the laid-out ones. Exact pieces also give these structures' bounds ([structure-placement.md](../specs/structure-placement.md#bounds)), and let features near them be decided by their pieces rather than by everything within 8 chunks ([features.md](../specs/features.md#structures)).
+Lay out the pieces of the structures with loot that spyglass doesn't lay out yet: strongholds, nether fortresses, end cities, woodland mansions and ocean-ruin clusters. Then place their containers, as [m20-containers](completed/m20-containers.md) does for the others. With them, the milestone's first exit criterion holds for every kind of structure with loot, not only the laid-out ones. Exact pieces also give these structures' bounds ([structure-placement.md](../specs/structure-placement.md#bounds)), and let features near them be decided by their pieces rather than by everything within 8 chunks ([features.md](../specs/features.md#structures)).
 
 ## Approach
 
@@ -56,4 +56,4 @@ A spike reads each generator in 26.2, 26.3 and 26.4-snapshot-7 before porting it
 
 ## Notes
 
-- 2026-11-04: a plan of its own, rather than narrowing the milestone's first exit criterion to the structures spyglass already laid out. Its order assumes [m20-containers](m20-containers.md) is done first, so the containers here reuse its rules and oracle run.
+- 2026-11-04: a plan of its own, rather than narrowing the milestone's first exit criterion to the structures spyglass already laid out. Its order assumes [m20-containers](completed/m20-containers.md) is done first, so the containers here reuse its rules and oracle run.

@@ -7,7 +7,7 @@
 
 ## Goal
 
-A container's contents from its loot table and loot seed, slot by slot, exactly as the game fills it. This is the half of the milestone that needs no worldgen: given a table id, a seed and the container's position, spyglass gives the game's items, counts, enchantments and other components, in the game's slots. [m20-containers](../m20-containers.md) finds the tables and seeds; [m20-queries](../m20-queries.md) asks about them. It meets the first exit criterion's rolling half: for every container table of every supported version, the game's contents for any seed.
+A container's contents from its loot table and loot seed, slot by slot, exactly as the game fills it. This is the half of the milestone that needs no worldgen: given a table id, a seed and the container's position, spyglass gives the game's items, counts, enchantments and other components, in the game's slots. [m20-containers](m20-containers.md) finds the tables and seeds; [m20-queries](../m20-queries.md) asks about them. It meets the first exit criterion's rolling half: for every container table of every supported version, the game's contents for any seed.
 
 ## Approach
 
@@ -34,7 +34,7 @@ No entry has a `quality` and no pool has `bonus_rolls`, so the opener's luck cha
 
 **Enchanting** is the hard part: `EnchantmentHelper.selectEnchantment` (levels, the item's enchantability, the cost ranges, weights and exclusive sets of the enchantments in `options` or the tag), and `enchant_randomly`'s pick from the compatible ones. Its order of draws is ported from each version's bytecode. Enchantments are data from 1.21, so this is algorithms over the bundle's `enchantment/` files.
 
-**Exploration maps** search for the nearest structure from the container (`findNearestMapStructure`), whose answer spyglass's locate can give, and whose `skip_existing_chunks` depends on what the world has explored. Rolling gives the map's destination tag, decoration and zoom and leaves its target to the caller. [m20-containers](../m20-containers.md) fills it in for a fresh world, and says why a save's can differ.
+**Exploration maps** search for the nearest structure from the container (`findNearestMapStructure`), whose answer spyglass's locate can give, and whose `skip_existing_chunks` depends on what the world has explored. Rolling gives the map's destination tag, decoration and zoom and leaves its target to the caller. [m20-containers](m20-containers.md) fills it in for a fresh world, and says why a save's can differ.
 
 **Where it lives.** A new crate, `spyglass-loot`, above `spyglass-data` and `spyglass-rng`, beside `spyglass-feature`: loading tables, items and enchantments, and `roll(table, seed, origin) -> Contents`. It needs no worldgen except the container's biome for `location_check`, which the caller passes in.
 

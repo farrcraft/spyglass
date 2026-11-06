@@ -2,7 +2,7 @@
 
 - Status: In progress
 - Depends on: [07](completed/07-terrain-and-validity.md), [19](completed/19-features.md)
-- Plans, in order: [m20-tables](../plans/completed/m20-tables.md), [m20-containers](../plans/m20-containers.md), [m20-layouts](../plans/m20-layouts.md), [m20-queries](../plans/m20-queries.md)
+- Plans, in order: [m20-tables](../plans/completed/m20-tables.md), [m20-containers](../plans/completed/m20-containers.md), [m20-layouts](../plans/m20-layouts.md), [m20-queries](../plans/m20-queries.md)
 
 ## Goal
 

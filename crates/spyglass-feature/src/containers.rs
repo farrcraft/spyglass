@@ -20,6 +20,7 @@ use spyglass_structure::{
 };
 
 use crate::blocks::{Blocks, Tag};
+use crate::mineshaft::ShaftBlocks;
 use crate::region::{Doubt, Region};
 
 /// Why a structure's container isn't certain.
@@ -50,7 +51,7 @@ pub struct StructureContainer {
     pub structure: usize,
     /// Where.
     pub pos: [i32; 3],
-    /// The block, e.g. `minecraft:chest`.
+    /// The block, e.g. `minecraft:chest`, or the entity, `minecraft:chest_minecart`.
     pub block: String,
     /// The loot table's id.
     pub table: String,
@@ -137,29 +138,33 @@ pub struct StructureContainers {
     processors: HashMap<Processors, Vec<Processor>>,
     /// `#features_cannot_replace`, which ruined portals' chests don't replace.
     pub(crate) cannot_replace: Tag,
+    /// What mineshafts place and test for.
+    pub(crate) shaft: ShaftBlocks,
 }
 
 impl StructureContainers {
     /// Parses every single element's processors in `pools`, adding the tags they test to
-    /// `blocks`. The bundle's block report must say which blocks are loot containers.
+    /// `blocks`. The bundle's block report must say which blocks are loot containers, and
+    /// which faces support (format 3).
     pub fn load(
         resources: &dyn Resources,
         blocks: &mut Blocks,
         pools: &JigsawPools,
     ) -> Result<Self, LoadError> {
-        if blocks.loot_container("minecraft:chest").is_none() {
+        if blocks.loot_container("minecraft:chest").is_none() || !blocks.knows_support() {
             return Err(LoadError::new(
                 "reports/block_behaviour.json",
                 "loot_container",
                 LoadErrorKind::Invalid(
-                    "a block report without loot containers; extract the bundle again with this \
-                     version of spyglass",
+                    "a block report without loot containers or faces' support; extract the \
+                     bundle again with this version of spyglass",
                 ),
             ));
         }
         let mut out = StructureContainers {
             processors: HashMap::new(),
             cannot_replace: blocks.tag(resources, "minecraft:features_cannot_replace")?,
+            shaft: ShaftBlocks::load(blocks)?,
         };
         let mut stack: Vec<&PoolElement> = pools.elements().collect();
         while let Some(element) = stack.pop() {

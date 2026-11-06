@@ -2,11 +2,15 @@
 //! pieces in the chunk being decorated before that step's features
 //! (`docs/specs/features.md#structures`).
 
+use spyglass_blocks::ChunkGenerator;
 use spyglass_rng::WorldgenRandom;
-use spyglass_structure::{Assembly, BoundingBox, Check, Starts, StructureSets, StructureType};
+use spyglass_structure::{
+    Assembly, BoundingBox, Check, Layout, ShaftPiece, Starts, StructureSets, StructureType,
+};
 
 use crate::blocks::Blocks;
 use crate::containers::{ContainerDoubt, Reads, StructureContainer, StructureContainers};
+use crate::mineshaft::Shaft;
 use crate::region::Region;
 use crate::scattered;
 
@@ -128,7 +132,7 @@ pub fn pieces(
 
 /// The containers with loot tables the structures spyglass places put in the region's chunk,
 /// in the order they place them (`docs/specs/loot.md#containers`), for world `seed`: jigsaw
-/// structures and the single-piece ones but swamp huts. Each step's structures place
+/// structures, mineshafts and the single-piece ones but swamp huts. Each step's structures place
 /// in registry order, each from the decoration random seeded with its index in the step, and
 /// each start referencing the chunk places its pieces from that random. Only the structures of
 /// step `step`, on the region as the steps before it left it; `reads` says why a block a
@@ -142,6 +146,7 @@ pub fn containers(
     sets: &StructureSets,
     containers: &StructureContainers,
     blocks: &Blocks,
+    generator: &ChunkGenerator<'_>,
     region: &mut Region<'_>,
     seed: i64,
     step: usize,
@@ -152,8 +157,8 @@ pub fn containers(
         min: [cx * 16, i32::MIN, cz * 16],
         max: [cx * 16 + 15, i32::MAX, cz * 16 + 15],
     };
-    let mut random = WorldgenRandom::new(0);
-    let decoration = random.set_decoration_seed(seed, cx.wrapping_shl(4), cz.wrapping_shl(4));
+    let decoration =
+        WorldgenRandom::new(0).set_decoration_seed(seed, cx.wrapping_shl(4), cz.wrapping_shl(4));
     let mut order: Vec<usize> = (0..sets.structures().len())
         .filter(|&s| {
             let info = &sets.structures()[s];
@@ -164,11 +169,11 @@ pub fn containers(
     let mut out = Vec::new();
     for structure in order {
         let info = &sets.structures()[structure];
-        let jigsaw = info.kind == StructureType::Jigsaw;
-        // The starts whose box reaches the chunk (`createReferences`), each with whether it's
-        // surely there. The single-piece structures spyglass places put their containers in
-        // their start chunk only.
-        let reach = if jigsaw {
+        let laid_out = matches!(info.kind, StructureType::Jigsaw | StructureType::Mineshaft);
+        // The starts whose pieces reach the chunk (`createReferences`), each with whether it's
+        // surely there. The single-piece structures spyglass places put their containers near
+        // their start chunk.
+        let reach = if laid_out {
             REACH_CHUNKS
         } else {
             scattered::reach(info.kind)
@@ -194,48 +199,111 @@ pub fn containers(
                 }
                 // Certain only if it's the set's one try here and it passes.
                 let sure = selection.tries.len() == 1 && selection.tries[i].1 == Check::Passes;
-                if !jigsaw {
-                    referencing.push((start, None, sure));
+                if info.kind == StructureType::Mineshaft {
+                    if let Some(pieces) = starts.mineshaft_pieces(structure, start)
+                        && pieces.iter().any(|p| p.bounds().intersects(&chunk))
+                    {
+                        referencing.push((start, Laid::Shaft(pieces), sure));
+                    }
+                } else if !laid_out {
+                    referencing.push((start, Laid::Single, sure));
                 } else if let Some(Assembly::Built(layout)) = starts.assemble(structure, start)
                     && layout.bounds.intersects(&chunk)
                 {
-                    referencing.push((start, Some(layout), sure));
+                    referencing.push((start, Laid::Jigsaw(layout), sure));
                 }
             }
         }
         if referencing.is_empty() {
             continue;
         }
-        random.set_feature_seed(decoration, info.step_index as i32, info.step as i32);
-        let mut unknown = (referencing.len() > 1).then_some(ContainerDoubt::StartOrder);
-        for (start, layout, sure) in &referencing {
-            let first = out.len();
-            match layout {
-                Some(layout) => containers.jigsaw(
-                    blocks,
-                    region,
-                    layout,
-                    structure,
-                    &mut random,
-                    &mut unknown,
-                    reads,
-                    &mut out,
-                ),
-                None => {
-                    let start = scattered::Start {
-                        info,
-                        structure,
-                        chunk: *start,
-                        starts,
-                        blocks,
-                        cannot_replace: containers.cannot_replace,
-                    };
-                    scattered::containers(&start, region, seed, &mut random, reads, &mut out);
+        // Whether a block's biome is one mineshafts don't place in; `None` on a tie that
+        // decides it.
+        let blocking = |pos: [i32; 3]| {
+            let lookup = generator.block_biome(pos);
+            let blocks = |b| info.mineshaft_blocking.contains(b);
+            let answer = blocks(lookup.biome());
+            lookup
+                .candidates()
+                .iter()
+                .all(|&b| blocks(b) == answer)
+                .then_some(answer)
+        };
+        // The starts place from one random in an order spyglass doesn't know, so with several,
+        // each order's containers are candidates; past a few starts, only the one order.
+        let place =
+            |region: &mut Region<'_>, order: &[usize], out: &mut Vec<StructureContainer>| {
+                let mut random = WorldgenRandom::new(0);
+                random.set_feature_seed(decoration, info.step_index as i32, info.step as i32);
+                let mut unknown = (order.len() > 1).then_some(ContainerDoubt::StartOrder);
+                for &i in order {
+                    let (start, layout, sure) = &referencing[i];
+                    let first = out.len();
+                    match layout {
+                        Laid::Shaft(pieces) => {
+                            let mut shaft = Shaft {
+                                region: &mut *region,
+                                blocks,
+                                shaft_blocks: &containers.shaft,
+                                info,
+                                structure,
+                                blocking: &blocking,
+                                reads,
+                                random: &mut random,
+                                doubt: unknown.clone(),
+                                out: &mut *out,
+                            };
+                            shaft.place(pieces);
+                            // A start that might not be there makes the next one's draws unknown.
+                            unknown = shaft.doubt.take().or(unknown);
+                            if !sure {
+                                unknown.get_or_insert(ContainerDoubt::Start);
+                            }
+                        }
+                        Laid::Jigsaw(layout) => containers.jigsaw(
+                            blocks,
+                            region,
+                            layout,
+                            structure,
+                            &mut random,
+                            &mut unknown,
+                            reads,
+                            out,
+                        ),
+                        Laid::Single => {
+                            let start = scattered::Start {
+                                info,
+                                structure,
+                                chunk: *start,
+                                starts,
+                                blocks,
+                                cannot_replace: containers.cannot_replace,
+                            };
+                            scattered::containers(&start, region, seed, &mut random, reads, out);
+                        }
+                    }
+                    if !sure {
+                        for c in &mut out[first..] {
+                            c.doubt.get_or_insert(ContainerDoubt::Start);
+                        }
+                    }
                 }
-            }
-            if !sure {
-                for c in &mut out[first..] {
-                    c.doubt.get_or_insert(ContainerDoubt::Start);
+            };
+        let orders = if referencing.len() <= MAX_ORDERED_STARTS {
+            permutations(referencing.len())
+        } else {
+            vec![(0..referencing.len()).collect()]
+        };
+        // The first order places in the region, the rest in copies of it.
+        let before = region.clone();
+        place(region, &orders[0], &mut out);
+        for order in &orders[1..] {
+            let mut copy = before.clone();
+            let mut more = Vec::new();
+            place(&mut copy, order, &mut more);
+            for c in more {
+                if !out.contains(&c) {
+                    out.push(c);
                 }
             }
         }
@@ -245,5 +313,33 @@ pub fn containers(
 
 /// Whether spyglass places `kind`'s containers ([`containers`]).
 pub fn places_containers(kind: StructureType) -> bool {
-    kind == StructureType::Jigsaw || scattered::places(kind)
+    matches!(kind, StructureType::Jigsaw | StructureType::Mineshaft) || scattered::places(kind)
+}
+
+/// With at most this many starts of a structure reaching a chunk, every order they could place
+/// in is tried: 24 orders.
+const MAX_ORDERED_STARTS: usize = 4;
+
+/// Every order of `0..n`.
+fn permutations(n: usize) -> Vec<Vec<usize>> {
+    if n == 0 {
+        return vec![Vec::new()];
+    }
+    let mut out = Vec::new();
+    for rest in permutations(n - 1) {
+        for at in 0..=rest.len() {
+            let mut order = rest.clone();
+            order.insert(at, n - 1);
+            out.push(order);
+        }
+    }
+    out
+}
+
+/// How a start referencing the chunk is laid out, for placing its containers.
+enum Laid {
+    Jigsaw(Layout),
+    Shaft(Vec<ShaftPiece>),
+    /// A single-piece structure, laid out as it's placed.
+    Single,
 }

@@ -29,7 +29,7 @@ pub use jigsaw::{
 };
 pub use load::{Entry, STEPS, Structure, StructureSet, StructureSets, StructureType};
 pub use locate::{LOCATE_RADIUS, MAX_UNCERTAIN, StructureHit, StructureSearch};
-pub use mineshaft::Mineshaft;
+pub use mineshaft::{Mineshaft, ShaftPiece};
 pub use placement::{
     ConcentricRings, ExclusionZone, FrequencyReduction, Placement, PlacementKind, Placements,
     RandomSpread, RingPosition, SeedPlacements, SpreadType,

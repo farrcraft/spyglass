@@ -274,6 +274,11 @@ impl Blocks {
         self.source.of(id).map(|b| b.loot_container)
     }
 
+    /// Whether the bundle's block report says which faces support (format 3 on).
+    pub fn knows_support(&self) -> bool {
+        self.source.knows_support()
+    }
+
     /// The heightmaps a state counts for, a bit per [`Heightmap`] by its order.
     pub fn heightmap_bits(&self, s: State) -> u8 {
         self.entries[usize::from(s)].heightmaps

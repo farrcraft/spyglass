@@ -7,6 +7,7 @@ use spyglass_terrain::Heightmap;
 
 use crate::assembly::{Assembly, Layout};
 use crate::jigsaw::BoundingBox;
+use crate::scattered::Facing;
 
 /// A mineshaft's settings (`MineshaftStructure`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,6 +40,80 @@ enum Direction {
     South,
     West,
     East,
+}
+
+impl Direction {
+    fn facing(self) -> Facing {
+        match self {
+            Direction::North => Facing::North,
+            Direction::South => Facing::South,
+            Direction::West => Facing::West,
+            Direction::East => Facing::East,
+        }
+    }
+}
+
+/// One of a mineshaft's pieces, as its `postProcess` needs it (`MineshaftPieces`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ShaftPiece {
+    /// `MineShaftRoom`, the start: a dirt-floored cave with exits.
+    Room {
+        /// Its box.
+        bounds: BoundingBox,
+        /// Where each exit's opening goes (`childEntranceBoxes`), in the order they were made.
+        entrances: Vec<BoundingBox>,
+    },
+    /// `MineShaftCorridor`, 3 wide and 3 high, in sections of 5 blocks.
+    Corridor {
+        /// Its box.
+        bounds: BoundingBox,
+        /// Its orientation, which turns its own coordinates.
+        facing: Facing,
+        /// `hasRails`.
+        rails: bool,
+        /// `spiderCorridor`: cobwebs and a cave spider spawner.
+        spider: bool,
+        /// `numSections`.
+        sections: i32,
+    },
+    /// `MineShaftCrossing`, in world coordinates.
+    Crossing {
+        /// Its box.
+        bounds: BoundingBox,
+    },
+    /// `MineShaftStairs`, going down 5 over 8.
+    Stairs {
+        /// Its box.
+        bounds: BoundingBox,
+        /// Its orientation.
+        facing: Facing,
+    },
+}
+
+impl ShaftPiece {
+    /// Its box.
+    pub fn bounds(&self) -> &BoundingBox {
+        match self {
+            ShaftPiece::Room { bounds, .. }
+            | ShaftPiece::Corridor { bounds, .. }
+            | ShaftPiece::Crossing { bounds }
+            | ShaftPiece::Stairs { bounds, .. } => bounds,
+        }
+    }
+
+    fn moved(&mut self, by: [i32; 3]) {
+        match self {
+            ShaftPiece::Room { bounds, entrances } => {
+                *bounds = bounds.moved(by);
+                for e in entrances {
+                    *e = e.moved(by);
+                }
+            }
+            ShaftPiece::Corridor { bounds, .. }
+            | ShaftPiece::Crossing { bounds }
+            | ShaftPiece::Stairs { bounds, .. } => *bounds = bounds.moved(by),
+        }
+    }
 }
 
 /// What a piece is, as far as its children need.
@@ -81,6 +156,8 @@ struct Builder {
     random: LegacyRandomSource,
     /// Every piece's box so far, in the order added.
     pieces: Vec<BoundingBox>,
+    /// Every piece so far, in the order added.
+    shafts: Vec<ShaftPiece>,
     /// The start piece's box (the room's), for the distance limit.
     start: BoundingBox,
 }
@@ -99,18 +176,32 @@ impl Builder {
     /// blocks from the room's minimum corner in x or z; otherwise a random piece, added, and
     /// then its children, depth first.
     fn generate_and_add(&mut self, x: i32, y: i32, z: i32, direction: Direction, depth: i32) {
+        self.generate_and_add_box(x, y, z, direction, depth);
+    }
+
+    /// [`generate_and_add`](Self::generate_and_add), returning the piece's box if one was
+    /// added.
+    fn generate_and_add_box(
+        &mut self,
+        x: i32,
+        y: i32,
+        z: i32,
+        direction: Direction,
+        depth: i32,
+    ) -> Option<BoundingBox> {
         if depth > MAX_DEPTH {
-            return;
+            return None;
         }
         if x.wrapping_sub(self.start.min[0]).wrapping_abs() > 80
             || z.wrapping_sub(self.start.min[2]).wrapping_abs() > 80
         {
-            return;
+            return None;
         }
-        if let Some(piece) = self.random_shaft_piece(x, y, z, direction, depth.wrapping_add(1)) {
-            self.pieces.push(piece.bbox);
-            self.add_children(&piece);
-        }
+        let (piece, shaft) = self.random_shaft_piece(x, y, z, direction, depth.wrapping_add(1))?;
+        self.pieces.push(piece.bbox);
+        self.shafts.push(shaft);
+        self.add_children(&piece);
+        Some(piece.bbox)
     }
 
     /// `MineshaftPieces.createRandomShaftPiece`: a crossing on 80..100, stairs on 70..80, else a
@@ -122,28 +213,48 @@ impl Builder {
         z: i32,
         direction: Direction,
         depth: i32,
-    ) -> Option<Piece> {
+    ) -> Option<(Piece, ShaftPiece)> {
         let roll = self.next_int(100);
-        let (kind, bbox) = if roll >= 80 {
+        let (kind, bbox, shaft) = if roll >= 80 {
+            let bounds = self.find_crossing(x, y, z, direction)?;
             (
                 Kind::Crossing(direction),
-                self.find_crossing(x, y, z, direction)?,
+                bounds,
+                ShaftPiece::Crossing { bounds },
             )
         } else if roll >= 70 {
+            let bounds = self.find_stairs(x, y, z, direction)?;
             (
                 Kind::Stairs(direction),
-                self.find_stairs(x, y, z, direction)?,
+                bounds,
+                ShaftPiece::Stairs {
+                    bounds,
+                    facing: direction.facing(),
+                },
             )
         } else {
-            let bbox = self.find_corridor_size(x, y, z, direction)?;
+            let bounds = self.find_corridor_size(x, y, z, direction)?;
             // The constructor: hasRails, then spiderCorridor only without rails.
             let rails = self.next_int(3) == 0;
-            if !rails {
-                self.next_int(23);
-            }
-            (Kind::Corridor(direction), bbox)
+            let spider = !rails && self.next_int(23) == 0;
+            let axis = if matches!(direction, Direction::North | Direction::South) {
+                2
+            } else {
+                0
+            };
+            (
+                Kind::Corridor(direction),
+                bounds,
+                ShaftPiece::Corridor {
+                    bounds,
+                    facing: direction.facing(),
+                    rails,
+                    spider,
+                    sections: span(&bounds, axis) / 5,
+                },
+            )
         };
-        Some(Piece { kind, bbox, depth })
+        Some((Piece { kind, bbox, depth }, shaft))
     }
 
     /// A box at the origin, moved to `(x, y, z)`, if nothing collides with it.
@@ -414,6 +525,7 @@ impl Builder {
     /// `MineShaftRoom.addChildren`: exits along each side (north, south, west, east), at a
     /// random offset and height, at least 4 blocks apart.
     fn room_children(&mut self, bbox: &BoundingBox, depth: i32) {
+        let mut entrances = Vec::new();
         let mut height = span(bbox, 1).wrapping_sub(3).wrapping_sub(1);
         if height <= 0 {
             height = 1;
@@ -441,9 +553,33 @@ impl Builder {
                     Direction::West => (min_x.wrapping_sub(1), min_z.wrapping_add(pos)),
                     Direction::East => (max_x.wrapping_add(1), min_z.wrapping_add(pos)),
                 };
-                self.generate_and_add(x, y, z, direction, depth);
+                if let Some(child) = self.generate_and_add_box(x, y, z, direction, depth) {
+                    // The opening into the child, two blocks into the room.
+                    let (min, max) = match direction {
+                        Direction::North => (
+                            [child.min[0], child.min[1], min_z],
+                            [child.max[0], child.max[1], min_z.wrapping_add(1)],
+                        ),
+                        Direction::South => (
+                            [child.min[0], child.min[1], max_z.wrapping_sub(1)],
+                            [child.max[0], child.max[1], max_z],
+                        ),
+                        Direction::West => (
+                            [min_x, child.min[1], child.min[2]],
+                            [min_x.wrapping_add(1), child.max[1], child.max[2]],
+                        ),
+                        Direction::East => (
+                            [max_x.wrapping_sub(1), child.min[1], child.min[2]],
+                            [max_x, child.max[1], child.max[2]],
+                        ),
+                    };
+                    entrances.push(BoundingBox { min, max });
+                }
                 pos = pos.wrapping_add(4);
             }
+        }
+        if let Some(ShaftPiece::Room { entrances: e, .. }) = self.shafts.first_mut() {
+            *e = entrances;
         }
     }
 }
@@ -468,7 +604,7 @@ impl Mineshaft {
         chunk: [i32; 2],
         heights: &Heights,
         first_free: &mut dyn FnMut(i32, i32, Heightmap) -> Option<i32>,
-    ) -> Option<(Layout, i32)> {
+    ) -> Option<(Layout, i32, Vec<ShaftPiece>)> {
         let mut random = worldgen::large_feature(seed, chunk[0], chunk[1]);
         random.next_double();
         // MineShaftRoom at getBlockX(2), getBlockZ(2): its maxima draw x, y, z in order.
@@ -488,12 +624,17 @@ impl Mineshaft {
         let mut builder = Builder {
             random,
             pieces: vec![room.bbox],
+            shafts: vec![ShaftPiece::Room {
+                bounds: room.bbox,
+                entrances: Vec::new(),
+            }],
             start: room.bbox,
         };
         builder.add_children(&room);
         let Builder {
             mut random,
             mut pieces,
+            mut shafts,
             ..
         } = builder;
         let bounds = around(&pieces);
@@ -526,6 +667,9 @@ impl Mineshaft {
         for piece in &mut pieces {
             *piece = piece.moved([0, dy, 0]);
         }
+        for shaft in &mut shafts {
+            shaft.moved([0, dy, 0]);
+        }
         let mut bounds = bounds.moved([0, dy, 0]);
         if self.adapts_terrain {
             bounds = bounds.inflated(12);
@@ -537,7 +681,21 @@ impl Mineshaft {
                 bounds,
             },
             dy,
+            shafts,
         ))
+    }
+
+    /// The start's pieces in `chunk`, as [`layout`](Self::layout) lays them out, each with
+    /// what placing it needs.
+    pub(crate) fn shaft_pieces(
+        &self,
+        seed: i64,
+        chunk: [i32; 2],
+        heights: &Heights,
+        first_free: &mut dyn FnMut(i32, i32, Heightmap) -> Option<i32>,
+    ) -> Option<Vec<ShaftPiece>> {
+        self.layout(seed, chunk, heights, first_free)
+            .map(|(.., shafts)| shafts)
     }
 
     /// [`layout`](Self::layout) as an [`Assembly`].
@@ -549,7 +707,7 @@ impl Mineshaft {
         first_free: &mut dyn FnMut(i32, i32, Heightmap) -> Option<i32>,
     ) -> Assembly {
         match self.layout(seed, chunk, heights, first_free) {
-            Some((layout, _)) => Assembly::Built(layout),
+            Some((layout, ..)) => Assembly::Built(layout),
             None => Assembly::NeedsTerrain,
         }
     }
@@ -575,9 +733,13 @@ mod tests {
             adapts_terrain: false,
         };
         for chunk in [[0, 0], [-3, 7], [100, -100]] {
-            let (layout, dy) = normal
+            let (layout, dy, shafts) = normal
                 .layout(12345, chunk, &HEIGHTS, &mut no_terrain)
                 .unwrap();
+            assert_eq!(shafts.len(), layout.pieces.len());
+            for (shaft, bbox) in shafts.iter().zip(&layout.pieces) {
+                assert_eq!(shaft.bounds(), bbox);
+            }
             let room = layout.pieces[0];
             assert_eq!(room.min[0], chunk[0] * 16 + 2);
             assert_eq!(room.min[2], chunk[1] * 16 + 2);
@@ -604,7 +766,7 @@ mod tests {
             Assembly::NeedsTerrain
         );
         // At or below the sea level the target is the sea level, with no draw.
-        let (layout, dy) = mesa
+        let (layout, dy, _) = mesa
             .layout(1, [0, 0], &HEIGHTS, &mut |_, _, _| Some(40))
             .unwrap();
         let b = layout.bounds;

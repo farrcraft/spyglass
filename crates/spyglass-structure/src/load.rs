@@ -113,6 +113,9 @@ pub struct Structure {
     pub height: Option<HeightProvider>,
     /// For [`StructureType::Mineshaft`], its type and terrain adaptation.
     pub mineshaft: Option<Mineshaft>,
+    /// For [`StructureType::Mineshaft`], `#mineshaft_blocking`: biomes where its pieces aren't
+    /// placed (`isInInvalidLocation`). Empty for other types.
+    pub mineshaft_blocking: BiomeSet,
     /// `step`: the decoration step it places its pieces in, before that step's features, as
     /// an index into [`STEPS`].
     pub step: usize,
@@ -577,6 +580,13 @@ impl SetLoader<'_> {
             StructureType::Mineshaft => Some(Self::mineshaft(obj, &root)?),
             _ => None,
         };
+        let mineshaft_blocking = match kind {
+            StructureType::Mineshaft => self.tags.holder_set(
+                &Value::String("#minecraft:mineshaft_blocking".into()),
+                &root,
+            )?,
+            _ => BiomeSet::default(),
+        };
         let step_name = field(obj, "step", &root)?.as_str().unwrap_or_default();
         let step = STEPS.iter().position(|s| *s == step_name).ok_or_else(|| {
             root.child("step").error(LoadErrorKind::Unsupported {
@@ -594,6 +604,7 @@ impl SetLoader<'_> {
             templates,
             height,
             mineshaft,
+            mineshaft_blocking,
             step,
             // Set once every structure is loaded.
             step_index: 0,

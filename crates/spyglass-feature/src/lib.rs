@@ -4,6 +4,7 @@
 pub mod blocks;
 pub mod containers;
 mod decorate;
+mod mineshaft;
 mod modifier;
 pub mod neighbours;
 pub mod order;

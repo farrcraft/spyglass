@@ -32,11 +32,18 @@ struct Report {
     certain: usize,
     /// spyglass's candidates, by reason.
     candidates: BTreeMap<String, usize>,
-    /// Candidates with a seed found among the game's: how many have the game's seed, and how
-    /// many don't.
+    /// Candidates with a seed found among the game's, but those of several starts' orders: how
+    /// many have the game's seed, and how many don't.
     candidate_seeds: (usize, usize),
     /// By structure: the game's containers, and spyglass's certain ones.
     by_structure: BTreeMap<String, (usize, usize)>,
+}
+
+/// Whether the game's container is the block or entity `name`.
+fn holds(t: &spyglass_oracle::containers::GoldenContainer, name: &str) -> bool {
+    match &t.what {
+        Holder::Block(b) | Holder::Entity(b) => b == name,
+    }
 }
 
 fn check(path: &Path) -> Report {
@@ -212,26 +219,23 @@ fn check(path: &Path) -> Report {
                 &sets,
                 &containers,
                 &blocks,
+                &generator,
                 &mut region,
                 file.seed,
                 *step,
                 &reads,
             ));
         }
-        let theirs: Vec<_> = chunk
-            .containers
-            .iter()
-            .filter(|c| placed(&c.by) && matches!(c.what, Holder::Block(_)))
-            .collect();
+        let theirs: Vec<_> = chunk.containers.iter().filter(|c| placed(&c.by)).collect();
         report.game += theirs.len();
         for c in &theirs {
             report.by_structure.entry(c.by.clone()).or_default().0 += 1;
         }
         for c in &ours {
             let id = &sets.structures()[c.structure].id;
-            let found = theirs
-                .iter()
-                .find(|t| t.by == *id && t.pos == c.pos && t.table == c.table);
+            let found = theirs.iter().find(|t| {
+                t.by == *id && t.pos == c.pos && t.table == c.table && holds(t, &c.block)
+            });
             match (&c.doubt, c.seed, found) {
                 (None, Some(seed), Some(t)) if t.seed == seed => {
                     report.certain += 1;
@@ -249,7 +253,10 @@ fn check(path: &Path) -> Report {
                     found.map(|t| t.seed)
                 )),
                 (Some(why), seed, found) => {
-                    if let (Some(seed), Some(t)) = (seed, found) {
+                    // Each order of several starts gives its own seeds; one of them is the game's.
+                    if let (Some(seed), Some(t), false) =
+                        (seed, found, *why == ContainerDoubt::StartOrder)
+                    {
                         if t.seed == seed {
                             report.candidate_seeds.0 += 1;
                         } else {
@@ -275,7 +282,10 @@ fn check(path: &Path) -> Report {
         }
         for t in &theirs {
             if !ours.iter().any(|c| {
-                sets.structures()[c.structure].id == t.by && c.pos == t.pos && c.table == t.table
+                sets.structures()[c.structure].id == t.by
+                    && c.pos == t.pos
+                    && c.table == t.table
+                    && holds(t, &c.block)
             }) {
                 report.failures.push(format!(
                     "seed {} chunk {:?}: the game's {} container at {:?} ({}) isn't an answer",

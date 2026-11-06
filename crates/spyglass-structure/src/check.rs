@@ -11,7 +11,7 @@ use crate::assembly::{Assembly, JigsawPools};
 use crate::biomes::BiomeSet;
 use crate::jigsaw::{Jigsaw, JigsawCheck};
 use crate::load::{Structure, StructureType};
-use crate::mineshaft::{self, Heights};
+use crate::mineshaft::{self, Heights, ShaftPiece};
 use crate::placement::Placements;
 use crate::portal::PortalLayout;
 
@@ -162,6 +162,23 @@ impl<'a> Starts<'a> {
             terrain,
             level_min_y,
         ))
+    }
+
+    /// A mineshaft's pieces if it starts in `chunk`, whether or not its biome check passes,
+    /// each with what placing it needs; `None` for other types, and for a mesa's without
+    /// terrain.
+    pub fn mineshaft_pieces(&self, structure: usize, chunk: [i32; 2]) -> Option<Vec<ShaftPiece>> {
+        let config = &self.placements.sets().structures()[structure];
+        let terrain = self.terrain;
+        let mut first_free = |x: i32, z: i32, heightmap: Heightmap| {
+            terrain.map(|t| t.first_free_height(x, z, heightmap))
+        };
+        config.mineshaft.as_ref()?.shaft_pieces(
+            self.placements.seed(),
+            chunk,
+            &self.mineshaft_heights(),
+            &mut first_free,
+        )
     }
 
     /// What a mineshaft's layout needs from the dimension.
@@ -408,7 +425,7 @@ impl<'a> Starts<'a> {
                     terrain.map(|t| t.first_free_height(x, z, heightmap))
                 };
                 let seed = self.placements.seed();
-                if let Some((_, dy)) =
+                if let Some((_, dy, _)) =
                     shaft.layout(seed, chunk, &self.mineshaft_heights(), &mut first_free)
                 {
                     return fixed([mid_x, mineshaft::START_Y.wrapping_add(dy), min_z]);

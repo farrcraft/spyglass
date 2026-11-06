@@ -69,13 +69,7 @@ final class Loot {
         biomes.sort((a, b) -> a.key().identifier().compareTo(b.key().identifier()));
         long[] seeds = seeds();
 
-        var server = StandIns.allocate(Server.class);
-        server.registries = registries;
-        var level = StandIns.allocate(Level.class);
-        // Enchanting reads the enchantments from the level's registries.
-        level.game = game;
-        level.server = server;
-        level.structures = StandIns.allocate(NoStructures.class);
+        Level level = level(game, registries);
 
         List<Identifier> tables = registries.lookup().lookupOrThrow(Registries.LOOT_TABLE).listElementIds()
                 .map(ResourceKey::identifier).filter(id -> slots(id) > 0).sorted().toList();
@@ -139,6 +133,18 @@ final class Loot {
         return resources.fullRegistries();
     }
 
+    /** A level to fill in, with one biome everywhere until one is set. */
+    static Level level(Game game, ReloadableServerRegistries.Holder registries) {
+        var server = StandIns.allocate(Server.class);
+        server.registries = registries;
+        var level = StandIns.allocate(Level.class);
+        // Enchanting reads the enchantments from the level's registries.
+        level.game = game;
+        level.server = server;
+        level.structures = StandIns.allocate(NoStructures.class);
+        return level;
+    }
+
     /** The slots of the container a table fills, or 0 for a table that fills none. */
     private static int slots(Identifier id) {
         if (!id.getNamespace().equals("minecraft")) {
@@ -199,13 +205,15 @@ final class Loot {
     }
 
     /**
-     * The level a fill runs in: its server, one biome everywhere, every chunk loaded, and no
+     * The level a fill runs in: its server, one biome everywhere or each block's, every chunk loaded, and no
      * structure for any exploration map. The overloads below cover every supported version's
      * methods; one a version lacks is only a method of this class there.
      */
     static class Level extends FeatureStep.Server {
         MinecraftServer server;
         Holder<Biome> biome;
+        /** Each block's biome, where it's set; otherwise {@link #biome} everywhere. */
+        java.util.function.Function<BlockPos, Holder<Biome>> biomes;
         StructureManager structures;
 
         @Override
@@ -214,11 +222,11 @@ final class Loot {
         }
 
         public Holder<Biome> getBiome(BlockPos pos) {
-            return biome;
+            return biomes == null ? biome : biomes.apply(pos);
         }
 
         public Holder<Biome> getBiome(int x, int y, int z) {
-            return biome;
+            return getBiome(new BlockPos(x, y, z));
         }
 
         @Override

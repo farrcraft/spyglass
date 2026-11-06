@@ -420,11 +420,11 @@ Each chunk decorated on its own, and every call decoration makes to a target fea
 
 ## Container golden files
 
-The nearest start of each structure to the origin, and every chunk it reaches decorated on its own with structures, recording each container with a loot table that decoration made and what made it ([loot.md](loot.md#containers)). One UTF-8 JSON file per golden seed and dimension, `oracle-out/<version>/containers/<dimension path>/<seed>.json`. Seed 0's Overworld in 26.3, cut to one start, one piece and one container:
+The nearest start of each structure to the origin, and every chunk it reaches decorated on its own with structures, recording each container with a loot table that decoration made, what made it, and what the game's table fills it with ([loot.md](loot.md#containers)). One UTF-8 JSON file per golden seed and dimension, `oracle-out/<version>/containers/<dimension path>/<seed>.json`. Seed 0's Overworld in 26.3, cut to one start, one piece, one container and two of its stacks:
 
 ```json
 {
-  "format": 1,
+  "format": 2,
   "harness": 1,
   "version": "26.3",
   "data_version": 5023,
@@ -447,7 +447,12 @@ The nearest start of each structure to the origin, and every chunk it reaches de
           "pos": [283, 69, 944],
           "block": "minecraft:chest",
           "table": "minecraft:chests/village/village_cartographer",
-          "seed": 839954437439742537
+          "seed": 839954437439742537,
+          "slots": 27,
+          "items": [
+            { "id": "minecraft:paper", "count": 1, "slot": 0 },
+            { "id": "minecraft:compass", "count": 1, "slot": 16 }
+          ]
         }
       ]
     }
@@ -456,12 +461,13 @@ The nearest start of each structure to the origin, and every chunk it reaches de
 ```
 
 - **`starts`:** for each structure with a start whose start chunk is within 64 chunks of the origin on each axis, and whose box stays within that square, the nearest (by squared chunk distance, the first of equals in z then x order): its start chunk, its box (`StructureStart.getBoundingBox`, least corner then greatest) and its pieces' boxes, before any is placed. Sorted by structure id.
-- **`chunks`:** every chunk a start's box meets, in z then x order, each decorated on its own in full (every step), with every container made: a block entity that's a `RandomizableContainer` with a loot table, in the chunk or its 8 neighbours, new or with a new table or seed since the last label; or an entity in the chunk with `LootTable` in its NBT (a chest minecart). `by` is what the region was generating when it appeared (`setCurrentlyGenerating`): a structure's id or a placed feature's. Block containers under one label are by position (y, then z, then x); `pos` of an entity is the block it's in.
+- **`chunks`:** every chunk a start's box meets, in z then x order, each decorated on its own in full (every step), with every container made: a block entity that's a `RandomizableContainer` with a loot table, in the chunk or its 8 neighbours, new or with a new table or seed since the last label; or an entity in the chunk with `LootTable` in its NBT (a chest minecart). `by` is what the region was generating when it appeared (`setCurrentlyGenerating`): a structure's id or a placed feature's. Block containers under one label are by position (y, then z, then x); `pos` of an entity is the block it's in. From format 2, `slots` is the container's `getContainerSize()`, and `items` what the game's own `LootTable.fill` puts in it from its table and seed, each non-empty slot's stack as `ItemStack.CODEC` encodes it with its `slot`, as in [loot golden files](#loot-golden-files). `items` is left out where the fill asks for a biome outside the decorated region.
 
 **How the harness makes them** ([ADR 0062](../adr/0062-the-oracle-places-structures-for-containers.md)):
 
 - **Starts:** a fresh proto chunk for every chunk within 72 of the origin on each axis, each given its starts by the generator's own `createStructures` (`ChunkGeneratorStructureState` as the server makes it), through a real `StructureManager` built without its constructor, whose `level` is a stand-in handing out those chunks, the registries and the heights, and failing on anything else. Where a fortress or an end city can generate (a set among `possibleStructureSets` has one), starts are made one at a time: their piece generators keep state in static fields (a fortress's piece weights, an end city's ship), which starts made at once on several threads race over. Then `createReferences` for each chunk decorated.
 - **Decorating:** as the first run of [feature golden files](#feature-golden-files), with a manager in place of one without structures: the 3 × 3 chunks generated without structures, the region and `applyBiomeDecoration`. Each chunk's manager reads the references made above, and starts made again for that chunk alone: some pieces settle their state in the first chunk that places them (an ocean ruin its height), so each chunk sees its starts as made, as if it were the first decorated. The stand-in level also answers what structures' mobs ask (a structure manager, its dimension, a fresh world's difficulty: the mob's own draws, not the chunk's) and hears no sounds, and each thread has its own structure templates, whose palettes cache in plain maps.
+- **Filling:** each container as it's recorded, as `RandomizableContainer.unpackLootTable` fills it when opened (a chest minecart's `unpackChestVehicleLootTable` likewise): into a `SimpleContainer` of its slots, `ORIGIN` the block's centre (the entity's position), in a stand-in level as for loot golden files, but whose biome at a block is the decoration region's (`getBiome`, the zoomed lookup). An exploration map finds no structure there; its target is the [map cases'](#locate-answers). A minecart's slots are asked of one made by its type on the region's level.
 - **Determinism:** a second run writes the same bytes.
 - **Not the game's:** the terrain is generated without structures, so without their terrain adaptation (`Beardifier`), as [block golden files](#block-golden-files) are. Containers placed after something that reads the blocks a structure would have changed (a village's trees, a mineshaft corridor near one) may differ from a real world's.
 

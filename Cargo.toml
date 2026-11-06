@@ -38,6 +38,7 @@ spyglass-data = { path = "crates/spyglass-data" }
 spyglass-density = { path = "crates/spyglass-density" }
 spyglass-extract = { path = "crates/spyglass-extract" }
 spyglass-feature = { path = "crates/spyglass-feature" }
+spyglass-loot = { path = "crates/spyglass-loot" }
 spyglass-noise = { path = "crates/spyglass-noise" }
 spyglass-oracle = { path = "crates/spyglass-oracle" }
 spyglass-rng = { path = "crates/spyglass-rng" }

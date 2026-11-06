@@ -41,8 +41,8 @@ Where each loot container is, with its loot table and loot seed, certain or a ca
 - [x] **Single-piece structures:** buried treasure, desert pyramid, jungle temple (chests and dispensers), igloo, shipwreck, ruined portal: each one's draws up to its containers. _No differences in any version. Certain of the game's (26.3; 26.2 and 26.4-snapshot-7 within one): buried treasure 10 of 10, shipwrecks 34 of 34, igloos 2 of 2, desert pyramids 4 of 8, jungle temples 0 of 4, ruined portals 13 of 39. Every candidate with a seed has the game's._
 - [x] **Mineshafts:** measure how many golden containers are minecart chests; port the corridors' `postProcess` over the carved blocks. _125 of 26.3's golden containers are minecarts (103 normal, 22 mesa). Every piece's `postProcess` is ported over the region, and the block report gains faces' support (format 3). No differences in any version; certain: 90 of 103 and 13 of 22 in 26.3, 91 of 107 and 13 of 22 in 26.2, 92 of 103 and 13 of 22 in 26.4-snapshot-7._
 - [x] **Maps:** the exploration map's target from locate, from the container, for a fresh world. _`Starts::map_target`, with references carried from map to map and 26.3's claim of the container's own structure (switch `map_claims_nothing` for 26.2). The locate oracle's map cases fill each of the version's maps on the real server, from its origins and from golden containers; `map_targets_match_the_game` replays them in order. 26.3: 316 of 316 certain, all the game's; 26.2 52 of 52 (it has only the treasure maps); 26.4-snapshot-7 316 of 316._
-- [ ] **Comparison:** every certain container's position, table, seed and contents are the game's; every game's container is an answer, certain or a candidate.
-- [ ] **Spec:** loot.md's containers section, and features.md's monster room.
+- [x] **Comparison:** every certain container's position, table, seed and contents are the game's; every game's container is an answer, certain or a candidate. _The containers oracle fills each container with the game's table at its block and the region's biomes (format 2), and the block report gives containers' slots (format 4). `container_contents_match_the_game` fills every one of them with spyglass's slots, biomes and tables: 2051 of 2051 the game's in 26.3 (14,896 stacks), 1870 of 1870 in 26.2, 2048 of 2048 in 26.4-snapshot-7, no biome ties. Maps' targets stay the map cases'._
+- [x] **Spec:** loot.md's containers section, and features.md's monster room. _loot.md gains contents; the monster room already gave its chests._
 - [ ] `cargo xtask check` and `cargo xtask oracle-test`. Complete the plan.
 
 ## Verification
@@ -52,13 +52,14 @@ Where each loot container is, with its loot table and loot seed, certain or a ca
 
 ## Durable outputs
 
-- [ ] loot.md: containers, their seeds and certainty.
-- [ ] oracle.md: `oracle containers`, structures in generated chunks.
+- [x] loot.md: containers, their seeds and certainty.
+- [x] oracle.md: `oracle containers`, structures in generated chunks.
 - [ ] structure-placement.md: what each piece draws, where ported.
 - [ ] An ADR if the chunk oracle's design changes.
 
 ## Notes
 
+- 2026-11-05: **contents.** A container's contents are its table's fill from its seed; the inputs beyond the table are its slots (now data, the block report's `slots`, except the chest minecart's 27) and the zoomed biome at its block (`location_check` in abandoned mineshafts' and camps' tables). The oracle's region gives the biome through `getBiome`, whose signature 26.4 changed, so it's found by reflection.
 - 2026-11-05: **mineshaft candidates** are mostly several starts reaching one chunk (23 in 26.3): their order is a hash set's, so every order's containers are candidates, for up to 4 starts. The rest read where a mesa shaft's pieces or a sulfur pool could have written, or a tie. A trial chamber's chests near a shaft stay candidates (73): the chamber reads where the shaft's pieces could be, though spyglass now places them; using their blocks is a follow-up.
 - 2026-11-05: **single-piece candidates:** almost all read where a shallow dungeon (`monster_room`) could have written, because its writes count as unknown over its whole try range once one try is a candidate. Pyramids and temples read the heights under them, portals the block at their chest. Bounding a candidate dungeon by its own try, not the range, would settle most. The Nether's portals read `basalt_pillar`, which isn't ported. The comparison now places each step's earlier features where spyglass places them exactly before its structures read the region, which made 12 more jigsaw containers certain.
 - 2026-11-05: **jigsaw candidates by reason** (26.3; 26.2 and 26.4-snapshot-7 within a few): `protected_blocks` reading where a feature of an earlier step could have written, 136 (ancient cities 106 beside deep dungeons and large dripstone, trial chambers 30); reading where a mineshaft's pieces could be, 53 (trial chambers); after a village's feature element (trees, hay, pumpkins), 10. No candidates for several starts or uncertain starts in the golden seeds. Ancient cities are the weak spot, 3 certain of 109: the features' bounds are where their tries could be, not where they wrote. Placing what spyglass places exactly (dungeons) before reading would settle most of them.

@@ -3729,6 +3729,7 @@ dependencies = [
  "spyglass-blocks",
  "spyglass-data",
  "spyglass-density",
+ "spyglass-loot",
  "spyglass-noise",
  "spyglass-oracle",
  "spyglass-rng",
@@ -3765,6 +3766,7 @@ dependencies = [
  "serde",
  "serde_json",
  "spyglass-data",
+ "spyglass-loot",
  "tempfile",
  "thiserror 2.0.21",
 ]

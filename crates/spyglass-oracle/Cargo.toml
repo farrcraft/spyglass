@@ -14,5 +14,6 @@ workspace = true
 serde.workspace = true
 serde_json.workspace = true
 spyglass-data.workspace = true
+spyglass-loot.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true

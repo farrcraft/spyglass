@@ -4,21 +4,31 @@
 //! game's. Every certain container must be the game's, seed included, and every container the
 //! game placed for those structures must be an answer, certain or not.
 //!
+//! Then contents: every container the game placed, filled by spyglass from its table and seed at
+//! its block, with spyglass's slots and biomes, must hold what the game's own fill put in it. With
+//! the first comparison, a certain container's contents are the game's. Exploration maps find
+//! nothing in either fill; their targets are compared by the locate oracle's map cases
+//! (`docs/specs/loot.md#maps`).
+//!
 //! Needs `cargo xtask oracle containers` and a bundle for the same version. Run with
 //! `cargo test --release -p spyglass-feature --test containers -- --ignored`.
 
+use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use rayon::prelude::*;
-use spyglass_biome::BiomeSource;
+use spyglass_biome::{BiomeSource, Biomes, Lookup};
 use spyglass_blocks::BlockSettings;
+use spyglass_blocks::zoom::BiomeZoom;
 use spyglass_data::bundle::Bundle;
-use spyglass_feature::containers::{ContainerDoubt, StructureContainers};
+use spyglass_feature::containers::{ContainerDoubt, StructureContainers, container_slots};
 use spyglass_feature::{
     Blocks, Decorator, Doubt, FeatureSettings, NeighbourBounds, Placer, Reading, Region, structures,
 };
+use spyglass_loot::{Loot, MapRequest, World};
 use spyglass_oracle::containers::{ContainerFile, Holder};
+use spyglass_oracle::stacks;
 use spyglass_structure::{JigsawPools, Starts, StructureSets};
 use spyglass_terrain::Terrain;
 
@@ -295,6 +305,146 @@ fn check(path: &Path) -> Report {
         }
     }
     report
+}
+
+/// The world a container is filled in: biomes as spyglass looks them up at a block, noting
+/// whether one was a tie, and no structure for any map, as the harness's fills find none.
+struct FillWorld<'a> {
+    source: &'a BiomeSource,
+    biomes: &'a Biomes<'a>,
+    zoom: BiomeZoom,
+    /// Whether a biome the fill asked for was a tie, so spyglass's might not be the game's.
+    tied: Cell<bool>,
+}
+
+impl World for FillWorld<'_> {
+    fn biome(&self, x: i32, y: i32, z: i32) -> Option<String> {
+        let [qx, qy, qz] = self.zoom.quart([x, y, z]);
+        let lookup = self.biomes.biome_at(qx, qy, qz);
+        if matches!(lookup, Lookup::Tied(_)) {
+            self.tied.set(true);
+        }
+        Some(self.source.name(lookup.biome()).to_string())
+    }
+
+    fn map_target(&self, _request: &MapRequest) -> Option<[i32; 2]> {
+        None
+    }
+}
+
+#[test]
+#[ignore = "needs the oracle's container golden files and a bundle: cargo xtask oracle containers"]
+fn container_contents_match_the_game() {
+    let files = spyglass_oracle::containers::files();
+    assert!(
+        !files.is_empty(),
+        "no container files for {}; run cargo xtask oracle containers",
+        spyglass_oracle::version()
+    );
+    let bundle = Bundle::open(spyglass_oracle::bundle_dir()).unwrap();
+    let mut loot = Loot::new();
+    let mut dimensions = HashMap::new();
+    let (mut filled, mut stacks_seen, mut unfilled, mut tied) = (0, 0, 0, 0);
+    let mut by_table: BTreeMap<String, usize> = BTreeMap::new();
+    let mut failures = Vec::new();
+    for path in &files {
+        let file = ContainerFile::read(path).unwrap();
+        let (source, blocks) = dimensions.entry(file.dimension.clone()).or_insert_with(|| {
+            let source = BiomeSource::load(&bundle, "minecraft:normal", &file.dimension).unwrap();
+            let settings =
+                BlockSettings::load(&bundle, "minecraft:normal", &file.dimension).unwrap();
+            let blocks = Blocks::new(&bundle, settings.palette()).unwrap();
+            (source, blocks)
+        });
+        let biomes = source.with_seed(file.seed).unwrap();
+        let world = FillWorld {
+            source,
+            biomes: &biomes,
+            zoom: BiomeZoom::new(file.seed),
+            tied: Cell::new(false),
+        };
+        for chunk in &file.chunks {
+            for c in &chunk.containers {
+                let at = format!(
+                    "seed {} {} at {:?} ({} by {})",
+                    file.seed, file.dimension, c.pos, c.table, c.by
+                );
+                let (Holder::Block(holder) | Holder::Entity(holder)) = &c.what;
+                let slots = container_slots(blocks, holder);
+                if slots != Some(c.slots) {
+                    failures.push(format!(
+                        "{at}: {holder} has {} slots, spyglass says {slots:?}",
+                        c.slots
+                    ));
+                    continue;
+                }
+                let Some(items) = &c.items else {
+                    unfilled += 1;
+                    continue;
+                };
+                if !loot.has(&c.table) {
+                    loot.load(&bundle, &c.table)
+                        .unwrap_or_else(|e| panic!("{}: {e}", c.table));
+                }
+                world.tied.set(false);
+                let ours = match loot.fill(&c.table, c.seed, c.pos, c.slots, &world) {
+                    Ok(ours) => ours,
+                    Err(e) => {
+                        failures.push(format!("{at}: {e}"));
+                        continue;
+                    }
+                };
+                let mut theirs: BTreeMap<usize, &serde_json::Value> = BTreeMap::new();
+                for stack in items {
+                    theirs.insert(stack["slot"].as_u64().unwrap() as usize, stack);
+                }
+                let wrong: Vec<String> = ours
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(slot, ours)| {
+                        let want = theirs.get(&slot).map(|v| stacks::game(v));
+                        let got = ours.as_ref().map(|s| stacks::ours(s, &bundle));
+                        (want != got)
+                            .then(|| format!("slot {slot}: game {want:?}, spyglass {got:?}"))
+                    })
+                    .collect();
+                if wrong.is_empty() {
+                    filled += 1;
+                    stacks_seen += theirs.len();
+                    *by_table.entry(c.table.clone()).or_default() += 1;
+                } else if world.tied.get() {
+                    // A biome tie spyglass answers one way and the game the other.
+                    tied += 1;
+                } else {
+                    failures.push(format!("{at}: {}", wrong.join("; ")));
+                }
+            }
+        }
+    }
+    for (table, n) in &by_table {
+        println!("  {table}: {n}");
+    }
+    println!(
+        "{} files: {filled} containers filled as the game fills them ({stacks_seen} stacks), \
+         {tied} after a biome tie, {unfilled} the harness couldn't fill; {} differences",
+        files.len(),
+        failures.len()
+    );
+    assert!(
+        filled > 0,
+        "no filled containers; run cargo xtask oracle containers"
+    );
+    assert!(
+        failures.is_empty(),
+        "{} differences:\n{}",
+        failures.len(),
+        failures
+            .iter()
+            .take(30)
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
 }
 
 #[test]

@@ -274,6 +274,18 @@ impl Blocks {
         self.source.of(id).map(|b| b.loot_container)
     }
 
+    /// The slots block `id`'s loot container has, which its table fills; `None` where the
+    /// block isn't a loot container, or the bundle's block report predates slot counts.
+    pub fn container_slots(&self, id: &str) -> Option<usize> {
+        if !self.source.knows_container_slots() {
+            return None;
+        }
+        self.source
+            .of(id)
+            .filter(|b| b.loot_container)
+            .map(|b| usize::from(b.container_slots))
+    }
+
     /// Whether the bundle's block report says which faces support (format 3 on).
     pub fn knows_support(&self) -> bool {
         self.source.knows_support()

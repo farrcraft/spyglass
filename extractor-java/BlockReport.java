@@ -13,7 +13,7 @@ import java.nio.file.Path;
 
 public final class BlockReport {
     /** The report's format; bump it when its shape changes. */
-    private static final int FORMAT = 3;
+    private static final int FORMAT = 4;
 
     /** Flags every version has: the name in the report, then the `BlockState` method. */
     private static final String[][] FLAGS = {
@@ -53,6 +53,7 @@ public final class BlockReport {
         Method newBlockEntity = entityBlock.getMethod("newBlockEntity", blockPos, blockState);
         Object origin = blockPos.getField("ZERO").get(null);
         Class<?> randomizable = Class.forName("net.minecraft.world.RandomizableContainer");
+        Method containerSize = Class.forName("net.minecraft.world.Container").getMethod("getContainerSize");
         java.util.Set<Object> unmade = new java.util.HashSet<>();
         Class<?> falling = Class.forName("net.minecraft.world.level.block.FallingBlock");
         // Faces' support, on an empty level at the origin: `isFaceSturdy` for a full face, in
@@ -90,9 +91,14 @@ public final class BlockReport {
             // a seed for. A block entity that can't be made outside a world (a vault, whose
             // config makes items) is named on stderr and taken as no container.
             boolean container = false;
+            int slots = 0;
             if (entityBlock.isInstance(block)) {
                 try {
-                    container = randomizable.isInstance(newBlockEntity.invoke(block, origin, state));
+                    Object entity = newBlockEntity.invoke(block, origin, state);
+                    container = randomizable.isInstance(entity);
+                    if (container) {
+                        slots = (Integer) containerSize.invoke(entity);
+                    }
                 } catch (InvocationTargetException e) {
                     if (unmade.add(block)) {
                         System.err.println("no block entity for " + block + ": " + e.getCause());
@@ -100,6 +106,10 @@ public final class BlockReport {
                 }
             }
             flag(out, "loot_container", container);
+            // The slots a loot table fills: `Container.getContainerSize()`.
+            if (container) {
+                out.append(",\"slots\":").append(slots);
+            }
             flag(out, "falling", falling.isInstance(block));
             StringBuilder faces = new StringBuilder();
             for (Object d : directions) {

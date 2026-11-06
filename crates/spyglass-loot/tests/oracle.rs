@@ -7,7 +7,8 @@ use std::path::Path;
 
 use serde_json::Value;
 use spyglass_data::bundle::Bundle;
-use spyglass_loot::{Loot, MapRequest, NameTarget, Stack, World};
+use spyglass_loot::{Loot, MapRequest, World};
+use spyglass_oracle::stacks;
 
 /// The fill's one biome, everywhere, and no structure for any map, as the oracle's level gives.
 struct Oracle {
@@ -58,8 +59,8 @@ fn every_fill_matches_the_game() {
                 theirs.insert(slot["slot"].as_u64().unwrap() as usize, slot);
             }
             for (slot, ours) in ours.iter().enumerate() {
-                let want = theirs.get(&slot).map(|v| canonical_game(v));
-                let got = ours.as_ref().map(|s| canonical_ours(s, &bundle));
+                let want = theirs.get(&slot).map(|v| stacks::game(v));
+                let got = ours.as_ref().map(|s| stacks::ours(s, &bundle));
                 if want != got {
                     wrong.push(format!(
                         "{table} seed {seed} slot {slot}: game {want:?}, spyglass {got:?}"
@@ -97,137 +98,4 @@ fn collect(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
         }
     }
     files.sort();
-}
-
-/// A stack as comparable text: the item, the count, and each component spyglass sets, in a
-/// fixed order, defaults left out.
-#[derive(Debug, PartialEq)]
-struct Canonical {
-    item: String,
-    count: i64,
-    components: BTreeMap<&'static str, String>,
-}
-
-/// The game's encoded stack (`ItemStack.CODEC`), whose `components` are the changes from the
-/// item's defaults.
-fn canonical_game(stack: &Value) -> Canonical {
-    let mut components = BTreeMap::new();
-    if let Some(patch) = stack.get("components").and_then(Value::as_object) {
-        for (key, value) in patch {
-            let (name, text) = match key.as_str() {
-                "minecraft:damage" if value.as_i64() == Some(0) => continue,
-                "minecraft:damage" => ("damage", value.to_string()),
-                "minecraft:enchantments" => ("enchantments", sorted(value)),
-                "minecraft:stored_enchantments" => ("stored_enchantments", sorted(value)),
-                "minecraft:potion_contents" => (
-                    "potion",
-                    match value {
-                        Value::String(s) => s.clone(),
-                        v => v["potion"].as_str().unwrap_or_default().to_string(),
-                    },
-                ),
-                "minecraft:suspicious_stew_effects" => (
-                    "stew_effects",
-                    value
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .map(|e| {
-                            // A duration of 160 ticks is the default, left out.
-                            let duration = e.get("duration").and_then(Value::as_i64).unwrap_or(160);
-                            format!("{}={duration}", e["id"].as_str().unwrap())
-                        })
-                        .collect::<Vec<_>>()
-                        .join(","),
-                ),
-                "minecraft:instrument" => ("instrument", value.as_str().unwrap().to_string()),
-                "minecraft:custom_name" => ("custom_name", value.to_string()),
-                "minecraft:item_name" => ("item_name", value.to_string()),
-                "minecraft:ominous_bottle_amplifier" => {
-                    ("ominous_bottle_amplifier", value.to_string())
-                }
-                other => panic!("a component spyglass doesn't set: {other} = {value}"),
-            };
-            components.insert(name, text);
-        }
-    }
-    Canonical {
-        item: stack["id"].as_str().unwrap().into(),
-        count: stack.get("count").and_then(Value::as_i64).unwrap_or(1),
-        components,
-    }
-}
-
-fn canonical_ours(stack: &Stack, bundle: &Bundle) -> Canonical {
-    let mut components = BTreeMap::new();
-    let levels = |map: &BTreeMap<String, i32>| {
-        serde_json::to_string(&map.iter().collect::<BTreeMap<_, _>>()).unwrap()
-    };
-    if let Some(damage) = stack.damage.filter(|&d| d != 0) {
-        components.insert("damage", damage.to_string());
-    }
-    if !stack.enchantments.is_empty() {
-        components.insert("enchantments", levels(&stack.enchantments));
-    }
-    if !stack.stored_enchantments.is_empty() {
-        components.insert("stored_enchantments", levels(&stack.stored_enchantments));
-    }
-    if let Some(potion) = &stack.potion {
-        components.insert("potion", potion.clone());
-    }
-    if !stack.stew_effects.is_empty() {
-        let effects: Vec<String> = stack
-            .stew_effects
-            .iter()
-            .map(|(id, ticks)| format!("{id}={ticks}"))
-            .collect();
-        components.insert("stew_effects", effects.join(","));
-    }
-    // The game's patch leaves out a component equal to the item's default, as a goat horn's
-    // `ponder_goat_horn` is.
-    if let Some(instrument) = &stack.instrument
-        && default(bundle, stack.item(), "minecraft:instrument").as_ref()
-            != Some(&Value::String(instrument.clone()))
-    {
-        components.insert("instrument", instrument.clone());
-    }
-    if let Some((target, name)) = &stack.name {
-        let key = match target {
-            NameTarget::CustomName => "custom_name",
-            NameTarget::ItemName => "item_name",
-        };
-        components.insert(key, name.to_string());
-    }
-    if let Some(amplifier) = stack.ominous_bottle_amplifier
-        && default(bundle, stack.item(), "minecraft:ominous_bottle_amplifier")
-            != Some(Value::from(amplifier))
-    {
-        components.insert("ominous_bottle_amplifier", amplifier.to_string());
-    }
-    assert!(stack.map.is_none(), "the oracle's maps find nothing");
-    Canonical {
-        item: stack.item().into(),
-        count: stack.count.into(),
-        components,
-    }
-}
-
-/// Component `name`'s default on `item`, from the bundle's item report.
-fn default(bundle: &Bundle, item: &str, name: &str) -> Option<Value> {
-    let path = item.strip_prefix("minecraft:").unwrap();
-    let report = bundle
-        .report(&format!("reports/minecraft/components/item/{path}.json"))
-        .ok()?;
-    report["components"].get(name).cloned()
-}
-
-/// An enchantment map's JSON with its keys sorted: the game's order is its hash map's.
-fn sorted(value: &Value) -> String {
-    let map: BTreeMap<String, i64> = value
-        .as_object()
-        .unwrap()
-        .iter()
-        .map(|(k, v)| (k.clone(), v.as_i64().unwrap()))
-        .collect();
-    serde_json::to_string(&map).unwrap()
 }

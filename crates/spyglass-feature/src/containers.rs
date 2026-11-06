@@ -61,6 +61,25 @@ pub struct StructureContainer {
     pub doubt: Option<ContainerDoubt>,
 }
 
+impl StructureContainer {
+    /// The slots its table fills ([`container_slots`]).
+    pub fn slots(&self, blocks: &Blocks) -> Option<usize> {
+        container_slots(blocks, &self.block)
+    }
+}
+
+/// `ChestMinecart.getContainerSize()`: the block report has only blocks' slots.
+const MINECART_SLOTS: usize = 27;
+
+/// The slots of the container block or entity `holder`, which a loot table fills; `None` for
+/// one that isn't a loot container, or where the bundle's block report doesn't say.
+pub fn container_slots(blocks: &Blocks, holder: &str) -> Option<usize> {
+    if full_id(holder) == crate::mineshaft::MINECART {
+        return Some(MINECART_SLOTS);
+    }
+    blocks.container_slots(holder)
+}
+
 /// A structure processor, as far as what it does to a container.
 #[derive(Debug, Clone)]
 enum Processor {

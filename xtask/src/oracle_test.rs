@@ -207,6 +207,11 @@ pub(crate) const TESTS: &[(&str, &str, &[Input])] = &[
         &[Input::Containers, Input::Bundle],
     ),
     (
+        "spyglass-feature",
+        "container_contents_match_the_game",
+        &[Input::Containers, Input::Bundle],
+    ),
+    (
         "spyglass-structure",
         "map_targets_match_the_game",
         &[Input::Locate, Input::Bundle],

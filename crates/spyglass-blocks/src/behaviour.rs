@@ -57,6 +57,10 @@ pub struct Behaviour {
     /// Its block entity is a `RandomizableContainer`: it takes a loot table and seed. Only in
     /// reports of format 2 on ([`BlockBehaviour::knows_loot_containers`]).
     pub loot_container: bool,
+    /// A loot container's slots, `Container.getContainerSize()`: what its table fills. 0 for a
+    /// block that isn't one. Only in reports of format 4 on
+    /// ([`BlockBehaviour::knows_container_slots`]).
+    pub container_slots: u8,
     /// The faces `isFaceSturdy` holds for, a full face's support: bit `i` for
     /// `Direction.values()[i]`, down, up, north, south, west, east ([`Behaviour::sturdy`]).
     /// Only in reports of format 3 on ([`BlockBehaviour::knows_support`]).
@@ -172,7 +176,7 @@ impl BlockBehaviour {
         let names = state_names(resources)?;
         let report = object(&report, &root)?;
         let format = report.get("format").and_then(Value::as_u64);
-        if !matches!(format, Some(1..=3)) {
+        if !matches!(format, Some(1..=4)) {
             return Err(root.child("format").error(LoadErrorKind::Unsupported {
                 what: "block behaviour report format",
                 name: format!("{format:?}"),
@@ -227,6 +231,17 @@ impl BlockBehaviour {
                     blocks_motion: flag("blocks_motion"),
                     leaves: flag("leaves"),
                     loot_container: flag("loot_container"),
+                    container_slots: match o.get("slots") {
+                        None => 0,
+                        Some(v) => {
+                            v.as_u64()
+                                .and_then(|n| u8::try_from(n).ok())
+                                .ok_or_else(|| {
+                                    at.child("slots")
+                                        .error(LoadErrorKind::Shape("a slot count"))
+                                })?
+                        }
+                    },
                     sturdy_faces,
                     center_down: flag("center_down"),
                     falling: flag("falling"),
@@ -248,6 +263,12 @@ impl BlockBehaviour {
     /// report had it.
     pub fn knows_loot_containers(&self) -> bool {
         self.format >= 2
+    }
+
+    /// Whether [`Behaviour::container_slots`] is known: false for a bundle extracted before the
+    /// report had it.
+    pub fn knows_container_slots(&self) -> bool {
+        self.format >= 4
     }
 
     /// Whether [`Behaviour::sturdy_faces`], [`Behaviour::center_down`] and

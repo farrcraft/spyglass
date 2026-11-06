@@ -22,7 +22,7 @@ use crate::region::Region;
 const LOOT_TABLE: &str = "minecraft:chests/abandoned_mineshaft";
 
 /// The entity a corridor's chest is.
-const MINECART: &str = "minecraft:chest_minecart";
+pub(crate) const MINECART: &str = "minecraft:chest_minecart";
 
 /// The blocks a type of mineshaft builds with (`MineshaftStructure.Type`).
 #[derive(Debug, Clone, Copy)]

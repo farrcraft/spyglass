@@ -4,6 +4,8 @@ import java.io.IOException;
 import java.io.StringWriter;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -23,15 +25,27 @@ import java.util.function.Supplier;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.stream.JsonWriter;
+import com.mojang.serialization.JsonOps;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Holder;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.resources.Identifier;
+import net.minecraft.resources.RegistryOps;
 import net.minecraft.resources.ResourceKey;
+import net.minecraft.server.ReloadableServerRegistries;
+import net.minecraft.world.Container;
+import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.RandomizableContainer;
+import net.minecraft.world.SimpleContainer;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.LevelReader;
+import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LevelHeightAccessor;
@@ -50,6 +64,10 @@ import net.minecraft.world.level.levelgen.WorldOptions;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.minecraft.world.level.levelgen.structure.Structure;
 import net.minecraft.world.level.levelgen.structure.StructureStart;
+import net.minecraft.world.level.storage.loot.LootParams;
+import net.minecraft.world.level.storage.loot.parameters.LootContextParamSets;
+import net.minecraft.world.level.storage.loot.parameters.LootContextParams;
+import net.minecraft.world.phys.Vec3;
 
 /**
  * Container golden files: for one seed, the nearest start of each structure to the origin, and
@@ -61,6 +79,10 @@ import net.minecraft.world.level.levelgen.structure.StructureStart;
  * {@code createReferences}, on fresh proto chunks, through a real {@code StructureManager} whose
  * level is a stand-in handing out those chunks. Decoration then runs as for feature golden files,
  * with that manager.
+ *
+ * <p>Each new container is filled at once from its table and seed by the game's own
+ * {@code LootTable.fill}, at its block, with the region's biomes and no structure for any map,
+ * as loot golden files are ({@link Loot}).
  */
 final class Containers {
     /** How far from the origin, in chunks on each axis, starts are looked for. */
@@ -75,19 +97,38 @@ final class Containers {
      */
     private static final Set<String> STATIC_STATE = Set.of("minecraft:fortress", "minecraft:end_city");
 
-    /** A container decoration made: what made it, where, the block or entity, the table and seed. */
-    record Container(String by, BlockPos pos, String block, String entity, String table, long seed) {}
+    /**
+     * A container decoration made: what made it, where, the block or entity, the table and seed,
+     * its slots, and what the table fills them with (null until filled, or where the region can't
+     * give its biomes).
+     */
+    record Made(String by, BlockPos pos, String block, String entity, String table, long seed, int slots,
+            JsonArray items) {
+        Made filled(JsonArray items) {
+            return new Made(by, pos, block, entity, table, seed, slots, items);
+        }
+    }
+
+    /** The server's loot tables, and the ops that encode the stacks they make. */
+    private static ReloadableServerRegistries.Holder loot;
+    private static RegistryOps<JsonElement> ops;
+
+    /** {@code LevelReader.getBiome}: of a {@code BlockPos} to 26.3, of x, y and z from 26.4. */
+    private static final Method GET_BIOME = getBiome();
 
     /** What one chunk's decoration is recording: the label generating, and the containers so far. */
     private static final class Recording {
         final ChunkPos center;
+        /** The level fills run in. */
+        final Loot.Level level;
         String by = "";
-        Map<String, Container> seen = new HashMap<>();
+        Map<String, Made> seen = new HashMap<>();
         int entities;
-        final List<Container> made = new ArrayList<>();
+        final List<Made> made = new ArrayList<>();
 
-        Recording(ChunkPos center) {
+        Recording(ChunkPos center, Loot.Level level) {
             this.center = center;
+            this.level = level;
         }
     }
 
@@ -100,7 +141,8 @@ final class Containers {
         // Decoration's stand-ins, with each thread's structure templates; and the items' components
         // bound, for the mobs structures spawn with their equipment.
         GameApi.get().recordFeatures(game, Features.TARGETS);
-        Loot.holder(game);
+        loot = Loot.holder(game);
+        ops = RegistryOps.create(JsonOps.INSTANCE, loot.lookup());
         try (var pool = Executors.newFixedThreadPool(Math.max(1, threads))) {
             for (String text : seeds) {
                 long t0 = System.nanoTime();
@@ -176,7 +218,7 @@ final class Containers {
         var decorated = new ArrayList<Future<JsonObject>>();
         for (ChunkPos pos : chunks) {
             decorated.add(pool.submit(() -> {
-                var recording = new Recording(pos);
+                var recording = new Recording(pos, Loot.level(game, loot));
                 RECORDING.set(recording);
                 try {
                     api.decorate(game, generator, height, random, seed, pos, false, world.managerFor(pos));
@@ -186,7 +228,7 @@ final class Containers {
                 var o = new JsonObject();
                 o.add("chunk", ints(pos.x(), pos.z()));
                 var list = new JsonArray();
-                for (Container c : recording.made) {
+                for (Made c : recording.made) {
                     list.add(json(c));
                 }
                 o.add("containers", list);
@@ -195,7 +237,7 @@ final class Containers {
         }
 
         var root = new JsonObject();
-        root.addProperty("format", 1);
+        root.addProperty("format", 2);
         root.addProperty("harness", Main.HARNESS_VERSION);
         root.addProperty("version", game.version);
         root.addProperty("data_version", game.dataVersion);
@@ -275,8 +317,8 @@ final class Containers {
      * position, then the center chunk's entities (chest minecarts) added since.
      */
     private static void collect(WorldGenLevel region, Recording recording) {
-        Map<String, Container> now = new HashMap<>();
-        var fresh = new ArrayList<Container>();
+        Map<String, Made> now = new HashMap<>();
+        var fresh = new ArrayList<Made>();
         ChunkPos center = recording.center;
         for (int dz = -1; dz <= 1; dz++) {
             for (int dx = -1; dx <= 1; dx++) {
@@ -284,14 +326,14 @@ final class Containers {
                 for (BlockPos pos : chunk.getBlockEntitiesPos()) {
                     if (chunk.getBlockEntity(pos) instanceof RandomizableContainer container
                             && container.getLootTable() != null) {
-                        var c = new Container(recording.by, pos.immutable(),
+                        var c = new Made(recording.by, pos.immutable(),
                                 BuiltInRegistries.BLOCK
                                         .getKey(chunk.getBlockState(pos).getBlock()).toString(),
                                 null, container.getLootTable().identifier().toString(),
-                                container.getLootTableSeed());
+                                container.getLootTableSeed(), container.getContainerSize(), null);
                         String key = pos.toShortString();
                         now.put(key, c);
-                        Container before = recording.seen.get(key);
+                        Made before = recording.seen.get(key);
                         if (before == null || !before.table().equals(c.table()) || before.seed() != c.seed()) {
                             fresh.add(c);
                         }
@@ -300,8 +342,11 @@ final class Containers {
             }
         }
         recording.seen = now;
-        fresh.sort(Comparator.comparing(Container::pos));
-        recording.made.addAll(fresh);
+        fresh.sort(Comparator.comparing(Made::pos));
+        for (Made c : fresh) {
+            recording.made.add(c.filled(fill(region, recording.level, c.table(), c.seed(), Vec3.atCenterOf(c.pos()),
+                    c.slots())));
+        }
         if (region.getChunk(center.x(), center.z()) instanceof ProtoChunk proto) {
             List<CompoundTag> entities = proto.getEntities();
             for (int i = recording.entities; i < entities.size(); i++) {
@@ -311,13 +356,97 @@ final class Containers {
                     continue;
                 }
                 var position = tag.getListOrEmpty("Pos");
-                var pos = BlockPos.containing(position.getDoubleOr(0, 0), position.getDoubleOr(1, 0),
+                var origin = new Vec3(position.getDoubleOr(0, 0), position.getDoubleOr(1, 0),
                         position.getDoubleOr(2, 0));
-                recording.made.add(new Container(recording.by, pos, null, tag.getStringOr("id", ""), table,
-                        tag.getLongOr("LootTableSeed", 0)));
+                String id = tag.getStringOr("id", "");
+                long seed = tag.getLongOr("LootTableSeed", 0);
+                int slots = entitySlots(region, id);
+                recording.made.add(new Made(recording.by, BlockPos.containing(origin), null, id, table, seed, slots,
+                        fill(region, recording.level, table, seed, origin, slots)));
             }
             recording.entities = entities.size();
         }
+    }
+
+    /**
+     * The stacks table {@code table} fills a container of {@code slots} slots with, from loot seed
+     * {@code seed}, as {@code RandomizableContainer.unpackLootTable} fills it from {@code origin}
+     * (an entity's {@code ContainerEntity.unpackChestVehicleLootTable} likewise): each encoded
+     * by {@code ItemStack.CODEC}, with its slot. Biomes are the region's, so null where a block
+     * the table asks about is outside it.
+     */
+    private static JsonArray fill(WorldGenLevel region, Loot.Level level, String table, long seed, Vec3 origin,
+            int slots) {
+        var key = ResourceKey.create(Registries.LOOT_TABLE, Identifier.parse(table));
+        level.biomes = pos -> biomeAt(region, pos);
+        var container = new SimpleContainer(slots);
+        try {
+            LootParams params = new LootParams.Builder(level).withParameter(LootContextParams.ORIGIN, origin)
+                    .create(LootContextParamSets.CHEST);
+            loot.getLootTable(key).fill(container, params, seed);
+        } catch (OutsideRegion e) {
+            return null;
+        }
+        var items = new JsonArray();
+        for (int slot = 0; slot < container.getContainerSize(); slot++) {
+            ItemStack stack = container.getItem(slot);
+            if (stack.isEmpty()) {
+                continue;
+            }
+            JsonObject encoded = ItemStack.CODEC.encodeStart(ops, stack).getOrThrow().getAsJsonObject();
+            encoded.addProperty("slot", slot);
+            items.add(encoded);
+        }
+        return items;
+    }
+
+    /** A fill asked for the biome of a block the region can't give. */
+    private static final class OutsideRegion extends RuntimeException {
+        private static final long serialVersionUID = 1L;
+
+        OutsideRegion(Throwable cause) {
+            super(cause);
+        }
+    }
+
+    /** The region's biome at {@code pos}, as the level's {@code getBiome} gives it: the zoomed one. */
+    private static Holder<Biome> biomeAt(WorldGenLevel region, BlockPos pos) {
+        try {
+            Object biome = GET_BIOME.getParameterCount() == 1 ? GET_BIOME.invoke(region, pos)
+                    : GET_BIOME.invoke(region, pos.getX(), pos.getY(), pos.getZ());
+            @SuppressWarnings("unchecked")
+            var holder = (Holder<Biome>) biome;
+            return holder;
+        } catch (InvocationTargetException e) {
+            throw new OutsideRegion(e.getCause());
+        } catch (IllegalAccessException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private static Method getBiome() {
+        try {
+            return LevelReader.class.getMethod("getBiome", BlockPos.class);
+        } catch (NoSuchMethodException e) {
+            try {
+                return LevelReader.class.getMethod("getBiome", int.class, int.class, int.class);
+            } catch (NoSuchMethodException none) {
+                throw new IllegalStateException("LevelReader has no getBiome", none);
+            }
+        }
+    }
+
+    /**
+     * The slots of the container entity {@code id}: {@code getContainerSize()} of one made on the
+     * region's level, as structures make their mobs.
+     */
+    private static int entitySlots(WorldGenLevel region, String id) {
+        Object entity = BuiltInRegistries.ENTITY_TYPE.getValue(Identifier.parse(id)).create(region.getLevel(),
+                EntitySpawnReason.STRUCTURE);
+        if (!(entity instanceof Container container)) {
+            throw new IllegalStateException(id + " with a loot table isn't a container");
+        }
+        return container.getContainerSize();
     }
 
     /**
@@ -468,7 +597,7 @@ final class Containers {
         }
     }
 
-    private static JsonObject json(Container c) {
+    private static JsonObject json(Made c) {
         var o = new JsonObject();
         o.addProperty("by", c.by());
         o.add("pos", ints(c.pos().getX(), c.pos().getY(), c.pos().getZ()));
@@ -480,6 +609,10 @@ final class Containers {
         }
         o.addProperty("table", c.table());
         o.addProperty("seed", c.seed());
+        o.addProperty("slots", c.slots());
+        if (c.items() != null) {
+            o.add("items", c.items());
+        }
         return o;
     }
 

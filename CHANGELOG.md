@@ -9,6 +9,7 @@ Changes go under **Unreleased** as they're made. `cargo xtask release` turns tha
 ### Added
 
 - **26.4-snapshot-7**, checked against the game.
+- **Pieces of strongholds, fortresses, end cities, woodland mansions and ocean ruins**, laid out as the game lays them out and checked against the game in every supported version. `Session::structure_layout` gives them, so their exact bounds show where jigsaw structures' and mineshafts' already did. Features near them, and near mineshafts, are decided by those pieces rather than by everything within 8 chunks, which settles most of the dungeons that were candidates for that reason ([structure-placement.md](docs/specs/structure-placement.md#legacy-pieces)).
 
 ## [0.2.0] - 2026-11-01
 

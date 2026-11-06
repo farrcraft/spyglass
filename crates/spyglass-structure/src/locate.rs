@@ -289,9 +289,10 @@ impl Starts<'_> {
     }
 
     /// A start's box as references see it (`StructureStart.getBoundingBox`, made when the
-    /// start is: `docs/specs/structure-placement.md#bounds`), and whether it's exact: a jigsaw's
-    /// or mineshaft's layout, a single piece's or template's box before its height is
-    /// settled, a ruined portal's template. Otherwise a box it surely stays inside.
+    /// start is: `docs/specs/structure-placement.md#bounds`), and whether it's exact: a jigsaw's,
+    /// mineshaft's, end city's, mansion's, fortress's, stronghold's or ocean ruin's layout, a single piece's or
+    /// template's box before its height is settled, a ruined portal's template. Otherwise a box
+    /// it surely stays inside.
     fn start_bounds(&self, structure: usize, chunk: [i32; 2]) -> (BoundingBox, bool) {
         use crate::{ScatteredPiece, StructureType};
         let config = &self.placements().sets().structures()[structure];
@@ -317,12 +318,16 @@ impl Starts<'_> {
         // A start reaches at most 8 chunks from its own (`createReferences`).
         let anywhere = around(8 * 16);
         match config.kind {
-            StructureType::Jigsaw | StructureType::Mineshaft => {
-                match self.assemble(structure, chunk) {
-                    Some(crate::Assembly::Built(layout)) => (layout.bounds, true),
-                    _ => anywhere,
-                }
-            }
+            StructureType::Jigsaw
+            | StructureType::Mineshaft
+            | StructureType::EndCity
+            | StructureType::Fortress
+            | StructureType::Stronghold
+            | StructureType::WoodlandMansion
+            | StructureType::OceanRuin => match self.assemble(structure, chunk) {
+                Some(crate::Assembly::Built(layout)) => (layout.bounds, true),
+                _ => anywhere,
+            },
             StructureType::DesertPyramid => piece([21, 15, 21]),
             StructureType::JungleTemple => piece([12, 10, 15]),
             StructureType::SwampHut => piece([7, 7, 9]),
@@ -357,9 +362,6 @@ impl Starts<'_> {
                 Some(layout) => (layout.bounds, true),
                 None => anywhere,
             },
-            // A cluster's pieces stay within 48 blocks of the start chunk's corner
-            // (`OceanRuinPieces.addClusterRuins`).
-            StructureType::OceanRuin => around(64),
             _ => anywhere,
         }
     }

@@ -151,6 +151,16 @@ fn main() -> spyglass::Result<()> {
                 .unwrap(),
         );
     });
+    // The legacy and template layouts, at seed 0's starts.
+    for (structure, chunk) in [
+        ("minecraft:stronghold", [-13, -106]),
+        ("minecraft:ocean_ruin_cold", [9, -37]),
+        ("minecraft:mansion", [-221, -52]),
+    ] {
+        report(&format!("structure_layout {structure}"), 5, || {
+            black_box(session.structure_layout(structure, chunk).unwrap());
+        });
+    }
     let stronghold = world.structure_query("minecraft:stronghold")?;
     report("locate_structure stronghold, new session", 5, || {
         let session = world.session(*seeds.next().unwrap()).unwrap();
@@ -417,6 +427,21 @@ fn main() -> spyglass::Result<()> {
     });
     report("End World::session", 20, || {
         black_box(end.session(*seeds.next().unwrap()).unwrap());
+    });
+    let (nether_0, end_0) = (nether.session(0)?, end.session(0)?);
+    report("structure_layout minecraft:fortress", 5, || {
+        black_box(
+            nether_0
+                .structure_layout("minecraft:fortress", [15, 2])
+                .unwrap(),
+        );
+    });
+    report("structure_layout minecraft:end_city", 5, || {
+        black_box(
+            end_0
+                .structure_layout("minecraft:end_city", [-1_874_997, -1_874_995])
+                .unwrap(),
+        );
     });
     let fortress = nether.structure_query("minecraft:fortress")?;
     for confirm in [false, true] {

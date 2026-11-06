@@ -16,11 +16,12 @@ use spyglass_density::Resources;
 use spyglass_rng::{LegacyRandomSource, RandomSource, WorldgenRandom, block_seed};
 use spyglass_structure::{
     BoundingBox, JigsawPools, Layout, NbtBlock, PoolElement, Processors, Projection, Rotation,
-    Template,
+    StructureSets, StructureType, Template,
 };
 
 use crate::blocks::{Blocks, Tag};
 use crate::mineshaft::ShaftBlocks;
+use crate::place::template::Template as PlaceTemplate;
 use crate::region::{Doubt, Region};
 
 /// Why a structure's container isn't certain.
@@ -159,16 +160,22 @@ pub struct StructureContainers {
     pub(crate) cannot_replace: Tag,
     /// What mineshafts place and test for.
     pub(crate) shaft: ShaftBlocks,
+    /// `#ice`, which an ocean ruin's height scan passes.
+    pub(crate) ice: Tag,
+    /// Each ocean ruin template's blocks, by id: what a ruin's earlier pieces put in the columns
+    /// a later one's height reads.
+    pub(crate) ruins: HashMap<String, PlaceTemplate>,
 }
 
 impl StructureContainers {
     /// Parses every single element's processors in `pools`, adding the tags they test to
-    /// `blocks`. The bundle's block report must say which blocks are loot containers, and
-    /// which faces support (format 3).
+    /// `blocks`, and loads `sets`' ocean ruins' templates. The bundle's block report must say
+    /// which blocks are loot containers, and which faces support (format 3).
     pub fn load(
         resources: &dyn Resources,
         blocks: &mut Blocks,
         pools: &JigsawPools,
+        sets: &StructureSets,
     ) -> Result<Self, LoadError> {
         if blocks.loot_container("minecraft:chest").is_none() || !blocks.knows_support() {
             return Err(LoadError::new(
@@ -184,7 +191,19 @@ impl StructureContainers {
             processors: HashMap::new(),
             cannot_replace: blocks.tag(resources, "minecraft:features_cannot_replace")?,
             shaft: ShaftBlocks::load(blocks)?,
+            ice: blocks.tag(resources, "minecraft:ice")?,
+            ruins: HashMap::new(),
         };
+        for s in sets.structures() {
+            if s.kind == StructureType::OceanRuin {
+                for t in &s.templates {
+                    if !out.ruins.contains_key(&t.id) {
+                        let template = PlaceTemplate::load_unturned(resources, blocks, &t.id)?;
+                        out.ruins.insert(t.id.clone(), template);
+                    }
+                }
+            }
+        }
         let mut stack: Vec<&PoolElement> = pools.elements().collect();
         while let Some(element) = stack.pop() {
             match element {

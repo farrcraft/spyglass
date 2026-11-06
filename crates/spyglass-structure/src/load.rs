@@ -17,6 +17,7 @@ use crate::biomes::{BiomeSet, Tags};
 use crate::corner::CornerSamplers;
 use crate::jigsaw::{GenerationHeights, HeightProvider, Jigsaw, JigsawLoader, Template};
 use crate::mineshaft::Mineshaft;
+use crate::ocean_ruin::OceanRuin;
 use crate::placement::{
     ConcentricRings, ExclusionZone, FrequencyReduction, Placement, PlacementKind, RandomSpread,
     SpreadType,
@@ -106,13 +107,18 @@ pub struct Structure {
     /// For [`StructureType::RuinedPortal`], its setups and templates.
     pub ruined_portal: Option<RuinedPortal>,
     /// The templates a [`StructureType::Shipwreck`] picks from (`STRUCTURE_LOCATION_BEACHED`
-    /// or `_OCEAN`), or a [`StructureType::Igloo`]'s top, ladder and laboratory; empty for
-    /// other types.
+    /// or `_OCEAN`), a [`StructureType::Igloo`]'s top, ladder and laboratory, or a
+    /// [`StructureType::EndCity`]'s or a [`StructureType::WoodlandMansion`]'s pieces, or a
+    /// [`StructureType::OceanRuin`]'s, warm or cold; empty for other types.
     pub templates: Vec<Arc<Template>>,
+    /// Whether its `terrain_adaptation` isn't `none`, which grows its bounds by 12.
+    pub adapts_terrain: bool,
     /// For [`StructureType::NetherFossil`], `height`: where its scan starts.
     pub height: Option<HeightProvider>,
     /// For [`StructureType::Mineshaft`], its type and terrain adaptation.
     pub mineshaft: Option<Mineshaft>,
+    /// For [`StructureType::OceanRuin`], its kind and how often it's large or clustered.
+    pub ocean_ruin: Option<OceanRuin>,
     /// For [`StructureType::Mineshaft`], `#mineshaft_blocking`: biomes where its pieces aren't
     /// placed (`isInInvalidLocation`). Empty for other types.
     pub mineshaft_blocking: BiomeSet,
@@ -559,10 +565,20 @@ impl SetLoader<'_> {
         };
         let beached = kind == StructureType::Shipwreck
             && obj.get("is_beached").and_then(Value::as_bool) == Some(true);
+        let ocean_ruin = match kind {
+            StructureType::OceanRuin => Some(Self::ocean_ruin(obj, &root)?),
+            _ => None,
+        };
         let template_ids: &[&str] = match kind {
             StructureType::Shipwreck if beached => &template_piece::SHIPWRECKS_BEACHED,
             StructureType::Shipwreck => &template_piece::SHIPWRECKS_OCEAN,
             StructureType::Igloo => &template_piece::IGLOO,
+            StructureType::EndCity => &crate::end_city::TEMPLATES,
+            StructureType::WoodlandMansion => &crate::mansion::TEMPLATES,
+            StructureType::OceanRuin if ocean_ruin.is_some_and(|r| r.cold) => {
+                &crate::ocean_ruin::COLD
+            }
+            StructureType::OceanRuin => &crate::ocean_ruin::WARM,
             _ => &[],
         };
         let templates = template_ids
@@ -602,8 +618,13 @@ impl SetLoader<'_> {
             beached,
             ruined_portal,
             templates,
+            adapts_terrain: obj
+                .get("terrain_adaptation")
+                .and_then(Value::as_str)
+                .is_some_and(|t| t != "none"),
             height,
             mineshaft,
+            ocean_ruin,
             mineshaft_blocking,
             step,
             // Set once every structure is loaded.
@@ -636,6 +657,36 @@ impl SetLoader<'_> {
         Ok(Mineshaft {
             mesa,
             adapts_terrain,
+        })
+    }
+
+    /// `OceanRuinStructure.CODEC`'s own fields: `biome_temp` (`warm` or `cold`), and
+    /// `large_probability` and `cluster_probability`, floats from 0 to 1.
+    fn ocean_ruin(obj: &Map<String, Value>, root: &At<'_>) -> LoadResult<OceanRuin> {
+        let at = root.child("biome_temp");
+        let cold = match field(obj, "biome_temp", root)?.as_str() {
+            Some("cold") => true,
+            Some("warm") => false,
+            Some(other) => {
+                return Err(at.error(LoadErrorKind::Unsupported {
+                    what: "ocean ruin type",
+                    name: other.to_string(),
+                }));
+            }
+            None => return Err(at.error(LoadErrorKind::Shape("a string"))),
+        };
+        let probability = |name: &'static str| -> LoadResult<f32> {
+            let at = root.child(name);
+            let p = codec::float(field(obj, name, root)?, &at)?;
+            if !(0.0..=1.0).contains(&p) {
+                return Err(at.error(LoadErrorKind::Invalid("must be 0 to 1")));
+            }
+            Ok(p)
+        };
+        Ok(OceanRuin {
+            cold,
+            large_probability: probability("large_probability")?,
+            cluster_probability: probability("cluster_probability")?,
         })
     }
 

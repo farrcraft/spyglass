@@ -29,7 +29,7 @@ use spyglass_feature::{
 use spyglass_loot::{Loot, MapRequest, World};
 use spyglass_oracle::containers::{ContainerFile, Holder};
 use spyglass_oracle::stacks;
-use spyglass_structure::{JigsawPools, Starts, StructureSets};
+use spyglass_structure::{Assembly, BoundingBox, JigsawPools, Starts, StructureSets};
 use spyglass_terrain::Terrain;
 
 /// One file's comparison.
@@ -47,6 +47,8 @@ struct Report {
     candidate_seeds: (usize, usize),
     /// By structure: the game's containers, and spyglass's certain ones.
     by_structure: BTreeMap<String, (usize, usize)>,
+    /// The golden starts spyglass lays out, all with the game's pieces and bounds.
+    layouts: usize,
 }
 
 /// Whether the game's container is the block or entity `name`.
@@ -84,12 +86,35 @@ fn check(path: &Path) -> Report {
     let generator = settings.generator(file.seed).unwrap();
     let mut blocks = Blocks::new(&bundle, settings.palette()).unwrap();
     let pools = JigsawPools::load(&bundle, &sets).unwrap();
-    let containers = StructureContainers::load(&bundle, &mut blocks, &pools).unwrap();
+    let containers = StructureContainers::load(&bundle, &mut blocks, &pools, &sets).unwrap();
     let seeded = biomes.with_seed(file.seed).unwrap();
     let placements = sets.with_seed(file.seed, &seeded);
     let terrain = settings.terrain();
     let terrain_of_seed = Terrain::new(terrain, file.seed).unwrap();
     let starts = Starts::with_terrain(&placements, &seeded, &terrain_of_seed).with_pools(&pools);
+    // The starts' pieces, where spyglass lays them out.
+    for start in &file.starts {
+        let Some(structure) = sets.structure_index(&start.structure) else {
+            continue;
+        };
+        let Some(Assembly::Built(layout)) = starts.assemble(structure, start.chunk) else {
+            continue;
+        };
+        let boxes = |b: &BoundingBox| [b.min[0], b.min[1], b.min[2], b.max[0], b.max[1], b.max[2]];
+        let ours: Vec<[i32; 6]> = layout.pieces.iter().map(boxes).collect();
+        if ours == start.pieces && boxes(&layout.bounds) == start.bounds {
+            report.layouts += 1;
+        } else {
+            let first = ours.iter().zip(&start.pieces).position(|(a, b)| a != b);
+            report.failures.push(format!(
+                "{} {:?}: {} pieces, game {}; first difference at {first:?}",
+                start.structure,
+                start.chunk,
+                ours.len(),
+                start.pieces.len()
+            ));
+        }
+    }
     // For each step with structures spyglass places, the features of the steps before it,
     // placed where spyglass places them.
     let mut steps: Vec<usize> = sets
@@ -291,15 +316,26 @@ fn check(path: &Path) -> Report {
             }
         }
         for t in &theirs {
+            // A candidate whose height was read in doubt (an ocean ruin's chest) answers for
+            // the game's at its x and z with its seed.
             if !ours.iter().any(|c| {
+                let height_in_doubt = c.doubt.is_some()
+                    && c.seed == Some(t.seed)
+                    && [c.pos[0], c.pos[2]] == [t.pos[0], t.pos[2]];
                 sets.structures()[c.structure].id == t.by
-                    && c.pos == t.pos
+                    && (c.pos == t.pos || height_in_doubt)
                     && c.table == t.table
                     && holds(t, &c.block)
             }) {
+                let near: Vec<_> = ours
+                    .iter()
+                    .filter(|c| sets.structures()[c.structure].id == t.by)
+                    .map(|c| (c.pos, c.seed, &c.doubt))
+                    .collect();
                 report.failures.push(format!(
-                    "seed {} chunk {:?}: the game's {} container at {:?} ({}) isn't an answer",
-                    file.seed, chunk.chunk, t.by, t.pos, t.table
+                    "seed {} chunk {:?}: the game's {} container at {:?} ({}, seed {}) isn't an \
+                     answer; ours there: {near:?}",
+                    file.seed, chunk.chunk, t.by, t.pos, t.table, t.seed
                 ));
             }
         }
@@ -482,9 +518,10 @@ fn structure_containers_match_the_game() {
         reports.iter().map(|r| r.candidate_seeds.1).sum::<usize>()
     );
     println!(
-        "{} files: {} structure containers in the game, {} certain answers, {} candidates, {} \
-         differences",
+        "{} files: {} starts laid out as the game's; {} structure containers in the game, {} \
+         certain answers, {} candidates, {} differences",
         files.len(),
+        reports.iter().map(|r| r.layouts).sum::<usize>(),
         reports.iter().map(|r| r.game).sum::<usize>(),
         reports.iter().map(|r| r.certain).sum::<usize>(),
         candidates.values().sum::<usize>(),

@@ -85,8 +85,9 @@ impl ContainerFile {
     /// Parses a container file's bytes.
     pub fn parse(bytes: &[u8]) -> Result<Self, String> {
         let file: Value = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
-        if file["format"] != 2 {
-            return Err(format!("format {} isn't 2", file["format"]));
+        // Format 3 adds the starts at ring positions, which needn't be near the origin.
+        if file["format"] != 2 && file["format"] != 3 {
+            return Err(format!("format {} isn't 2 or 3", file["format"]));
         }
         let text =
             |v: &Value, what: &str| v.as_str().map(str::to_string).ok_or(format!("no {what}"));

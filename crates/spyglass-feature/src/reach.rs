@@ -467,6 +467,8 @@ fn one_displacement(modifier: &Value) -> ([i32; 3], [i32; 3], bool) {
         | "noise_based_count"
         | "noise_threshold_count" => ([0; 3], [0; 3], false),
         "in_square" => ([0; 3], [15, 0, 15], false),
+        // Positions in the origin's chunk, at any height.
+        "fixed_placement" => ([0; 3], [15, 0, 15], true),
         "offset" => {
             let (x, y, z) = (range("x"), range("y"), range("z"));
             ([x.0, y.0, z.0], [x.1, y.1, z.1], false)

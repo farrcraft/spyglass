@@ -174,7 +174,7 @@ One UTF-8 JSON file per seed and dimension: `oracle-out/<version>/structures/<di
 
 ```json
 {
-  "format": 2,
+  "format": 3,
   "harness": 1,
   "version": "26.3",
   "data_version": 5023,
@@ -209,7 +209,7 @@ One UTF-8 JSON file per seed and dimension: `oracle-out/<version>/structures/<di
 
 - `regions` are chunk rectangles, inclusive: `origin` (chunks −64 to 63), `far-pos` and `far-neg` (32 × 32 chunks from block ±1,000,000), and `border-pos` and `border-neg` (the 32 × 32 chunks inside the world border).
 - `rings` gives each concentric-ring set's positions, in the game's order.
-- `sets` lists every set the dimension generates (`possibleStructureSets`), with every placement chunk in the regions (`isStructureChunk`).
+- `sets` lists every set the dimension generates (`possibleStructureSets`), with every placement chunk in the regions (`isStructureChunk`), and for a concentric-ring set each ring position outside them, in ring order. For a set with no start in the regions (mansions are rare), placement chunks outside them are tried in squares outward from the origin, up to 1,024 chunks, until one starts, and that one is kept. Format 2 files had neither.
 - `tries` is each structure the game's choice tried there, in order, ending at the first `start`. For each try:
   - `stub` is the check position `findGenerationPoint` returned. It's absent when there was none, e.g. a failed climate-only condition.
   - `biome` is the biome there, and `valid_biome` is `isValidBiome`.
@@ -424,7 +424,7 @@ The nearest start of each structure to the origin, and every chunk it reaches de
 
 ```json
 {
-  "format": 2,
+  "format": 3,
   "harness": 1,
   "version": "26.3",
   "data_version": 5023,
@@ -460,12 +460,12 @@ The nearest start of each structure to the origin, and every chunk it reaches de
 }
 ```
 
-- **`starts`:** for each structure with a start whose start chunk is within 64 chunks of the origin on each axis, and whose box stays within that square, the nearest (by squared chunk distance, the first of equals in z then x order): its start chunk, its box (`StructureStart.getBoundingBox`, least corner then greatest) and its pieces' boxes, before any is placed. Sorted by structure id.
+- **`starts`:** for each structure with a start whose start chunk is within 64 chunks of the origin on each axis, and whose box stays within that square, the nearest (by squared chunk distance, the first of equals in z then x order): its start chunk, its box (`StructureStart.getBoundingBox`, least corner then greatest) and its pieces' boxes, before any is placed. Then, for each concentric-ring set, the starts at its ring position nearest the origin (by squared chunk distance, the first in ring order), wherever it is, for structures without one yet: there's never a stronghold within 64 chunks. And for any other set without a start there, its first start in placement chunks in squares outward beyond that, up to 1,024 chunks. Sorted by structure id. Format 2 files had neither.
 - **`chunks`:** every chunk a start's box meets, in z then x order, each decorated on its own in full (every step), with every container made: a block entity that's a `RandomizableContainer` with a loot table, in the chunk or its 8 neighbours, new or with a new table or seed since the last label; or an entity in the chunk with `LootTable` in its NBT (a chest minecart). `by` is what the region was generating when it appeared (`setCurrentlyGenerating`): a structure's id or a placed feature's. Block containers under one label are by position (y, then z, then x); `pos` of an entity is the block it's in. From format 2, `slots` is the container's `getContainerSize()`, and `items` what the game's own `LootTable.fill` puts in it from its table and seed, each non-empty slot's stack as `ItemStack.CODEC` encodes it with its `slot`, as in [loot golden files](#loot-golden-files). `items` is left out where the fill asks for a biome outside the decorated region.
 
 **How the harness makes them** ([ADR 0062](../adr/0062-the-oracle-places-structures-for-containers.md)):
 
-- **Starts:** a fresh proto chunk for every chunk within 72 of the origin on each axis, each given its starts by the generator's own `createStructures` (`ChunkGeneratorStructureState` as the server makes it), through a real `StructureManager` built without its constructor, whose `level` is a stand-in handing out those chunks, the registries and the heights, and failing on anything else. Where a fortress or an end city can generate (a set among `possibleStructureSets` has one), starts are made one at a time: their piece generators keep state in static fields (a fortress's piece weights, an end city's ship), which starts made at once on several threads race over. Then `createReferences` for each chunk decorated.
+- **Starts:** a fresh proto chunk for every chunk within 72 of the origin on each axis, each given its starts by the generator's own `createStructures` (`ChunkGeneratorStructureState` as the server makes it), through a real `StructureManager` built without its constructor, whose `level` is a stand-in handing out those chunks, the registries and the heights, and failing on anything else. Where a fortress, a stronghold or an end city can generate (a set among `possibleStructureSets` has one), starts are made one at a time: their piece generators keep state in static fields (a fortress's and a stronghold's piece weights, an end city's ship), which starts made at once on several threads race over. Then `createReferences` for each chunk decorated.
 - **Decorating:** as the first run of [feature golden files](#feature-golden-files), with a manager in place of one without structures: the 3 × 3 chunks generated without structures, the region and `applyBiomeDecoration`. Each chunk's manager reads the references made above, and starts made again for that chunk alone: some pieces settle their state in the first chunk that places them (an ocean ruin its height), so each chunk sees its starts as made, as if it were the first decorated. The stand-in level also answers what structures' mobs ask (a structure manager, its dimension, a fresh world's difficulty: the mob's own draws, not the chunk's) and hears no sounds, and each thread has its own structure templates, whose palettes cache in plain maps.
 - **Filling:** each container as it's recorded, as `RandomizableContainer.unpackLootTable` fills it when opened (a chest minecart's `unpackChestVehicleLootTable` likewise): into a `SimpleContainer` of its slots, `ORIGIN` the block's centre (the entity's position), in a stand-in level as for loot golden files, but whose biome at a block is the decoration region's (`getBiome`, the zoomed lookup). An exploration map finds no structure there; its target is the [map cases'](#locate-answers). A minecart's slots are asked of one made by its type on the region's level.
 - **Determinism:** a second run writes the same bytes.

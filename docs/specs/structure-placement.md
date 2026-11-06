@@ -329,15 +329,139 @@ Without terrain, a normal mineshaft's layout and check are exact; a mesa's need 
 
 _Versions:_ the same in 26.2, 26.3 and 26.4-snapshot-6 but for the mesa's height query ([above](#with-terrain)). 26.2's pieces take a `StructurePieceAccessor` (which `StructurePiecesBuilder` implements) where 26.3 takes the builder itself, with the same calls, and 26.4-snapshot-6's room keeps its entrance boxes in an `ArrayList` rather than a `LinkedList`. Neither changes a piece or a draw.
 
+## Legacy pieces
+
+Fortresses and strongholds share `StructurePiece`'s helpers:
+
+- **A piece's box** (`BoundingBox.orientBox(x, y, z, ox, oy, oz, w, h, d, facing)`), from the point `(x, y, z)` it grows from, an offset across, up and along, and a size: facing south `(x + ox, y + oy, z + oz)` to `(x + w − 1 + ox, y + h − 1 + oy, z + d − 1 + oz)`; north `(x + ox, y + oy, z − d + 1 + oz)` to `(x + w − 1 + ox, y + h − 1 + oy, z + oz)`; west `(x − d + 1 + oz, y + oy, z + ox)` to `(x + oz, y + h − 1 + oy, z + w − 1 + ox)`; east `(x + oz, y + oy, z + ox)` to `(x + d − 1 + oz, y + h − 1 + oy, z + w − 1 + ox)`.
+- **An exit** `across` along a piece's side and `up` from its floor (`generateChildForward`, `Left` and `Right`, strongholds' `generateSmallDoorChild...`), at y `minY + up`: forward, facing north `(minX + across, minZ − 1)`, south `(minX + across, maxZ + 1)`, west `(minX − 1, minZ + across)`, east `(maxX + 1, minZ + across)`, facing the same way. Left, from a piece facing north or south `(minX − 1, minZ + across)` facing west, from one facing west or east `(minX + across, minZ − 1)` facing north; right, `(maxX + 1, minZ + across)` facing east, or `(minX + across, maxZ + 1)` facing south. Left is always the −x or −z side.
+- **A piece's own coordinates** (`getWorldPos`) turn as the jungle temple's do ([loot.md](loot.md#containers)).
+- **A collision** is any piece so far whose box shares a block with it (`findCollisionPiece`).
+- **A weighted pick** (`generatePiece`): up to five rolls of `R.nextInt(total)`, `total` the weights of every type still in the list, walking the list in order. The rolled type ends the roll if it's used up (its `placeCount` at a nonzero limit) or was the last one picked (`previousPiece`) and may not repeat; if its piece doesn't fit, the roll stays negative and passes to each next type in turn. A type that reaches its limit leaves the list. The counts are statics of the game's, reset by each start.
+- **Exits are grown** from a pending list: each piece made is appended, and `R.nextInt(size)` picks the next to grow its exits, until the list is empty. Pieces are in the order they were made, the start first.
+
+## Nether fortresses
+
+Implemented in `fortress.rs` (`spyglass-structure`), given by `Starts::fortress_pieces` and `Starts::assemble`. The context random `R` is `setLargeFeatureSeed(seed, chunkX, chunkZ)`; nothing reads the world. The check is at `(minX, 64, minZ)`.
+
+1. **The start**, a bridge crossing: facing `R.nextInt(4)` of north, east, south and west, its box `(minX + 2, 64, minZ + 2)` to `(minX + 20, 73, minZ + 20)` whichever way, depth 0.
+2. **A child** at depth `d + 1`, from an exit of a piece at depth `d`: if its point is more than 112 from the start's box corner on x or z (`Math.abs`), an end filler is made, drawing if it fits, and dropped. Otherwise a [weighted pick](#legacy-pieces) from the bridge or the castle list; none if no limited type is left below its limit or past depth 30, and without a piece an end filler. A piece is made only if its box is above y 10 and collides with nothing. It's added, and pending.
+3. **Lists** (type, weight, limit, whether it may repeat). Bridge: straight 30, none, yes; crossing 10, 4; room crossing 10, 4; stairs room 10, 3; monster throne 5, 2; castle entrance 5, 1. Castle: small corridor 25, none, yes; small crossing 15, 5; right turn 5, 10; left turn 5, 10; corridor stairs 10, 3, yes; T balcony 7, 2; stalk room 5, 2. One `previousPiece` serves both lists.
+4. **Pieces**: `orientBox` offset and size, what the constructor draws, and the exits (`across`, `up`, the list):
+
+   | Piece                  | Offset    | Size       | Draws                          | Exits                                                                                                                                    |
+   | ---------------------- | --------- | ---------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+   | Bridge straight        | −1, −3, 0 | 5, 10, 19  |                                | forward 1, 3, bridge                                                                                                                     |
+   | Bridge crossing, start | −8, −3, 0 | 19, 10, 19 |                                | forward, left, right 8, 3, bridge                                                                                                        |
+   | Room crossing          | −2, 0, 0  | 7, 9, 7    |                                | forward, left, right 2, 0, bridge                                                                                                        |
+   | Stairs room            | −2, 0, 0  | 7, 11, 7   |                                | right 2, 6, bridge                                                                                                                       |
+   | Monster throne         | −2, 0, 0  | 7, 8, 9    |                                |                                                                                                                                          |
+   | Castle entrance        | −5, −3, 0 | 13, 14, 13 |                                | forward 5, 3, castle                                                                                                                     |
+   | End filler             | −1, −3, 0 | 5, 10, 8   | `R.nextInt()`, its own seed    |                                                                                                                                          |
+   | Small corridor         | −1, 0, 0  | 5, 7, 5    |                                | forward 1, 0, castle                                                                                                                     |
+   | Small crossing         | −1, 0, 0  | 5, 7, 5    |                                | forward, left, right 1, 0, castle                                                                                                        |
+   | Right turn, left turn  | −1, 0, 0  | 5, 7, 5    | a chest if `R.nextInt(3) == 0` | right (left) 1, 0, castle                                                                                                                |
+   | Corridor stairs        | −1, −7, 0 | 5, 14, 10  |                                | forward 1, 0, castle                                                                                                                     |
+   | T balcony              | −3, 0, 0  | 9, 7, 9    |                                | left then right, `across` 5 facing west or north, else 1, `up` 0, each from the castle list if `R.nextInt(8) > 0`, drawn before it grows |
+   | Stalk room             | −5, −3, 0 | 13, 14, 13 |                                | forward 5, 3 and forward 5, 11, castle                                                                                                   |
+
+5. **The move** (`moveInsideHeights(R, 48, 70)`): with `B` the box around every piece, `room = 23 − B.ySpan`, and `y = 48 + R.nextInt(room)` if `room > 1`, else 48. Every piece moves by `y − B.minY`. Fortresses don't adapt terrain: the bounds are `B`, moved.
+
+_Versions:_ the same in 26.2, 26.3 and 26.4-snapshot-7.
+
+## Strongholds
+
+Implemented in `stronghold.rs` (`spyglass-structure`), given by `Starts::stronghold_pieces` and `Starts::assemble`, at each [ring position](#concentric-rings). Nothing reads the world. The check is at `(minX, 0, minZ)`.
+
+1. **Attempts:** for `a` = 0, 1, 2 and on, the random `R` is `setLargeFeatureSeed(seed + a, chunkX, chunkZ)` and the layout is made afresh, counts and all, until one has a portal room.
+2. **The start**, the spiral stairs: facing `R.nextInt(4)`, its box `(minX + 2, 64, minZ + 2)` to `(minX + 6, 74, minZ + 6)`, depth 0. Its one exit, forward 1, 1, is a five-way crossing if that fits (`imposedPiece`: not counted, and not the last pick).
+3. **A child** at depth `d + 1`, from an exit of a piece at depth `d`: none past depth 50, more than 112 from the start's corner, or once every limited type is used up. Otherwise a [weighted pick](#legacy-pieces) in which no type follows itself; the library needs depth `d + 1 > 4`, the portal room `> 5`. Without a piece, a filler corridor: where the box at offset (−1, −1, 0), 5 × 5 × 4, hits a piece whose least y is the same, the first of lengths 2 and 1 that misses it, plus one, if its least y is above 1. A piece is made only if its box is above y 10 and collides with nothing.
+4. **Types** (weight, limit): straight 40, none; prison hall 5, 5; left turn 20, none; right turn 20, none; room crossing 10, 6; straight stairs down 5, 5; stairs down 5, 5; five-way crossing 5, 4; chest corridor 5, 4; library 10, 2; portal room 20, 1.
+5. **Pieces**: offset and size; every constructor but the portal room's first draws its door, `R.nextInt(5)`:
+
+   | Piece                | Offset    | Size                                       | Then draws                                                                         | Exits (`across`, `up`)                                                                                                                               |
+   | -------------------- | --------- | ------------------------------------------ | ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+   | Straight             | −1, −1, 0 | 5, 5, 7                                    | a left door if `R.nextInt(2) == 0`, then a right one                               | forward 1, 1; left 2, 1 and right 2, 1 if drawn                                                                                                      |
+   | Prison hall          | −1, −1, 0 | 9, 5, 11                                   |                                                                                    | forward 1, 1                                                                                                                                         |
+   | Left turn            | −1, −1, 0 | 5, 5, 5                                    |                                                                                    | left 1, 1 facing north or east, else right                                                                                                           |
+   | Right turn           | −1, −1, 0 | 5, 5, 5                                    |                                                                                    | right 1, 1 facing north or east, else left                                                                                                           |
+   | Room crossing        | −4, −1, 0 | 11, 7, 11                                  | its room, `R.nextInt(5)`                                                           | forward, left, right 4, 1                                                                                                                            |
+   | Straight stairs down | −1, −7, 0 | 5, 11, 8                                   |                                                                                    | forward 1, 1                                                                                                                                         |
+   | Stairs down, start   | −1, −7, 0 | 5, 11, 5                                   |                                                                                    | forward 1, 1                                                                                                                                         |
+   | Five-way crossing    | −4, −3, 0 | 10, 9, 11                                  | left low, left high and right low `R.nextBoolean()`, right high `R.nextInt(3) > 0` | forward 5, 1; then if drawn left low 1, `l`; left high 7, `h`; right low 1, `l`; right high 7, `h`, with `l`, `h` 3, 5, or 5, 3 facing west or north |
+   | Chest corridor       | −1, −1, 0 | 5, 5, 7                                    |                                                                                    | forward 1, 1                                                                                                                                         |
+   | Library              | −4, −1, 0 | 14, 11, 15, or 14, 6, 15 if that won't fit | tall if 11 high                                                                    |                                                                                                                                                      |
+   | Portal room          | −4, −1, 0 | 11, 8, 16                                  | no door                                                                            |                                                                                                                                                      |
+
+6. **The move** (`moveBelowSeaLevel(seaLevel, minY, R, 10)`), every attempt, as a normal [mineshaft's](#mineshafts). Strongholds bury, so the bounds are the moved box grown by 12.
+
+_Versions:_ the same in 26.2, 26.3 and 26.4-snapshot-7. Checked at the ring positions the structure golden files try ([oracle.md](oracle.md#structure-golden-files)).
+
+## Woodland mansions
+
+Implemented in `mansion.rs` (`spyglass-structure`), given by `Starts::mansion_pieces` and `Starts::assemble`. From the start's check ([The Nether and the End](#the-nether-and-the-end) gives the footprint rule), the context random `R` has drawn the rotation `rot`, and the start `P` is the chunk's (7, 7) at the lowest corner's height. The rest draws from the same `R`; nothing reads the world, so the height only moves the layout. All arithmetic is `int`.
+
+**The grid** (`MansionGrid`) is 11 × 11 cells (out of the grid: blocked), each 8 blocks: clear 0, corridor 1, room 2, start room 3, test room 4, blocked 5; "house" is 1 to 4.
+
+1. **The base grid**, with the entrance at (7, 4): start room (7, 4)–(8, 5), room (6, 4)–(6, 5), blocked (9, 2)–(10, 7), corridors (8, 2)–(8, 3), (8, 6)–(8, 7), (6, 3) and (6, 6), blocked rows 0–1 and 9–10.
+2. **Corridors** (`recursiveCorridor(x, y, dir, depth)`), from (7, 2) and (7, 7) west for 6, then (5, 3) and (5, 6) west for 3: none at depth 0; the cell becomes a corridor, the one ahead too if clear; then up to 8 tries of `r = from2DDataValue(R.nextInt(4))` (south, west, north, east), skipping the opposite of `dir`, and east on `R.nextBoolean()`; the first `r` whose two cells beyond the one ahead are clear continues from there at depth − 1. Last, the clear cells to either side, ahead and to either side of it, two ahead, and two to either side become rooms. Then, until nothing changes, each clear cell (y outer, x inner, in place) with 3 or 4 house neighbours, or 2 and at most one house diagonal, becomes a room.
+3. **Rooms** (`identifyRooms`), for floors 0 and 1 from the base grid: its room cells (y outer) shuffled (`Util.shuffle`); each not yet in a room starts one, 2 × 2 if the cells to +x, +y and +x+y are free rooms, else −x,+y, else −x,−y, else 1 × 2 to +x, +y, −x or −y, else 1 × 1. Its origin is a corner from `R.nextBoolean()` for x, then y; if no corridor borders it, the opposite corner, then the other two in turn; with none, no door, at the least corner. Ids count from 10. Floors 0 and 1 then mark (8, 4)–(8, 5) as carpeted.
+4. **The third floor:** a floor 1 1 × 2 room with a door, picked by `R.nextInt`, takes the stairs; its other cell `s` starts a third-floor grid (the base's house cells clear, the rest blocked, both stair cells start rooms, `s` carpeted on floor 2), whose corridor grows from a clear neighbour of `s` picked by `R.nextInt` (north, east, south, west), depth 4, then its gaps fill. Without such a room or neighbour, the third floor is all blocked. Its rooms are identified as above.
+
+**Pieces** (`MansionPiecePlacer.createMansion`) are templates `minecraft:woodland_mansion/<name>`, turned about their corner, some mirrored first (left-right negates z, front-back x). A grid cell `(x, y)` on a level based at `B` is `B` moved `8 + 8(y − 5)` south and `8(x − 8)` east, turned by `rot`; rooms and indoor walls one block further west.
+
+1. `entrance` at `P` 9 west; then the outer walls of floors 0 and 1, walking clockwise from cell (8, 5) south back to (8, 4) facing south, from `P` 16 south and 8 higher: a wall piece (`wall_flat`, `wall_window`) per side, `wall_corner` at outer corners, turning the walk's own rotation. The third floor's walls start from the first third-floor house cell (y ascending, x descending), 19 above where the first walk ended.
+2. Roofs over floors 0 and 1 at `P` + 16 and over floor 2 at `P` + 27: `roof`, `roof_front`, `roof_corner` and `roof_inner_corner` on cells with no floor above, `small_wall` and `small_wall_corner` around those under one.
+3. Each floor at `P` + 0, 8 and 19: corridor cells' `corridor_floor` and carpets; then, for each room cell (and floor 2's stair cells), indoor walls or doors on sides that leave the room, and at its origin the room: the door, `R.nextInt` of the corridors around it (none: a secret room), then its template, drawn as it's named: 1 × 1 `1x1_a` (floor 0) or `1x1_b` `R.nextInt(5) + 1`, a secret one `1x1_as` `R.nextInt(4) + 1` after; 1 × 2 by door and direction, a side entrance (`1x2_a` 9, `1x2_c` 4 or `1x2_c_stairs`), front entrance (`1x2_b` 5, `1x2_d` 5 or `1x2_d_stairs`) or secret (`1x2_s` 2, `1x2_se` `nextInt(1)`); 2 × 2 `2x2_a` 4 or `2x2_b` 5, a secret `2x2_s1` without a draw.
+
+Mansions don't adapt terrain: the bounds are the pieces'.
+
+_Versions:_ the same in 26.2, 26.3 and 26.4-snapshot-7. Checked against the golden files' mansions, which the oracle finds beyond the regions ([oracle.md](oracle.md#structure-golden-files)).
+
+## Ocean ruins
+
+Implemented in `ocean_ruin.rs` (`spyglass-structure`), given by `Starts::ocean_ruin_pieces` and `Starts::assemble`. The context random `R` is `setLargeFeatureSeed(seed, chunkX, chunkZ)`; nothing reads the world. Pieces are templates `minecraft:underwater_ruin/<name>`, turned about their corner, laid out at y 90.
+
+1. At the chunk's corner `(minX, 90, minZ)`: the rotation `R.nextInt(4)`; large if `R.nextFloat() <= large_probability` (`float`), integrity 0.9 large, else 0.8.
+2. **A ruin** (`addPiece`): warm, one of `big_warm_4` to `_7` (`R.nextInt(4)`) or `warm_1` to `_8` (`R.nextInt(8)`); cold, one index `R.nextInt(4)` (big: `_1`, `_2`, `_3`, `_8`) or `R.nextInt(8)` for three pieces, brick, cracked and mossy, at integrity as drawn, 0.7 and 0.5.
+3. **A cluster**, for a large ruin on `R.nextFloat() <= cluster_probability`: eight spots around the least corner of the large ruin's 16 × 16 footprint, x then z of each drawn: (−15 to −8, 17 to 23), (−15 to −8, 1 to 7), (−15 to −8, −12 to −8), (1 to 7, 17 to 23), (1 to 7, −12 to −10), (17 to 23, 19 to 24), (17 to 23, 1 to 7), (17 to 23, −12 to −8). Then `R.nextInt(5) + 4` times a spot `R.nextInt(size)` is taken and a rotation `R.nextInt(4)` drawn; unless its 6 × 7 footprint meets the large one's, a small ruin goes there at 0.8.
+
+Ocean ruins don't adapt terrain: the bounds are the pieces', at y 90.
+
+_Versions:_ the same in 26.2, 26.3 and 26.4-snapshot-7.
+
+## End cities
+
+Implemented in `end_city.rs` (`spyglass-structure`), given by `Starts::end_city_pieces` and `Starts::assemble`. From the start's check ([The Nether and the End](#the-nether-and-the-end)): the context random `R` (`setLargeFeatureSeed(seed, chunkX, chunkZ)`) has drawn the rotation `r`, and the start is at the chunk's (7, 7) at the lowest corner's height. Nothing in the layout reads the world, so the height only moves it. All arithmetic is `int`.
+
+**Pieces** (`EndCityPiece`) are templates `minecraft:end_city/<name>`, turned about their corner, never mirrored; a piece's box is its template's box turned and moved to its corner. A child at offset `o` from its parent `P` has its corner at `P.corner + P.rotation(o)`: the parent's rotation turns the offset, whatever the child's own. Rotations add (`getRotated`) in the order none, clockwise 90, 180, counterclockwise 90.
+
+**Start** (`startHouseTower`): `base_floor` at the start, turned `r`; then `second_floor_1` at (−1, 0, −1), `third_floor_1` at (−1, 4, −1) and `third_roof` at (−1, 8, −1), each from the one before; then a tower from the roof at depth 1, into the start's pieces.
+
+**Children** (`recursiveChildren(generator, depth, parent, list)`): none past depth 8. Otherwise the generator adds its pieces to a new list; if it returns true, `stamp = R.nextInt()`, and each new piece in order takes `genDepth = stamp` and is tested against `list`: the first piece of `list` whose box shares a block with it, if its `genDepth` isn't the parent's, rejects the whole new list. Otherwise the new list is appended to `list`. Each generator passes its own list to the children it grows, so a subtree is tested only against the list it would join. A rejected list keeps its draws. New pieces have `genDepth` 0; a bridge's first piece and its far end take −1.
+
+**Generators**, each turning its pieces by the parent's rotation `t`:
+
+- **Tower:** `tower_base` at (3 + `R.nextInt(2)`, −3, 3 + `R.nextInt(2)`), x drawn first; `tower_piece` at (0, 7, 0); the bridges leave from it if `R.nextInt(3) == 0`; `floors = 1 + R.nextInt(3)` more `tower_piece`s at (0, 4, 0), each but the last taking the bridges on `R.nextBoolean()`. With bridges, for each of `TOWER_BRIDGES` (none (1, −1, 0), clockwise 90 (6, −1, 1), counterclockwise 90 (0, −1, 5), 180 (5, −1, 6)) on `R.nextBoolean()`: a `bridge_end` at that offset from the bridges' piece, turned `t` plus the entry's rotation, then a bridge from it at depth + 1, whatever the bridge's outcome. Then `tower_top` at (−1, 4, −1) from the last tower piece. Without bridges: a fat tower at depth + 1, whose outcome is the tower's; at depth 7, `tower_top` instead.
+- **Bridge:** `segments = R.nextInt(4) + 1`; `bridge_piece` at (0, 0, −4) (`genDepth` −1), `h = 0`; each segment on `R.nextBoolean()` a `bridge_piece` at (0, h, −4) and `h = 0`, else on `R.nextBoolean()` `bridge_steep_stairs` at (0, h, −4), or `bridge_gentle_stairs` at (0, h, −8), and `h = 4`. Then, if no ship has been tried in this start and `R.nextInt(10 − depth) == 0`, the `ship` at (−8 + `R.nextInt(8)`, h, −70 + `R.nextInt(10)`), and a ship has been tried, even if this list is later rejected; else a house tower at depth + 1 from (−3, h + 1, −11), and the bridge fails if it does. Last, `bridge_end` at (4, h, 0), turned `t` plus 180 (`genDepth` −1).
+- **House tower:** none past depth 8; `base_floor` at the given offset; `R.nextInt(3)`: 0, `base_roof` at (−1, 4, −1); 1, `second_floor_2` at (−1, 0, −1), `second_roof` at (−1, 8, −1) and a tower at depth + 1; 2, `second_floor_2`, `third_floor_2` at (−1, 4, −1), `third_roof` at (−1, 8, −1) and a tower at depth + 1. The towers' outcomes are ignored.
+- **Fat tower:** `fat_tower_base` at (−3, 4, −3), `fat_tower_middle` at (0, 4, 0); then up to twice, while `R.nextInt(3) != 0`, another `fat_tower_middle` at (0, 8, 0) and, for each of `FAT_TOWER_BRIDGES` (none (4, −1, 0), clockwise 90 (12, −1, 4), counterclockwise 90 (0, −1, 8), 180 (8, −1, 12)) on `R.nextBoolean()`, a `bridge_end` and a bridge as the tower's; last, `fat_tower_top` at (−2, 8, −2).
+
+"A ship has been tried" is the game's static `shipCreated`, reset by each start. The game makes starts on several threads, which can share it; spyglass follows one start at a time, as the oracle makes them.
+
+End cities don't adapt terrain: the bounds are the pieces'.
+
+_Versions:_ the same in 26.2, 26.3 and 26.4-snapshot-7.
+
 ## Placing pieces
 
-The layouts above are what a start holds. Placing them happens in decoration, each step's structures before its features, all of a structure's pieces in a chunk from one random ([features.md](features.md#structures)). What each piece writes and draws as it's placed, and so each container's position and loot seed, is in [loot.md](loot.md#containers): jigsaw templates, the single-piece structures, shipwrecks' and igloos' templates with their markers, ruined portals and mineshafts. Those are the pieces spyglass places; strongholds, fortresses, end cities, mansions and ocean-ruin clusters aren't laid out or placed yet.
+The layouts above are what a start holds. Placing them happens in decoration, each step's structures before its features, all of a structure's pieces in a chunk from one random ([features.md](features.md#structures)). What each piece writes and draws as it's placed, and so each container's position and loot seed, is in [loot.md](loot.md#containers): jigsaw templates, the single-piece structures, shipwrecks' and igloos' templates with their markers, ruined portals, mineshafts, end cities, fortresses, strongholds, mansions and ocean ruins.
 
 ## Bounds
 
-A start's box (`StructureStart.getBoundingBox`) is the box around its pieces' boxes, grown by 12 on every side if the structure's `terrain_adaptation` isn't `none` (`Structure.adjustBoundingBox`). In 26.3's Overworld that's strongholds and every jigsaw. Boxes are as generated, before placement moves any piece. spyglass gives them for jigsaw structures and mineshafts (`Layout`), and, for the box that holds an exploration map's container ([loot.md](loot.md#maps)), for single-piece structures: from `makeBoundingBox`, the pyramid's 21 × 15 × 21 at y 64, the temple's 12 × 10 × 15 and the swamp hut's 7 × 7 × 9, turned by the piece's random direction; the buried treasure's one block at `(minX + 9, 90, minZ + 9)`; the monument's 58 × 23 × 58 from `(minX − 29, 39, minZ − 29)`; a shipwreck's or igloo's templates at y 90 as laid out; a ruined portal's template.
+A start's box (`StructureStart.getBoundingBox`) is the box around its pieces' boxes, grown by 12 on every side if the structure's `terrain_adaptation` isn't `none` (`Structure.adjustBoundingBox`). In 26.3's Overworld that's strongholds and every jigsaw. Boxes are as generated, before placement moves any piece. spyglass gives them for jigsaw structures, mineshafts, end cities, fortresses, strongholds, mansions and ocean ruins (`Layout`), and, for the box that holds an exploration map's container ([loot.md](loot.md#maps)), for single-piece structures: from `makeBoundingBox`, the pyramid's 21 × 15 × 21 at y 64, the temple's 12 × 10 × 15 and the swamp hut's 7 × 7 × 9, turned by the piece's random direction; the buried treasure's one block at `(minX + 9, 90, minZ + 9)`; the monument's 58 × 23 × 58 from `(minX − 29, 39, minZ − 29)`; a shipwreck's or igloo's templates at y 90 as laid out; a ruined portal's template.
 
-Not covered: mansions, strongholds, fortresses, end cities and nether fossils. An ocean-ruin cluster's pieces stay within 48 blocks of its start chunk's corner (`OceanRuinPieces.addClusterRuins`: offsets of up to 24 from a corner up to 15 back, pieces up to 16 across), so its box is inside the chunk grown by 64.
+Not covered: nether fossils.
 
 ## The Nether and the End
 

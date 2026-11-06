@@ -1254,11 +1254,11 @@ impl<'w> Session<'w> {
         out
     }
 
-    /// The pieces of jigsaw structure or mineshaft `structure` (an id, e.g.
-    /// `minecraft:village_plains`) if it starts in `chunk`, as the game lays them out, with its
-    /// bounds. Whether it starts there is [`structures_in`](Self::structures_in)'s question;
-    /// this one assumes it does. `None` if the structure is neither, or a jigsaw with no start
-    /// piece there. Binds the seed's terrain, and the first call for a jigsaw in a world loads
+    /// The pieces of `structure` (an id, e.g. `minecraft:village_plains`) if it starts in
+    /// `chunk`, as the game lays them out, with its bounds: jigsaw structures, mineshafts,
+    /// strongholds, fortresses, end cities, mansions and ocean ruins. Whether it starts there is
+    /// [`structures_in`](Self::structures_in)'s question; this one assumes it does. `None` for
+    /// another type, or a jigsaw with no start piece there. Binds the seed's terrain, and the first call for a jigsaw in a world loads
     /// its template pools, which takes a while (about a second for 26.3).
     pub fn structure_layout(
         &self,
@@ -1273,12 +1273,10 @@ impl<'w> Session<'w> {
                 id: structure.to_string(),
             })?;
         let definition = &sets.structures()[index];
-        let starts = if definition.mineshaft.is_some() {
-            self.starts(true)
-        } else if definition.jigsaw.is_some() {
+        let starts = if definition.jigsaw.is_some() {
             self.starts(true).with_pools(self.world.pools()?)
         } else {
-            return Ok(None);
+            self.starts(true)
         };
         Ok(match starts.assemble(index, chunk) {
             Some(Assembly::Built(layout)) => Some(StructureLayout {

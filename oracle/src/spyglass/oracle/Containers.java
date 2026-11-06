@@ -92,10 +92,12 @@ final class Containers {
     static final int REACH = 8;
 
     /**
-     * Structure types whose piece generators keep state in static fields: a fortress's piece
-     * weights, an end city's ship. Their starts race when made at once on several threads.
+     * Structure types whose piece generators keep state in static fields: a fortress's and a
+     * stronghold's piece weights, an end city's ship. Their starts race when made at once on
+     * several threads.
      */
-    private static final Set<String> STATIC_STATE = Set.of("minecraft:fortress", "minecraft:end_city");
+    private static final Set<String> STATIC_STATE =
+            Set.of("minecraft:fortress", "minecraft:end_city", "minecraft:stronghold");
 
     /**
      * A container decoration made: what made it, where, the block or entity, the table and seed,
@@ -202,6 +204,61 @@ final class Containers {
             }
         }
 
+        // A ring set's starts are far from the origin: the one at its position nearest the origin.
+        for (var holder : state.possibleStructureSets()) {
+            if (!(holder.value().placement()
+                    instanceof net.minecraft.world.level.levelgen.structure.placement.ConcentricRingsStructurePlacement rp)) {
+                continue;
+            }
+            ChunkPos best = null;
+            for (ChunkPos p : state.getRingPositionsFor(rp)) {
+                long d = (long) p.x() * p.x() + (long) p.z() * p.z();
+                if (best == null || d < (long) best.x() * best.x() + (long) best.z() * best.z()) {
+                    best = p;
+                }
+            }
+            if (best == null) {
+                continue;
+            }
+            for (var entry : world.chunk(best).getAllStarts().entrySet()) {
+                if (!entry.getValue().getPieces().isEmpty()) {
+                    nearest.putIfAbsent(registry.getKey(entry.getKey()).toString(), entry.getValue());
+                }
+            }
+        }
+
+        // A set that starts too rarely to be near the origin (mansions): its nearest start, from
+        // placement chunks further out, square by square.
+        for (var holder : state.possibleStructureSets()) {
+            var set = holder.value();
+            if (set.placement()
+                    instanceof net.minecraft.world.level.levelgen.structure.placement.ConcentricRingsStructurePlacement
+                    || set.structures().stream().anyMatch(e -> nearest.containsKey(
+                            e.structure().unwrapKey().orElseThrow().identifier().toString()))) {
+                continue;
+            }
+            search:
+            for (int d = RADIUS + 1; d <= Structures.FAR_SEARCH; d++) {
+                for (int z = -d; z <= d; z++) {
+                    for (int x = -d; x <= d; x++) {
+                        if (Math.max(Math.abs(x), Math.abs(z)) != d
+                                || !set.placement().isStructureChunk(state, x, z)) {
+                            continue;
+                        }
+                        for (var entry : world.chunk(new ChunkPos(x, z)).getAllStarts().entrySet()) {
+                            String id = registry.getKey(entry.getKey()).toString();
+                            boolean ours = set.structures().stream().anyMatch(e -> e.structure()
+                                    .unwrapKey().orElseThrow().identifier().toString().equals(id));
+                            if (ours && !entry.getValue().getPieces().isEmpty()) {
+                                nearest.put(id, entry.getValue());
+                                break search;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // The chunks those starts reach, each decorated on its own.
         var chunks = new TreeSet<ChunkPos>(Comparator.comparingInt(ChunkPos::z).thenComparingInt(ChunkPos::x));
         for (StructureStart start : nearest.values()) {
@@ -237,7 +294,7 @@ final class Containers {
         }
 
         var root = new JsonObject();
-        root.addProperty("format", 2);
+        root.addProperty("format", 3);
         root.addProperty("harness", Main.HARNESS_VERSION);
         root.addProperty("version", game.version);
         root.addProperty("data_version", game.dataVersion);

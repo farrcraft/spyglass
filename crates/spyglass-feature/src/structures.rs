@@ -5,7 +5,8 @@
 use spyglass_blocks::ChunkGenerator;
 use spyglass_rng::WorldgenRandom;
 use spyglass_structure::{
-    Assembly, BoundingBox, Check, Layout, ShaftPiece, Starts, StructureSets, StructureType,
+    Assembly, BoundingBox, Check, CityPiece, FortressPiece, Layout, MansionPiece, ShaftPiece,
+    Starts, StrongholdPiece, StructureSets, StructureType,
 };
 
 use crate::blocks::Blocks;
@@ -47,8 +48,9 @@ fn footprint(kind: StructureType) -> Option<(i32, i32)> {
 }
 
 /// The pieces of every structure that could start within reach of chunk `[cx, cz]` and places
-/// in a step up to `last_step`: a jigsaw start's own pieces, and for any other start, or a
-/// jigsaw spyglass can't lay out, everything within reach of its start chunk. A start that only
+/// in a step up to `last_step`: a laid-out start's own pieces (jigsaws, mineshafts, end cities,
+/// mansions, fortresses, strongholds, ocean ruins), and for any other start, or one spyglass can't lay
+/// out, everything within reach of its start chunk. A start that only
 /// might be there counts.
 pub fn pieces(
     starts: &Starts<'_>,
@@ -78,18 +80,34 @@ pub fn pieces(
                     continue;
                 }
                 let laid_out = match info.kind {
-                    StructureType::Jigsaw => starts.assemble(structure, start),
+                    StructureType::Jigsaw
+                    | StructureType::Mineshaft
+                    | StructureType::EndCity
+                    | StructureType::Fortress
+                    | StructureType::Stronghold
+                    | StructureType::WoodlandMansion
+                    | StructureType::OceanRuin => starts.assemble(structure, start),
                     _ => None,
                 };
                 match laid_out {
                     Some(Assembly::Built(layout)) => {
                         // A mineshaft's corridors drop supports below their box to solid
-                        // ground and hang chains above it: whole columns.
-                        let column = info.kind == StructureType::Mineshaft;
+                        // ground and hang chains above it: whole columns. A fortress's
+                        // pieces fill columns down from theirs, as a mansion does under its own.
+                        // An ocean ruin's pieces settle on the floor below them, from y 90.
+                        let column = matches!(
+                            info.kind,
+                            StructureType::Mineshaft | StructureType::OceanRuin
+                        );
+                        let down = column
+                            || matches!(
+                                info.kind,
+                                StructureType::Fortress | StructureType::WoodlandMansion
+                            );
                         out.extend(layout.pieces.iter().map(|piece| Piece {
                             min: [
                                 piece.min[0],
-                                if column { min_y } else { piece.min[1] },
+                                if down { min_y } else { piece.min[1] },
                                 piece.min[2],
                             ],
                             max: [
@@ -169,7 +187,15 @@ pub fn containers(
     let mut out = Vec::new();
     for structure in order {
         let info = &sets.structures()[structure];
-        let laid_out = matches!(info.kind, StructureType::Jigsaw | StructureType::Mineshaft);
+        let laid_out = matches!(
+            info.kind,
+            StructureType::Jigsaw
+                | StructureType::Mineshaft
+                | StructureType::EndCity
+                | StructureType::Fortress
+                | StructureType::Stronghold
+                | StructureType::WoodlandMansion
+        );
         // The starts whose pieces reach the chunk (`createReferences`), each with whether it's
         // surely there. The single-piece structures spyglass places put their containers near
         // their start chunk.
@@ -205,6 +231,30 @@ pub fn containers(
                     {
                         referencing.push((start, Laid::Shaft(pieces), sure));
                     }
+                } else if info.kind == StructureType::WoodlandMansion {
+                    if let Some(pieces) = starts.mansion_pieces(structure, start)
+                        && pieces.iter().any(|p| p.bounds().intersects(&chunk))
+                    {
+                        referencing.push((start, Laid::Mansion(pieces), sure));
+                    }
+                } else if info.kind == StructureType::Stronghold {
+                    if let Some(pieces) = starts.stronghold_pieces(structure, start)
+                        && pieces.iter().any(|p| p.bounds.intersects(&chunk))
+                    {
+                        referencing.push((start, Laid::Stronghold(pieces), sure));
+                    }
+                } else if info.kind == StructureType::Fortress {
+                    if let Some(pieces) = starts.fortress_pieces(structure, start)
+                        && pieces.iter().any(|p| p.bounds.intersects(&chunk))
+                    {
+                        referencing.push((start, Laid::Fortress(pieces), sure));
+                    }
+                } else if info.kind == StructureType::EndCity {
+                    if let Some(pieces) = starts.end_city_pieces(structure, start)
+                        && pieces.iter().any(|p| p.bounds().intersects(&chunk))
+                    {
+                        referencing.push((start, Laid::City(pieces), sure));
+                    }
                 } else if !laid_out {
                     referencing.push((start, Laid::Single, sure));
                 } else if let Some(Assembly::Built(layout)) = starts.assemble(structure, start)
@@ -231,64 +281,110 @@ pub fn containers(
         };
         // The starts place from one random in an order spyglass doesn't know, so with several,
         // each order's containers are candidates; past a few starts, only the one order.
-        let place =
-            |region: &mut Region<'_>, order: &[usize], out: &mut Vec<StructureContainer>| {
-                let mut random = WorldgenRandom::new(0);
-                random.set_feature_seed(decoration, info.step_index as i32, info.step as i32);
-                let mut unknown = (order.len() > 1).then_some(ContainerDoubt::StartOrder);
-                for &i in order {
-                    let (start, layout, sure) = &referencing[i];
-                    let first = out.len();
-                    match layout {
-                        Laid::Shaft(pieces) => {
-                            let mut shaft = Shaft {
-                                region: &mut *region,
+        let place = |region: &mut Region<'_>,
+                     order: &[usize],
+                     out: &mut Vec<StructureContainer>| {
+            let mut random = WorldgenRandom::new(0);
+            random.set_feature_seed(decoration, info.step_index as i32, info.step as i32);
+            let mut unknown = (order.len() > 1).then_some(ContainerDoubt::StartOrder);
+            for &i in order {
+                let (start, layout, sure) = &referencing[i];
+                let first = out.len();
+                match layout {
+                    Laid::Shaft(pieces) => {
+                        let mut shaft = Shaft {
+                            region: &mut *region,
+                            blocks,
+                            shaft_blocks: &containers.shaft,
+                            info,
+                            structure,
+                            blocking: &blocking,
+                            reads,
+                            random: &mut random,
+                            doubt: unknown.clone(),
+                            out: &mut *out,
+                        };
+                        shaft.place(pieces);
+                        // A start that might not be there makes the next one's draws unknown.
+                        unknown = shaft.doubt.take().or(unknown);
+                        if !sure {
+                            unknown.get_or_insert(ContainerDoubt::Start);
+                        }
+                    }
+                    Laid::Jigsaw(layout) => containers.jigsaw(
+                        blocks,
+                        region,
+                        layout,
+                        structure,
+                        &mut random,
+                        &mut unknown,
+                        reads,
+                        out,
+                    ),
+                    Laid::City(_) | Laid::Mansion(_) | Laid::Fortress(_) | Laid::Stronghold(_) => {
+                        match layout {
+                            Laid::City(pieces) => scattered::end_city(
+                                pieces,
                                 blocks,
-                                shaft_blocks: &containers.shaft,
-                                info,
                                 structure,
-                                blocking: &blocking,
+                                region,
+                                &mut random,
                                 reads,
-                                random: &mut random,
-                                doubt: unknown.clone(),
-                                out: &mut *out,
-                            };
-                            shaft.place(pieces);
-                            // A start that might not be there makes the next one's draws unknown.
-                            unknown = shaft.doubt.take().or(unknown);
-                            if !sure {
-                                unknown.get_or_insert(ContainerDoubt::Start);
+                                out,
+                            ),
+                            Laid::Mansion(pieces) => scattered::mansion(
+                                pieces,
+                                blocks,
+                                structure,
+                                region,
+                                &mut random,
+                                out,
+                            ),
+                            Laid::Stronghold(pieces) => scattered::stronghold(
+                                pieces,
+                                structure,
+                                region,
+                                &mut random,
+                                reads,
+                                out,
+                            ),
+                            Laid::Fortress(pieces) => {
+                                scattered::fortress(pieces, structure, region, &mut random, out)
+                            }
+                            _ => {}
+                        }
+                        // Not after an earlier start's draws that aren't known.
+                        if let Some(why) = &unknown {
+                            for c in &mut out[first..] {
+                                c.seed = None;
+                                c.doubt.get_or_insert(why.clone());
                             }
                         }
-                        Laid::Jigsaw(layout) => containers.jigsaw(
-                            blocks,
-                            region,
-                            layout,
-                            structure,
-                            &mut random,
-                            &mut unknown,
-                            reads,
-                            out,
-                        ),
-                        Laid::Single => {
-                            let start = scattered::Start {
-                                info,
-                                structure,
-                                chunk: *start,
-                                starts,
-                                blocks,
-                                cannot_replace: containers.cannot_replace,
-                            };
-                            scattered::containers(&start, region, seed, &mut random, reads, out);
+                        if !sure {
+                            unknown.get_or_insert(ContainerDoubt::Start);
                         }
                     }
-                    if !sure {
-                        for c in &mut out[first..] {
-                            c.doubt.get_or_insert(ContainerDoubt::Start);
-                        }
+                    Laid::Single => {
+                        let start = scattered::Start {
+                            info,
+                            structure,
+                            chunk: *start,
+                            starts,
+                            blocks,
+                            cannot_replace: containers.cannot_replace,
+                            ice: containers.ice,
+                            ruins: &containers.ruins,
+                        };
+                        scattered::containers(&start, region, seed, &mut random, reads, out);
                     }
                 }
-            };
+                if !sure {
+                    for c in &mut out[first..] {
+                        c.doubt.get_or_insert(ContainerDoubt::Start);
+                    }
+                }
+            }
+        };
         let orders = if referencing.len() <= MAX_ORDERED_STARTS {
             permutations(referencing.len())
         } else {
@@ -313,7 +409,15 @@ pub fn containers(
 
 /// Whether spyglass places `kind`'s containers ([`containers`]).
 pub fn places_containers(kind: StructureType) -> bool {
-    matches!(kind, StructureType::Jigsaw | StructureType::Mineshaft) || scattered::places(kind)
+    matches!(
+        kind,
+        StructureType::Jigsaw
+            | StructureType::Mineshaft
+            | StructureType::EndCity
+            | StructureType::Fortress
+            | StructureType::Stronghold
+            | StructureType::WoodlandMansion
+    ) || scattered::places(kind)
 }
 
 /// With at most this many starts of a structure reaching a chunk, every order they could place
@@ -340,6 +444,14 @@ fn permutations(n: usize) -> Vec<Vec<usize>> {
 enum Laid {
     Jigsaw(Layout),
     Shaft(Vec<ShaftPiece>),
+    /// An end city's template pieces.
+    City(Vec<CityPiece>),
+    /// A mansion's template pieces.
+    Mansion(Vec<MansionPiece>),
+    /// A fortress's pieces.
+    Fortress(Vec<FortressPiece>),
+    /// A stronghold's pieces.
+    Stronghold(Vec<StrongholdPiece>),
     /// A single-piece structure, laid out as it's placed.
     Single,
 }

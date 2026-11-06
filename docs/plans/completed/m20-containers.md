@@ -7,7 +7,7 @@
 
 ## Goal
 
-Where each loot container is, with its loot table and loot seed, certain or a candidate, for the structures and features spyglass places. With [m20-tables](m20-tables.md)'s rolls, that's what's in the chests. It meets the first exit criterion for the structures spyglass lays out and for dungeons: the golden seeds' nearest of each kind, their containers' contents the game's, in every supported version. [m20-layouts](../m20-layouts.md) adds the rest.
+Where each loot container is, with its loot table and loot seed, certain or a candidate, for the structures and features spyglass places. With [m20-tables](m20-tables.md)'s rolls, that's what's in the chests. It meets the first exit criterion for the structures spyglass lays out and for dungeons: the golden seeds' nearest of each kind, their containers' contents the game's, in every supported version. [m20-layouts](m20-layouts.md) adds the rest.
 
 ## Approach
 
@@ -26,7 +26,7 @@ Where each loot container is, with its loot table and loot seed, certain or a ca
 - **Template structures with data markers** (shipwrecks, igloos, ocean ruins, ruined portals): the template's draws, then the markers'.
 - **Mineshafts:** corridors draw per block for cobwebs, rails and supports, and read the blocks (`isInInvalidLocation`, air below a minecart). Their containers need each corridor's `postProcess` ported over carved blocks. They're the most common container underground, so this is a task of its own, measured first.
 
-**Structures spyglass doesn't lay out** (strongholds, fortresses, end cities, mansions and ocean-ruin clusters, [structure-placement.md](../../specs/structure-placement.md#bounds)) get their layouts and containers in [m20-layouts](../m20-layouts.md), after this plan, with its rules.
+**Structures spyglass doesn't lay out** (strongholds, fortresses, end cities, mansions and ocean-ruin clusters, [structure-placement.md](../../specs/structure-placement.md#bounds)) get their layouts and containers in [m20-layouts](m20-layouts.md), after this plan, with its rules.
 
 **Certainty.** As for features ([ADR 0056](../../adr/0056-two-certainties-on-its-own-and-whatever-the-neighbours.md)), each container is certain or a candidate with a reason: an earlier draw spyglass doesn't know (a feature element, a piece it can't place), a block read it can't decide (a tie, a feature placed earlier, a neighbour decorated first), or the start itself being a candidate. A container in a chunk whose decoration spyglass can't settle has a position and table but no seed.
 
@@ -80,5 +80,5 @@ Where each loot container is, with its loot table and loot seed, certain or a ca
   - **Census (26.3):** villages 80 containers in 67 of 478 templates (18 fisher barrels without a table); outposts 2; bastions 37; ancient cities 15; trial chambers 29 (chests, dispensers, pots, barrels, a hopper); trail ruins none; abandoned camps 414 in all 297 templates.
   - **Piece state is decided by the first chunk decorated:** a pyramid's height, a wreck's height and its beached draw, a spider corridor's spawner. Only the beached draw changes a seed.
 
-- 2026-11-04: structures with no layout get [m20-layouts](../m20-layouts.md), a plan of their own, rather than a narrower exit criterion.
+- 2026-11-04: structures with no layout get [m20-layouts](m20-layouts.md), a plan of their own, rather than a narrower exit criterion.
 - 2026-11-04: from the survey that wrote this plan (26.3): templates with loot tables are in 7 jigsaw structures' pools: villages, outposts, bastions, ancient cities, ruined portals, trial chambers and abandoned camps. Trial chambers' vaults are rolled per player and stay out of scope; their decorated pots and dispensers have tables. Desert pyramids', trail ruins' and the well's suspicious blocks are archaeology, out of scope.

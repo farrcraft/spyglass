@@ -49,6 +49,12 @@ impl Rotation {
         Rotation::Counterclockwise90,
     ];
 
+    /// `Rotation.getRotated`: this turn, then `by`.
+    pub(crate) fn rotated(self, by: Rotation) -> Rotation {
+        let index = |r: Rotation| Self::ALL.iter().position(|&x| x == r).unwrap_or(0);
+        Self::ALL[(index(self) + index(by)) % 4]
+    }
+
     /// `Rotation.getRandom`: `values()[nextInt(4)]`.
     pub fn random(random: &mut LegacyRandomSource) -> Self {
         Self::ALL[random.next_int_bounded(4) as usize]

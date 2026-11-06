@@ -225,7 +225,7 @@ struct Costs {
     /// A seed's containers, with their comparison. Estimated from local runs (16 threads) at
     /// four times as long, until CI's logs have them.
     containers: f64,
-    /// `oracle locate`'s server, and its comparison.
+    /// `oracle locate`'s server, its map cases included, and their comparisons.
     locate: f64,
     /// `oracle loot`'s fills, and their comparison.
     loot: f64,
@@ -250,7 +250,7 @@ const COSTS: &[Costs] = &[
         features: 5.0,
         dungeon: 22.0,
         containers: 10.0,
-        locate: 8.5,
+        locate: 12.0,
         loot: 1.0,
         bundle: 14.0,
     },
@@ -266,7 +266,7 @@ const COSTS: &[Costs] = &[
         features: 3.1,
         dungeon: 4.5,
         containers: 4.5,
-        locate: 2.0,
+        locate: 5.0,
         loot: 1.0,
         bundle: 3.0,
     },
@@ -283,7 +283,7 @@ const COSTS: &[Costs] = &[
         features: 3.1,
         dungeon: 4.8,
         containers: 5.0,
-        locate: 2.5,
+        locate: 5.5,
         loot: 1.0,
         bundle: 11.0,
     },

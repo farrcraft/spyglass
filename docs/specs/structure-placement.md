@@ -331,9 +331,9 @@ _Versions:_ the same in 26.2, 26.3 and 26.4-snapshot-6 but for the mesa's height
 
 ## Bounds
 
-A start's box (`StructureStart.getBoundingBox`) is the box around its pieces' boxes, grown by 12 on every side if the structure's `terrain_adaptation` isn't `none` (`Structure.adjustBoundingBox`). In 26.3's Overworld that's strongholds and every jigsaw. Boxes are as generated, before placement moves any piece. spyglass gives them for jigsaw structures and mineshafts (`Layout`).
+A start's box (`StructureStart.getBoundingBox`) is the box around its pieces' boxes, grown by 12 on every side if the structure's `terrain_adaptation` isn't `none` (`Structure.adjustBoundingBox`). In 26.3's Overworld that's strongholds and every jigsaw. Boxes are as generated, before placement moves any piece. spyglass gives them for jigsaw structures and mineshafts (`Layout`), and, for the box that holds an exploration map's container ([loot.md](loot.md#maps)), for single-piece structures: from `makeBoundingBox`, the pyramid's 21 × 15 × 21 at y 64, the temple's 12 × 10 × 15 and the swamp hut's 7 × 7 × 9, turned by the piece's random direction; the buried treasure's one block at `(minX + 9, 90, minZ + 9)`; the monument's 58 × 23 × 58 from `(minX − 29, 39, minZ − 29)`; a shipwreck's or igloo's templates at y 90 as laid out; a ruined portal's template.
 
-Not covered: single-piece structures (whose boxes would come from `makeBoundingBox`: the pyramid's 21 × 15 × 21 at y 64, the temple's 12 × 10 × 15, the swamp hut's 7 × 7 × 9, rotated by the piece's random direction; the buried treasure's one block at `(minX + 9, 90, minZ + 9)`; the monument's 58 × 23 × 58 from `(minX − 29, 39, minZ − 29)`), mansions, strongholds and ocean-ruin clusters.
+Not covered: mansions, strongholds, fortresses, end cities and nether fossils. An ocean-ruin cluster's pieces stay within 48 blocks of its start chunk's corner (`OceanRuinPieces.addClusterRuins`: offsets of up to 24 from a corner up to 15 back, pieces up to 16 across), so its box is inside the chunk grown by 64.
 
 ## The Nether and the End
 

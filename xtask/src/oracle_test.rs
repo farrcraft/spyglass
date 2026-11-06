@@ -207,6 +207,11 @@ pub(crate) const TESTS: &[(&str, &str, &[Input])] = &[
         &[Input::Containers, Input::Bundle],
     ),
     (
+        "spyglass-structure",
+        "map_targets_match_the_game",
+        &[Input::Locate, Input::Bundle],
+    ),
+    (
         "spyglass-loot",
         "every_container_table_loads_and_fills",
         &[Input::Bundle],

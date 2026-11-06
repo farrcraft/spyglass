@@ -525,6 +525,8 @@ The cases, per dimension, from 3 positions in it:
 - **Nether:** the fortress, the bastion, the nether fossil and the Nether's ruined portal, and its 5 biomes. The positions are roughly the Overworld's divided by 8, at heights inside the Nether.
 - **End:** the end city, and its 5 biomes, from the main island and the outer islands.
 
+- **Map cases**, on a seed's server after its locate cases: each of the version's exploration maps, every chest table entry with an `exploration_map` function ([loot.md](loot.md#maps)), filled from the Overworld's 3 positions, then from up to 2 of the seed's [golden containers](#container-golden-files) of each table that gives one, where the seed's container file exists. The server's world has a data pack, `spyglass_maps`, with a table per entry, `spyglass:map/<i>`, giving that entry alone, copied from the bundle's table without its conditions and weight, in the version's own form; its `pack.mcmeta` takes the jar's `version.json` `data_major`. A chest at (0, 100, 0) in a force-loaded chunk takes each map: `item replace` empties its first slot, `execute positioned <from> run loot replace block` fills it from the case's position, the fill's origin, and `data get block … Items[0].components."minecraft:map_decorations"` reads the target, whose `x` and `z` are the answer. The cases run in order on one world, so a map that skips known structures claims what it finds for the cases after it.
+
 It takes under a minute per seed, and isn't part of `golden`.
 
 **On a world save**, `cargo xtask oracle locate --world <save>` (repeatable) does the same on a **copy** of the save, made in the throwaway directory without its `session.lock`; the server never opens the save itself. `server.properties` leaves out `level-seed`, and the cases add the single player's position as a fourth origin in the player's dimension. The answers go to `oracle-out/<version>/locate/world-<folder>.json`, which also records `world_dir`, and the comparison opens the save through `inspect_save` ([world-saves.md](world-saves.md#testing)).
@@ -533,7 +535,7 @@ One UTF-8 JSON file per seed, `oracle-out/<version>/locate/<seed>.json`:
 
 ```json
 {
-  "format": 2,
+  "format": 3,
   "version": "26.3",
   "seed": "0",
   "cases": [
@@ -546,9 +548,26 @@ One UTF-8 JSON file per seed, `oracle-out/<version>/locate/<seed>.json`:
       "found": "minecraft:village_plains",
       "message": "The nearest #minecraft:village (minecraft:village_plains) is at [272, ~, 944] (982 blocks away)"
     }
+  ],
+  "maps": [
+    {
+      "table": "minecraft:chests/shipwreck_map",
+      "function": {
+        "type": "minecraft:exploration_map",
+        "decoration": "minecraft:red_x",
+        "destination": "#minecraft:on_treasure_maps",
+        "skip_existing_chunks": false,
+        "zoom": 1
+      },
+      "from": [0, 64, 0],
+      "target": [9, -343],
+      "message": "… 0, 100, 0 has the following block data: {+: {rotation: 180.0f, x: 9.0d, z: -343.0d, type: \"minecraft:red_x\"}}"
+    }
   ]
 }
 ```
+
+`maps`, from format 3, are the map cases in the order they ran: the entry's table and its function as the table writes it, the position it was filled from, and the target's block x and z, or null where the map marks nothing. A save's file has none.
 
 `seed` is the text given to the server, or the save's seed as text. `dimension` is the case's dimension, which `from` and `answer` are in. Format 1 files have one `dimension` for the whole file, always the Overworld. `answer` is null when the game found nothing; its y is null where the game prints `~`. `found` is the structure or biome named in the message. [locate.md](locate.md#testing) has the Rust-side comparison.
 

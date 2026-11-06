@@ -201,6 +201,10 @@ switches! {
     /// The geode's noise is the 1.21 family's `NormalNoise.create(random, -4, 1.0)`, sampled in
     /// `double`, not `NormalNoise.createParity(-4, 1.0)` sampled in `float`.
     geode_noise_v1_21, "features.md#geode", [0..5023];
+
+    /// An exploration map that skips known structures doesn't first claim the destination
+    /// structure whose box holds its container.
+    map_claims_nothing, "loot.md#maps", [0..5023];
 }
 
 #[cfg(test)]

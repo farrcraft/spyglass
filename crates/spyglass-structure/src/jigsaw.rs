@@ -64,6 +64,24 @@ impl Rotation {
         }
     }
 
+    /// `StructureTemplate.transform(pos, mirror, rotation, pivot)`: the mirror (front-back
+    /// negates x), then the rotation about `pivot`'s x and z.
+    pub fn transform_about(
+        self,
+        [x, y, z]: [i32; 3],
+        front_back: bool,
+        [px, _, pz]: [i32; 3],
+    ) -> [i32; 3] {
+        let x = if front_back { x.wrapping_neg() } else { x };
+        let [x, z] = match self {
+            Rotation::Counterclockwise90 => [px - pz + z, px + pz - x],
+            Rotation::Clockwise90 => [px + pz - z, pz - px + x],
+            Rotation::Clockwise180 => [px + px - x, pz + pz - z],
+            Rotation::None => [x, z],
+        };
+        [x, y, z]
+    }
+
     /// `Rotation.rotate(Direction)`: horizontal directions turn, up and down stay.
     fn rotate(self, d: Direction) -> Direction {
         use Direction::{East, North, South, West};
@@ -294,6 +312,18 @@ pub struct Template {
     /// Each palette's other blocks with block-entity NBT but structure blocks, in the template's
     /// block order: the blocks `placeInWorld` may draw a loot seed for.
     nbt_blocks: Vec<Vec<NbtBlock>>,
+    /// Each palette's data markers, in the template's block order.
+    markers: Vec<Vec<Marker>>,
+}
+
+/// A template's data marker: a structure block in `DATA` mode, which a template piece hands to
+/// its `handleDataMarker` (`TemplateStructurePiece.postProcess`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Marker {
+    /// Template-local position, unrotated.
+    pub pos: [i32; 3],
+    /// Its `metadata`, e.g. `chest`.
+    pub name: String,
 }
 
 /// A template block with block-entity NBT, as the template saves it.
@@ -344,6 +374,7 @@ impl Template {
                 // block entities, which is stably sorted by (y, x, z).
                 let mut jigsaws = Vec::new();
                 let mut nbt_blocks = Vec::new();
+                let mut markers = Vec::new();
                 for (i, block) in blocks.iter().enumerate() {
                     let state = block.get("state").and_then(Tag::as_int).unwrap_or(0);
                     let entry = usize::try_from(state).ok().and_then(|s| palette.get(s));
@@ -354,15 +385,26 @@ impl Template {
                         .and_then(Tag::as_str);
                     let name = name.map(full_id);
                     if name.as_deref() != Some("minecraft:jigsaw") {
+                        let block_at = || at.child("blocks").child(&format!("[{i}]"));
+                        if let Some(nbt) = block.get("nbt")
+                            && name.as_deref() == Some("minecraft:structure_block")
+                            && nbt.get("mode").and_then(Tag::as_str) == Some("DATA")
+                        {
+                            markers.push(Marker {
+                                pos: int3(block.get("pos"), &block_at().child("pos"))?,
+                                name: nbt
+                                    .get("metadata")
+                                    .and_then(Tag::as_str)
+                                    .unwrap_or_default()
+                                    .to_string(),
+                            });
+                        }
                         // Structure blocks are dropped before placing (`BlockIgnoreProcessor`).
                         if let Some(nbt) = block.get("nbt")
                             && let Some(name) = name
                             && name != "minecraft:structure_block"
                         {
-                            let pos = int3(
-                                block.get("pos"),
-                                &at.child("blocks").child(&format!("[{i}]")).child("pos"),
-                            )?;
+                            let pos = int3(block.get("pos"), &block_at().child("pos"))?;
                             let mut properties: Vec<(String, String)> = entry
                                 .and_then(|p| p.get("properties").or_else(|| p.get("Properties")))
                                 .and_then(Tag::as_compound)
@@ -401,15 +443,18 @@ impl Template {
                 }
                 jigsaws.sort_by_key(|j| (j.pos[1], j.pos[0], j.pos[2]));
                 nbt_blocks.sort_by_key(|b| (b.pos[1], b.pos[0], b.pos[2]));
-                Ok((jigsaws, nbt_blocks))
+                markers.sort_by_key(|m| (m.pos[1], m.pos[0], m.pos[2]));
+                Ok(((jigsaws, nbt_blocks), markers))
             })
             .collect::<LoadResult<Vec<_>>>()?;
+        let (palettes, markers): (Vec<_>, Vec<_>) = palettes.into_iter().unzip();
         let (palettes, nbt_blocks) = palettes.into_iter().unzip();
         Ok(Template {
             id: id.to_string(),
             size,
             palettes,
             nbt_blocks,
+            markers,
         })
     }
 
@@ -436,6 +481,11 @@ impl Template {
     /// template's block order.
     pub fn nbt_blocks(&self, palette: usize) -> &[NbtBlock] {
         &self.nbt_blocks[palette]
+    }
+
+    /// Palette `palette`'s data markers, in the template's block order.
+    pub fn markers(&self, palette: usize) -> &[Marker] {
+        &self.markers[palette]
     }
 
     /// `StructureTemplate.getJigsaws(pos, rotation)`: one palette's jigsaw blocks
@@ -1254,6 +1304,7 @@ impl<'a> JigsawLoader<'a> {
                 size: [0; 3],
                 palettes: Vec::new(),
                 nbt_blocks: Vec::new(),
+                markers: Vec::new(),
             },
             Err(e) => return Err(error(e.into())),
         };
@@ -1431,6 +1482,7 @@ impl Template {
             size,
             palettes: vec![palette],
             nbt_blocks: vec![Vec::new()],
+            markers: vec![Vec::new()],
         }
     }
 }
@@ -1445,6 +1497,7 @@ mod tests {
             size,
             palettes: vec![vec![]],
             nbt_blocks: vec![vec![]],
+            markers: vec![vec![]],
         }
     }
 

@@ -12,6 +12,7 @@ pub mod place;
 pub mod predicate;
 pub mod reach;
 pub mod region;
+mod scattered;
 mod settings;
 pub mod structures;
 

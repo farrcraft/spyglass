@@ -16,14 +16,16 @@ mod locate;
 mod mineshaft;
 mod placement;
 mod portal;
+mod scattered;
 mod slime;
+mod template_piece;
 
 pub use assembly::{Assembly, JigsawPools, LaidPiece, Layout};
 pub use biomes::BiomeSet;
 pub use check::{Check, Selection, Starts};
 pub use jigsaw::{
-    BoundingBox, GenerationHeights, HeightProvider, Jigsaw, JigsawCheck, NbtBlock, PoolElement,
-    Processors, Projection, Rotation, Template,
+    BoundingBox, GenerationHeights, HeightProvider, Jigsaw, JigsawCheck, Marker, NbtBlock,
+    PoolElement, Processors, Projection, Rotation, Template,
 };
 pub use load::{Entry, STEPS, Structure, StructureSet, StructureSets, StructureType};
 pub use locate::{LOCATE_RADIUS, MAX_UNCERTAIN, StructureHit, StructureSearch};
@@ -32,5 +34,7 @@ pub use placement::{
     ConcentricRings, ExclusionZone, FrequencyReduction, Placement, PlacementKind, Placements,
     RandomSpread, RingPosition, SeedPlacements, SpreadType,
 };
-pub use portal::{RuinedPortal, Setup, VerticalPlacement};
+pub use portal::{PortalLayout, RuinedPortal, Setup, VerticalPlacement};
+pub use scattered::{Facing, ScatteredPiece};
 pub use slime::is_slime_chunk;
+pub use template_piece::{TemplatePiece, template_pieces};

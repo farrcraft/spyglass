@@ -13,6 +13,7 @@ use crate::jigsaw::{Jigsaw, JigsawCheck};
 use crate::load::{Structure, StructureType};
 use crate::mineshaft::{self, Heights};
 use crate::placement::Placements;
+use crate::portal::PortalLayout;
 
 /// What spyglass can say about one structure's biome check in one chunk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -146,6 +147,20 @@ impl<'a> Starts<'a> {
             sets.heights(),
             self.pools?,
             &mut first_free,
+        ))
+    }
+
+    /// A ruined portal's piece if it starts in `chunk`, whether or not its biome check passes;
+    /// `None` for other types, and without terrain, which its height needs.
+    pub fn ruined_portal(&self, structure: usize, chunk: [i32; 2]) -> Option<PortalLayout> {
+        let config = &self.placements.sets().structures()[structure];
+        let terrain = self.terrain?;
+        let level_min_y = self.placements.sets().heights().level_min_y;
+        Some(config.ruined_portal.as_ref()?.layout(
+            self.placements.seed(),
+            chunk,
+            terrain,
+            level_min_y,
         ))
     }
 

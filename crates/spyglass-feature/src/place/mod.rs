@@ -345,12 +345,41 @@ impl Placer {
         own: &[Foreign],
         structures: &[Piece],
     ) -> Vec<Placement> {
+        self.decorate_noting(
+            decorator,
+            region,
+            seed,
+            foreign,
+            own,
+            structures,
+            &mut Vec::new(),
+        )
+    }
+
+    /// As [`decorate`](Self::decorate), noting in `unsure` the placed features whose writes in
+    /// the chunk aren't known on its own, with why: those this placer doesn't place, and those
+    /// it does from their first candidate on. What reads the region after them is in doubt
+    /// where they could have written.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the decoration's inputs, passed through"
+    )]
+    pub fn decorate_noting(
+        &self,
+        decorator: &Decorator<'_>,
+        region: &mut Region<'_>,
+        seed: i64,
+        foreign: &[Foreign],
+        own: &[Foreign],
+        structures: &[Piece],
+        unsure: &mut Vec<(PlacedRef, Doubt)>,
+    ) -> Vec<Placement> {
         let [cx, cz] = region.center();
         let chunk = ([cx * 16, cz * 16], [cx * 16 + 15, cz * 16 + 15]);
         let mut out = Vec::new();
         // The placed features whose writes aren't known, with why: on the chunk's own, and
         // whatever the neighbours do.
-        let mut unsure: Vec<(PlacedRef, Doubt)> = Vec::new();
+        unsure.clear();
         let mut unsure_anyway: Vec<(PlacedRef, Doubt)> = Vec::new();
         let mut place = |attempt: &Try, random: &mut WorldgenRandom, region: &mut Region<'_>| {
             region.take_doubt();
@@ -359,7 +388,7 @@ impl Placer {
             if ours.is_none() || !attempt.exact {
                 // Not placed here, or where isn't known: what it writes isn't.
                 let why = Doubt::OtherFeature(attempt.placed);
-                for list in [&mut unsure, &mut unsure_anyway] {
+                for list in [&mut *unsure, &mut unsure_anyway] {
                     if !list.iter().any(|(r, _)| *r == attempt.placed) {
                         list.push((attempt.placed, why));
                     }
@@ -420,7 +449,7 @@ impl Placer {
                     .map(|p| Doubt::Structure(p.structure))
             };
             let tie = (!attempt.certain).then_some(Doubt::Tie);
-            let why = tie.or_else(|| piece(true)).or_else(|| doubt(&unsure));
+            let why = tie.or_else(|| piece(true)).or_else(|| doubt(unsure));
             let anyway = foreign
                 .iter()
                 .find(|f| reads(f))
@@ -435,7 +464,7 @@ impl Placer {
             };
             let why = region.take_doubt().or(why);
             let anyway = why.or(anyway);
-            for (list, doubt) in [(&mut unsure, why), (&mut unsure_anyway, anyway)] {
+            for (list, doubt) in [(&mut *unsure, why), (&mut unsure_anyway, anyway)] {
                 if let Some(doubt) = doubt
                     && !list.iter().any(|(r, _)| *r == attempt.placed)
                 {

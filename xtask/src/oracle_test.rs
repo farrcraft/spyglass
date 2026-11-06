@@ -203,7 +203,7 @@ pub(crate) const TESTS: &[(&str, &str, &[Input])] = &[
     ),
     (
         "spyglass-feature",
-        "jigsaw_containers_match_the_game",
+        "structure_containers_match_the_game",
         &[Input::Containers, Input::Bundle],
     ),
     (

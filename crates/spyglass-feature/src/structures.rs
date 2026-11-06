@@ -6,8 +6,9 @@ use spyglass_rng::WorldgenRandom;
 use spyglass_structure::{Assembly, BoundingBox, Check, Starts, StructureSets, StructureType};
 
 use crate::blocks::Blocks;
-use crate::containers::{ContainerDoubt, StructureContainer, StructureContainers};
-use crate::region::{Doubt, Region};
+use crate::containers::{ContainerDoubt, Reads, StructureContainer, StructureContainers};
+use crate::region::Region;
+use crate::scattered;
 
 /// Blocks a structure's pieces could write.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,12 +126,17 @@ pub fn pieces(
     out
 }
 
-/// The containers with loot tables the jigsaw structures' pieces place in the region's chunk,
-/// in the order they place them (`docs/specs/loot.md#containers`), for world `seed`. Each step's
-/// structures place in registry order, each from the decoration random seeded with its index in
-/// the step, and each start referencing the chunk places its pieces from that random. `reads`
-/// says why a block a processor reads might not be the region's for a structure, by index:
-/// what placed before it could have written there.
+/// The containers with loot tables the structures spyglass places put in the region's chunk,
+/// in the order they place them (`docs/specs/loot.md#containers`), for world `seed`: jigsaw
+/// structures and the single-piece ones but swamp huts. Each step's structures place
+/// in registry order, each from the decoration random seeded with its index in the step, and
+/// each start referencing the chunk places its pieces from that random. Only the structures of
+/// step `step`, on the region as the steps before it left it; `reads` says why a block a
+/// structure reads might not be the region's: what placed before it could have written there.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the decoration's state, passed through"
+)]
 pub fn containers(
     starts: &Starts<'_>,
     sets: &StructureSets,
@@ -138,7 +144,8 @@ pub fn containers(
     blocks: &Blocks,
     region: &mut Region<'_>,
     seed: i64,
-    reads: &dyn Fn([i32; 3], usize) -> Option<Doubt>,
+    step: usize,
+    reads: &Reads<'_>,
 ) -> Vec<StructureContainer> {
     let [cx, cz] = region.center();
     let chunk = BoundingBox {
@@ -148,13 +155,24 @@ pub fn containers(
     let mut random = WorldgenRandom::new(0);
     let decoration = random.set_decoration_seed(seed, cx.wrapping_shl(4), cz.wrapping_shl(4));
     let mut order: Vec<usize> = (0..sets.structures().len())
-        .filter(|&s| sets.structures()[s].kind == StructureType::Jigsaw)
+        .filter(|&s| {
+            let info = &sets.structures()[s];
+            info.step == step && places_containers(info.kind)
+        })
         .collect();
-    order.sort_by_key(|&s| (sets.structures()[s].step, sets.structures()[s].step_index));
+    order.sort_by_key(|&s| sets.structures()[s].step_index);
     let mut out = Vec::new();
     for structure in order {
+        let info = &sets.structures()[structure];
+        let jigsaw = info.kind == StructureType::Jigsaw;
         // The starts whose box reaches the chunk (`createReferences`), each with whether it's
-        // surely there.
+        // surely there. The single-piece structures spyglass places put their containers in
+        // their start chunk only.
+        let reach = if jigsaw {
+            REACH_CHUNKS
+        } else {
+            scattered::reach(info.kind)
+        };
         let mut referencing = Vec::new();
         for (set, structure_set) in sets.sets().iter().enumerate() {
             if !structure_set.possible
@@ -165,7 +183,6 @@ pub fn containers(
             {
                 continue;
             }
-            let reach = REACH_CHUNKS;
             for (start, selection) in
                 starts.starts_in(set, [cx - reach, cz - reach], [cx + reach, cz + reach])
             {
@@ -177,31 +194,45 @@ pub fn containers(
                 }
                 // Certain only if it's the set's one try here and it passes.
                 let sure = selection.tries.len() == 1 && selection.tries[i].1 == Check::Passes;
-                if let Some(Assembly::Built(layout)) = starts.assemble(structure, start)
+                if !jigsaw {
+                    referencing.push((start, None, sure));
+                } else if let Some(Assembly::Built(layout)) = starts.assemble(structure, start)
                     && layout.bounds.intersects(&chunk)
                 {
-                    referencing.push((layout, sure));
+                    referencing.push((start, Some(layout), sure));
                 }
             }
         }
         if referencing.is_empty() {
             continue;
         }
-        let info = &sets.structures()[structure];
         random.set_feature_seed(decoration, info.step_index as i32, info.step as i32);
         let mut unknown = (referencing.len() > 1).then_some(ContainerDoubt::StartOrder);
-        for (layout, sure) in &referencing {
+        for (start, layout, sure) in &referencing {
             let first = out.len();
-            containers.jigsaw(
-                blocks,
-                region,
-                layout,
-                structure,
-                &mut random,
-                &mut unknown,
-                reads,
-                &mut out,
-            );
+            match layout {
+                Some(layout) => containers.jigsaw(
+                    blocks,
+                    region,
+                    layout,
+                    structure,
+                    &mut random,
+                    &mut unknown,
+                    reads,
+                    &mut out,
+                ),
+                None => {
+                    let start = scattered::Start {
+                        info,
+                        structure,
+                        chunk: *start,
+                        starts,
+                        blocks,
+                        cannot_replace: containers.cannot_replace,
+                    };
+                    scattered::containers(&start, region, seed, &mut random, reads, &mut out);
+                }
+            }
             if !sure {
                 for c in &mut out[first..] {
                     c.doubt.get_or_insert(ContainerDoubt::Start);
@@ -210,4 +241,9 @@ pub fn containers(
         }
     }
     out
+}
+
+/// Whether spyglass places `kind`'s containers ([`containers`]).
+pub fn places_containers(kind: StructureType) -> bool {
+    kind == StructureType::Jigsaw || scattered::places(kind)
 }

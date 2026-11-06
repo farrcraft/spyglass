@@ -38,6 +38,11 @@ pub enum ContainerDoubt {
     Read(Doubt),
 }
 
+/// Why something placed before a structure's pieces, which spyglass doesn't place, could have
+/// written within a box (least corner, greatest corner), for the structure by index; `None`
+/// where nothing could have.
+pub type Reads<'a> = dyn Fn([i32; 3], [i32; 3], usize) -> Option<Doubt> + 'a;
+
 /// A container a structure's piece placed in the chunk.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructureContainer {
@@ -127,9 +132,11 @@ enum Processed {
 }
 
 /// The processor lists of a dimension's jigsaw pools, for finding their pieces' containers.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct StructureContainers {
     processors: HashMap<Processors, Vec<Processor>>,
+    /// `#features_cannot_replace`, which ruined portals' chests don't replace.
+    pub(crate) cannot_replace: Tag,
 }
 
 impl StructureContainers {
@@ -150,7 +157,10 @@ impl StructureContainers {
                 ),
             ));
         }
-        let mut out = StructureContainers::default();
+        let mut out = StructureContainers {
+            processors: HashMap::new(),
+            cannot_replace: blocks.tag(resources, "minecraft:features_cannot_replace")?,
+        };
         let mut stack: Vec<&PoolElement> = pools.elements().collect();
         while let Some(element) = stack.pop() {
             match element {
@@ -172,7 +182,7 @@ impl StructureContainers {
     /// drawing their seeds from `random`, the structure's random for the chunk. `unknown` is
     /// why the random's draws aren't known, if they aren't; a feature element sets it.
     /// `reads` says why a block a processor reads (`protected_blocks`) might not be the
-    /// region's for a structure, by index, if it might not.
+    /// region's, if it might not.
     #[allow(
         clippy::too_many_arguments,
         reason = "the decoration's state, passed through"
@@ -185,7 +195,7 @@ impl StructureContainers {
         structure: usize,
         random: &mut WorldgenRandom,
         unknown: &mut Option<ContainerDoubt>,
-        reads: &dyn Fn([i32; 3], usize) -> Option<Doubt>,
+        reads: &Reads<'_>,
         out: &mut Vec<StructureContainer>,
     ) {
         let [cx, cz] = region.center();
@@ -222,7 +232,7 @@ struct Place<'a, 'r, 'b> {
     structure: usize,
     random: &'a mut WorldgenRandom,
     unknown: &'a mut Option<ContainerDoubt>,
-    reads: &'b dyn Fn([i32; 3], usize) -> Option<Doubt>,
+    reads: &'b Reads<'b>,
     out: &'a mut Vec<StructureContainer>,
 }
 
@@ -354,7 +364,7 @@ impl Place<'_, '_, '_> {
                     }
                 }
                 Processor::Protected(tag) => {
-                    if let Some(why) = (self.reads)(world, self.structure) {
+                    if let Some(why) = (self.reads)(world, world, self.structure) {
                         return Processed::Unknown(ContainerDoubt::Read(why));
                     }
                     self.region.take_doubt();

@@ -1,6 +1,7 @@
 //! Loading structure sets and structures from a bundle, mirroring the game's codecs (ADR 0010).
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use serde_json::{Map, Value};
 use spyglass_biome::{BiomeNames, BiomeSource, SpawnTargets};
@@ -14,13 +15,14 @@ use spyglass_noise::NormalNoiseParameters;
 
 use crate::biomes::{BiomeSet, Tags};
 use crate::corner::CornerSamplers;
-use crate::jigsaw::{GenerationHeights, HeightProvider, Jigsaw, JigsawLoader};
+use crate::jigsaw::{GenerationHeights, HeightProvider, Jigsaw, JigsawLoader, Template};
 use crate::mineshaft::Mineshaft;
 use crate::placement::{
     ConcentricRings, ExclusionZone, FrequencyReduction, Placement, PlacementKind, RandomSpread,
     SpreadType,
 };
 use crate::portal::RuinedPortal;
+use crate::template_piece;
 
 const STRUCTURE_SET: &str = "worldgen/structure_set";
 const STRUCTURE: &str = "worldgen/structure";
@@ -103,6 +105,10 @@ pub struct Structure {
     pub beached: bool,
     /// For [`StructureType::RuinedPortal`], its setups and templates.
     pub ruined_portal: Option<RuinedPortal>,
+    /// The templates a [`StructureType::Shipwreck`] picks from (`STRUCTURE_LOCATION_BEACHED`
+    /// or `_OCEAN`), or a [`StructureType::Igloo`]'s top, ladder and laboratory; empty for
+    /// other types.
+    pub templates: Vec<Arc<Template>>,
     /// For [`StructureType::NetherFossil`], `height`: where its scan starts.
     pub height: Option<HeightProvider>,
     /// For [`StructureType::Mineshaft`], its type and terrain adaptation.
@@ -550,6 +556,16 @@ impl SetLoader<'_> {
         };
         let beached = kind == StructureType::Shipwreck
             && obj.get("is_beached").and_then(Value::as_bool) == Some(true);
+        let template_ids: &[&str] = match kind {
+            StructureType::Shipwreck if beached => &template_piece::SHIPWRECKS_BEACHED,
+            StructureType::Shipwreck => &template_piece::SHIPWRECKS_OCEAN,
+            StructureType::Igloo => &template_piece::IGLOO,
+            _ => &[],
+        };
+        let templates = template_ids
+            .iter()
+            .map(|id| self.jigsaw.template(&format!("minecraft:{id}")))
+            .collect::<LoadResult<Vec<_>>>()?;
         let height = match kind {
             StructureType::NetherFossil => Some(HeightProvider::parse(
                 field(obj, "height", &root)?,
@@ -575,6 +591,7 @@ impl SetLoader<'_> {
             jigsaw,
             beached,
             ruined_portal,
+            templates,
             height,
             mineshaft,
             step,

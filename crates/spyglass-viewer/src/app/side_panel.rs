@@ -119,6 +119,11 @@ impl App {
                 Vec::new()
             },
             features: self.settings.features.clone(),
+            loot: self
+                .selection
+                .loot
+                .as_ref()
+                .map_or(String::new(), |q| q.argument().to_string()),
             highlight: self.settings.highlight.clone(),
             ties: self.settings.ties,
             slime_chunks: self.settings.slime_chunks && self.slime_allowed(),
@@ -167,6 +172,15 @@ impl App {
         self.export_note = None;
         self.exporting = Some(Pending::spawn(ctx, move || {
             let layers = spyglass::Layers {
+                loot: if export.loot.is_empty() || export.area.scale > spyglass::MAX_FEATURE_SCALE {
+                    None
+                } else {
+                    Some(
+                        world
+                            .item_query(&export.loot, None)
+                            .map_err(|e| e.to_string())?,
+                    )
+                },
                 biomes: true,
                 ties: export.ties,
                 highlight: export
@@ -367,6 +381,45 @@ impl App {
         }
     }
 
+    /// Loot containers, up close: every one, and rings around those holding an item.
+    fn loot_section(&mut self, ui: &mut egui::Ui) {
+        style::heading(ui, "Loot");
+        let mut changed = ui
+            .checkbox(&mut self.settings.containers, "Containers")
+            .on_hover_text(
+                "Every chest, barrel and other loot container structures and dungeons place.",
+            )
+            .changed();
+        ui.horizontal(|ui| {
+            ui.label("Ring those holding");
+            let edit = ui.add(
+                egui::TextEdit::singleline(&mut self.settings.loot)
+                    .hint_text("minecraft:diamond")
+                    .desired_width(150.0),
+            );
+            if edit.lost_focus() || (edit.changed() && self.settings.loot.is_empty()) {
+                changed = true;
+            }
+        });
+        if changed {
+            self.select();
+        }
+        if let Some(error) = &self.selection.loot_error {
+            ui.colored_label(style::ERROR, error);
+        }
+        if self.settings.containers || self.selection.loot.is_some() {
+            if self.settings.view.scale <= spyglass::MAX_FEATURE_SCALE {
+                style::hint(
+                    ui,
+                    "Gold rings: a full one where it certainly holds the item, a thin one where it \
+                     might. Click a container for its contents. Slow to draw: each chunk is placed.",
+                );
+            } else {
+                style::hint(ui, "Zoom to 1:2 or closer to see them.");
+            }
+        }
+    }
+
     /// What's drawn on the map: biomes, overlays, structures, and whether to confirm with
     /// terrain.
     pub(super) fn layers_tab(&mut self, ui: &mut egui::Ui) {
@@ -449,6 +502,9 @@ impl App {
 
         ui.add_space(6.0);
         self.features_section(ui);
+
+        ui.add_space(6.0);
+        self.loot_section(ui);
 
         ui.add_space(6.0);
         self.structure_list(ui);

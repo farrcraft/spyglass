@@ -12,7 +12,7 @@ use crate::place::Written;
 use crate::region::Region;
 
 /// `BuiltInLootTables.SIMPLE_DUNGEON`, the chests' loot table.
-const LOOT_TABLE: &str = "minecraft:chests/simple_dungeon";
+pub(crate) const LOOT_TABLE: &str = "minecraft:chests/simple_dungeon";
 
 /// `Direction.Plane.HORIZONTAL`: north, east, south, west, as offsets.
 const HORIZONTAL: [[i32; 3]; 4] = [[0, 0, -1], [1, 0, 0], [0, 0, 1], [-1, 0, 0]];

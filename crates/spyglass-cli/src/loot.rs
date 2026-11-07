@@ -116,17 +116,20 @@ fn at(out: &Out<'_>, position: [i32; 3]) -> Result<()> {
     Ok(())
 }
 
-/// `loot in`: the containers in a region, only those holding `query`'s item if given.
+/// `loot in`: the containers in a region, only those holding `query`'s item, or that might,
+/// if given.
 fn within(out: &Out<'_>, min: [i32; 2], max: [i32; 2], query: Option<&ItemQuery>) -> Result<()> {
     let (low, high) = chunks_of(min, max)?;
-    let found = out.session.containers_in(low, high)?;
+    let found = match query {
+        Some(query) => out.session.containers_holding(query, low, high)?,
+        None => out.session.containers_in(low, high)?,
+    };
     let hits: Vec<&FoundContainer> = found
         .iter()
         .filter(|c| {
             let [x, _, z] = c.position;
             (min[0]..=max[0]).contains(&x) && (min[1]..=max[1]).contains(&z)
         })
-        .filter(|c| query.is_none_or(|q| c.holds(q)))
         .collect();
     if out.json {
         return out.print(

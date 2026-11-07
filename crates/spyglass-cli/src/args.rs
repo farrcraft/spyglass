@@ -407,6 +407,11 @@ pub struct Render {
     /// takes a while.
     #[arg(long, value_delimiter = ',')]
     pub features: Vec<String>,
+    /// Ring the loot containers holding this item, an id or an item `#tag` (scales up to 2),
+    /// and the candidates that might. Each chunk a container could be in is placed, which takes
+    /// a while.
+    #[arg(long)]
+    pub loot: Option<String>,
     /// Biomes to keep bright, separated by commas; the rest are dimmed.
     #[arg(long, value_delimiter = ',')]
     pub highlight: Vec<String>,

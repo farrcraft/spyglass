@@ -38,6 +38,17 @@ struct Pass {
     skipped: Vec<PlacedRef>,
 }
 
+/// A placed feature that puts down containers.
+struct ContainerFeature {
+    placed: PlacedRef,
+    /// Its decoration step.
+    step: usize,
+    /// Its containers' loot table.
+    table: &'static str,
+    /// It on its own, for whether a chunk has tries of it.
+    alone: Wanted,
+}
+
 /// A world's loot, seed-independent, loaded on first use: what places containers, and the
 /// tables that fill them.
 pub(crate) struct LootWorld {
@@ -55,9 +66,8 @@ pub(crate) struct LootWorld {
     bounds: NeighbourBounds,
     /// The passes, by step.
     passes: Vec<Pass>,
-    /// The placed features that place containers, each with its step and the pass whose
-    /// placing includes it, and on its own, for whether a chunk has tries of it.
-    container_features: Vec<(PlacedRef, usize, Wanted)>,
+    /// The placed features that place containers.
+    container_features: Vec<ContainerFeature>,
     /// The last step anything placing containers is in.
     last_step: usize,
     /// The tables loaded so far.
@@ -93,11 +103,10 @@ impl LootWorld {
                 .position(|step| step.contains(&r))
                 .unwrap_or(0)
         };
-        let container_features: Vec<(PlacedRef, usize)> = all
+        let container_features: Vec<(PlacedRef, usize, &'static str)> = all
             .iter()
             .copied()
-            .filter(|&r| placer.places_containers(r))
-            .map(|r| (r, step_of(r)))
+            .filter_map(|r| Some((r, step_of(r), placer.container_table(r)?)))
             .collect();
         // A pass for each step with structures that place containers, and one after the last
         // step with features that do.
@@ -108,7 +117,7 @@ impl LootWorld {
             .filter(|s| structures::places_containers(s.kind))
             .map(|s| (s.step, true))
             .collect();
-        if let Some(&(_, step)) = container_features.iter().max_by_key(|(_, step)| *step)
+        if let Some(&(_, step, _)) = container_features.iter().max_by_key(|(_, step, _)| *step)
             && !steps.iter().any(|&(s, _)| s > step)
         {
             steps.push((step + 1, false));
@@ -150,7 +159,14 @@ impl LootWorld {
         let last_step = passes.last().map_or(0, |p| p.step);
         let container_features = container_features
             .into_iter()
-            .map(|(r, step)| Ok((r, step, Wanted::load(settings, &[r], None)?)))
+            .map(|(placed, step, table)| {
+                Ok(ContainerFeature {
+                    placed,
+                    step,
+                    table,
+                    alone: Wanted::load(settings, &[placed], None)?,
+                })
+            })
             .collect::<Result<Vec<_>>>()?;
         Ok(LootWorld {
             everything: Wanted::load(settings, &all, None)?,
@@ -176,6 +192,38 @@ impl World {
         }
         let loot = LootWorld::load(self)?;
         Ok(self.loot.get_or_init(|| loot))
+    }
+
+    /// Loads `table` unless it's loaded.
+    fn load_table(&self, loot: &LootWorld, table: &str) -> Result<()> {
+        let loaded = loot
+            .tables
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .has(table);
+        if !loaded {
+            loot.tables
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .load(&self.bundle, table)?;
+        }
+        Ok(())
+    }
+
+    /// Whether a container of loot table `table` could hold an item `query` names, whatever
+    /// its seed: for a container whose contents aren't known (`Loot::possible_items`, a
+    /// superset).
+    pub fn table_could_hold(&self, query: &ItemQuery, table: &str) -> Result<bool> {
+        if query.world != self.id {
+            return Err(Error::OtherWorld(query.argument.clone()));
+        }
+        let loot = self.loot_world()?;
+        self.load_table(loot, table)?;
+        let tables = loot
+            .tables
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        Ok(query.could_hold(&tables.possible_items(table)))
     }
 
     /// Resolves an item argument for [`Session::nearest_container`]: an item id, or an item
@@ -284,7 +332,7 @@ pub enum ContainerSource {
 }
 
 /// A stack in a container: an item, its count, and the components its table gave it.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Item {
     /// The item, e.g. `minecraft:golden_apple`.
@@ -354,7 +402,7 @@ pub struct MapDestination {
 }
 
 /// A filled slot of a container.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Slot {
     /// The slot, from 0.
@@ -364,7 +412,7 @@ pub struct Slot {
 }
 
 /// A loot container a structure or feature placed, or might have.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct FoundContainer {
     /// Where: the block, or a chest minecart's rail.
@@ -411,7 +459,7 @@ impl FoundContainer {
 }
 
 /// The answer to [`Session::nearest_container`].
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ContainerLocate {
     /// Every container that may be the nearest holding the item, nearest first by horizontal
@@ -511,6 +559,31 @@ impl<'w> Session<'w> {
     /// structure's pieces or a dungeon's tries reach, which takes a while each
     /// (`docs/specs/locate.md#loot`).
     pub fn containers_in(&self, min: [i32; 2], max: [i32; 2]) -> Result<Vec<FoundContainer>> {
+        self.containers_where(min, max, None)
+    }
+
+    /// The containers in chunks `min..=max` that hold an item `query` names, or might, as
+    /// [`nearest_container`](Self::nearest_container) counts them, in
+    /// [`containers_in`](Self::containers_in)'s order. Faster than filtering `containers_in`:
+    /// chunks are placed only for containers whose table could hold the item, so for an item
+    /// dungeons can't have, only container structures' chunks are.
+    pub fn containers_holding(
+        &self,
+        query: &ItemQuery,
+        min: [i32; 2],
+        max: [i32; 2],
+    ) -> Result<Vec<FoundContainer>> {
+        self.check_world(query.world, &query.argument)?;
+        self.containers_where(min, max, Some(query))
+    }
+
+    /// The containers in chunks `min..=max`, all of them or those holding `query`'s item.
+    fn containers_where(
+        &self,
+        min: [i32; 2],
+        max: [i32; 2],
+        query: Option<&ItemQuery>,
+    ) -> Result<Vec<FoundContainer>> {
         let loot = self.world.loot_world()?;
         let mut cache = self.loot_cache()?;
         let mut out = Vec::new();
@@ -518,9 +591,39 @@ impl<'w> Session<'w> {
             cache.carved.retain(|c, _| c[1] >= cz - 1);
             cache.biomes.retain(|c, _| c[1] >= cz - 1);
             for cx in min[0]..=max[0] {
-                for placed in self.chunk_containers(loot, [cx, cz], &mut cache)? {
-                    out.push(self.fill(loot, placed, &cache.starts)?);
-                }
+                out.extend(self.chunk_holding(loot, [cx, cz], &mut cache, query)?);
+            }
+        }
+        Ok(out)
+    }
+
+    /// One chunk's containers filled, all of them or those holding `query`'s item, or that
+    /// might: a candidate whose contents aren't known but whose table could hold it.
+    fn chunk_holding(
+        &self,
+        loot: &LootWorld,
+        chunk: [i32; 2],
+        cache: &mut Cache<'_>,
+        query: Option<&ItemQuery>,
+    ) -> Result<Vec<FoundContainer>> {
+        // Dungeons only where their table could hold the item.
+        let mut dungeons = Vec::with_capacity(loot.container_features.len());
+        for f in &loot.container_features {
+            dungeons.push(match query {
+                None => true,
+                Some(query) => self.could_hold(loot, cache, f.table, query)?,
+            });
+        }
+        let mut out = Vec::new();
+        for placed in self.chunk_containers(loot, chunk, cache, &dungeons)? {
+            if let Some(query) = query
+                && !self.could_hold(loot, cache, &placed.table, query)?
+            {
+                continue;
+            }
+            let container = self.fill(loot, placed, &cache.starts)?;
+            if query.is_none_or(|q| container.contents.is_none() || container.holds(q)) {
+                out.push(container);
             }
         }
         Ok(out)
@@ -560,15 +663,7 @@ impl<'w> Session<'w> {
                         continue;
                     }
                     let chunk = [centre[0] + dx, centre[1] + dz];
-                    for placed in self.chunk_containers(loot, chunk, &mut cache)? {
-                        if !self.could_hold(loot, &mut cache, &placed.table, query)? {
-                            continue;
-                        }
-                        let container = self.fill(loot, placed, &cache.starts)?;
-                        let unknown = container.contents.is_none();
-                        if !container.holds(query) && !unknown {
-                            continue;
-                        }
+                    for container in self.chunk_holding(loot, chunk, &mut cache, Some(query))? {
                         if container.contents_certain() {
                             let d = distance_sqr(container.position);
                             nearest_certain = Some(nearest_certain.map_or(d, |n| n.min(d)));
@@ -605,18 +700,7 @@ impl<'w> Session<'w> {
 
     /// Loads `table` unless it's loaded.
     fn load_table(&self, loot: &LootWorld, table: &str) -> Result<()> {
-        let loaded = loot
-            .tables
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .has(table);
-        if !loaded {
-            loot.tables
-                .write()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .load(&self.world.bundle, table)?;
-        }
-        Ok(())
+        self.world.load_table(loot, table)
     }
 
     /// Whether a container of `table` could hold an item `query` names.
@@ -722,12 +806,14 @@ impl<'w> Session<'w> {
     /// reach has none. Otherwise, for each step with container structures (and one after the
     /// container features' step), the chunk is decorated with the features of the steps before
     /// it, on its blocks and its neighbours', and that step's structures place their
-    /// containers on what the features left (`docs/specs/loot.md#containers`).
+    /// containers on what the features left (`docs/specs/loot.md#containers`). Only the
+    /// container features `dungeons` keeps (by index in the loot world's) are answered.
     fn chunk_containers(
         &self,
         loot: &LootWorld,
         chunk: [i32; 2],
         cache: &mut Cache<'_>,
+        dungeons: &[bool],
     ) -> Result<Vec<Placed>> {
         let world = self.world;
         let settings = &loot.settings;
@@ -760,8 +846,14 @@ impl<'w> Session<'w> {
                 && p.min[2] <= z0 + 15
                 && z0 <= p.max[2]
         });
-        let feature_reaches = loot.container_features.iter().any(|(_, _, alone)| {
-            let decorator = Decorator::of(settings, generator, self.seed, anchors, min_y, alone);
+        let wanted: Vec<&ContainerFeature> = loot
+            .container_features
+            .iter()
+            .zip(dungeons)
+            .filter_map(|(f, &keep)| keep.then_some(f))
+            .collect();
+        let feature_reaches = wanted.iter().any(|f| {
+            let decorator = Decorator::of(settings, generator, self.seed, anchors, min_y, &f.alone);
             !decorator
                 .tries(chunk, &mut |_, _| spyglass_feature::Drawn::Unknown)
                 .is_empty()
@@ -823,12 +915,8 @@ impl<'w> Session<'w> {
         let mut out = Vec::new();
         let mut features_done = false;
         for pass in &loot.passes {
-            let wants_features = !features_done
-                && feature_reaches
-                && loot
-                    .container_features
-                    .iter()
-                    .any(|(_, step, _)| *step < pass.step);
+            let wants_features =
+                !features_done && feature_reaches && wanted.iter().any(|f| f.step < pass.step);
             if !wants_features && !(pass.structures && structure_reaches) {
                 continue;
             }
@@ -854,7 +942,7 @@ impl<'w> Session<'w> {
             if wants_features {
                 features_done = true;
                 for p in placements {
-                    if !loot.placer.places_containers(p.at.placed) {
+                    if !wanted.iter().any(|f| f.placed == p.at.placed) {
                         continue;
                     }
                     let reason = match p.outcome {

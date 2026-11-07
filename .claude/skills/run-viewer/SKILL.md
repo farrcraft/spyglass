@@ -23,7 +23,7 @@ description: Launch and drive the spyglass viewer on Windows to see a change wor
    & $V start -Out <scratchpad>\viewer -Seed 12345 -Version 26.3 -Structures minecraft:ancient_city,minecraft:igloo
    ```
 
-   Options: `-Dimension overworld|the_nether|the_end`, `-CentreX`/`-CentreZ` (blocks), `-Scale` (blocks per pixel), `-Surface`, `-Relief`, `-Unconfirmed`, and `-Wait` (seconds before returning, default 6). Pass structures as ids. Tags work too, and the viewer turns them into their members. `-Features` takes placed feature ids (`minecraft:monster_room,minecraft:monster_room_deep`), drawn at scales up to 2.
+   Options: `-Dimension overworld|the_nether|the_end`, `-CentreX`/`-CentreZ` (blocks), `-Scale` (blocks per pixel), `-Surface`, `-Relief`, `-Unconfirmed`, and `-Wait` (seconds before returning, default 6). Pass structures as ids. Tags work too, and the viewer turns them into their members. `-Features` takes placed feature ids (`minecraft:monster_room,minecraft:monster_room_deep`), drawn at scales up to 2. `-Containers` marks every loot container and `-Loot` rings those holding an item (`minecraft:diamond`), both at scales up to 2; click a container for its contents.
 
 3. **Look** at it: `& $V shot -Out <scratchpad>\viewer\name.png`, then Read the PNG. A blank or grey frame means it didn't draw: wait longer, or check that a bundle for `-Version` is in `bundles/`.
 

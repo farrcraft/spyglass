@@ -2,8 +2,8 @@
 //!
 //! Workers do the slow parts: a tile's biome map, heights, underground layers and slime
 //! chunks (keeping each tile's carving map across heights), separately the structure starts on
-//! a tile for the structures chosen, the features chosen up close, and the layouts of jigsaw
-//! structures shown up close. The UI thread turns biome maps into textures with the current
+//! a tile for the structures chosen, the features and loot containers chosen up close, and the
+//! layouts of jigsaw structures shown up close. The UI thread turns biome maps into textures with the current
 //! style (ties, highlight, slime, relief) through the library's `BiomeMap::colorize`,
 //! `Image::shade` and `Image::draw_features`, so restyling never samples biomes again, and draws
 //! structure markers and bounds itself.
@@ -21,9 +21,9 @@ use std::thread;
 
 use eframe::egui;
 use spyglass::{
-    BiomeMap, CarvingMap, DEFAULT_MAP_Y, FeatureQuery, FoundFeature, HeightMap, Layers,
-    MAX_SLIME_SCALE, MapFeatures, Session, StructureLayout, StructureQuery, StructureStart,
-    UndergroundMap,
+    BiomeMap, CarvingMap, DEFAULT_MAP_Y, FeatureQuery, FoundContainer, FoundFeature, HeightMap,
+    ItemQuery, Layers, MAX_SLIME_SCALE, MapFeatures, Session, StructureLayout, StructureQuery,
+    StructureStart, UndergroundMap,
 };
 
 use crate::timing;
@@ -106,6 +106,15 @@ pub struct FeatureKey {
     pub tile: Tile,
 }
 
+/// A loot container on the map, and whether it's ringed: it holds the Loot item, or might.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LootMark {
+    /// The container, with its contents where they're known.
+    pub container: FoundContainer,
+    /// Whether it holds the item asked for, or might.
+    pub ringed: bool,
+}
+
 /// A structure's layout: the world and seed, the structure (an index into
 /// `World::structures`) and its start chunk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -139,6 +148,8 @@ pub enum JobKey {
     Markers(MarkerKey),
     /// A tile's features.
     Features(FeatureKey),
+    /// A tile's loot containers, up close.
+    Loot(FeatureKey),
     /// A structure's layout, for its bounds.
     Layout(LayoutKey),
 }
@@ -149,7 +160,7 @@ impl Job {
         match self.key {
             JobKey::Biomes(k) => k.source,
             JobKey::Markers(k) => k.source,
-            JobKey::Features(k) => k.source,
+            JobKey::Features(k) | JobKey::Loot(k) => k.source,
             JobKey::Layout(k) => k.source,
         }
     }
@@ -165,6 +176,10 @@ pub struct Job {
     pub structures: Arc<[StructureQuery]>,
     /// For feature markers: the features chosen.
     pub features: Arc<[FeatureQuery]>,
+    /// For loot: the item whose containers are ringed.
+    pub loot: Option<ItemQuery>,
+    /// For loot: every container, not only those the item's in.
+    pub all_containers: bool,
 }
 
 /// What a job computed, by the kind of job.
@@ -175,6 +190,8 @@ pub enum Output {
     Markers(Vec<StructureStart>),
     /// The features whose marker centre is on the tile, in drawing order.
     Features(Vec<FoundFeature>),
+    /// The loot containers on the tile, in drawing order.
+    Loot(Vec<LootMark>),
     /// `None` if the structure is neither a jigsaw nor a mineshaft.
     Layout(Option<StructureLayout>),
 }
@@ -298,7 +315,7 @@ fn compute(job: &Job, carvings: &Carvings) -> Result<Output, String> {
     let (tile, y) = match job.key {
         JobKey::Biomes(key) => (key.tile, key.y),
         JobKey::Markers(key) => (key.tile, DEFAULT_MAP_Y),
-        JobKey::Features(key) => (key.tile, DEFAULT_MAP_Y),
+        JobKey::Features(key) | JobKey::Loot(key) => (key.tile, DEFAULT_MAP_Y),
         JobKey::Layout(key) => {
             let structure = job
                 .session
@@ -401,8 +418,50 @@ fn compute(job: &Job, carvings: &Carvings) -> Result<Output, String> {
             });
             Ok(Output::Features(found))
         }
+        JobKey::Loot(_) => {
+            let marks = timing::job(timing_name("loot"), || loot_marks(job, &area))
+                .map_err(|e| e.to_string())?;
+            Ok(Output::Loot(marks))
+        }
         JobKey::Layout(_) => unreachable!("layouts are computed above"),
     }
+}
+
+/// The loot containers on `area`'s tile: every one with the job's `all_containers`, those
+/// holding its item otherwise (`Session::containers_holding`), each ringed if it holds the item
+/// or might.
+fn loot_marks(job: &Job, area: &spyglass::MapArea) -> spyglass::Result<Vec<LootMark>> {
+    let session = &job.session;
+    // The tile's chunks and one more on every side: a dungeon's or a ruined portal's chest can
+    // be beside the chunk that places it.
+    let last = |d: usize| {
+        let end = i64::from(area.min[d]) + i64::from(area.size[d]) * i64::from(area.scale);
+        ((end - 1) >> 4) as i32 + 1
+    };
+    let min = area.min.map(|m| (m >> 4) - 1);
+    let max = [last(0), last(1)];
+    let found = match (&job.loot, job.all_containers) {
+        (Some(query), false) => session.containers_holding(query, min, max)?,
+        (_, true) => session.containers_in(min, max)?,
+        (None, false) => Vec::new(),
+    };
+    let world = session.world();
+    let mut marks = Vec::new();
+    for container in found {
+        // Each marker belongs to the tile its centre is on, so it's drawn once.
+        let [x, z] = area.pixel([container.position[0], container.position[2]]);
+        let inside = 0..i64::from(TILE);
+        if !inside.contains(&x) || !inside.contains(&z) {
+            continue;
+        }
+        let ringed = match &job.loot {
+            None => false,
+            Some(query) if container.contents.is_some() => container.holds(query),
+            Some(query) => world.table_could_hold(query, &container.table)?,
+        };
+        marks.push(LootMark { container, ringed });
+    }
+    Ok(marks)
 }
 
 /// The tile's carving map, kept across heights: carving a tile is most of its underground
@@ -583,6 +642,8 @@ mod tests {
             session: session.clone(),
             structures,
             features: Arc::from(Vec::new()),
+            loot: None,
+            all_containers: false,
         }
     }
 

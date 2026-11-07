@@ -252,12 +252,13 @@ impl Placer {
         self.features.iter().any(|(r, _)| *r == placed)
     }
 
-    /// Whether `placed`'s feature puts down containers with loot tables: dungeons
+    /// The loot table of the containers `placed`'s feature puts down, if it puts any: dungeons'
     /// (`docs/specs/loot.md#containers`).
-    pub fn places_containers(&self, placed: PlacedRef) -> bool {
-        self.features
-            .iter()
-            .any(|(r, f)| *r == placed && matches!(f, Configured::MonsterRoom(_)))
+    pub fn container_table(&self, placed: PlacedRef) -> Option<&'static str> {
+        self.features.iter().find_map(|(r, f)| match f {
+            Configured::MonsterRoom(_) if *r == placed => Some(monster_room::LOOT_TABLE),
+            _ => None,
+        })
     }
 
     /// Whether `placed`'s feature could write air: true unless it writes only one state that

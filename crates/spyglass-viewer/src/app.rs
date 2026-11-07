@@ -12,10 +12,10 @@ use std::thread;
 use eframe::egui::{self, Color32, Key, Pos2, Rect, Sense, TextureOptions, Vec2};
 use serde::{Deserialize, Serialize};
 use spyglass::{
-    BiomeQuery, BundleInfo, Dimension, Evaluation, FeatureQuery, FindOutcome, FoundFeature, Game,
-    Heightmap, Image, LauncherSave, Layers, MAX_TERRAIN_SCALE, MAX_UNDERGROUND_SCALE, SaveReport,
-    Scan, SearchOutcome, SearchQuery, Session, SpawnOrigin, StructureLayout, StructureQuery,
-    StructureStart, World,
+    BiomeQuery, BundleInfo, Dimension, Evaluation, FeatureQuery, FindOutcome, FoundContainer,
+    FoundFeature, Game, Heightmap, Image, ItemQuery, LauncherSave, Layers, MAX_TERRAIN_SCALE,
+    MAX_UNDERGROUND_SCALE, SaveReport, Scan, SearchOutcome, SearchQuery, Session, SpawnOrigin,
+    StructureLayout, StructureQuery, StructureStart, World,
 };
 
 use crate::export::{Export, Source, visible_area};
@@ -26,8 +26,8 @@ use crate::markers::{self, Picked};
 use crate::search::{self, FindRun, Match, Running, SearchSettings, SeedRun};
 use crate::style;
 use crate::tiles::{
-    Cache, Entry, FeatureKey, Job, JobKey, LayoutKey, MarkerKey, Output, Pool, Style, TileKey,
-    Underground, slime_features,
+    Cache, Entry, FeatureKey, Job, JobKey, LayoutKey, LootMark, MarkerKey, Output, Pool, Style,
+    TileKey, Underground, slime_features,
 };
 use crate::userdata::{Marker, Store, WorldKey};
 use crate::view::{TILE, Tile, View};
@@ -104,6 +104,10 @@ struct Settings {
     structures: Vec<String>,
     /// Placed feature ids to mark, up close.
     features: Vec<String>,
+    /// Mark every loot container, up close.
+    containers: bool,
+    /// The item, or item `#tag`, whose containers are ringed, up close; empty for none.
+    loot: String,
     /// Biome ids to keep bright.
     highlight: Vec<String>,
     /// The Search tab's query and options.
@@ -134,6 +138,8 @@ impl Default for Settings {
             carvers: false,
             structures: Vec::new(),
             features: Vec::new(),
+            containers: false,
+            loot: String::new(),
             highlight: Vec::new(),
             search: SearchSettings::default(),
             show_done: true,
@@ -240,6 +246,10 @@ struct Selection {
     queries: Arc<[StructureQuery]>,
     /// The features to mark, up close.
     features: Arc<[FeatureQuery]>,
+    /// The item whose containers are ringed, up close.
+    loot: Option<ItemQuery>,
+    /// Why the Loot item isn't one, if it isn't.
+    loot_error: Option<String>,
 }
 
 impl Default for Selection {
@@ -248,6 +258,8 @@ impl Default for Selection {
             id: 0,
             queries: Arc::from(Vec::new()),
             features: Arc::from(Vec::new()),
+            loot: None,
+            loot_error: None,
         }
     }
 }
@@ -282,6 +294,10 @@ pub struct App {
     markers: Cache<MarkerKey, Result<Vec<StructureStart>, String>>,
     /// Each tile's features, up close.
     feature_markers: Cache<FeatureKey, Result<Vec<FoundFeature>, String>>,
+    /// Each tile's loot containers, up close.
+    loot_markers: Cache<FeatureKey, Result<Vec<LootMark>, String>>,
+    /// The container whose contents are open in a window.
+    open_container: Option<FoundContainer>,
     /// Structure layouts, for their bounds; `None` for a structure that has none.
     layouts: Cache<LayoutKey, Result<Option<StructureLayout>, String>>,
     /// The structures and features marked.
@@ -431,6 +447,8 @@ impl App {
             cache: Cache::new(CACHE_TILES),
             markers: Cache::new(CACHE_MARKERS),
             feature_markers: Cache::new(CACHE_MARKERS),
+            loot_markers: Cache::new(CACHE_MARKERS),
+            open_container: None,
             layouts: Cache::new(CACHE_LAYOUTS),
             selection: Selection::default(),
             structure_filter: String::new(),
@@ -701,6 +719,8 @@ impl App {
                 self.cache.clear();
                 self.markers.clear();
                 self.feature_markers.clear();
+                self.loot_markers.clear();
+                self.open_container = None;
                 self.layouts.clear();
                 self.select();
                 self.remember_world();
@@ -754,11 +774,22 @@ impl App {
             .iter()
             .filter_map(|id| world.feature_query(id).ok())
             .collect();
+        let item = self.settings.loot.trim();
+        let (loot, loot_error) = if item.is_empty() {
+            (None, None)
+        } else {
+            match world.item_query(item, None) {
+                Ok(query) => (Some(query), None),
+                Err(e) => (None, Some(e.to_string())),
+            }
+        };
         self.next_id += 1;
         self.selection = Selection {
             id: self.next_id,
             queries: queries.into(),
             features: features.into(),
+            loot,
+            loot_error,
         };
     }
 

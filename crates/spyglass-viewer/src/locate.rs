@@ -19,13 +19,15 @@ pub enum Target {
     Biome(String),
     /// Features: a name and the placed features it covers.
     Feature { name: String, placed: Vec<String> },
+    /// The containers holding an item or item `#tag`.
+    Loot(String),
 }
 
 impl Target {
     /// What it's called: the id or tag, or the features' name.
     pub fn name(&self) -> &str {
         match self {
-            Target::Structure(id) | Target::Biome(id) => id,
+            Target::Structure(id) | Target::Biome(id) | Target::Loot(id) => id,
             Target::Feature { name, .. } => name,
         }
     }
@@ -199,6 +201,61 @@ pub fn run(
             } else if hits.iter().any(|h| !h.certain) {
                 Some(
                     "Tied cells come first: the game's biome there depends on lookup history."
+                        .to_string(),
+                )
+            } else {
+                None
+            };
+            (hits, Vec::new(), note)
+        }
+        Target::Loot(item) => {
+            let query = world.item_query(item, None).map_err(|e| e.to_string())?;
+            let found = session
+                .nearest_container(&query, from, FEATURE_RADIUS)
+                .map_err(|e| e.to_string())?;
+            let away = |c: &spyglass::FoundContainer| {
+                let (dx, dz) = (
+                    f64::from(c.position[0] - from[0]),
+                    f64::from(c.position[2] - from[2]),
+                );
+                (dx * dx + dz * dz).sqrt() as i32
+            };
+            let hits: Vec<Hit> = found
+                .hits
+                .iter()
+                .map(|c| {
+                    let by = match &c.source {
+                        spyglass::ContainerSource::Structure(id)
+                        | spyglass::ContainerSource::Feature(id) => spyglass::display_name(id),
+                        _ => String::new(),
+                    };
+                    Hit {
+                        x: c.position[0],
+                        y: Some(c.position[1]),
+                        z: c.position[2],
+                        what: format!("{} in {by}", spyglass::display_name(&c.holder)),
+                        certain: c.contents_certain(),
+                        blocks_away: away(c),
+                        answer: c.contents_certain().then_some("Nearest"),
+                        place: Place {
+                            kind: Kind::Place,
+                            id: String::new(),
+                            at: [c.position[0], c.position[2]],
+                        },
+                    }
+                })
+                .collect();
+            let note = if hits.is_empty() {
+                Some(format!(
+                    "None within {FEATURE_RADIUS} chunks. Each chunk is placed, so the search stops there."
+                ))
+            } else if !found.complete {
+                Some(format!(
+                    "None certainly holds it within {FEATURE_RADIUS} chunks; these might."
+                ))
+            } else if hits.len() > 1 {
+                Some(
+                    "Containers that might hold it, nearer than the nearest that certainly does, come first."
                         .to_string(),
                 )
             } else {

@@ -55,6 +55,11 @@ pub fn run(args: &Render) -> Result<()> {
             .iter()
             .map(|f| world.feature_query(f))
             .collect::<spyglass::Result<_>>()?,
+        loot: args
+            .loot
+            .as_deref()
+            .map(|item| world.item_query(item, None))
+            .transpose()?,
         slime_chunks: args.slime,
         spawn: args.spawn,
         confirm: args.confirm,
@@ -104,6 +109,7 @@ pub fn run(args: &Render) -> Result<()> {
                     highlight: &args.highlight,
                     structures: &args.structures,
                     features: &args.features,
+                    loot: args.loot.as_deref(),
                     slime_chunks: layers.slime_chunks,
                     spawn: layers.spawn,
                     confirm: layers.confirm,
@@ -118,6 +124,11 @@ pub fn run(args: &Render) -> Result<()> {
                     .features
                     .iter()
                     .map(|f| json::FeatureHit::new(f, None))
+                    .collect(),
+                containers: features
+                    .containers
+                    .iter()
+                    .map(|c| json::Container::new(c, None))
                     .collect(),
                 slime_chunks: features.slime_chunks.clone(),
                 spawn: features.spawn.map(|s| json::SpawnAnswer::new(&s)),
@@ -171,6 +182,18 @@ pub fn run(args: &Render) -> Result<()> {
             "  {} features ({certain} certain, {} likely candidates)",
             features.features.len(),
             features.features.len() - certain,
+        );
+    }
+    if let Some(item) = &args.loot {
+        let certain = features
+            .containers
+            .iter()
+            .filter(|c| c.contents_certain())
+            .count();
+        out!(
+            "  {} containers with {item} ({certain} certain, {} candidates)",
+            features.containers.len(),
+            features.containers.len() - certain,
         );
     }
     out.warn();

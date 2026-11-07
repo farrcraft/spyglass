@@ -29,7 +29,7 @@ Each answer is certain or a candidate, as structures and features are. A contain
 
 - [x] **API:** `containers_in`, `nearest_container`, item and tag matching, components in the answers; locate.md. _`Session::containers_in`, `Session::nearest_container`, `World::item_query`; `Loot::possible_items` rules out containers whose table can't hold the item, and answers seedless candidates that could. `containers_in_are_the_game_s` finds no differences in 26.2, 26.3 and 26.4-snapshot-5 to 7 (26.3: 538 of the game's containers, 13 in unlikely dungeons, the rest answered; 440 certain answers, all the game's). About 0.1 s a placed chunk in 26.3, mostly carving; 26.2's comparison takes about 5.5 minutes a seed, so CI's container units grew._
 - [x] **CLI:** `spyglass loot` with `--json`, on seeds and saves; the CLI's tests. _`loot at x,y,z` (the 3 × 3 chunks around it, as a dungeon's chest can be beside its chunk), `loot in --min --max [--item]` (at most 1,024 chunks), `loot find <item> [--enchantment --level]`; cli-json.md and getting-started. `loot_answers_are_the_library_s` checks all three against the library by seed -1's mansion in 26.2, 26.3 and 26.4-snapshot-7; `a_default_world` checks a save's answer is its seed's. `loot find` over 16 chunks takes about a minute in 26.3._
-- [ ] **Viewer:** contents of a selected structure's containers; the item layer; Nearest loot. Checked by eye on a real seed.
+- [x] **Viewer:** contents of a selected structure's containers; the item layer; Nearest loot. Checked by eye on a real seed. _The viewer has no selected structure, so the Layers tab's **Loot** section marks every container up close (**Containers**) and rings those holding an item; hovering one lists its contents, and clicking opens them slot by slot. **Nearest** the item is in the map's menu, and exports and `spyglass render --loot` draw the rings (`Layers::loot`, `Session::containers_holding`, which skips dungeons for an item their table can't hold). Each tile places its chunks and one more on every side, as a dungeon's chest can be beside its chunk. Checked by eye on seed -1 in 26.3 at its woodland mansion: the two chests with a diamond hoe ringed, one opened with its 11 stacks, and Nearest diamond hoe finding none within 8 chunks from 4301, −3533, as neither is._
 - [ ] **Search:** `loot` in both searches, its parser, prefilter and order; search.md.
 - [ ] **Cost:** containers for a seed in `cargo xtask bench`; a seed search for an enchanted golden apple near spawn, timed.
 - [ ] **Changelog** entries.
@@ -45,7 +45,7 @@ Each answer is certain or a candidate, as structures and features are. A contain
 
 - [x] locate.md: loot queries.
 - [ ] search.md: `loot` constraints.
-- [ ] render.md: the loot markers and layer.
+- [x] render.md: the loot markers and layer.
 - [ ] An ADR if `loot` in the search language needs a decision of its own.
 
 ## Notes

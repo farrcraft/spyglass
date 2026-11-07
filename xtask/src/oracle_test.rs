@@ -338,6 +338,16 @@ pub(crate) const TESTS: &[(&str, &str, &[Input])] = &[
     ),
     (
         "spyglass",
+        "containers_in_are_the_game_s",
+        &[Input::Containers, Input::Bundle],
+    ),
+    (
+        "spyglass",
+        "item_queries_resolve_ids_tags_and_enchantments",
+        &[Input::Bundle],
+    ),
+    (
+        "spyglass",
         "two_dungeon_seeds_are_the_game_s",
         &[Input::Features, Input::DungeonSeed, Input::Bundle],
     ),

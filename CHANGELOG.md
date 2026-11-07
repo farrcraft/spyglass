@@ -10,6 +10,7 @@ Changes go under **Unreleased** as they're made. `cargo xtask release` turns tha
 
 - **26.4-snapshot-7**, checked against the game.
 - **Pieces of strongholds, fortresses, end cities, woodland mansions and ocean ruins**, laid out as the game lays them out and checked against the game in every supported version. `Session::structure_layout` gives them, so their exact bounds show where jigsaw structures' and mineshafts' already did. Features near them, and near mineshafts, are decided by those pieces rather than by everything within 8 chunks, which settles most of the dungeons that were candidates for that reason ([structure-placement.md](docs/specs/structure-placement.md#legacy-pieces)).
+- **Loot in the library:** `Session::containers_in` gives the loot containers structures and dungeons place in an area, each certain or a candidate with its table, seed and contents: every stack with its count, enchantments, damage, potion, name and an exploration map's destination. `Session::nearest_container` finds the nearest holding an item or item tag, optionally with an enchantment (`World::item_query`). Checked against the game's containers in every supported version ([locate.md](docs/specs/locate.md#loot)).
 
 ## [0.2.0] - 2026-11-01
 

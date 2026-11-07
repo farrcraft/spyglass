@@ -252,6 +252,14 @@ impl Placer {
         self.features.iter().any(|(r, _)| *r == placed)
     }
 
+    /// Whether `placed`'s feature puts down containers with loot tables: dungeons
+    /// (`docs/specs/loot.md#containers`).
+    pub fn places_containers(&self, placed: PlacedRef) -> bool {
+        self.features
+            .iter()
+            .any(|(r, f)| *r == placed && matches!(f, Configured::MonsterRoom(_)))
+    }
+
     /// Whether `placed`'s feature could write air: true unless it writes only one state that
     /// isn't, or isn't ported.
     pub fn writes_air(&self, placed: PlacedRef, blocks: &Blocks) -> bool {

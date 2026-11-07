@@ -11,6 +11,7 @@ mod enchant;
 mod fill;
 mod load;
 mod model;
+mod possible;
 mod random;
 mod stack;
 
@@ -49,6 +50,12 @@ impl Loot {
     /// Whether table `id` is loaded.
     pub fn has(&self, id: &str) -> bool {
         self.tables.contains_key(&spyglass_data::codec::full_id(id))
+    }
+
+    /// Every item table `id` could put in a container, whatever the seed, in id order: a
+    /// superset, as conditions and counts aren't followed. Empty if the table isn't loaded.
+    pub fn possible_items(&self, id: &str) -> std::collections::BTreeSet<String> {
+        possible::items(self, &spyglass_data::codec::full_id(id))
     }
 
     /// The contents of a container of `slots` empty slots at block `at`, filled from table `id`

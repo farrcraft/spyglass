@@ -1,8 +1,8 @@
 # m20. Loot queries
 
-- Status: Draft
+- Status: In progress
 - Milestone: [20. Loot](../roadmap/20-loot.md)
-- Started:
+- Started: 2026-11-06
 - Completed:
 
 ## Goal
@@ -27,7 +27,7 @@ Each answer is certain or a candidate, as structures and features are. A contain
 
 ## Tasks
 
-- [ ] **API:** `containers_in`, `nearest_container`, item and tag matching, components in the answers; locate.md.
+- [x] **API:** `containers_in`, `nearest_container`, item and tag matching, components in the answers; locate.md. _`Session::containers_in`, `Session::nearest_container`, `World::item_query`; `Loot::possible_items` rules out containers whose table can't hold the item, and answers seedless candidates that could. `containers_in_are_the_game_s` finds no differences in 26.2, 26.3 and 26.4-snapshot-5 to 7 (26.3: 538 of the game's containers, 13 in unlikely dungeons, the rest answered; 440 certain answers, all the game's). About 0.1 s a placed chunk in 26.3, mostly carving; 26.2's comparison takes about 5.5 minutes a seed, so CI's container units grew._
 - [ ] **CLI:** `spyglass loot` with `--json`, on seeds and saves; the CLI's tests.
 - [ ] **Viewer:** contents of a selected structure's containers; the item layer; Nearest loot. Checked by eye on a real seed.
 - [ ] **Search:** `loot` in both searches, its parser, prefilter and order; search.md.
@@ -43,7 +43,7 @@ Each answer is certain or a candidate, as structures and features are. A contain
 
 ## Durable outputs
 
-- [ ] locate.md: loot queries.
+- [x] locate.md: loot queries.
 - [ ] search.md: `loot` constraints.
 - [ ] render.md: the loot markers and layer.
 - [ ] An ADR if `loot` in the search language needs a decision of its own.

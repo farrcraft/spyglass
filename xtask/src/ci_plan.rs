@@ -222,9 +222,9 @@ struct Costs {
     /// The test that searches for [`DUNGEON_SEED`] and checks its dungeons, on top of the seed's
     /// features.
     dungeon: f64,
-    /// A seed's containers, with their comparison: its starts' and its ring and far starts'
-    /// chunks. Estimated from local runs (16 threads) at four times as long, until CI's logs
-    /// have them.
+    /// A seed's containers, with their comparisons: its starts' and its ring and far starts'
+    /// chunks, and the loot queries over them (about 5 minutes of it, 22 in 26.2). Estimated from local runs
+    /// (16 threads) at four times as long, until CI's logs have them.
     containers: f64,
     /// `oracle locate`'s server, its map cases included, and their comparisons.
     locate: f64,
@@ -250,7 +250,7 @@ const COSTS: &[Costs] = &[
         blocks: 0.5,
         features: 5.0,
         dungeon: 22.0,
-        containers: 15.0,
+        containers: 37.0,
         locate: 12.0,
         loot: 1.0,
         bundle: 14.0,
@@ -266,7 +266,7 @@ const COSTS: &[Costs] = &[
         blocks: 0.3,
         features: 3.1,
         dungeon: 4.5,
-        containers: 7.0,
+        containers: 12.0,
         locate: 5.0,
         loot: 1.0,
         bundle: 3.0,
@@ -283,7 +283,7 @@ const COSTS: &[Costs] = &[
         blocks: 0.3,
         features: 3.1,
         dungeon: 4.8,
-        containers: 7.5,
+        containers: 12.5,
         locate: 5.5,
         loot: 1.0,
         bundle: 11.0,

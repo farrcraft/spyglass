@@ -29,6 +29,7 @@
 mod blocks;
 mod features;
 mod game;
+mod loot;
 mod render;
 mod save;
 mod search;
@@ -51,6 +52,9 @@ use spyglass_terrain::{Terrain, TerrainSettings};
 pub use blocks::{BlockAt, BlockColumn, Carvers, ChunkBlocks};
 pub use features::{FeatureLocate, FeatureOptions, FeatureQuery, FoundFeature, Neighbours};
 pub use game::{Game, GameSession};
+pub use loot::{
+    ContainerLocate, ContainerSource, FoundContainer, Item, ItemQuery, MapDestination, Slot,
+};
 pub use render::{
     BiomeMap, CarverKind, CarvingMap, DEFAULT_MAP_Y, HeightMap, Image, Layers, MARKER_REACH,
     MAX_FEATURE_SCALE, MAX_PIXELS, MAX_SCALE, MAX_SIDE, MAX_SLIME_SCALE, MAX_TERRAIN_SCALE,
@@ -457,6 +461,8 @@ pub struct World {
     blocks: OnceLock<BlockSettings>,
     /// Loaded on first feature query.
     features: OnceLock<features::FeatureWorld>,
+    /// Loaded on first loot query.
+    loot: OnceLock<loot::LootWorld>,
     /// Each biome's map colour, by [`BiomeId`].
     palette: Vec<[u8; 3]>,
 }
@@ -507,6 +513,7 @@ impl World {
             pools: OnceLock::new(),
             blocks: OnceLock::new(),
             features: OnceLock::new(),
+            loot: OnceLock::new(),
             palette,
         })
     }

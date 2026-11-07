@@ -1,4 +1,4 @@
-//! Every container loot table of a real bundle loads and fills. Ignored: needs a bundle
+//! Every container loot table of a real bundle loads and fills, with only items it could hold. Ignored: needs a bundle
 //! (`cargo run -p spyglass-extract`); `cargo xtask oracle-test` runs it for every version.
 
 use spyglass_data::bundle::Bundle;
@@ -42,11 +42,18 @@ fn every_container_table_loads_and_fills() {
     }
     let mut stacks = 0;
     for table in &tables {
+        // Every stack a fill makes is one the table could make.
+        let possible = loot.possible_items(table);
         for seed in 1..=1_000 {
             let contents = loot.fill(table, seed, [0, 64, 0], 27, &Plains).unwrap();
             assert_eq!(contents.len(), 27);
             for stack in contents.iter().flatten() {
                 assert!(stack.count >= 1, "{table} {seed}: {stack:?}");
+                assert!(
+                    possible.contains(stack.item()),
+                    "{table} {seed}: {} isn't among its possible items {possible:?}",
+                    stack.item()
+                );
                 stacks += 1;
             }
         }

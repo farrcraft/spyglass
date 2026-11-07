@@ -2,6 +2,8 @@
 //! pieces in the chunk being decorated before that step's features
 //! (`docs/specs/features.md#structures`).
 
+use std::collections::HashMap;
+
 use spyglass_blocks::ChunkGenerator;
 use spyglass_rng::WorldgenRandom;
 use spyglass_structure::{
@@ -55,10 +57,36 @@ fn footprint(kind: StructureType) -> Option<(i32, i32)> {
 pub fn pieces(
     starts: &Starts<'_>,
     sets: &StructureSets,
+    chunk: [i32; 2],
+    last_step: usize,
+    min_y: i32,
+    max_y: i32,
+) -> Vec<Piece> {
+    pieces_cached(
+        starts,
+        sets,
+        chunk,
+        last_step,
+        min_y,
+        max_y,
+        &mut LayoutCache::new(),
+    )
+}
+
+/// Each start's pieces, by structure and start chunk, as [`pieces`] gives them: what nearby
+/// chunks' queries share, so a start is laid out once. Only for one seed's starts and one
+/// level's heights.
+pub type LayoutCache = HashMap<(usize, [i32; 2]), Vec<Piece>>;
+
+/// As [`pieces`], keeping each start's pieces in `cache` for the next chunk's.
+pub fn pieces_cached(
+    starts: &Starts<'_>,
+    sets: &StructureSets,
     [cx, cz]: [i32; 2],
     last_step: usize,
     min_y: i32,
     max_y: i32,
+    cache: &mut LayoutCache,
 ) -> Vec<Piece> {
     let mut out = Vec::new();
     let reach = REACH_CHUNKS;
@@ -79,6 +107,11 @@ pub fn pieces(
                 if info.step > last_step || check == Check::Rejected {
                     continue;
                 }
+                if let Some(pieces) = cache.get(&(structure, start)) {
+                    out.extend_from_slice(pieces);
+                    continue;
+                }
+                let first = out.len();
                 let laid_out = match info.kind {
                     StructureType::Jigsaw
                     | StructureType::Mineshaft
@@ -142,6 +175,7 @@ pub fn pieces(
                         structure,
                     }),
                 }
+                cache.insert((structure, start), out[first..].to_vec());
             }
         }
     }

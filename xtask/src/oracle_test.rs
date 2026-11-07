@@ -377,6 +377,11 @@ pub(crate) const TESTS: &[(&str, &str, &[Input])] = &[
     ("spyglass-cli", "jigsaw_bounds", &[Input::Extracted]),
     ("spyglass-cli", "biomes", &[Input::Extracted]),
     ("spyglass-cli", "slime_and_spawn", &[Input::Extracted]),
+    (
+        "spyglass-cli",
+        "loot_answers_are_the_library_s",
+        &[Input::Extracted],
+    ),
     ("spyglass-cli", "a_default_world", &[Input::Extracted]),
     (
         "spyglass-cli",

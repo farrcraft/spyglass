@@ -1,6 +1,6 @@
 # CLI JSON output
 
-Status: stable, format 1. Covers `spyglass locate`, `spyglass heights`, `spyglass blocks`, `spyglass render`, `spyglass search`, `spyglass find` and `spyglass world` with `--json`.
+Status: stable, format 1. Covers `spyglass locate`, `spyglass loot`, `spyglass heights`, `spyglass blocks`, `spyglass render`, `spyglass search`, `spyglass find` and `spyglass world` with `--json`.
 
 Scripts depend on this format, so it's versioned. Within a format version, fields are only ever added. Removing or changing the meaning of a field bumps `format`. The CLI writes the JSON from the library's results ([ADR 0014](../adr/0014-public-api-world-and-session.md)); the library types themselves aren't the format.
 
@@ -13,15 +13,15 @@ Scripts depend on this format, so it's versioned. Within a format version, field
 - Paths are strings. Characters that aren't valid Unicode are replaced with U+FFFD.
 - `seed` is the 64-bit seed after text seeds are hashed ([locate.md](locate.md#text-seeds)).
 
-Every `locate`, `heights`, `blocks` and `render` object starts with:
+Every `locate`, `features`, `loot`, `heights`, `blocks` and `render` object starts with:
 
-| Field       | Type   | Meaning                                                                                                                                                              |
-| ----------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `format`    | int    | This format's version: `1`.                                                                                                                                          |
-| `command`   | string | `locate structure`, `locate biome`, `locate slime`, `locate spawn`, `heights`, `blocks` or `render`.                                                                 |
-| `version`   | string | The game version of the bundle used, e.g. `26.3`.                                                                                                                    |
-| `dimension` | string | The dimension answered for: `minecraft:overworld`, `minecraft:the_nether` or `minecraft:the_end` (`--dimension`, or the player's when the position is the player's). |
-| `seed`      | int    | The world seed.                                                                                                                                                      |
+| Field       | Type   | Meaning                                                                                                                                                               |
+| ----------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `format`    | int    | This format's version: `1`.                                                                                                                                           |
+| `command`   | string | `locate structure`, `locate biome`, `locate feature`, `locate slime`, `locate spawn`, `features`, `loot at`, `loot in`, `loot find`, `heights`, `blocks` or `render`. |
+| `version`   | string | The game version of the bundle used, e.g. `26.3`.                                                                                                                     |
+| `dimension` | string | The dimension answered for: `minecraft:overworld`, `minecraft:the_nether` or `minecraft:the_end` (`--dimension`, or the player's when the position is the player's).  |
+| `seed`      | int    | The world seed.                                                                                                                                                       |
 
 With `--world`, two more:
 
@@ -89,6 +89,32 @@ Each hit ([locate.md](locate.md#features)): `feature` (the placed feature), `pos
 ## `features`
 
 `target`, `min` and `max` (`[x, z]`, the region asked for) and `features`: each feature in the region, chunk by chunk, as `locate feature`'s hits without `blocks_away`.
+
+## `loot`
+
+Loot containers and their contents ([locate.md](locate.md#loot)). With `--world`, contents are as the seed generates them, not what a container holds now.
+
+- **`loot at`:** `position` (`[x, y, z]`, the block asked about) and `containers`: every answer there, usually one, several where candidates differ in their seeds. Empty: spyglass places none there.
+- **`loot in`:** `min` and `max` (`[x, z]`, the region asked for), `item` (the item asked for with `--item`, with its enchantment, or null) and `containers`: each container in the region holding it (all of them without `--item`), chunk by chunk.
+- **`loot find`:** `item` (as `loot in`'s), `from` (`[x, y, z]`), `radius` (chunks searched around `from`'s), `complete` (whether the hits end at one certainly holding the item) and `hits`: nearest first, every candidate nearer than the nearest certain one, then that one, each with `blocks_away` (horizontal, rounded down).
+
+Each container:
+
+| Field              | Type           | Meaning                                                                                                                     |
+| ------------------ | -------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `position`         | `{x, y, z}`    | The block, or a chest minecart's rail.                                                                                      |
+| `chunk`            | `[x, z]`       | The chunk whose decoration placed it; a dungeon's or ruined portal's chest may be beside it.                                |
+| `holder`           | string         | The block or entity, e.g. `minecraft:chest`, `minecraft:chest_minecart`.                                                    |
+| `source`           | object         | What placed it: `kind` (`structure` or `feature`) and `id`, e.g. `minecraft:village_plains`, `minecraft:monster_room_deep`. |
+| `table`            | string         | The loot table.                                                                                                             |
+| `loot_seed`        | int or null    | The loot seed; null where it isn't known.                                                                                   |
+| `certain`          | bool           | Whether the container is certain on its own, table and seed included.                                                       |
+| `reason`           | string or null | Why it's a candidate.                                                                                                       |
+| `contents`         | array or null  | The filled slots in order; null without a seed.                                                                             |
+| `contents_certain` | bool           | Whether the contents are certainly the game's.                                                                              |
+| `contents_doubt`   | string or null | Why the contents may not be the game's, or aren't known: a tied biome, a map's target that isn't certain, an unknown seed.  |
+
+Each slot has `slot` (from 0), `item` and `count`, and the components its table set, each left out when unset: `damage`, `enchantments` and `stored_enchantments` (objects of levels by id), `potion`, `stew_effects` (`{effect, duration}` in ticks), `instrument`, `name` (the text component), `ominous_bottle_amplifier` and `map` (`target` as `{x, z}`, `decoration` and `zoom`).
 
 ## `locate slime`
 

@@ -181,6 +181,32 @@ fn a_default_world() {
     let text = spyglass(&["locate", "spawn", "--world", path]);
     assert!(String::from_utf8_lossy(&text.stdout).contains("(Test World, seed 12345"));
 
+    // Loot in a save is the seed's.
+    let loot = json(&[
+        "loot",
+        "find",
+        "#minecraft:logs",
+        "--world",
+        path,
+        "--from",
+        "player",
+        "--radius",
+        "1",
+    ]);
+    assert_eq!(loot["command"], "loot find");
+    let from_seed = json(&[
+        "loot",
+        "find",
+        "#minecraft:logs",
+        "--seed",
+        "12345",
+        "--from",
+        "100,64,-201",
+        "--radius",
+        "1",
+    ]);
+    assert_eq!(loot["hits"], from_seed["hits"]);
+
     // A map of a save is centred on its player: block (100, -201) in pixel (4, 4).
     let png = dir.path().join("map.png");
     let png = png.to_str().unwrap();

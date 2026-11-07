@@ -19,6 +19,7 @@ mod find;
 mod heights;
 mod json;
 mod locate;
+mod loot;
 mod render;
 mod search;
 mod world;
@@ -70,6 +71,7 @@ fn run(cli: Cli) -> Result<()> {
         Command::Heights(args) => heights::run(&args),
         Command::Blocks(args) => blocks::run(&args),
         Command::Features(args) => features::run(&args),
+        Command::Loot { what } => loot::run(&what),
     }
 }
 

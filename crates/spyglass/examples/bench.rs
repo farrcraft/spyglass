@@ -2,7 +2,8 @@
 //! `cargo run --profile dist -p spyglass --example bench -- [bundle dir or version] [--only text]`.
 //! Needs a bundle: a directory, a version in `bundles/`, or by default the newest release there.
 //! Each line is the median of several runs; `--only` runs just the lines whose names contain
-//! the text.
+//! the text, and `--runs n` runs each timed line n times, so a profile of a short line isn't
+//! mostly the world loading.
 
 use std::hint::black_box;
 use std::path::{Path, PathBuf};
@@ -13,6 +14,8 @@ use spyglass::{Dimension, Game, Layers, MapArea, Session, World};
 
 /// The text a line's name must contain to run, from `--only`.
 static ONLY: OnceLock<Option<String>> = OnceLock::new();
+/// How many times each timed line runs, from `--runs`, in place of the line's own count.
+static RUNS: OnceLock<Option<usize>> = OnceLock::new();
 
 const SEEDS: [i64; 5] = [
     0,
@@ -25,15 +28,23 @@ const SEEDS: [i64; 5] = [
 fn main() -> spyglass::Result<()> {
     let mut bundle = None;
     let mut only = None;
+    let mut runs = None;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         if arg == "--only" {
             only = args.next();
+        } else if arg == "--runs" {
+            runs = args
+                .next()
+                .and_then(|n| n.parse::<usize>().ok())
+                .filter(|&n| n > 0);
+            assert!(runs.is_some(), "--runs needs a positive count");
         } else {
             bundle = Some(arg);
         }
     }
     ONLY.set(only).expect("set once");
+    RUNS.set(runs).expect("set once");
     let dir: PathBuf = match bundle {
         Some(arg) if Path::new(&arg).join("bundle.json").is_file() => arg.into(),
         version => spyglass::find_bundle("bundles", version.as_deref())?.dir,
@@ -728,6 +739,7 @@ fn report_after<T>(name: &str, runs: usize, mut setup: impl FnMut() -> T, mut f:
     if !wanted(name) {
         return;
     }
+    let runs = RUNS.get().copied().flatten().unwrap_or(runs);
     let mut times: Vec<Duration> = (0..runs)
         .map(|_| {
             let input = setup();

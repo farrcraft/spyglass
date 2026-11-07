@@ -156,10 +156,29 @@ Project-level commands live in the `xtask` crate and run as `cargo xtask <comman
 | `cargo xtask msrv`          | Builds the workspace with its minimum Rust version.                                                                       |
 | `cargo xtask oracle`        | Builds and runs the oracle harness (below).                                                                               |
 | `cargo xtask oracle-test`   | Runs the ignored comparisons with the game (below).                                                                       |
+| `cargo xtask profile`       | Where a bench line's time goes, by function, from Linux `perf` in Docker ([profiling](#profiling)).                       |
 | `cargo xtask release`       | Sets the version and dates the changelog for a release ([releasing](releasing.md)).                                       |
 | `cargo xtask sweep`         | Deletes stale build outputs from `target/` ([ADR 0061](adr/0061-keeping-target-small.md)).                                |
 | `cargo xtask version-diff`  | Reports what changed between two bundles ([adding a version](adding-a-version.md)).                                       |
 | `cargo xtask viewer-timing` | Times the viewer's cold start in five fixed scenarios (`dist` build; [the viewer](#10-the-viewer)).                       |
+
+### Profiling
+
+`cargo xtask bench` says how long each line takes; `cargo xtask profile` says where that time goes. It records a bench line with Linux `perf`, in a privileged Docker container, because the sampling profilers on Windows need an elevated shell. Docker Desktop's Linux VM needs nothing more.
+
+```sh
+cargo xtask profile 26.3 --only "dungeons at 1:2"                  # a long line, as it is
+cargo xtask profile 26.3 --only "chunk_blocks with carvers" --runs 300 \
+  --callers "BiomeZoom>::quart"                                     # a short line, repeated; who calls a function
+```
+
+- **What you get:** self and inclusive time by function, and every sample's stack in `target/profile/<version>-<line>.stacks`, innermost frame first, for further digging.
+- **What's profiled:** your working tree as it is, committed or not, mounted read-only and built under `dist` with line tables and frame pointers. Expect the same hot spots as the Windows build, not the same times.
+- **Setting the line up:**
+  - `--only` picks lines as the bench's own `--only` does.
+  - `--runs` repeats each line, so a short one outweighs the world loading that its first run triggers.
+  - `--delay` (default 1.5 s) skips opening the world.
+- **The container** (`spyglass-profile`) and its volume (`spyglass-profile-root`, holding the toolchain and the build) stay between runs. The first run installs `perf`, Rust and `rustfilt` and builds from scratch, which takes a few minutes; later runs only rebuild what changed. Remove them with `docker rm -f spyglass-profile` and `docker volume rm spyglass-profile-root`.
 
 ## 6. The oracle
 

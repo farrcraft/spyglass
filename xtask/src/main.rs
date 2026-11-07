@@ -20,6 +20,7 @@ mod linux_check;
 mod locate;
 mod oracle;
 mod oracle_test;
+mod profile;
 mod release;
 mod smoke;
 mod sweep;
@@ -100,6 +101,9 @@ enum Cmd {
         #[command(subcommand)]
         cmd: oracle::OracleCmd,
     },
+    /// Profile the bench's lines with Linux `perf`, in a privileged Docker container, and print
+    /// where the time goes by function.
+    Profile(profile::Profile),
     /// Set the version for a release and date the changelog, for a pull request. Doesn't touch
     /// git; the Release workflow tags and drafts it from main (docs/releasing.md).
     Release(release::Release),
@@ -138,6 +142,7 @@ fn main() -> ExitCode {
         Cmd::Msrv { print } => msrv(print),
         Cmd::Oracle { cmd } => oracle::run(cmd),
         Cmd::OracleTest { game_version } => oracle_test::run(game_version.as_deref()),
+        Cmd::Profile(args) => profile::run(&args),
         Cmd::Release(args) => release::run(&args),
         Cmd::ReleaseNotes(args) => release::notes(&args),
         Cmd::Smoke(args) => smoke::run(&args),

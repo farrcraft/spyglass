@@ -26,6 +26,7 @@ The milestones build toward the goals in the [README](../../README.md#goals): co
 | 18  | [Surface rules, ore veins, caves, carvers](completed/18-surface-veins-and-carvers.md) | A chunk's blocks before features, and layers to show them.          | Completed   |
 | 19  | [Features](completed/19-features.md)                                                  | Dungeons, geodes, wells, fossils and lava lakes, certain or not.    | Completed   |
 | 20  | [Loot](20-loot.md)                                                                    | What's in the chests, and searching for it.                         | In progress |
+| 21  | [Faster queries](21-faster-queries.md)                                                | Single queries on every core, cheaper biome searches, a profiler.   | In progress |
 
 ## Follow-ups
 

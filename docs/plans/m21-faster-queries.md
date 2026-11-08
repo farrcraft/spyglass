@@ -99,10 +99,10 @@ Phase 1's profiles put biome lookup ahead of noise in chunk work ([notes](#notes
 
 ### Phase 4: build-level gains
 
-- [ ] PGO trial on the bench; decision on releases against ADR 0038.
-- [ ] `mimalloc` trial in the CLI and viewer; every `dist` target and the MSRV build checked.
-- [ ] A faster hasher for the maps the profile shows are hot.
-- [ ] ADR for the changes kept; the numbers for the ones dropped in the notes.
+- [x] PGO trial on the bench; decision on releases against ADR 0038. Local builds only: `cargo xtask bench --pgo` and `cargo xtask dist --pgo` (notes).
+- [x] `mimalloc` trial in the CLI and viewer; every `dist` target and the MSRV build checked. Kept; Windows `dist --pgo` and a Linux build in the profile container pass, and MSRV; macOS is left to the release workflow.
+- [x] A faster hasher for the maps the profile shows are hot: `FxHashMap` for `corners_of`'s cells and `NoiseChunk`'s two maps.
+- [x] ADR for the changes kept; the numbers for the ones dropped in the notes ([ADR 0064](../adr/0064-build-level-speedups.md)).
 
 ### Phase 5: biome bounds
 
@@ -126,16 +126,43 @@ Phase 1's profiles put biome lookup ahead of noise in chunk work ([notes](#notes
 ## Durable outputs
 
 - [x] ADR: threads within library queries ([0063](../adr/0063-threads-within-library-queries.md)).
-- [ ] ADR: build-level changes kept (PGO, allocator, hasher), if any.
+- [x] ADR: build-level changes kept (PGO, allocator, hasher), if any ([0064](../adr/0064-build-level-speedups.md)).
 - [ ] ADR: the biome-bounds stage, if built.
 - [ ] [search.md](../specs/search.md): the new stage, if built.
 - [ ] [biome-lookup.md](../specs/biome-lookup.md) and [material.md](../specs/material.md#biomes): the hinted search and the batched zoom, if either spec describes how spyglass computes them.
 - [ ] [locate.md](../specs/locate.md) and [structure-placement.md](../specs/structure-placement.md): cost lines, and that ring positions are settled independently.
-- [x] [getting-started.md](../getting-started.md): how to profile.
+- [x] [getting-started.md](../getting-started.md): how to profile, and profile-guided builds.
 - [ ] `docs/research/`: the GPU and SIMD assessment.
 - [x] [architecture.md](../architecture.md), if the use of threads changes what it says about crates or front ends: a paragraph in [front ends](../architecture.md#front-ends).
 
 ## Notes
+
+- 2026-11-08: **A faster hasher.** The phase 2 profiles' hashing samples, by the first frame above the hasher: on 26.3, `corners_of`'s map is 5.9 to 7.1% of chunk work, dungeon tiles and `nearest_feature`, and nothing else passes 0.3%; on 26.2, `NoiseChunk`'s `surface_levels` and `columns` are 1.9%. Those three maps became `rustc-hash`'s `FxHashMap` (already in the tree); none is iterated, so no answer can change. With NordVPN and a browser each keeping a core busy, three rounds of the usual lines spread by ±25%, so the single-threaded chunk lines ran eight alternating rounds of 40 runs each, against f4d10c3. Minimum and median of the rounds:
+
+  | Line                                 | Before           | FxHash           |
+  | ------------------------------------ | ---------------- | ---------------- |
+  | `chunk_blocks` with carvers, 26.3    | 15.9 and 24.9 ms | 13.7 and 22.2 ms |
+  | `chunk_blocks` without carvers, 26.3 | 19.0 and 27.3 ms | 17.2 and 23.7 ms |
+  | `chunk_blocks` with carvers, 26.2    | 80.9 and 133 ms  | 76.7 and 119 ms  |
+  | `chunk_blocks` without carvers, 26.2 | 76.4 and 81.7 ms | 51.3 and 77.5 ms |
+
+  Kept: about a tenth off 26.3's chunk work, a little more than the profile's share of hashing, within noise.
+
+- 2026-11-08: **mimalloc** 0.1.52 as the bench's global allocator, against the FxHash build, alternating. Single-threaded chunk work doesn't move (eight rounds of 40 runs: 26.3 with carvers 23.2 and 24.6 → 22.0 and 24.1 ms, minimum and median; without, 20.0 and 26.9 → 23.7 and 27.6 ms). Threaded feature work on 26.3 gains about 9%: eight rounds of the 1:1 dungeon tile gave 1,073 and 1,120 → 980 and 1,022 ms, mimalloc ahead in six. 26.2's tile moved 1% (4,763 and 5,056 → 4,701 and 5,022 ms). It's the CLI's first C code; the viewer already builds C on every target, for `ring` (through `spyglass-extract`'s `ureq`). Kept, by the user's choice (2026-11-08), in the CLI, the viewer and the bench.
+- 2026-11-08: **PGO trial**, by hand rather than with `cargo-pgo`: `-Cprofile-generate` on the `dist` bench in its own target directory, trained on the whole bench for 26.3 and 26.2, merged with `llvm-profdata` (the `llvm-tools` component) and rebuilt with `-Cprofile-use`. Against the FxHash build, alternating; minimum and median:
+
+  | Line                                       | FxHash             | PGO                |
+  | ------------------------------------------ | ------------------ | ------------------ |
+  | `chunk_blocks` with carvers, 26.3 (8 × 40) | 13.6 and 21.7 ms   | 11.9 and 18.8 ms   |
+  | `chunk_blocks` without, 26.3 (8 × 40)      | 17.2 and 24.8 ms   | 13.1 and 22.4 ms   |
+  | `chunk_blocks` without, 26.2 (8 × 40)      | 51.0 and 78.5 ms   | 49.7 and 65.8 ms   |
+  | Dungeon tile at 1:1, 26.3                  | 1,160 and 1,179 ms | 770 and 1,027 ms   |
+  | Dungeon tile at 1:2, 26.3                  | 2,353 and 2,380 ms | 1,771 and 2,148 ms |
+  | `nearest_feature monster_room`, 26.3       | 1,054 and 1,148 ms | 800 and 1,073 ms   |
+  | Biome presence within 500, 26.3 (5 × 20)   | 6.17 and 6.36 ms   | 5.83 and 6.30 ms   |
+  | Biome presence within 500, 26.2 (5 × 20)   | 15.5 and 15.5 ms   | 16.3 and 16.4 ms   |
+
+  26.3 gains 10 to 15% in chunk work and more in features; 26.2's chunk work gains a little, its feature lines are mixed and its biome lines lose 5%. The training set is the bench itself, so these flatter it. Kept for local builds only, by the user's choice (2026-11-08): `cargo xtask bench --pgo` and `cargo xtask dist --pgo`, which took 19 minutes on this machine, most of it the instrumented bench. Releases stay as ADR 0038 has them until a training run is shown to repeat.
 
 - 2026-11-08: **Viewer by eye**, dist build, seed 12345 on 26.3, both dungeon features at 1:1, with the default search started while tiles were pending. Both kept moving: tiles left went 78 → 51 → 25 over 30 s, with dungeon markers filling in, while the search went from 3,332 to 10,535 seeds at about 340 a second. `oracle-test` passed on every bundle, both thread tests included.
 - 2026-11-07: **Features in parallel**, three alternating rounds against 104721e on 16 threads, on a busier machine than the morning's (the before ranges are wider):

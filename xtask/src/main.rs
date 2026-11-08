@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use clap::{Parser, Subcommand};
 use spyglass_extract::{java, manifest};
 
@@ -20,6 +20,7 @@ mod linux_check;
 mod locate;
 mod oracle;
 mod oracle_test;
+mod pgo;
 mod profile;
 mod release;
 mod smoke;
@@ -40,6 +41,10 @@ enum Cmd {
     Bench {
         /// The bundle to use: a directory or a version in `bundles/` [default: the newest release].
         bundle: Option<PathBuf>,
+        /// Build the bench profile-guided, trained first on an instrumented run of itself
+        /// (docs/adr/0064-build-level-speedups.md). Needs rustup's `llvm-tools` component.
+        #[arg(long)]
+        pgo: bool,
     },
     /// Run every check in .pre-commit-config.yaml against the whole repo, as CI does, then sweep
     /// stale build outputs from `target/`.
@@ -127,7 +132,7 @@ enum Cmd {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
-        Cmd::Bench { bundle } => bench(bundle.as_deref()),
+        Cmd::Bench { bundle, pgo } => bench(bundle.as_deref(), pgo),
         Cmd::Check => check(),
         Cmd::Ci(args) => ci::run(&args),
         Cmd::CiPlan(args) => ci_plan::run(&args),
@@ -192,7 +197,26 @@ fn command(program: &str) -> Command {
     cmd
 }
 
-fn bench(bundle: Option<&Path>) -> Result<()> {
+fn bench(bundle: Option<&Path>, pgo: bool) -> Result<()> {
+    if pgo {
+        let profile = pgo::train(bundle, &[], None)?;
+        let build_dir = pgo::dir().join("use");
+        let mut cmd = pgo::cargo_dist(&build_dir, &[pgo::use_flag(&profile)], None);
+        cmd.args(["-p", "spyglass", "--example", "bench"]);
+        ensure!(
+            cmd.status().context("failed to run cargo")?.success(),
+            "the profile-guided bench didn't build"
+        );
+        let bench = pgo::output(&build_dir, None)
+            .join("examples")
+            .join(pgo::exe("bench"));
+        let status = command(&bench.to_string_lossy())
+            .args(bundle)
+            .status()
+            .context("failed to run the bench")?;
+        ensure!(status.success(), "the benchmark failed");
+        return Ok(());
+    }
     let mut cmd = command("cargo");
     cmd.args([
         "run",

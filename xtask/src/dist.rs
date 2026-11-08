@@ -19,6 +19,11 @@ pub struct Dist {
     /// The target triple to build for [default: this machine's].
     #[arg(long)]
     target: Option<String>,
+    /// Build profile-guided, trained first on the bench over the newest release bundle. For
+    /// this machine only: the archive isn't reproducible, so releases never use it
+    /// (docs/adr/0064-build-level-speedups.md). Needs rustup's `llvm-tools` component.
+    #[arg(long)]
+    pgo: bool,
 }
 
 /// The binaries shipped: package, then binary name.
@@ -80,7 +85,11 @@ pub fn run(args: &Dist) -> Result<()> {
         eprintln!("warning: the tree has uncommitted changes; the build is marked -dirty");
     }
 
-    build_binaries(&target, &build)?;
+    ensure!(
+        !args.pgo || target == host,
+        "--pgo trains on this machine, so it builds only for {host}"
+    );
+    build_binaries(&target, &build, args.pgo)?;
     let windows = target.contains("windows");
     let exe = if windows { ".exe" } else { "" };
     let out = repo_root().join("target").join(&target).join("dist");
@@ -139,7 +148,7 @@ pub fn run(args: &Dist) -> Result<()> {
 }
 
 /// This machine's target triple, from `rustc -vV`.
-fn host_target() -> Result<String> {
+pub(crate) fn host_target() -> Result<String> {
     let out = command("rustc").arg("-vV").output()?;
     String::from_utf8_lossy(&out.stdout)
         .lines()
@@ -171,8 +180,9 @@ fn build_info() -> Result<Build> {
     })
 }
 
-/// `cargo build --profile dist` for `target`, with this build's commit and remapped paths.
-fn build_binaries(target: &str, build: &Build) -> Result<()> {
+/// `cargo build --profile dist` for `target`, with this build's commit and remapped paths, and
+/// profile-guided with `pgo`.
+fn build_binaries(target: &str, build: &Build, pgo: bool) -> Result<()> {
     let mut flags: Vec<String> = remaps()
         .into_iter()
         .map(|(from, to)| format!("--remap-path-prefix={}={to}", from.display()))
@@ -184,6 +194,10 @@ fn build_binaries(target: &str, build: &Build) -> Result<()> {
         flags.push("-Ctarget-feature=+crt-static".into());
         flags.push("-Clink-arg=/PDBALTPATH:%_PDB%".into());
         flags.push("-Clink-arg=/Brepro".into());
+    }
+    if pgo {
+        let profile = crate::pgo::train(None, &flags, Some(target))?;
+        flags.push(crate::pgo::use_flag(&profile));
     }
     let mut cmd = command("cargo");
     cmd.args(["build", "--profile", "dist", "--locked", "--target", target]);

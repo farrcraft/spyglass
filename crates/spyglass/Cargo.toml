@@ -35,5 +35,6 @@ serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+mimalloc.workspace = true
 spyglass-oracle.workspace = true
 tempfile.workspace = true

@@ -34,6 +34,10 @@ use spyglass::{Dimension, Game, SaveReport, Scan, Session, UncheckedVersion, Wor
 
 use crate::args::{Cli, Command, Common, Locate, Origin};
 
+// Threaded queries allocate from many threads at once (ADR 0064).
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 /// How many hits human output lists; `--json` has them all.
 const SHOWN: usize = 8;
 

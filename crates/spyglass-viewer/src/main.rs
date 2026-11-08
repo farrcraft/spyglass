@@ -22,6 +22,10 @@ mod timing;
 mod userdata;
 mod view;
 
+// Tile workers and threaded queries allocate from many threads at once (ADR 0064).
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 /// The app's name, which names its settings folder too.
 const APP: &str = "spyglass";
 

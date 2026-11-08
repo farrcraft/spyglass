@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+use rustc_hash::FxHashMap;
 use spyglass_data::anchor::AnchorHeights;
 use spyglass_data::codec::{LoadError, LoadErrorKind};
 use spyglass_noise::mth::{self, exp2i};
@@ -1040,7 +1041,7 @@ pub(crate) struct Memo {
     entries: Vec<(u64, f32)>,
     /// Interpolated and upscaled cells' corners, for points: by the input's binder and slot
     /// and the corners' volume ([`corners_of`]). Cleared when it holds [`MAX_POINT_CELLS`].
-    cells: HashMap<CornersKey, Arc<[f32]>>,
+    cells: FxHashMap<CornersKey, Arc<[f32]>>,
 }
 
 /// A point's corners: the input's binder and slot, and the corners' least position, step and

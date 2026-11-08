@@ -180,6 +180,16 @@ cargo xtask profile 26.3 --only "chunk_blocks with carvers" --runs 300 \
   - `--delay` (default 1.5 s) skips opening the world.
 - **The container** (`spyglass-profile`) and its volume (`spyglass-profile-root`, holding the toolchain and the build) stay between runs. The first run installs `perf`, Rust and `rustfilt` and builds from scratch, which takes a few minutes; later runs only rebuild what changed. Remove them with `docker rm -f spyglass-profile` and `docker volume rm spyglass-profile-root`.
 
+### Profile-guided builds
+
+`--pgo` builds the bench or the archive with a profile trained on this machine: an instrumented bench runs once, then everything is built again with its counts ([ADR 0064](adr/0064-build-level-speedups.md)). It needs rustup's `llvm-tools` component, and the training run is slower than a plain bench. Builds go under `target/pgo/`. Releases don't use it, since two trainings never give the same profile.
+
+```sh
+rustup component add llvm-tools
+cargo xtask bench --pgo 26.3          # train on the bench over 26.3, then time a profile-guided bench
+cargo xtask dist --pgo                # this machine's archive, profile-guided
+```
+
 ## 6. The oracle
 
 The oracle asks the real game for answers and writes golden files that the Rust crates are tested against ([specs/oracle.md](specs/oracle.md)). It needs a JDK (see [Java](#java)). Everything it downloads or generates stays out of the repo: the server jar goes to your per-user cache, build output to `target/oracle/`, and golden files to `oracle-out/` (gitignored).

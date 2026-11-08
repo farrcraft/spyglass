@@ -12,6 +12,10 @@ use std::time::{Duration, Instant};
 
 use spyglass::{Dimension, Game, Layers, MapArea, Session, World};
 
+// As the CLI and viewer allocate (ADR 0064).
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 /// The text a line's name must contain to run, from `--only`.
 static ONLY: OnceLock<Option<String>> = OnceLock::new();
 /// How many times each timed line runs, from `--runs`, in place of the line's own count.

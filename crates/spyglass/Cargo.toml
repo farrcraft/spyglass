@@ -30,6 +30,7 @@ spyglass-structure.workspace = true
 spyglass-terrain.workspace = true
 spyglass-world.workspace = true
 png.workspace = true
+rayon.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 

@@ -7,6 +7,8 @@ use std::collections::HashSet;
 use std::f64::consts::PI;
 use std::sync::OnceLock;
 
+use rayon::prelude::*;
+
 use spyglass_biome::{Biomes, HorizontalArea};
 use spyglass_rng::{LegacyRandomSource, RandomSource, worldgen};
 
@@ -486,6 +488,9 @@ pub struct Placements<'s> {
     rings: Vec<OnceLock<Rings>>,
     /// The dimension origin's chunk, once a dimension-origin set asks for it.
     origin: OnceLock<[i32; 2]>,
+    /// Whether ring positions are settled in parallel, on the calling thread's rayon pool
+    /// (ADR 0063). A search's checks turn it off: seeds are already its parallel work.
+    parallel: bool,
 }
 
 /// One concentric-ring set's points, each with its position once settled.
@@ -508,11 +513,20 @@ impl StructureSets {
             biomes: biomes.clone(),
             rings: self.sets().iter().map(|_| OnceLock::new()).collect(),
             origin: OnceLock::new(),
+            parallel: true,
         }
     }
 }
 
 impl Placements<'_> {
+    /// These placements, settling ring positions on the calling thread only.
+    pub fn sequential(self) -> Self {
+        Placements {
+            parallel: false,
+            ..self
+        }
+    }
+
     /// The seed.
     pub fn seed(&self) -> i64 {
         self.seed_only.seed
@@ -544,6 +558,15 @@ impl Placements<'_> {
     /// for a set settles every one, which takes a while (128 biome searches for strongholds).
     pub fn ring_positions(&self, set: usize) -> Option<&[RingPosition]> {
         let (config, rings) = self.rings(set)?;
+        // Each point settles from its own fork, so the order they settle in changes nothing.
+        // They settle before `all` is filled, not inside it: a thread waiting on parallel work
+        // can be handed a job that asks for these positions too, and it mustn't then be in the
+        // middle of filling the cell that job reads.
+        if self.parallel && rings.all.get().is_none() {
+            (0..rings.points.len()).into_par_iter().for_each(|i| {
+                self.settled(config, rings, i);
+            });
+        }
         Some(rings.all.get_or_init(|| {
             (0..rings.points.len())
                 .map(|i| self.settled(config, rings, i).clone())
@@ -571,13 +594,16 @@ impl Placements<'_> {
                 && (min[1].saturating_sub(SETTLE_REACH)..=max[1].saturating_add(SETTLE_REACH))
                     .contains(&p.z)
         };
-        Some(
-            (0..rings.points.len())
-                .filter(|&i| near(&rings.points[i]))
-                .map(|i| self.settled(config, rings, i).chunk)
-                .filter(|c| inside(c, min, max))
-                .collect(),
-        )
+        let nearby: Vec<usize> = (0..rings.points.len())
+            .filter(|&i| near(&rings.points[i]))
+            .collect();
+        let chunk = |&i: &usize| self.settled(config, rings, i).chunk;
+        let chunks: Vec<[i32; 2]> = if self.parallel {
+            nearby.par_iter().map(chunk).collect()
+        } else {
+            nearby.iter().map(chunk).collect()
+        };
+        Some(chunks.into_iter().filter(|c| inside(c, min, max)).collect())
     }
 
     /// A dimension-origin set's chunk if it's in `min..=max`; `None` for other placement types.

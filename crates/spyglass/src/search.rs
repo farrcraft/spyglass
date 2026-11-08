@@ -719,10 +719,10 @@ impl World {
                     .all(|(_, p)| p.accepts(&self.sets, seed))
             },
             |seed, threshold| {
-                self.session(seed)?
+                self.search_session(seed)?
                     .check(query, options.certain, threshold, options.confirm)
             },
-            |seed| self.session(seed)?.evaluate(query, options.confirm),
+            |seed| self.search_session(seed)?.evaluate(query, options.confirm),
             progress,
         )
     }
@@ -749,10 +749,10 @@ impl Game {
             options,
             |seed| prefilters.iter().all(|(w, p)| p.accepts(&w.sets, seed)),
             |seed, threshold| {
-                self.session(seed)
+                self.search_session(seed)
                     .check(query, options.certain, threshold, options.confirm)
             },
-            |seed| self.session(seed).evaluate(query, options.confirm),
+            |seed| self.search_session(seed).evaluate(query, options.confirm),
             progress,
         )
     }

@@ -278,6 +278,11 @@ pub(crate) const TESTS: &[(&str, &str, &[Input])] = &[
     ),
     (
         "spyglass-structure",
+        "rings_settle_the_same_on_any_number_of_threads",
+        &[Input::Bundle],
+    ),
+    (
+        "spyglass-structure",
         "selects_starts_near_the_origin",
         &[Input::Bundle],
     ),
@@ -335,6 +340,11 @@ pub(crate) const TESTS: &[(&str, &str, &[Input])] = &[
         "spyglass",
         "features_in_are_the_game_s",
         &[Input::Features, Input::Bundle],
+    ),
+    (
+        "spyglass",
+        "features::tests::features_are_the_same_on_any_number_of_threads",
+        &[Input::Bundle],
     ),
     (
         "spyglass",

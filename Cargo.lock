@@ -3620,6 +3620,7 @@ name = "spyglass"
 version = "0.2.0"
 dependencies = [
  "png 0.18.1",
+ "rayon",
  "serde_json",
  "spyglass-biome",
  "spyglass-blocks",

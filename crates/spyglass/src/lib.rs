@@ -628,7 +628,17 @@ impl World {
             placements,
             terrain: OnceLock::new(),
             chunks: OnceLock::new(),
+            parallel: true,
         })
+    }
+
+    /// [`session`](Self::session) for a search's checks, whose queries run on the calling
+    /// thread: the search's threads already work on a seed each (ADR 0063).
+    pub(crate) fn search_session(&self, seed: i64) -> Result<Session<'_>> {
+        let mut session = self.session(seed)?;
+        session.placements = session.placements.sequential();
+        session.parallel = false;
+        Ok(session)
     }
 
     fn exists(&self, registry: &str, id: &str) -> bool {
@@ -874,6 +884,9 @@ pub struct Session<'w> {
     terrain: OnceLock<Terrain>,
     /// Bound on first block query.
     chunks: OnceLock<ChunkGenerator<'w>>,
+    /// Whether queries run their independent parts in parallel, on the calling thread's rayon
+    /// pool; not in a search's checks (ADR 0063).
+    parallel: bool,
 }
 
 /// The biome at a position.

@@ -77,6 +77,40 @@ fn computes_stronghold_rings() {
 
 #[test]
 #[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
+fn rings_settle_the_same_on_any_number_of_threads() {
+    let bundle = bundle();
+    let source = BiomeSource::overworld(&bundle).unwrap();
+    let sets = StructureSets::overworld(&bundle, &source).unwrap();
+    let strongholds = sets.set_index("strongholds").unwrap();
+    for seed in [0, 12_345, -7_000_000_000] {
+        let biomes = source.with_seed(seed).unwrap();
+        let alone = sets.with_seed(seed, &biomes).sequential();
+        let expected = alone.ring_positions(strongholds).unwrap().to_vec();
+        // Starts near a ring's first point settle only the points that can land there.
+        let near = expected[0].chunk;
+        let (min, max) = ([near[0] - 40, near[1] - 40], [near[0] + 40, near[1] + 40]);
+        let starts_alone = Starts::new(&alone, &biomes).starts_in(strongholds, min, max);
+        for threads in [1, 8] {
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .unwrap();
+            pool.install(|| {
+                let parallel = sets.with_seed(seed, &biomes);
+                let starts = Starts::new(&parallel, &biomes).starts_in(strongholds, min, max);
+                assert_eq!(starts, starts_alone, "seed {seed}, {threads} threads");
+                assert_eq!(
+                    parallel.ring_positions(strongholds).unwrap(),
+                    expected,
+                    "seed {seed}, {threads} threads"
+                );
+            });
+        }
+    }
+}
+
+#[test]
+#[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
 fn selects_starts_near_the_origin() {
     let bundle = bundle();
     let source = BiomeSource::overworld(&bundle).unwrap();

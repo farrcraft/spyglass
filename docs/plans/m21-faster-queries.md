@@ -87,15 +87,15 @@ Phase 1's profiles put biome lookup ahead of noise in chunk work ([notes](#notes
 - [x] Zoom fiddles kept per quart in `ChunkBiomes`; the kept-against-fresh test (`kept_fiddles_zoom_as_fresh_ones`).
 - [x] [biome-lookup.md](../specs/biome-lookup.md#search) and [material.md](../specs/material.md#biomes) updated.
 - [x] Bench lines, three rounds: the three changes together against 848fcfd (notes).
-- [ ] Profile again before phase 3.
+- [x] Profile again before phase 3 (notes).
 
 ### Phase 3: threads within a query
 
-- [ ] ADR: how library queries use threads, alongside the search's pool, its throttle and the viewer's tile workers.
-- [ ] Stronghold ring positions settled in parallel; a test that one thread and many give the same positions and flags.
-- [ ] `nearest_feature` and `features_in` in parallel, with the carved-chunk cache shared or per thread, as measured; the same test.
-- [ ] Bench lines for each, three rounds.
-- [ ] The viewer checked by eye (`run-viewer`): dungeon tiles at 1:1 while a search runs, so the map still fills and the search still moves.
+- [x] ADR: how library queries use threads, alongside the search's pool, its throttle and the viewer's tile workers ([ADR 0063](../adr/0063-threads-within-library-queries.md): the current pool, sequential in a search's checks).
+- [x] Stronghold ring positions settled in parallel; a test that one thread and many give the same positions and flags (`rings_settle_the_same_on_any_number_of_threads`).
+- [x] `nearest_feature` and `features_in` in parallel, with the carved-chunk cache shared: one cell per chunk, so no chunk is carved twice; the same test (`features_are_the_same_on_any_number_of_threads`).
+- [x] Bench lines for each, three rounds (notes).
+- [x] The viewer checked by eye (`run-viewer`): dungeon tiles at 1:1 while a search runs, so the map still fills and the search still moves (notes).
 
 ### Phase 4: build-level gains
 
@@ -125,7 +125,7 @@ Phase 1's profiles put biome lookup ahead of noise in chunk work ([notes](#notes
 
 ## Durable outputs
 
-- [ ] ADR: threads within library queries.
+- [x] ADR: threads within library queries ([0063](../adr/0063-threads-within-library-queries.md)).
 - [ ] ADR: build-level changes kept (PGO, allocator, hasher), if any.
 - [ ] ADR: the biome-bounds stage, if built.
 - [ ] [search.md](../specs/search.md): the new stage, if built.
@@ -133,9 +133,44 @@ Phase 1's profiles put biome lookup ahead of noise in chunk work ([notes](#notes
 - [ ] [locate.md](../specs/locate.md) and [structure-placement.md](../specs/structure-placement.md): cost lines, and that ring positions are settled independently.
 - [x] [getting-started.md](../getting-started.md): how to profile.
 - [ ] `docs/research/`: the GPU and SIMD assessment.
-- [ ] [architecture.md](../architecture.md), if the use of threads changes what it says about crates or front ends.
+- [x] [architecture.md](../architecture.md), if the use of threads changes what it says about crates or front ends: a paragraph in [front ends](../architecture.md#front-ends).
 
 ## Notes
+
+- 2026-11-08: **Viewer by eye**, dist build, seed 12345 on 26.3, both dungeon features at 1:1, with the default search started while tiles were pending. Both kept moving: tiles left went 78 → 51 → 25 over 30 s, with dungeon markers filling in, while the search went from 3,332 to 10,535 seeds at about 340 a second. `oracle-test` passed on every bundle, both thread tests included.
+- 2026-11-07: **Features in parallel**, three alternating rounds against 104721e on 16 threads, on a busier machine than the morning's (the before ranges are wider):
+
+  | Line                                        | 26.3                    | 26.2                    |
+  | ------------------------------------------- | ----------------------- | ----------------------- |
+  | `nearest_feature monster_room`, new session | 3.74–5.55 → 1.16–1.64 s | 14.0–39.0 → 3.99–4.35 s |
+  | 128 × 128 dungeon tile at 1:1, next tile    | 2.51–3.90 → 0.96–1.55 s | 12.7–20.2 → 4.14–4.45 s |
+  | 128 × 128 dungeon tile at 1:2, next tile    | 8.29–13.6 → 2.21–3.66 s | 41.4–49.9 → 8.85–9.16 s |
+  | Two dungeons near spawn, evaluate           | 3.55–5.56 → 1.49–2.14 s | 20.6–23.0 → 5.31–5.97 s |
+  | Two dungeons near spawn, search, seeds/s    | 1.3–1.6 → 1.3–1.6       | 0.3 → 0.2–0.3           |
+
+  What they show:
+
+  - **The shared cache won without a per-thread trial:** a carved chunk is a neighbour of up to 9 placed ones, and a cache per thread would carve most of them again. Threads wait for a chunk another is carving rather than repeat it.
+  - **Short of 16×:** a ring of chunks around `nearest_feature`'s centre holds `8r` chunks, and a tile's row only its width, so the first rings and the rows' ends leave threads idle. A chunk ruled out from the outline costs far less than one placed, so the jobs are uneven.
+  - **The search doesn't change,** as [ADR 0063](../adr/0063-threads-within-library-queries.md) intends.
+  - **Found on review:** parallel work inside a `OnceLock`'s initializer can deadlock, since a waiting thread runs other jobs that may read the same cell. `ring_positions` settles its points before filling `all`, and the ADR states the rule.
+
+- 2026-11-07: **Stronghold rings in parallel.** `locate_structure` stronghold in a new session, three alternating rounds against 104721e: 26.3 0.95–1.14 s → 124–167 ms, 26.2 3.24–3.59 s → 340–386 ms, on 16 threads. `evaluate stronghold` settles only the few points near its area, so it doesn't change (5.7–10.9 ms both ways on 26.3).
+- 2026-11-07: **Profiles after phase 2**, as phase 1's (26.3 unless marked). Shares of samples, inclusive unless marked self:
+
+  | Workload                       | Biome lookup                                                        | Density and noise           | Other                                                  |
+  | ------------------------------ | ------------------------------------------------------------------- | --------------------------- | ------------------------------------------------------ |
+  | Carved chunk                   | 13% lookups (`biome_window` 9.6%), 7% self zoom                     | 27% point path, 18% volumes | SipHash 5% (`corners_of`'s key); first-use loading 12% |
+  | 128 × 128 dungeon tile at 1:2  | 19% lookups, 10% of them the outline's `chunk_biomes`; 6% self zoom | 26% point path, 22% volumes | SipHash 5%; ruling chunks out (`none_place`) 13%       |
+  | `nearest_feature monster_room` | 17% lookups; 6% self zoom                                           | 26% point path, 24% volumes | SipHash 5%; loading 7%                                 |
+  | Biome presence, one evaluation | 77% lookups: 55% climate sampling, 20% parameter search             | (in the lookups)            | loading 19%                                            |
+  | Carved chunk, 26.2             | 20% lookups, 18% of them climate sampling                           | `noise_smeared` 32% self    | `preliminary_surface_level` 41%, as before             |
+
+  What they show:
+
+  - **Biome lookup is no longer first in chunk work.** Density and noise lead again, at about half the samples. The zoom went from 12% self to 7%, and the parameter search from 16% to 9%.
+  - **What's left of lookups** is mostly windows that overlap their neighbours' and the outline's per-chunk `chunk_biomes`. A cache keyed by quart would take more of it, but each is now under a tenth.
+  - **Threads next**, as planned. SipHash (5%) and first-use loading (7 to 19% of short lines) are unchanged: phase 4's hasher, and loading for the CLI.
 
 - 2026-11-07: **Phase 2 benched** against 848fcfd, the three changes together, three alternating rounds per version under `dist`. The oracle comparisons pass for every bundle. Ranges, before → after:
 

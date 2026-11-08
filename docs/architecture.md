@@ -46,6 +46,8 @@ spyglass is library-first. Everything a user can do goes through the `spyglass` 
 
 Nothing in the CLI or viewer computes worldgen results itself. If the viewer can show it, the API can return it, so scripts can do anything the GUI can.
 
+Long queries (feature locates and areas, stronghold rings) run their independent parts with `rayon` on the pool they're called from: the caller's, if it installed one, else rayon's global pool. A search runs them on one thread per seed instead, since its own pool already has a seed on every thread ([ADR 0063](adr/0063-threads-within-library-queries.md)). Answers don't depend on the thread count.
+
 `spyglass-extract` builds bundles: the version manifest, the jar cache, Java discovery, the data generator and the `spyglass-extract` command. It depends on `spyglass-data`, and only `xtask` and the viewer, which extracts bundles for its users, depend on it ([ADR 0016](adr/0016-extractor-crate-and-read-only-data.md), [ADR 0042](adr/0042-the-viewer-extracts-bundles-itself.md)). No library crate may.
 
 `xtask/` (project commands, [ADR 0003](adr/0003-cargo-xtask-for-project-commands.md)) is tooling, not product. It may depend on these crates; none of them may depend on it.

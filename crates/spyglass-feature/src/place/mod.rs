@@ -304,7 +304,7 @@ impl Placer {
         &self,
         decorator: &Decorator<'_>,
         blocks: &Blocks,
-        outline: &mut Outline<'_>,
+        outline: &Outline<'_>,
         chunk: [i32; 2],
         writes: &[Foreign],
     ) -> bool {

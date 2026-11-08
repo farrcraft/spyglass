@@ -64,7 +64,7 @@ impl MonsterRoom {
     /// or no wall block that could be air under air, and it declines.
     pub fn declines_on(
         &self,
-        outline: &mut Outline<'_>,
+        outline: &Outline<'_>,
         written: &[Written],
         random: &mut WorldgenRandom,
         origin: [i32; 3],

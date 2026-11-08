@@ -116,6 +116,16 @@ impl Game {
             game: self,
             seed,
             sessions: Default::default(),
+            search: false,
+        }
+    }
+
+    /// [`session`](Self::session) for a search's checks, binding each dimension as
+    /// [`World::search_session`] does.
+    pub(crate) fn search_session(&self, seed: i64) -> GameSession<'_> {
+        GameSession {
+            search: true,
+            ..self.session(seed)
         }
     }
 }
@@ -128,6 +138,8 @@ pub struct GameSession<'g> {
     seed: i64,
     /// Each dimension's session, by [`Dimension::index`], once it's bound.
     sessions: [OnceLock<Session<'g>>; 3],
+    /// Whether it's bound for a search's checks ([`World::search_session`]).
+    search: bool,
 }
 
 impl<'g> GameSession<'g> {
@@ -147,7 +159,12 @@ impl<'g> GameSession<'g> {
         if let Some(session) = self.sessions[i].get() {
             return Ok(session);
         }
-        let session = self.game.world(dimension)?.session(self.seed)?;
+        let world = self.game.world(dimension)?;
+        let session = if self.search {
+            world.search_session(self.seed)?
+        } else {
+            world.session(self.seed)?
+        };
         Ok(self.sessions[i].get_or_init(|| session))
     }
 }

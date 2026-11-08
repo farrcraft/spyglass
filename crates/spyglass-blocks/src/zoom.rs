@@ -28,10 +28,10 @@ fn fiddle(hash: i64) -> f64 {
     (fraction - 0.5) * 0.9
 }
 
-/// `getFiddledDistance`: the squared distance from a block's place in its quart to the
-/// displaced corner quart `(qx, qy, qz)`.
-fn fiddled_distance(seed: i64, [qx, qy, qz]: [i32; 3], [x, y, z]: [f64; 3]) -> f64 {
-    // A hash of the quart, then one displacement on each axis from it.
+/// The first half of `getFiddledDistance`: corner quart `(qx, qy, qz)`'s displacement on each
+/// axis, from a hash of the quart. It depends on nothing else, so every block sharing a corner
+/// can share it.
+fn fiddles(seed: i64, [qx, qy, qz]: [i32; 3]) -> [f64; 3] {
     let mut hash = seed;
     for q in [qx, qy, qz, qx, qy, qz] {
         hash = lcg(hash, i64::from(q));
@@ -41,6 +41,12 @@ fn fiddled_distance(seed: i64, [qx, qy, qz]: [i32; 3], [x, y, z]: [f64; 3]) -> f
     let fy = fiddle(hash);
     hash = lcg(hash, seed);
     let fz = fiddle(hash);
+    [fx, fy, fz]
+}
+
+/// The rest of `getFiddledDistance`: the squared distance from a block's place in its quart to
+/// the corner quart displaced by its `fiddles`.
+fn fiddled_distance([fx, fy, fz]: [f64; 3], [x, y, z]: [f64; 3]) -> f64 {
     let square = |d: f64| d * d;
     (square(z + fz) + square(y + fy)) + square(x + fx)
 }
@@ -62,7 +68,23 @@ impl BiomeZoom {
     /// The quart block `(x, y, z)` takes its biome from: of the eight quarts at and above
     /// `((x − 2) >> 2, (y − 2) >> 2, (z − 2) >> 2)`, the one at the smallest fiddled distance,
     /// the first in order on ties.
-    pub fn quart(&self, [x, y, z]: [i32; 3]) -> [i32; 3] {
+    pub fn quart(&self, pos: [i32; 3]) -> [i32; 3] {
+        self.quart_with(pos, |quart| self.fiddles(quart))
+    }
+
+    /// Corner quart `quart`'s displacements, which [`quart_with`](Self::quart_with) needs.
+    pub fn fiddles(&self, quart: [i32; 3]) -> [f64; 3] {
+        fiddles(self.seed, quart)
+    }
+
+    /// [`quart`](Self::quart), with each corner's displacements from `fiddles`, which must give
+    /// what [`fiddles`](Self::fiddles) does. A caller zooming many blocks keeps them, since the
+    /// 64 blocks of a quart cell share their 8 corners.
+    pub fn quart_with(
+        &self,
+        [x, y, z]: [i32; 3],
+        mut fiddles: impl FnMut([i32; 3]) -> [f64; 3],
+    ) -> [i32; 3] {
         // Shifted by half a quart, so the quarts' centres are the corners around the block.
         let shifted = [x, y, z].map(|c| c.wrapping_sub(2));
         let base = shifted.map(|c| c >> 2);
@@ -75,7 +97,7 @@ impl BiomeZoom {
             let up = [corner & 4 != 0, corner & 2 != 0, corner & 1 != 0];
             let quart = std::array::from_fn(|d| if up[d] { base[d] + 1 } else { base[d] });
             let offset = std::array::from_fn(|d| if up[d] { within[d] - 1.0 } else { within[d] });
-            let distance = fiddled_distance(self.seed, quart, offset);
+            let distance = fiddled_distance(fiddles(quart), offset);
             // dcmpl/ifle: only a strictly smaller distance replaces the best.
             if best_distance > distance {
                 best = corner;
@@ -100,6 +122,29 @@ mod tests {
             (i64::MIN, 6_374_347_445_474_471_398),
         ] {
             assert_eq!(obfuscate_seed(seed), hashed, "seed {seed}");
+        }
+    }
+
+    #[test]
+    fn kept_fiddles_zoom_as_fresh_ones() {
+        // Every block of a chunk and its margins, sharing one store of corners' displacements.
+        for seed in [0, 12_345, -7] {
+            let zoom = BiomeZoom::new(seed);
+            let mut kept = std::collections::HashMap::new();
+            for x in -20..36 {
+                for z in -20..36 {
+                    for y in [-66, -64, -1, 0, 1, 2, 3, 62, 319, 320] {
+                        let shared = zoom.quart_with([x, y, z], |q| {
+                            *kept.entry(q).or_insert_with(|| zoom.fiddles(q))
+                        });
+                        assert_eq!(
+                            shared,
+                            zoom.quart([x, y, z]),
+                            "({x}, {y}, {z}), seed {seed}"
+                        );
+                    }
+                }
+            }
         }
     }
 

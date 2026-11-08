@@ -62,6 +62,8 @@ The rule reads biomes through `BiomeManager.getBiome(x, y, z)`, which picks one 
 
 The quart's biome is the chunk's generated biome there. The biome manager reads it through the region, with the quart's y clamped to the level's quarts (`ChunkAccess.getNoiseBiome`).
 
+**What spyglass keeps.** A corner's three fiddles depend only on the corner quart and the seed, so a chunk computes each quart's once and every block around it reuses them, with the distance's arithmetic unchanged. A chunk's biome window (its quarts and one more on every horizontal side, over the level) depends only on the chunk, so the generator keeps windows per seed, up to 2,048 chunks. The surface, the outline and the feature filter ([features.md](features.md)) all read the same window. Neither changes an answer.
+
 ### Ties
 
 A tied quart's biome in a real chunk depends on lookup history ([biome-lookup.md](biome-lookup.md#ties)). spyglass takes the tie's answer, the first in list order, and marks as uncertain every block whose block can depend on it:

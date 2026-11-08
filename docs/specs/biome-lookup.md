@@ -102,11 +102,12 @@ The reference is brute force over every point with `ParameterPoint::fitness`. Th
 
 - Leaves hold up to 8 points. Each inner node splits its points at the median, along the dimension (sorted by box centre) that minimises the children's total box span. The split only affects speed.
 - The search visits the nearer child first and **prunes only strictly farther boxes**, since a box at exactly the best distance can still hold a tie. It collects every point at the minimum.
+- **It starts from the previous answer.** The best distance starts at the distance from this target to the first point the previous lookup found, the previous lookup being the same thread's for `Biomes::biome_at`, or the same batch's. That distance bounds the minimum from above, so every point at the minimum is still visited and the answer is the same whatever came before. Unlike `Climate.RTree`'s warm start, it can't change which tied point wins. It only prunes more when consecutive targets are near each other, as neighbouring quarts are.
 - Box distances use the same arithmetic as fitness, which can only prune correctly without overflow. When any target value is outside `±2^30`, the search falls back to brute force. Climate values never come near that.
 
 _Versions:_ for 26.4-snapshot-5, box distances use its `distance` with the `+1` ([Fitness](#fitness)), as `Climate.RTree$Node.distance` does; the `±2^30` fallback still holds.
 
-The tree and brute force are compared on random lists with frequent ties, and on every climate target in the probe files.
+The tree and brute force are compared on random lists with frequent ties, cold and warm-started (from neighbouring targets and from arbitrary points), and on every climate target in the probe files.
 
 ## Region fill
 

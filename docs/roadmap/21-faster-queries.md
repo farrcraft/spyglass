@@ -65,7 +65,7 @@ Not in scope:
   - `nearest_feature monster_room`, new session: 1 s or less (2.52–3.11 s);
   - 128 × 128 dungeon tile at 1:2, one thread: 9 s or less (11.9–13.9 s);
   - `chunk_blocks` with carvers, bound: 15 ms or less (19.5–20.0 ms);
-  - biome presence within 500, one evaluation: 5 ms or less (6.99–7.46 ms), and a lower target set after the biome-bounds prototype.
+  - biome presence within 500, one evaluation: 5 ms or less (6.99–7.46 ms). The biome-bounds prototype didn't pay, so the stage wasn't built and the target stays (2026-11-08, the plan's notes).
 - [ ] Every parallel query gives the same answer on one thread as on many, checked by tests.
 - [ ] Every build change kept beats the bench's noise over three rounds; each one dropped is recorded with its numbers.
 - [ ] The GPU and SIMD assessment is in `docs/research/`.

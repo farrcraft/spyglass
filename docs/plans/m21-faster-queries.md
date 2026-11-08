@@ -106,8 +106,8 @@ Phase 1's profiles put biome lookup ahead of noise in chunk work ([notes](#notes
 
 ### Phase 5: biome bounds
 
-- [ ] Prototype: rejection rate and cost on biome presence and coverage queries; decision with the user.
-- [ ] If kept: ADR, spec, stage, soundness tests, bench lines.
+- [x] Prototype: rejection rate and cost on biome presence and coverage queries; decision with the user. Not built: sound bounds over tiles reject nothing, and per-sample ones cost what the evaluation does (notes). The prototype was deleted.
+- [x] If kept: ADR, spec, stage, soundness tests, bench lines. Not kept.
 
 ### Phase 6: records
 
@@ -127,8 +127,8 @@ Phase 1's profiles put biome lookup ahead of noise in chunk work ([notes](#notes
 
 - [x] ADR: threads within library queries ([0063](../adr/0063-threads-within-library-queries.md)).
 - [x] ADR: build-level changes kept (PGO, allocator, hasher), if any ([0064](../adr/0064-build-level-speedups.md)).
-- [ ] ADR: the biome-bounds stage, if built.
-- [ ] [search.md](../specs/search.md): the new stage, if built.
+- [x] ADR: the biome-bounds stage, if built. Not built.
+- [x] [search.md](../specs/search.md): the new stage, if built. Not built.
 - [ ] [biome-lookup.md](../specs/biome-lookup.md) and [material.md](../specs/material.md#biomes): the hinted search and the batched zoom, if either spec describes how spyglass computes them.
 - [ ] [locate.md](../specs/locate.md) and [structure-placement.md](../specs/structure-placement.md): cost lines, and that ring positions are settled independently.
 - [x] [getting-started.md](../getting-started.md): how to profile, and profile-guided builds.
@@ -136,6 +136,25 @@ Phase 1's profiles put biome lookup ahead of noise in chunk work ([notes](#notes
 - [x] [architecture.md](../architecture.md), if the use of threads changes what it says about crates or front ends: a paragraph in [front ends](../architecture.md#front-ends).
 
 ## Notes
+
+- 2026-11-08: **Biome bounds prototyped**, on 26.3, for `require biome minecraft:cherry_grove within 500 of 0,0` (3,069 samples; 8 to 11% of seeds have one). An estimate that a real stage can only match or lose to: each sample's true climate, widened by twice what the octaves left out can add (each layer's `|amplitude|` times 1.04, Perlin's largest value rounded up), hulled over square tiles, and tested against the parameter list by branch and bound (a target ruled out where its least fitness over the box is above every point's greatest). No seed with the biome was ever rejected.
+  - **The slack is too wide.** The climate noises' layer weights fall slowly: continentalness's 9 octaves weigh 0.75, 0.38, 0.38, 0.19, 0.09, … Kept to 1 to 3 octaves, continentalness's slack (doubled) is ±1.35 or more, and 0 to 2% of 200 seeds were rejected at any depth slack.
+  - **Even exact climates don't pay.** With every octave kept, so the boxes are the true climate's hull over each tile:
+
+    | Tile | Rejected (of 100) | Box tests a seed |
+    | ---- | ----------------- | ---------------- |
+    | 128  | 37                | 14 ms            |
+    | 32   | 73                | 270 ms           |
+    | 8    | 92                | 980 ms           |
+
+    The full evaluation costs 7.4 ms a seed, so every tile size that rejects a useful share costs more than what it saves, before any noise is sampled. Five of continentalness's nine octaves at 32-block tiles reject 55% for 190 ms. A rare biome is small patches, and ruling it out needs nearly the full climate at nearly every sample, which is the evaluation itself.
+
+  - **Coverage** (`plains covers 30% within 1000 step 32`) was slower still: 0.5 to 0.7 s of box tests a seed at 128-block tiles, rejecting none with one octave kept.
+  - 26.2's noises are built the same way, so it would fare no better.
+  - **Tried harder**, at the user's request: the seed's real stacks summed over the kept octaves at each tile's centre, widened once by the omitted octaves and by each kept layer's change across the tile; and a box test that looks for one point beating every target over the box, trying the last one first (0.8 ms a seed for presence, from 270 ms). It rejected none of 100 seeds at any setting (2 to 5 octaves, tiles of 32 to 128 blocks).
+    - **Why:** the boxes came out 20 to 1,000 times wider than the true climate's hull over the same tiles: over a 64-block tile, temperature 1.13 against 0.022 and continentalness 5.6 to 18 against 0.11. Two causes. Perlin's gradient bound (3.3 per lattice unit, measured) is several times its typical slope. And the shifts' octaves reach frequency ½, so across a tile the shift can move a noise's input by its whole range, about 13 quart units of the 21 a tile's centre has to cover. A Taylor bound, the centre's gradient plus a curvature term, halved temperature's width and widened the higher octaves'.
+    - **Per sample instead of per tile**, with each sample's shift exact: the first estimate at one sample a tile bounds it, 88% rejected (of 92% possible) with five octaves kept and 8% with three. But five octaves of each noise and the shifts are about 44 of the 52 layers a sample costs, plus a box test for the lookup, so the stage would cost about what the evaluation does.
+  - **Decision:** not built. A rare biome is small patches, so ruling it out needs nearly the full climate at nearly every sample, which is the evaluation itself.
 
 - 2026-11-08: **A faster hasher.** The phase 2 profiles' hashing samples, by the first frame above the hasher: on 26.3, `corners_of`'s map is 5.9 to 7.1% of chunk work, dungeon tiles and `nearest_feature`, and nothing else passes 0.3%; on 26.2, `NoiseChunk`'s `surface_levels` and `columns` are 1.9%. Those three maps became `rustc-hash`'s `FxHashMap` (already in the tree); none is iterated, so no answer can change. With NordVPN and a browser each keeping a core busy, three rounds of the usual lines spread by ±25%, so the single-threaded chunk lines ran eight alternating rounds of 40 runs each, against f4d10c3. Minimum and median of the rounds:
 

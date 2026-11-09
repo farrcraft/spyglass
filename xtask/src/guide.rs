@@ -9,6 +9,9 @@ use crate::{command, first_line};
 /// The mdBook the setup scripts and the workflows install. A test keeps them in step.
 pub const MDBOOK_VERSION: &str = "0.5.4";
 
+/// Where the Pages workflow publishes the guide.
+pub const SITE: &str = "https://farrcraft.github.io/spyglass/";
+
 /// The book's directory, holding `book.toml`, relative to the repo root.
 const BOOK: &str = "docs/guide";
 

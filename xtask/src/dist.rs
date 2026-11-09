@@ -566,7 +566,7 @@ mod tests {
         assert!(pins.iter().all(|(_, v)| *v == pins[0].1), "{pins:?}");
     }
 
-    /// The setup scripts and CI install the mdBook that `cargo xtask guide` expects.
+    /// The setup scripts and the workflows install the mdBook that `cargo xtask guide` expects.
     #[test]
     fn one_mdbook_version() {
         let pins = pins(
@@ -574,6 +574,7 @@ mod tests {
                 "scripts/setup.sh",
                 "scripts/setup.ps1",
                 ".github/workflows/ci.yml",
+                ".github/workflows/pages.yml",
             ],
             "mdbook@",
         );

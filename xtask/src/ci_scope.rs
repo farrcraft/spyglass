@@ -58,6 +58,7 @@ const LINUX_ONLY: &[&str] = &[
     ".github/dependabot.yml",
     ".github/workflows/fuzz.yml",
     ".github/workflows/release.yml",
+    ".github/workflows/pages.yml",
 ];
 
 /// What a change to `path` needs.

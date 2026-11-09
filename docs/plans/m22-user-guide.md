@@ -107,10 +107,11 @@ A new `.github/workflows/pages.yml`:
 
 ### Publishing and links
 
-- [ ] `.github/workflows/pages.yml`.
-- [ ] The README, docs/README.md, `GETTING-STARTED.txt` and the release notes link to the guide.
-- [ ] releasing.md: turning on Pages once, the deploy on publish, a manual redeploy.
-- [ ] CLAUDE.md: `docs/guide/` in Layout and `cargo xtask guide` in Commands. development-process.md: the guide is a durable doc, so it must not link to individual milestones or plans.
+- [x] `.github/workflows/pages.yml`.
+- [x] The README, docs/README.md, `GETTING-STARTED.txt` and the release notes link to the guide.
+- [ ] Once the site is live: the README's Install section links to the site, not the guide's source.
+- [x] releasing.md: turning on Pages once, the deploy on publish, a manual redeploy.
+- [x] CLAUDE.md: `docs/guide/` in Layout and `cargo xtask guide` in Commands. development-process.md: the guide is a durable doc, so it must not link to individual milestones or plans.
 
 ### Verification
 

@@ -13,6 +13,7 @@ Nothing is public, not even the `vX.Y.Z` tag, until you publish the draft. GitHu
 
 - `main` is green in CI.
 - The [changelog](../CHANGELOG.md)'s **Unreleased** section says what changed, for people who use spyglass.
+- The [user guide](guide/src/SUMMARY.md) describes what the release does: it's published from the release's tag, so a page fixed after the release waits for the next one ([ADR 0066](adr/0066-a-user-guide-on-github-pages.md)).
 - Every game version the release should support is in CI's oracle matrix and in `versions::CHECKED` ([adding a version](adding-a-version.md)). The release notes list them.
 - Choose the version ([ADR 0037](adr/0037-versions-and-releases.md#decision)). While it's `0.x`:
   - a breaking change to the API, the CLI's flags or its `--json` output is a minor release;
@@ -61,6 +62,7 @@ Open the draft on the repository's Releases page and check it:
 - The notes read well. The title is `spyglass 0.2.0`, and the tag to be made is `v0.2.0`.
 - It has four archives (Windows, Linux, macOS on Apple silicon and on Intel) and `SHA256SUMS`.
 - Download one for your machine, unpack it, and follow its `GETTING-STARTED.txt`.
+- The notes end with a link to the user guide.
 
 Then publish it in the page, or:
 
@@ -69,6 +71,20 @@ gh release edit v0.2.0 --draft=false
 ```
 
 Publishing makes the tag `v0.2.0` on the commit the workflow built.
+
+## 4. The user guide
+
+Publishing a release, but not a pre-release, starts the **Pages** workflow. It builds the [user guide](guide/src/SUMMARY.md) from the release's tag and deploys it to <https://farrcraft.github.io/spyglass/>. Check that its run passed and that the site shows the new version's pages.
+
+Pages has to be turned on once, before the first release that has the guide: in the repository's **Settings → Pages**, set **Source** to **GitHub Actions**.
+
+To deploy again without a release, such as after turning Pages on, run the workflow by hand with a tag:
+
+```sh
+gh workflow run pages.yml -f ref=v0.2.0
+```
+
+A fix to the guide alone can go out before the next release: merge it to `main`, make a branch from the release's tag with the fix cherry-picked onto it, and run the workflow with that branch as `ref`.
 
 ## Trying it first: a pre-release
 

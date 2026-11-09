@@ -391,6 +391,14 @@ cargo run --release -p spyglass-cli -- search --range 0..100000 --count 1000 -q 
 
 Each seed's dungeons are placed chunk by chunk, so this runs at about a seed a second, and a feature's place is at most 1,024 blocks on a side. Likely candidates count only towards **possibly** met; `--certain` keeps only seeds whose features are certain ([specs/search.md](specs/search.md#outcomes)).
 
+Loot counts containers that hold an item: `loot I` in a place, where `I` is an item or `#tag`, with `with E` and a level for an enchantment, as `spyglass loot find` takes them:
+
+```sh
+cargo run --release -p spyglass-cli -- search --range 0..10 --count 10 -q 'require loot minecraft:enchanted_golden_apple within 1000 of spawn'
+```
+
+Dungeons and mineshafts can hold an enchanted golden apple, so each seed places every chunk of the disc until it finds one: about a minute a seed for a radius of 1,000, and a few minutes more to list every match of each seed found. A loot place is at most 2,048 blocks on a side. Cheaper constraints in the same query are checked first and rule seeds out before any chunk is placed. Loot is the Overworld's unless you write `nether` or `end` ([ADR 0065](adr/0065-loot-in-the-search-language.md)).
+
 Most structures need terrain to confirm. Without `--confirm`, a constraint on them is usually **possibly** met rather than met: the structures are where the game tries them, and whether each one generates depends on the ground there. With it, terrain decides them, and only tied biomes and platform-dependent results stay uncertain. Confirming costs little on top of a search, since it runs only on seeds that pass everything else.
 
 ### Finding places in one seed
@@ -403,7 +411,7 @@ require flat 4 within 48 of here step 4'
 cargo run --release -p spyglass-cli -- find --world "My World" --from player -q 'find biome minecraft:mushroom_fields within 4096 step 32'
 ```
 
-The target is a structure or tag (each start), `feature F` (each feature), `biome B` (each sample of a grid), or `point` (each grid point). `within R` alone is around `--from` (default `0,0`). Matches come nearest first, up to `--top` (default 20); `--confirm`, `--certain`, `--threads`, `--time` and `--json` are as for `search`. Biome tags such as `#minecraft:is_ocean`, and the terrain conditions `height A to B` and `flat D` (over the terrain before structures and features), work in both kinds of query.
+The target is a structure or tag (each start), `feature F` (each feature), `loot I` (each container holding the item), `biome B` (each sample of a grid), or `point` (each grid point). `within R` alone is around `--from` (default `0,0`). Matches come nearest first, up to `--top` (default 20); `--confirm`, `--certain`, `--threads`, `--time` and `--json` are as for `search`. Biome tags such as `#minecraft:is_ocean`, and the terrain conditions `height A to B` and `flat D` (over the terrain before structures and features), work in both kinds of query.
 
 ### Reading the answers
 

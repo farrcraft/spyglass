@@ -1,7 +1,7 @@
 # m20. Piece layouts for the remaining structures
 
 - Status: Completed
-- Milestone: [20. Loot](../../roadmap/20-loot.md)
+- Milestone: [20. Loot](../../roadmap/completed/20-loot.md)
 - Started: 2026-11-06
 - Completed: 2026-11-06
 

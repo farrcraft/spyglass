@@ -22,7 +22,7 @@ Not in scope:
 
 - Every feature. Trees, ores, flowers and other decoration come only where a target feature's validity needs them.
 - The final spawn block, which needs features too. It stays in [Not yet planned](../README.md#not-yet-planned) until this milestone shows how far its features reach.
-- Loot ([20](../20-loot.md)).
+- Loot ([20](20-loot.md)).
 
 ## Exit criteria
 

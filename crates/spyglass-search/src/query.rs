@@ -26,6 +26,11 @@ pub const DEFAULT_APART: u32 = 256;
 /// The most blocks a feature count's place, or a `find` line's feature place, may span on each
 /// side: placing features takes tens of milliseconds a chunk.
 pub const MAX_FEATURE_SIDE: u32 = 1024;
+/// The most blocks a loot count's place, or a `find` line's loot place, may span on each side:
+/// an item a dungeon can hold places every chunk (ADR 0065).
+pub const MAX_LOOT_SIDE: u32 = 2048;
+/// The highest enchantment level a loot item may ask for.
+pub const MAX_ENCHANTMENT_LEVEL: u32 = 255;
 
 /// A parsed query: its `find` line, if any, and its constraints in order.
 #[derive(Debug, Clone)]
@@ -121,6 +126,8 @@ pub enum Target {
     /// `feature F`: each feature placed, or likely placed. A full placed or configured feature
     /// id.
     Feature(String),
+    /// `loot I`: each container that holds the item, or might.
+    Loot(LootItem),
     /// `point`: each grid point.
     Point,
 }
@@ -130,7 +137,7 @@ impl Target {
     /// grid targets, so one biome patch isn't a match per sample.
     pub fn default_apart(&self) -> u32 {
         match self {
-            Target::Structure(_) | Target::Feature(_) => 0,
+            Target::Structure(_) | Target::Feature(_) | Target::Loot(_) => 0,
             Target::Biome(_) | Target::Point => DEFAULT_APART,
         }
     }
@@ -211,6 +218,15 @@ pub enum Kind {
         /// Where all of them are.
         place: Place,
     },
+    /// `[count] loot ITEM place`: containers that hold the item, or might.
+    Loot {
+        /// How many.
+        count: Count,
+        /// What they hold.
+        item: LootItem,
+        /// Where.
+        place: Place,
+    },
     /// `[count] slime region`: slime chunks.
     Slime {
         /// How many.
@@ -265,6 +281,16 @@ pub enum Kind {
         /// The grid's spacing.
         step: u32,
     },
+}
+
+/// The item a loot constraint or target asks for: `ITEM [with ENCHANTMENT [LEVEL]]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LootItem {
+    /// A full item id, or `#` and a full item tag id.
+    pub item: String,
+    /// A full enchantment id the item must have, on it or stored in a book, and the least
+    /// level, 1 to [`MAX_ENCHANTMENT_LEVEL`], if one is written.
+    pub enchantment: Option<(String, Option<u32>)>,
 }
 
 /// Where structures or slime chunks are counted.
@@ -336,9 +362,19 @@ impl Default for Sampling {
 impl Place {
     /// Whether the place's bounding box is at most [`MAX_FEATURE_SIDE`] blocks on each side.
     pub fn fits_features(&self) -> bool {
+        self.fits(MAX_FEATURE_SIDE)
+    }
+
+    /// Whether the place's bounding box is at most [`MAX_LOOT_SIDE`] blocks on each side.
+    pub fn fits_loot(&self) -> bool {
+        self.fits(MAX_LOOT_SIDE)
+    }
+
+    /// Whether the place's bounding box is at most `side` blocks on each side.
+    fn fits(&self, side: u32) -> bool {
         match *self {
-            Place::Within { radius, .. } => 2 * u64::from(radius) < u64::from(MAX_FEATURE_SIDE),
-            Place::Box { min, max } => (0..2).all(|i| max[i].abs_diff(min[i]) < MAX_FEATURE_SIDE),
+            Place::Within { radius, .. } => 2 * u64::from(radius) < u64::from(side),
+            Place::Box { min, max } => (0..2).all(|i| max[i].abs_diff(min[i]) < side),
         }
     }
 
@@ -408,6 +444,7 @@ impl fmt::Display for Kind {
                 f,
                 "cluster {size} feature {feature} within {apart} of each other {place}"
             ),
+            Kind::Loot { count, item, place } => write!(f, "{count}loot {item} {place}"),
             Kind::Slime { count, region } => write!(f, "{count}slime {region}"),
             Kind::Biome {
                 present,
@@ -444,10 +481,25 @@ impl fmt::Display for Find {
             Target::Structure(s) => write!(f, "find {s} {}", self.place)?,
             Target::Biome(b) => write!(f, "find biome {b} {}{}", self.place, self.sampling)?,
             Target::Feature(t) => write!(f, "find feature {t} {}", self.place)?,
+            Target::Loot(item) => write!(f, "find loot {item} {}", self.place)?,
             Target::Point => write!(f, "find point {}{}", self.place, self.sampling)?,
         }
         if self.apart != self.target.default_apart() {
             write!(f, " apart {}", self.apart)?;
+        }
+        Ok(())
+    }
+}
+
+/// `ITEM`, then ` with ENCHANTMENT` and ` LEVEL` where they're written.
+impl fmt::Display for LootItem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.item)?;
+        if let Some((enchantment, level)) = &self.enchantment {
+            write!(f, " with {enchantment}")?;
+            if let Some(level) = level {
+                write!(f, " {level}")?;
+            }
         }
         Ok(())
     }

@@ -1,7 +1,7 @@
 # m20. Loot containers
 
 - Status: Completed
-- Milestone: [20. Loot](../../roadmap/20-loot.md)
+- Milestone: [20. Loot](../../roadmap/completed/20-loot.md)
 - Started: 2026-11-04
 - Completed: 2026-11-05
 

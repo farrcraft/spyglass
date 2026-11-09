@@ -3,6 +3,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeSet, HashMap};
+use std::ops::ControlFlow;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock};
 
 use rayon::prelude::*;
@@ -193,6 +194,11 @@ impl World {
         }
         let loot = LootWorld::load(self)?;
         Ok(self.loot.get_or_init(|| loot))
+    }
+
+    /// Whether any structure or feature in this world places loot containers.
+    pub(crate) fn places_containers(&self) -> Result<bool> {
+        Ok(!self.loot_world()?.passes.is_empty())
     }
 
     /// Loads `table` unless it's loaded.
@@ -470,6 +476,11 @@ pub struct ContainerLocate {
     pub complete: bool,
 }
 
+/// Each chunk's containers holding an item, or that might, by the item asked for: what one
+/// seed's queries share, so a chunk is placed once for an item however many ask for it.
+#[derive(Default)]
+pub(crate) struct LootPlacings(HashMap<(String, [i32; 2]), Vec<FoundContainer>>);
+
 /// A container as placing finds it, before it's filled.
 struct Placed {
     position: [i32; 3],
@@ -612,6 +623,58 @@ impl<'w> Session<'w> {
     ) -> Result<Vec<FoundContainer>> {
         self.check_world(query.world, &query.argument)?;
         self.containers_where(min, max, Some(query))
+    }
+
+    /// [`containers_holding`](Self::containers_holding) over the chunks `wanted` keeps, each
+    /// container handed to `visit` as it's found, until it breaks. Chunks already in `placings`
+    /// for this item aren't placed again. Keeps the carved chunks of three rows at a time.
+    pub(crate) fn each_container(
+        &self,
+        query: &ItemQuery,
+        min: [i32; 2],
+        max: [i32; 2],
+        wanted: impl Fn([i32; 2]) -> bool,
+        placings: &mut LootPlacings,
+        mut visit: impl FnMut(FoundContainer) -> ControlFlow<()>,
+    ) -> Result<()> {
+        self.check_world(query.world, &query.argument)?;
+        let loot = self.world.loot_world()?;
+        let mut cache: Option<Cache<'_>> = None;
+        let key = |chunk: [i32; 2]| (query.argument.clone(), chunk);
+        for cz in min[1]..=max[1] {
+            // The rows before this one's neighbours aren't read again.
+            if let Some(cache) = &mut cache {
+                cache.keep_rows_from(cz - 1);
+            }
+            let todo: Vec<i32> = (min[0]..=max[0])
+                .filter(|&cx| wanted([cx, cz]) && !placings.0.contains_key(&key([cx, cz])))
+                .collect();
+            if !todo.is_empty() {
+                if cache.is_none() {
+                    cache = Some(self.loot_cache()?);
+                }
+                let shared = cache.as_ref().expect("made above");
+                // The row's chunks placed at once, then visited in order below. A visit that
+                // breaks early leaves the rest of the row placed but unread.
+                let place = |&cx: &i32| self.chunk_holding(loot, [cx, cz], shared, Some(query));
+                let placed: Vec<Vec<FoundContainer>> = if self.parallel {
+                    todo.par_iter().map(place).collect::<Result<_>>()?
+                } else {
+                    todo.iter().map(place).collect::<Result<_>>()?
+                };
+                for (cx, found) in todo.into_iter().zip(placed) {
+                    placings.0.insert(key([cx, cz]), found);
+                }
+            }
+            for cx in (min[0]..=max[0]).filter(|&cx| wanted([cx, cz])) {
+                for c in placings.0.get(&key([cx, cz])).into_iter().flatten() {
+                    if visit(c.clone()).is_break() {
+                        return Ok(());
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// The containers in chunks `min..=max`, all of them or those holding `query`'s item.

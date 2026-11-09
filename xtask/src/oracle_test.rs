@@ -381,6 +381,26 @@ pub(crate) const TESTS: &[(&str, &str, &[Input])] = &[
         "find_feature_targets_skip_themselves",
         &[Input::Bundle],
     ),
+    (
+        "spyglass",
+        "loot_constraints_count_containers_holding",
+        &[Input::Bundle],
+    ),
+    (
+        "spyglass",
+        "the_fast_path_agrees_with_evaluate_for_loot",
+        &[Input::Bundle],
+    ),
+    (
+        "spyglass",
+        "find_loot_targets_skip_themselves",
+        &[Input::Bundle],
+    ),
+    (
+        "spyglass",
+        "loot_search_containers_are_the_game_s",
+        &[Input::Containers, Input::Bundle],
+    ),
     ("spyglass", "each_dimension_opens", &[Input::Bundle]),
     ("spyglass", "a_game_spans_the_dimensions", &[Input::Bundle]),
     (

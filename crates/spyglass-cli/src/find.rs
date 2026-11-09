@@ -157,6 +157,7 @@ fn print_text(
         let what = match &found_match.target {
             Some(Feature::Structure(s)) => s.structures.join(" or "),
             Some(Feature::Placed(f)) => f.feature.clone(),
+            Some(Feature::Container(c)) => format!("{}, {}", c.holder, c.table),
             Some(Feature::Biome { biome, .. }) => biome.biome.clone(),
             _ => "point".to_string(),
         };

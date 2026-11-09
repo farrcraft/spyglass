@@ -15,7 +15,7 @@ Whether each try from [m19-decoration](m19-decoration.md) places, and the blocks
 
 - **`lake`:** the lava lake's shape, its checks (no air or other fluid at the edge, at most one block of liquid above), and its blocks.
 - **`amethyst_geode`:** the shell from its noise and distances, the count of invalid blocks against its threshold, and its layers and buds.
-- **`monster_room`:** the room's size, the count of openings in its walls (1 to 5) with solid floor and ceiling, then its walls, spawner and chests. The chests' contents are [20](../../roadmap/20-loot.md)'s.
+- **`monster_room`:** the room's size, the count of openings in its walls (1 to 5) with solid floor and ceiling, then its walls, spawner and chests. The chests' contents are [20](../../roadmap/completed/20-loot.md)'s.
 - **`fossil`:** its template and rotation, the count of empty corners against `max_empty_corners_allowed`, and its processors (`fossil_rot`, `fossil_coal`, `fossil_diamonds`). Templates and processors come from the bundle, as the jigsaw code loads them.
 - **`desert_well`:** the sand under it and the air around it, then its blocks.
 

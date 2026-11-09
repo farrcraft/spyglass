@@ -550,6 +550,7 @@ pub struct ConstraintAnswer<'a> {
 pub enum FeatureAnswer<'a> {
     Structure(StructureMark<'a>),
     Feature(FeatureHit<'a>),
+    Container(Container<'a>),
     SlimeChunk {
         chunk: [i32; 2],
     },

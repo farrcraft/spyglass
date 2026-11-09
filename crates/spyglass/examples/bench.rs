@@ -352,6 +352,26 @@ fn main() -> spyglass::Result<()> {
         let session = world.session(*seeds.next().unwrap()).unwrap();
         black_box(session.containers_in([-4, -4], [3, 3]).unwrap());
     });
+    // A loot search (ADR 0065): dungeons and mineshafts can hold the apple, so each seed places
+    // every chunk of the disc, about 600, unless one is found first.
+    let apple =
+        world.search_query("require loot minecraft:enchanted_golden_apple within 200 of spawn")?;
+    report("evaluate golden apple near spawn, new session", 3, || {
+        let session = world.session(*seeds.next().unwrap()).unwrap();
+        black_box(session.evaluate(&apple, false).unwrap());
+    });
+    rate_world(
+        &world,
+        "search, golden apple near spawn, all threads",
+        &apple,
+        spyglass::SeedSource::Range {
+            first: 0,
+            last: i64::MAX,
+        },
+        16,
+        None,
+        false,
+    );
     let pair = world.search_query(
         "require cluster 2 feature minecraft:monster_room within 16 of each other within 96 of spawn",
     )?;

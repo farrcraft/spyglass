@@ -217,6 +217,7 @@ Feature kinds; more may be added within format 1:
 
 - `structure`: a `locate structure` hit without `blocks_away`.
 - `feature`: a `locate feature` hit without `blocks_away`.
+- `container`: a loot container, as [`loot`](#loot)'s, without `blocks_away`.
 - `slime_chunk`: `chunk`.
 - `biome`: `position` (`x`, `y`, `z`), `biome`, `tied` (as `locate biome`) and `certain`.
 - `spawn`: `locate spawn`'s fields.
@@ -239,7 +240,7 @@ Places in one seed or save that fit a `find` query ([search.md](search.md#search
 | `elapsed_seconds` | float    | How long it took.                                                                                    |
 | `matches`         | array    | Nearest first.                                                                                       |
 
-Each match has `position` (`{x, z}`), `distance` (from the place's centre, rounded down), `target` (the structure start, feature or biome sample, as in `search`, or null for a point), `score`, `verdict`, and `constraints`, as a `search` hit's, without the `find` line.
+Each match has `position` (`{x, z}`), `distance` (from the place's centre, rounded down), `target` (the structure start, feature, container or biome sample, as in `search`, or null for a point), `score`, `verdict`, and `constraints`, as a `search` hit's, without the `find` line.
 
 ## `world info`
 

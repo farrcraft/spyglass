@@ -1,13 +1,13 @@
 # m20. Loot tables
 
 - Status: Completed
-- Milestone: [20. Loot](../../roadmap/20-loot.md)
+- Milestone: [20. Loot](../../roadmap/completed/20-loot.md)
 - Started: 2026-11-04
 - Completed: 2026-11-04
 
 ## Goal
 
-A container's contents from its loot table and loot seed, slot by slot, exactly as the game fills it. This is the half of the milestone that needs no worldgen: given a table id, a seed and the container's position, spyglass gives the game's items, counts, enchantments and other components, in the game's slots. [m20-containers](m20-containers.md) finds the tables and seeds; [m20-queries](../m20-queries.md) asks about them. It meets the first exit criterion's rolling half: for every container table of every supported version, the game's contents for any seed.
+A container's contents from its loot table and loot seed, slot by slot, exactly as the game fills it. This is the half of the milestone that needs no worldgen: given a table id, a seed and the container's position, spyglass gives the game's items, counts, enchantments and other components, in the game's slots. [m20-containers](m20-containers.md) finds the tables and seeds; [m20-queries](m20-queries.md) asks about them. It meets the first exit criterion's rolling half: for every container table of every supported version, the game's contents for any seed.
 
 ## Approach
 

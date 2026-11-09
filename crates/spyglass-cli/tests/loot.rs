@@ -37,7 +37,20 @@ fn json(args: &[&str]) -> Value {
 
 #[test]
 fn bad_requests_fail_before_loading() {
-    let out = spyglass(&[
+    // An empty bundles folder: each request must be refused for what it asks, not for the
+    // missing bundle, so this runs without one.
+    let empty = tempfile::tempdir().unwrap();
+    let refusal = |args: &[&str]| {
+        let out = Command::new(env!("CARGO_BIN_EXE_spyglass"))
+            .args(args)
+            .arg("--bundles")
+            .arg(empty.path())
+            .output()
+            .unwrap();
+        assert!(!out.status.success(), "{args:?}");
+        String::from_utf8_lossy(&out.stderr).into_owned()
+    };
+    let too_big = refusal(&[
         "loot",
         "in",
         "--min",
@@ -47,12 +60,14 @@ fn bad_requests_fail_before_loading() {
         "--seed",
         "1",
     ]);
-    assert!(!out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("more than 1024"));
-    let out = spyglass(&["loot", "in", "--min", "10,0", "--max", "0,0", "--seed", "1"]);
-    assert!(!out.status.success());
-    let out = spyglass(&["loot", "find", "x", "--level", "2", "--seed", "1"]);
-    assert!(!out.status.success(), "--level needs --enchantment");
+    assert!(too_big.contains("more than 1024"), "{too_big}");
+    let backwards = refusal(&["loot", "in", "--min", "10,0", "--max", "0,0", "--seed", "1"]);
+    assert!(
+        backwards.contains("--max must be at least --min"),
+        "{backwards}"
+    );
+    let level_alone = refusal(&["loot", "find", "x", "--level", "2", "--seed", "1"]);
+    assert!(level_alone.contains("--enchantment"), "{level_alone}");
 }
 
 #[test]

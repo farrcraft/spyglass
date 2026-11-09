@@ -2,6 +2,7 @@
 
 | Doc                                              | What it covers                                                          |
 | ------------------------------------------------ | ----------------------------------------------------------------------- |
+| [guide/](guide/src/SUMMARY.md)                   | The user guide: installing, game data, the viewer and the command.      |
 | [getting-started.md](getting-started.md)         | Installing Rust, building, testing, running.                            |
 | [architecture.md](architecture.md)               | The code-vs-data split, crate layers and how they depend on each other. |
 | [adding-a-version.md](adding-a-version.md)       | Adding a game version, and what each one has cost.                      |

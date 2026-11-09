@@ -97,12 +97,13 @@ A new `.github/workflows/pages.yml`:
 
 ### Content
 
-- [ ] `install.md` and `game-data.md`.
-- [ ] `viewer.md`, with screenshots of the layers, markers and search panel. Each screenshot's seed, version and settings are in its alt text or caption, so it can be retaken with the `run-viewer` skill.
-- [ ] `command.md`, `maps.md`, `search-in-seed.md` and `your-worlds.md`.
-- [ ] `seed-search.md`, with worked queries for common goals: huts near spawn, a village by a biome, loot.
-- [ ] `answers.md` and `troubleshooting.md`.
-- [ ] getting-started.md reduced to contributor setup, with §8–10 replaced by a link to the guide. Fix every link into the removed sections (`cargo xtask links` finds them).
+- [x] `install.md` and `game-data.md`.
+- [x] `viewer.md`, with the four existing screenshots.
+- [ ] New screenshots for the viewer page: markers, loot and the This seed search. The existing four have no recorded settings. Each screenshot's seed, version and settings are in its alt text or caption, so it can be retaken with the `run-viewer` skill.
+- [x] `command.md`, `maps.md`, `search-in-seed.md` and `your-worlds.md`.
+- [x] `seed-search.md`, with worked queries for common goals: huts near spawn, a village by a biome, loot.
+- [x] `answers.md` and `troubleshooting.md`.
+- [x] getting-started.md reduced to contributor setup, with §9–10 replaced by a link to the guide and §8 cut to the commands a clone needs. Fix every link into the removed sections (`cargo xtask links` finds them).
 
 ### Publishing and links
 
@@ -135,4 +136,6 @@ A new `.github/workflows/pages.yml`:
 
 ## Notes
 
+- **Links before the site exists.** The README, getting-started.md and docs/README.md link to the guide's source (`docs/guide/src/*.md`), which GitHub renders and `cargo xtask links` checks. The README's Install section switches to the site's URL once the first release with the guide is published.
+- **The example commands** were run against a release build of `main` with 26.3 (2026-11-09). One query in the draft was invalid: a biome can't be measured from a structure, since structure anchors are only for structure and slime counts. `spyglass find --help` still describes the target as "a structure, a biome or a grid point", without features or loot.
 - **mdBook 0.5.4** exits with failure on a chapter `SUMMARY.md` names but that's missing (with `create-missing = false`), and says nothing about a missing image or a broken link. `cargo xtask links` covers those, but only for files git tracks, so a new page is checked once it's staged.

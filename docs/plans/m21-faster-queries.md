@@ -95,6 +95,7 @@ Phase 1's profiles put biome lookup ahead of noise in chunk work ([notes](#notes
 - [x] Stronghold ring positions settled in parallel; a test that one thread and many give the same positions and flags (`rings_settle_the_same_on_any_number_of_threads`).
 - [x] `nearest_feature` and `features_in` in parallel, with the carved-chunk cache shared: one cell per chunk, so no chunk is carved twice; the same test (`features_are_the_same_on_any_number_of_threads`).
 - [x] Bench lines for each, three rounds (notes).
+- [x] Loot's `nearest_container`, `containers_in` and `containers_holding` in parallel, as the milestone's scope asks and this plan first missed (added 2026-11-08): the loot cache shared, with a cell per carved chunk and `LayoutCache` shareable; the same kind of test (`containers_are_the_same_on_any_number_of_threads`); bench lines for both (notes).
 - [x] The viewer checked by eye (`run-viewer`): dungeon tiles at 1:1 while a search runs, so the map still fills and the search still moves (notes).
 
 ### Phase 4: build-level gains
@@ -111,10 +112,10 @@ Phase 1's profiles put biome lookup ahead of noise in chunk work ([notes](#notes
 
 ### Phase 6: records
 
-- [ ] The GPU and SIMD assessment in `docs/research/`, with sources, and the roadmap's stretch goal updated.
-- [ ] Specs' cost lines updated ([locate.md](../specs/locate.md#features) and others the changes touch).
-- [ ] Results table in the milestone: baseline against after.
-- [ ] `cargo xtask check` and `cargo xtask oracle-test` for every supported version.
+- [x] The GPU and SIMD assessment in `docs/research/`, with sources, and the roadmap's stretch goal updated.
+- [x] Specs' cost lines updated ([locate.md](../specs/locate.md#features) and others the changes touch).
+- [x] Results table in the milestone: baseline against after ([results](../roadmap/21-faster-queries.md#results)).
+- [x] `cargo xtask check` and `cargo xtask oracle-test` for every supported version (2026-11-08: 26.2, 26.3, 26.4-snapshot-5 to 7 and the testpack bundle, the three thread tests included).
 
 ## Verification
 
@@ -129,13 +130,22 @@ Phase 1's profiles put biome lookup ahead of noise in chunk work ([notes](#notes
 - [x] ADR: build-level changes kept (PGO, allocator, hasher), if any ([0064](../adr/0064-build-level-speedups.md)).
 - [x] ADR: the biome-bounds stage, if built. Not built.
 - [x] [search.md](../specs/search.md): the new stage, if built. Not built.
-- [ ] [biome-lookup.md](../specs/biome-lookup.md) and [material.md](../specs/material.md#biomes): the hinted search and the batched zoom, if either spec describes how spyglass computes them.
-- [ ] [locate.md](../specs/locate.md) and [structure-placement.md](../specs/structure-placement.md): cost lines, and that ring positions are settled independently.
+- [x] [biome-lookup.md](../specs/biome-lookup.md) and [material.md](../specs/material.md#biomes): the hinted search and the batched zoom, if either spec describes how spyglass computes them.
+- [x] [locate.md](../specs/locate.md) and [structure-placement.md](../specs/structure-placement.md): cost lines, and that ring positions are settled independently.
 - [x] [getting-started.md](../getting-started.md): how to profile, and profile-guided builds.
-- [ ] `docs/research/`: the GPU and SIMD assessment.
+- [x] `docs/research/`: the GPU and SIMD assessment ([gpu-and-simd.md](../research/gpu-and-simd.md)).
 - [x] [architecture.md](../architecture.md), if the use of threads changes what it says about crates or front ends: a paragraph in [front ends](../architecture.md#front-ends).
 
 ## Notes
+
+- 2026-11-08: **Loot in parallel**, three alternating rounds against the sequential loot code with the same bench lines, on 16 threads:
+
+  | Line                                      | 26.3                    | 26.2                    |
+  | ----------------------------------------- | ----------------------- | ----------------------- |
+  | `nearest_container saddle`, new session   | 86.4–172 → 14.8–16.1 s  | 490–546 → 64.7–85.6 s   |
+  | `containers_in` 8 × 8 chunks, new session | 2.29–4.18 → 0.82–1.01 s | 12.4–12.8 → 5.24–5.54 s |
+
+  `nearest_container` gains most because its rings are long; an 8 × 8 area's rows are only 8 chunks wide, fewer than the threads. Both thread tests passed (679 s in a debug build).
 
 - 2026-11-08: **Biome bounds prototyped**, on 26.3, for `require biome minecraft:cherry_grove within 500 of 0,0` (3,069 samples; 8 to 11% of seeds have one). An estimate that a real stage can only match or lose to: each sample's true climate, widened by twice what the octaves left out can add (each layer's `|amplitude|` times 1.04, Perlin's largest value rounded up), hulled over square tiles, and tested against the parameter list by branch and bound (a target ruled out where its least fitness over the box is above every point's greatest). No seed with the biome was ever rejected.
   - **The slack is too wide.** The climate noises' layer weights fall slowly: continentalness's 9 octaves weigh 0.75, 0.38, 0.38, 0.19, 0.09, … Kept to 1 to 3 octaves, continentalness's slack (doubled) is ±1.35 or more, and 0 to 2% of 200 seeds were rejected at any depth slack.

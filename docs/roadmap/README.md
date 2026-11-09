@@ -45,7 +45,7 @@ Work that completed milestones deferred, waiting for a milestone of its own:
 
 ## Stretch
 
-- GPU (`wgpu` compute) structure-placement search over the lower 48 bits of the seed, with CPU expansion of the top 16 bits for biome checks.
+- GPU computation, only if [the assessment](../research/gpu-and-simd.md)'s conditions change: the placement search a GPU does well is already cheap on the CPU, and the floating-point stages can't match the game bit for bit on one.
 
 ## Out of scope for now
 

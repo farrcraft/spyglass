@@ -342,6 +342,16 @@ fn main() -> spyglass::Result<()> {
                 .unwrap(),
         );
     });
+    // Loot: the nearest saddle, from dungeons and structures, and every container of an area.
+    let saddle = world.item_query("minecraft:saddle", None)?;
+    report("nearest_container saddle, new session", 3, || {
+        let session = world.session(*seeds.next().unwrap()).unwrap();
+        black_box(session.nearest_container(&saddle, [0, 64, 0], 32).unwrap());
+    });
+    report("containers_in 8 x 8 chunks, new session", 3, || {
+        let session = world.session(*seeds.next().unwrap()).unwrap();
+        black_box(session.containers_in([-4, -4], [3, 3]).unwrap());
+    });
     let pair = world.search_query(
         "require cluster 2 feature minecraft:monster_room within 16 of each other within 96 of spawn",
     )?;

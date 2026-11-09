@@ -3,8 +3,9 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeSet, HashMap};
-use std::sync::RwLock;
+use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock};
 
+use rayon::prelude::*;
 use spyglass_biome::{BiomeId, Lookup};
 use spyglass_blocks::{Chunk, ChunkGenerator};
 use spyglass_data::codec::full_id;
@@ -486,12 +487,48 @@ struct Cache<'s> {
     starts: Starts<'s>,
     /// Each start's pieces.
     layouts: LayoutCache,
-    /// Carved chunks, by chunk coordinates: each is a neighbour of up to 9 chunks.
-    carved: HashMap<[i32; 2], Chunk>,
+    /// Carved chunks, by chunk coordinates: each is a neighbour of up to 9 chunks. A cell per
+    /// chunk, so one carved by one thread is waited for, not carved again, by another.
+    carved: Mutex<HashMap<[i32; 2], Arc<OnceLock<Chunk>>>>,
     /// Each chunk's stored biomes.
-    biomes: HashMap<[i32; 2], Vec<BiomeId>>,
+    biomes: Mutex<HashMap<[i32; 2], Vec<BiomeId>>>,
     /// Each table's possible items.
-    possible: HashMap<String, BTreeSet<String>>,
+    possible: Mutex<HashMap<String, Arc<BTreeSet<String>>>>,
+}
+
+impl Cache<'_> {
+    /// Forgets the chunks in rows before `cz`.
+    fn keep_rows_from(&mut self, cz: i32) {
+        let carved = self
+            .carved
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner);
+        carved.retain(|c, _| c[1] >= cz);
+        let biomes = self
+            .biomes
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner);
+        biomes.retain(|c, _| c[1] >= cz);
+    }
+
+    /// Chunk `chunk` carved.
+    fn carved(&self, generator: &ChunkGenerator<'_>, chunk: [i32; 2]) -> Chunk {
+        let cell = {
+            let mut carved = self.carved.lock().unwrap_or_else(PoisonError::into_inner);
+            carved.entry(chunk).or_default().clone()
+        };
+        cell.get_or_init(|| generator.carved_chunk(chunk[0], chunk[1]))
+            .clone()
+    }
+
+    /// Chunk `chunk`'s stored biomes.
+    fn biomes(&self, generator: &ChunkGenerator<'_>, chunk: [i32; 2]) -> Vec<BiomeId> {
+        let mut biomes = self.biomes.lock().unwrap_or_else(PoisonError::into_inner);
+        biomes
+            .entry(chunk)
+            .or_insert_with(|| generator.chunk_biomes(chunk[0], chunk[1]))
+            .clone()
+    }
 }
 
 /// What filling needs of the session: biomes at blocks, and exploration maps' targets as a
@@ -588,11 +625,17 @@ impl<'w> Session<'w> {
         let mut cache = self.loot_cache()?;
         let mut out = Vec::new();
         for cz in min[1]..=max[1] {
-            cache.carved.retain(|c, _| c[1] >= cz - 1);
-            cache.biomes.retain(|c, _| c[1] >= cz - 1);
-            for cx in min[0]..=max[0] {
-                out.extend(self.chunk_holding(loot, [cx, cz], &mut cache, query)?);
-            }
+            // The rows before this one's neighbours aren't read again.
+            cache.keep_rows_from(cz - 1);
+            // The row's chunks placed at once, then kept in order.
+            let place = |&cx: &i32| self.chunk_holding(loot, [cx, cz], &cache, query);
+            let row: Vec<i32> = (min[0]..=max[0]).collect();
+            let placed: Vec<Vec<FoundContainer>> = if self.parallel {
+                row.par_iter().map(place).collect::<Result<_>>()?
+            } else {
+                row.iter().map(place).collect::<Result<_>>()?
+            };
+            out.extend(placed.into_iter().flatten());
         }
         Ok(out)
     }
@@ -603,7 +646,7 @@ impl<'w> Session<'w> {
         &self,
         loot: &LootWorld,
         chunk: [i32; 2],
-        cache: &mut Cache<'_>,
+        cache: &Cache<'_>,
         query: Option<&ItemQuery>,
     ) -> Result<Vec<FoundContainer>> {
         // Dungeons only where their table could hold the item.
@@ -641,7 +684,7 @@ impl<'w> Session<'w> {
     ) -> Result<ContainerLocate> {
         self.check_world(query.world, &query.argument)?;
         let loot = self.world.loot_world()?;
-        let mut cache = self.loot_cache()?;
+        let cache = self.loot_cache()?;
         let centre = [from[0] >> 4, from[2] >> 4];
         let distance_sqr = |p: [i32; 3]| {
             let (dx, dz) = (i64::from(p[0] - from[0]), i64::from(p[2] - from[2]));
@@ -657,20 +700,24 @@ impl<'w> Session<'w> {
                     break;
                 }
             }
-            for dz in -ring..=ring {
-                for dx in -ring..=ring {
-                    if dx.abs().max(dz.abs()) != ring {
-                        continue;
-                    }
-                    let chunk = [centre[0] + dx, centre[1] + dz];
-                    for container in self.chunk_holding(loot, chunk, &mut cache, Some(query))? {
-                        if container.contents_certain() {
-                            let d = distance_sqr(container.position);
-                            nearest_certain = Some(nearest_certain.map_or(d, |n| n.min(d)));
-                        }
-                        found.push(container);
-                    }
+            // The ring's chunks, z then x, each placed whole before the stopping test.
+            let chunks: Vec<[i32; 2]> = (-ring..=ring)
+                .flat_map(|dz| (-ring..=ring).map(move |dx| [dx, dz]))
+                .filter(|[dx, dz]| dx.abs().max(dz.abs()) == ring)
+                .map(|[dx, dz]| [centre[0] + dx, centre[1] + dz])
+                .collect();
+            let place = |&chunk: &[i32; 2]| self.chunk_holding(loot, chunk, &cache, Some(query));
+            let placed: Vec<Vec<FoundContainer>> = if self.parallel {
+                chunks.par_iter().map(place).collect::<Result<_>>()?
+            } else {
+                chunks.iter().map(place).collect::<Result<_>>()?
+            };
+            for container in placed.into_iter().flatten() {
+                if container.contents_certain() {
+                    let d = distance_sqr(container.position);
+                    nearest_certain = Some(nearest_certain.map_or(d, |n| n.min(d)));
                 }
+                found.push(container);
             }
         }
         found.sort_by_key(|c| distance_sqr(c.position));
@@ -691,10 +738,10 @@ impl<'w> Session<'w> {
     fn loot_cache(&self) -> Result<Cache<'_>> {
         Ok(Cache {
             starts: self.starts(true).with_pools(self.world.pools()?),
-            layouts: LayoutCache::new(),
-            carved: HashMap::new(),
-            biomes: HashMap::new(),
-            possible: HashMap::new(),
+            layouts: LayoutCache::default(),
+            carved: Mutex::default(),
+            biomes: Mutex::default(),
+            possible: Mutex::default(),
         })
     }
 
@@ -707,21 +754,33 @@ impl<'w> Session<'w> {
     fn could_hold(
         &self,
         loot: &LootWorld,
-        cache: &mut Cache<'_>,
+        cache: &Cache<'_>,
         table: &str,
         query: &ItemQuery,
     ) -> Result<bool> {
-        if !cache.possible.contains_key(table) {
-            self.load_table(loot, table)?;
-            let tables = loot
-                .tables
-                .read()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            cache
+        let known = {
+            let possible = cache
                 .possible
-                .insert(table.to_string(), tables.possible_items(table));
-        }
-        Ok(query.could_hold(&cache.possible[table]))
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            possible.get(table).cloned()
+        };
+        let possible = match known {
+            Some(possible) => possible,
+            // Worked out without the lock: two threads may both, and get the same set.
+            None => {
+                self.load_table(loot, table)?;
+                let tables = loot.tables.read().unwrap_or_else(PoisonError::into_inner);
+                let possible = Arc::new(tables.possible_items(table));
+                let mut cached = cache
+                    .possible
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner);
+                cached.insert(table.to_string(), possible.clone());
+                possible
+            }
+        };
+        Ok(query.could_hold(&possible))
     }
 
     /// A placed container with its contents.
@@ -812,7 +871,7 @@ impl<'w> Session<'w> {
         &self,
         loot: &LootWorld,
         chunk: [i32; 2],
-        cache: &mut Cache<'_>,
+        cache: &Cache<'_>,
         dungeons: &[bool],
     ) -> Result<Vec<Placed>> {
         let world = self.world;
@@ -823,11 +882,7 @@ impl<'w> Session<'w> {
         let (level_min, level_top) = generator.level();
         let sets = &world.sets;
         let Cache {
-            starts,
-            layouts,
-            carved,
-            biomes: stored,
-            ..
+            starts, layouts, ..
         } = cache;
         let pieces = structures::pieces_cached(
             starts,
@@ -861,20 +916,11 @@ impl<'w> Session<'w> {
         if !structure_reaches && !feature_reaches {
             return Ok(Vec::new());
         }
-        let mut biomes = |chunk: [i32; 2]| {
-            stored
-                .entry(chunk)
-                .or_insert_with(|| generator.chunk_biomes(chunk[0], chunk[1]))
-                .clone()
-        };
+        let mut biomes = |chunk: [i32; 2]| cache.biomes(generator, chunk);
         let mut chunks = Vec::with_capacity(9);
         for dz in -1..=1 {
             for dx in -1..=1 {
-                let key = [chunk[0] + dx, chunk[1] + dz];
-                let neighbour = carved
-                    .entry(key)
-                    .or_insert_with(|| generator.carved_chunk(key[0], key[1]));
-                chunks.push(neighbour.clone());
+                chunks.push(cache.carved(generator, [chunk[0] + dx, chunk[1] + dz]));
             }
         }
         let region = Region::new(&loot.blocks, chunk, chunks);
@@ -1065,5 +1111,36 @@ mod tests {
         let possible: BTreeSet<String> = ["minecraft:golden_apple".to_string()].into();
         assert!(query(&["minecraft:golden_apple", "minecraft:apple"], None).could_hold(&possible));
         assert!(!query(&["minecraft:enchanted_golden_apple"], None).could_hold(&possible));
+    }
+
+    /// A seed's containers near the origin, sequentially as a search's checks run them, and in
+    /// parallel on one thread and on several: the same answers in the same order.
+    #[test]
+    #[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
+    fn containers_are_the_same_on_any_number_of_threads() {
+        let version = spyglass_oracle::version();
+        let world = World::open(spyglass_oracle::bundle_dir())
+            .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {version}"));
+        let saddle = world.item_query("minecraft:saddle", None).unwrap();
+        for seed in [0, 12_345] {
+            let answers = |session: &Session<'_>| {
+                let area = session.containers_in([-4, -4], [3, 3]).unwrap();
+                let holding = session
+                    .containers_holding(&saddle, [-4, -4], [3, 3])
+                    .unwrap();
+                let nearest = session.nearest_container(&saddle, [40, 0, -40], 8).unwrap();
+                (area, holding, nearest)
+            };
+            let alone = answers(&world.search_session(seed).unwrap());
+            assert!(!alone.0.is_empty(), "seed {seed}: no containers to compare");
+            for threads in [1, 8] {
+                let pool = rayon::ThreadPoolBuilder::new()
+                    .num_threads(threads)
+                    .build()
+                    .unwrap();
+                let parallel = pool.install(|| answers(&world.session(seed).unwrap()));
+                assert_eq!(parallel, alone, "seed {seed}, {threads} threads");
+            }
+        }
     }
 }

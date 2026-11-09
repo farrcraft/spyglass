@@ -353,6 +353,11 @@ pub(crate) const TESTS: &[(&str, &str, &[Input])] = &[
     ),
     (
         "spyglass",
+        "loot::tests::containers_are_the_same_on_any_number_of_threads",
+        &[Input::Bundle],
+    ),
+    (
+        "spyglass",
         "item_queries_resolve_ids_tags_and_enchantments",
         &[Input::Bundle],
     ),

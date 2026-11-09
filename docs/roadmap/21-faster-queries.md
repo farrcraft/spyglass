@@ -57,6 +57,26 @@ Not in scope:
 - The viewer's tile scheduling, which was milestone 14's.
 - 26.2's carved chunks (about 100 ms, against 17 to 30 ms in 26.3), unless the profile shows a fix that's cheap.
 
+## Results
+
+Baseline (848fcfd) against after, `dist` builds back to back on the dev machine, five alternating rounds, 2026-11-08, minimum and median. The machine was busier than for the baseline above (NordVPN and a browser each keeping a core busy), so the baseline's own times came out higher, and the ratios say more than the times:
+
+| Line                                        | 26.3                             | 26.2                             |
+| ------------------------------------------- | -------------------------------- | -------------------------------- |
+| `locate_structure` stronghold, new session  | 0.97 and 1.00 → 0.12 and 0.12 s  | 2.17 and 2.56 → 0.26 and 0.30 s  |
+| `nearest_feature monster_room`, new session | 3.97 and 4.41 → 0.89 and 1.06 s  | 16.6 and 23.1 → 4.05 and 5.39 s  |
+| 128 × 128 dungeon tile at 1:2               | 11.0 and 11.6 → 1.82 and 2.01 s  | 53.4 and 55.3 → 8.71 and 8.86 s  |
+| The same tile, one thread                   | 11.5 and 12.5 → 7.01 and 10.8 s  | 49.9 and 61.8 → 39.5 and 40.1 s  |
+| `chunk_blocks` with carvers, bound (5 × 40) | 18.1 and 18.6 → 15.0 and 16.2 ms | 96.6 and 127 → 96.6 and 103 ms   |
+| Biome presence within 500 (5 × 20)          | 7.03 and 7.63 → 6.15 and 6.47 ms | 16.3 and 18.3 → 15.0 and 15.9 ms |
+
+What they show:
+
+- **Met:** the stronghold, at an eighth of the baseline, from settling ring points in parallel.
+- **Met at the minimum, not the median:** `nearest_feature` (1 s target; rounds of 0.89 to 1.27 s), the one-thread tile (9 s; 2 of 5 rounds under, 7.0 to 13.1 s) and `chunk_blocks` (15 ms; 15.0 to 19.4 ms). Each gained a fifth to three quarters, but a quieter machine is needed to say whether the median is under.
+- **Missed:** biome presence, about 15% faster from the cheaper lookups. The biome-bounds stage meant to meet it didn't pay (the plan's notes).
+- Loot's queries, added to the scope's threads, gained 2.5 to 8× (the plan's notes).
+
 ## Exit criteria
 
 - [x] A baseline: the bench, three rounds for 26.3 and 26.2, and a profile of each workload named in the scope, recorded in the plan.
@@ -66,7 +86,7 @@ Not in scope:
   - 128 × 128 dungeon tile at 1:2, one thread: 9 s or less (11.9–13.9 s);
   - `chunk_blocks` with carvers, bound: 15 ms or less (19.5–20.0 ms);
   - biome presence within 500, one evaluation: 5 ms or less (6.99–7.46 ms). The biome-bounds prototype didn't pay, so the stage wasn't built and the target stays (2026-11-08, the plan's notes).
-- [ ] Every parallel query gives the same answer on one thread as on many, checked by tests.
-- [ ] Every build change kept beats the bench's noise over three rounds; each one dropped is recorded with its numbers.
-- [ ] The GPU and SIMD assessment is in `docs/research/`.
-- [ ] `cargo xtask oracle-test` passes for every supported version, as well as `cargo xtask check`.
+- [x] Every parallel query gives the same answer on one thread as on many, checked by tests.
+- [x] Every build change kept beats the bench's noise over three rounds; each one dropped is recorded with its numbers.
+- [x] The GPU and SIMD assessment is in `docs/research/` ([gpu-and-simd.md](../research/gpu-and-simd.md)).
+- [x] `cargo xtask oracle-test` passes for every supported version, as well as `cargo xtask check`.

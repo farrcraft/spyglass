@@ -3,6 +3,7 @@
 //! (`docs/specs/features.md#structures`).
 
 use std::collections::HashMap;
+use std::sync::Mutex;
 
 use spyglass_blocks::ChunkGenerator;
 use spyglass_rng::WorldgenRandom;
@@ -69,14 +70,38 @@ pub fn pieces(
         last_step,
         min_y,
         max_y,
-        &mut LayoutCache::new(),
+        &LayoutCache::default(),
     )
 }
 
 /// Each start's pieces, by structure and start chunk, as [`pieces`] gives them: what nearby
 /// chunks' queries share, so a start is laid out once. Only for one seed's starts and one
-/// level's heights.
-pub type LayoutCache = HashMap<(usize, [i32; 2]), Vec<Piece>>;
+/// level's heights. Threads can share it: it's locked only to look a start up and to keep it,
+/// not while laying it out, so two threads that reach a start at once may each lay it out, and
+/// get the same pieces.
+#[derive(Debug, Default)]
+pub struct LayoutCache(Mutex<HashMap<StartKey, Vec<Piece>>>);
+
+/// A start: its structure, by index in its [`StructureSets`], and its chunk.
+type StartKey = (usize, [i32; 2]);
+
+impl LayoutCache {
+    fn get(&self, key: StartKey) -> Option<Vec<Piece>> {
+        let map = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        map.get(&key).cloned()
+    }
+
+    fn insert(&self, key: StartKey, pieces: Vec<Piece>) {
+        let mut map = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        map.insert(key, pieces);
+    }
+}
 
 /// As [`pieces`], keeping each start's pieces in `cache` for the next chunk's.
 pub fn pieces_cached(
@@ -86,7 +111,7 @@ pub fn pieces_cached(
     last_step: usize,
     min_y: i32,
     max_y: i32,
-    cache: &mut LayoutCache,
+    cache: &LayoutCache,
 ) -> Vec<Piece> {
     let mut out = Vec::new();
     let reach = REACH_CHUNKS;
@@ -107,8 +132,8 @@ pub fn pieces_cached(
                 if info.step > last_step || check == Check::Rejected {
                     continue;
                 }
-                if let Some(pieces) = cache.get(&(structure, start)) {
-                    out.extend_from_slice(pieces);
+                if let Some(pieces) = cache.get((structure, start)) {
+                    out.extend(pieces);
                     continue;
                 }
                 let first = out.len();

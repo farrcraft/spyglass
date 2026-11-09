@@ -48,6 +48,10 @@ The **Loot** section of the Layers tab shows what's in the chests, at 2 blocks p
 
 Click a container for its contents, slot by slot, as the seed generates them, and whether they're certain. With an item chosen, right-clicking the map offers **Nearest** that item. Each chunk is placed as the game decorates it, so containers fill in slowly.
 
+Seed 12345 in 26.3 at 1 block per pixel, centred on 0, 200, with every container marked and those holding a diamond ringed. A mineshaft's chest minecart at -158 44 372 is open:
+
+![Loot containers marked across a biome map, gold rings around those holding a diamond, and a chest minecart's contents listed slot by slot, with one diamond among torches, rails and bread](images/viewer-loot.png)
+
 ## Markers and done places
 
 - **Markers:** right-click the map and **Add a marker here**, or press M over it, then name it and pick a colour. Click a marker to edit it. The **Markers** tab lists the world's markers in the dimension shown, and what you've marked done.
@@ -62,6 +66,10 @@ Markers, done places and worlds are kept in `spyglass-data.json`, beside the set
 | macOS   | `~/Library/Application Support/spyglass/` |
 | Linux   | `~/.local/share/spyglass/`                |
 
+Seed 12345 in 26.3 at 4 blocks per pixel, with villages, outposts and witch huts marked, two markers added, and the village at -144, -832 marked done:
+
+![The Markers tab listing two markers, Base and Trading hall, and a village marked done; on the map, the two markers as pins and the done village dimmed](images/viewer-markers.png)
+
 **Settings** shows where, and exports all of it, or one world, to a file that **Import…** merges into another spyglass's. The format is [documented](https://github.com/farrcraft/spyglass/blob/main/docs/specs/user-data.md), so scripts can read it too.
 
 ## Sharing and exporting
@@ -74,7 +82,13 @@ Markers, done places and worlds are kept in `spyglass-data.json`, beside the set
 The **Search** tab has two modes:
 
 - **Seeds** finds the seeds that best fit a query, written in the [search language](seed-search.md). Set a seed count or a time limit (and **Confirm with terrain** to decide structures), and press **Search**. The best seeds appear as they're found. Click one to open it, in its first constraint's dimension and centred on that constraint's place, with everything its constraints matched ringed.
-- **This seed** finds [places in the seed shown](search-in-seed.md), around the view's centre. Pick a query from **Presets** (double witch huts, a monument in deep ocean, a flat outpost, rare biomes, a base site) or write one, and press **Find**. The nearest match opens on the map. **Previous** and **Next**, or P and N on the map, step through the rest.
+- **This seed** finds [places in the seed shown](search-in-seed.md), around the view's centre. Pick a query from **Presets** (double witch huts, a monument in deep ocean, a pillager outpost on flat ground, mushroom fields, ice spikes, a pale garden, a cherry grove by the sea) or write one, and press **Find**. The nearest match opens on the map. **Previous** and **Next**, or P and N on the map, step through the rest.
+
+Seed 12345 in 26.3 at 4 blocks per pixel, after **Find** with the **Cherry grove by the sea** preset and **Confirm with terrain** on:
+
+![This seed mode: the preset's query, six places found nearest first, and the nearest on the map, with the plains, cherry grove and ocean its constraints matched ringed](images/viewer-find.png)
+
+A search for seeds, with the best opened:
 
 ![The Search section listing ten ranked seeds, and the best one's two swamp huts and cherry grove ringed on the map](images/viewer-search.png)
 

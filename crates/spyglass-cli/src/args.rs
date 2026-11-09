@@ -36,7 +36,8 @@ pub enum Command {
     /// biomes, slime chunks and spawn, in any dimension.
     Search(Search),
     /// Places in one seed or world save that fit a `find` query, nearest first: a target (a
-    /// structure, a biome or a grid point) and constraints around it.
+    /// structure, a feature, a loot container holding an item, a biome or a grid point) and
+    /// constraints around it.
     Find(Find),
     /// Terrain heights before structures, carvers and features, as structures are placed by:
     /// one column or a region.

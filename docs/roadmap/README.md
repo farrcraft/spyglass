@@ -27,6 +27,7 @@ The milestones build toward the goals in the [README](../../README.md#goals): co
 | 19  | [Features](completed/19-features.md)                                                  | Dungeons, geodes, wells, fossils and lava lakes, certain or not.    | Completed |
 | 20  | [Loot](completed/20-loot.md)                                                          | What's in the chests, and searching for it.                         | Completed |
 | 21  | [Faster queries](completed/21-faster-queries.md)                                      | Single queries on every core, cheaper biome searches, a profiler.   | Completed |
+| 22  | [User guide](22-user-guide.md)                                                        | A user guide on GitHub Pages, published with each release.          | Planned   |
 
 ## Follow-ups
 

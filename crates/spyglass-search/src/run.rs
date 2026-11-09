@@ -798,20 +798,22 @@ mod tests {
     fn a_stop_cuts_a_round_part_way() {
         // Checks take a while, and the search is asked to stop from inside one. It stops within
         // a check, and keeps exactly the indices below `next`, as if it had been asked to
-        // evaluate that many.
+        // evaluate that many. The time is measured from the stop: before it, how long the sleeps
+        // take depends on the OS timer (on Windows, up to 15.6 ms each, not 200 µs).
         let source = SeedSource::Range {
             first: 0,
             last: 999_999,
         };
         let o = options(source.clone(), 0, None, 10);
         let stop = o.stop.clone();
-        let started = Instant::now();
+        let stopped_at = std::sync::OnceLock::new();
         let out = run(
             &four(),
             &o,
             |_| true,
             |seed, threshold| {
                 if seed >= 3_000 {
+                    stopped_at.get_or_init(Instant::now);
                     stop.stop();
                 }
                 std::thread::sleep(Duration::from_micros(200));
@@ -820,7 +822,7 @@ mod tests {
             |_| ControlFlow::Continue(()),
         )
         .unwrap();
-        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(stopped_at.get().unwrap().elapsed() < Duration::from_secs(2));
         let next = out.next.unwrap();
         assert!(next < 100_000, "{next}");
         assert_eq!(out.evaluated, next);

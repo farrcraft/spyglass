@@ -109,7 +109,7 @@ A new `.github/workflows/pages.yml`:
 
 - [x] `.github/workflows/pages.yml`.
 - [x] The README, docs/README.md, `GETTING-STARTED.txt` and the release notes link to the guide.
-- [ ] Once the site is live: the README's Install section links to the site, not the guide's source.
+- [x] The README links to the site, ahead of its first deploy (2026-11-09): the links resolve once the first release with the guide is published.
 - [x] releasing.md: turning on Pages once, the deploy on publish, a manual redeploy.
 - [x] CLAUDE.md: `docs/guide/` in Layout and `cargo xtask guide` in Commands. development-process.md: the guide is a durable doc, so it must not link to individual milestones or plans.
 

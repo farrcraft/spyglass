@@ -8,7 +8,7 @@ A local-only seed explorer for Minecraft: Java Edition. Describe what you want i
 
 ![The spyglass viewer showing the best seed from a search for two swamp huts near spawn, with the huts and a cherry grove ringed on a biome map](docs/guide/src/images/viewer-search.png)
 
-More of the viewer is in the [user guide](docs/guide/src/viewer.md).
+More of the viewer is in the [user guide](https://farrcraft.github.io/spyglass/viewer.html).
 
 Not affiliated with or endorsed by Mojang or Microsoft.
 
@@ -29,7 +29,7 @@ Mojang's data and code are never committed or redistributed. The extractor runs 
 
 ## Install
 
-Download the archive for your system from the [releases page](https://github.com/farrcraft/spyglass/releases/latest): Windows, Linux, or macOS (Apple silicon or Intel). Unpack it into a folder of its own and start `spyglass-viewer`. With no game data yet, it extracts some for you, into a `bundles` folder beside it; that needs a Java runtime matching the game version. No Rust is needed. The [user guide](docs/guide/src/SUMMARY.md) covers the rest: the warnings unsigned programs get on Windows and macOS, game data, the viewer and the `spyglass` command.
+Download the archive for your system from the [releases page](https://github.com/farrcraft/spyglass/releases/latest): Windows, Linux, or macOS (Apple silicon or Intel). Unpack it into a folder of its own and start `spyglass-viewer`. With no game data yet, it extracts some for you, into a `bundles` folder beside it; that needs a Java runtime matching the game version. No Rust is needed. The [user guide](https://farrcraft.github.io/spyglass/) covers the rest: the warnings unsigned programs get on Windows and macOS, game data, the viewer and the `spyglass` command.
 
 ## Build from source
 
@@ -62,7 +62,7 @@ cargo run --release -p spyglass-cli -- search -q 'require minecraft:fortress wit
 cargo run --release -p spyglass-viewer
 ```
 
-See [docs/getting-started.md](docs/getting-started.md) for the full walkthrough, including installing Rust by hand, and the [user guide](docs/guide/src/SUMMARY.md) for [the `spyglass` command](docs/guide/src/command.md) and [the viewer](docs/guide/src/viewer.md).
+See [docs/getting-started.md](docs/getting-started.md) for the full walkthrough, including installing Rust by hand, and the [user guide](https://farrcraft.github.io/spyglass/) for [the `spyglass` command](https://farrcraft.github.io/spyglass/command.html) and [the viewer](https://farrcraft.github.io/spyglass/viewer.html).
 
 ## Crates
 
@@ -87,7 +87,7 @@ See [docs/architecture.md](docs/architecture.md) for how they fit together.
 
 ## Documentation
 
-- [User guide](docs/guide/src/SUMMARY.md)
+- [User guide](https://farrcraft.github.io/spyglass/) ([source](docs/guide/src/SUMMARY.md))
 - [Getting started](docs/getting-started.md), for working on spyglass
 - [Architecture](docs/architecture.md)
 - [Specs](docs/specs/)

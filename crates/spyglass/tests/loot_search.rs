@@ -266,9 +266,23 @@ fn loot_search_containers_are_the_game_s() {
         }
         let golden: Vec<&GoldenContainer> =
             file.chunks.iter().flat_map(|c| &c.containers).collect();
-        // An item the game put in one of its containers; maps point somewhere else in
-        // spyglass's fills.
+        // An item the game put in one of its containers that spyglass places with certain
+        // contents, so the search has a certain container to compare. A candidate's contents
+        // may be another's, and CI's oracle jobs may each have a single file, so the first
+        // container won't do. Maps point somewhere else in spyglass's fills.
+        let session = world.session(file.seed).unwrap();
         let Some((container, item)) = golden.iter().find_map(|c| {
+            let chunk = [c.pos[0] >> 4, c.pos[2] >> 4];
+            let certain = session
+                .containers_in(chunk, chunk)
+                .unwrap()
+                .iter()
+                .any(|ours| {
+                    ours.position == c.pos && ours.table == c.table && ours.contents_certain()
+                });
+            if !certain {
+                return None;
+            }
             items(c)
                 .into_iter()
                 .find(|i| !i.ends_with("map"))

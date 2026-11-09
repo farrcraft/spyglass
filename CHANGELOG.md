@@ -6,6 +6,12 @@ Changes go under **Unreleased** as they're made. `cargo xtask release` turns tha
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-09
+
+### Game versions
+
+Checked against the game for 26.2, 26.3, 26.4-snapshot-5, 26.4-snapshot-6, 26.4-snapshot-7.
+
 ### Added
 
 - **A user guide** at <https://farrcraft.github.io/spyglass/>, published with each release: installing, game data, the viewer, the `spyglass` command, maps, seed searches with worked queries, searching within a seed, your own worlds, reading the answers, and troubleshooting. Release notes link to it.
@@ -92,6 +98,7 @@ The first release.
 - A warning for a game version this build wasn't checked against. Its answers may differ from the game's ([bundle-format.md](docs/specs/bundle-format.md#checked-versions)).
 - `--version` names the build and the game versions it was checked against.
 
-[Unreleased]: https://github.com/farrcraft/spyglass/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/farrcraft/spyglass/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/farrcraft/spyglass/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/farrcraft/spyglass/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/farrcraft/spyglass/releases/tag/v0.1.0

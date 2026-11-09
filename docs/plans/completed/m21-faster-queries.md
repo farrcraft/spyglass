@@ -1,9 +1,9 @@
 # m21. Faster queries
 
-- Status: In progress
-- Milestone: [21. Faster queries](../roadmap/21-faster-queries.md)
+- Status: Completed
+- Milestone: [21. Faster queries](../../roadmap/completed/21-faster-queries.md)
 - Started: 2026-11-06
-- Completed:
+- Completed: 2026-11-09
 
 ## Goal
 
@@ -25,7 +25,7 @@ Measure first, as milestone 09 did. Each phase after the first starts from the p
 - **A profiler.**
   - `perf`, or `samply` on Linux, in the Docker image `cargo xtask linux-check` already builds, since perf works there without elevation.
   - Failing that, `samply` on Windows run elevated once per profile.
-  - If it takes more than one command, it becomes an `xtask` command ([ADR 0003](../adr/0003-cargo-xtask-for-project-commands.md)).
+  - If it takes more than one command, it becomes an `xtask` command ([ADR 0003](../../adr/0003-cargo-xtask-for-project-commands.md)).
 - **Workloads:** a carved chunk (`chunk_blocks with carvers, bound`), a dungeon tile at 1:2, `nearest_feature monster_room`, a 1:4 height map and `evaluate biome presence`.
 - **The 1:4 height map.** Milestone 14 closed at 5.7 s for a tile, and the bench now gives 8.0 s. Bench milestone 14's last commit and HEAD back to back in one sitting, as milestone 09 did for the isolated column. Bisect only if the gap holds.
 
@@ -38,33 +38,33 @@ Phase 1's profiles put biome lookup ahead of noise in chunk work ([notes](#notes
   - Built without a new parameter: `lookup_with`'s reused `hits` already holds the previous answer, so its first point is the hint, and an index outside the list is ignored. Batches (`biomes_in`, `biome_grid`, the locate scan) reuse one buffer. `Biomes::biome_at`, which the search's sampling, the structure checks and the renderer call one quart at a time, keeps its buffer per thread, so `Biomes` stays shareable between threads.
   - A test compares hinted and cold lookups, and `brute_force_hits`, over random targets and random hints.
 - **Each chunk's biome window looked up once.** `ChunkGenerator::chunk_biomes` covers a 6 × 6 window of quart columns at every y, and the surface's `biomes_in` covers exactly the same window. The outline calls `chunk_biomes` directly as well as through the query's cache, so a placed chunk's window was looked up up to three times. The generator now keeps windows per seed (`biome_window`, up to 2,048 chunks, cleared when full), and all three read them. A window depends only on its chunk, so this is exact. Neighbouring windows still overlap (36 quart columns each for 16 of the chunk's own); a cache keyed by quart is the next step if the profile still shows lookups.
-- **The zoom's fiddles once per quart** (`BiomeZoom` in `spyglass-blocks`). `quart` hashes 8 corners per block, each an LCG chain of 8 steps, but a corner's three fiddles depend only on the quart and the seed. A batch form computes each quart's fiddles once and each block's distances from them, with the same operations in the same order ([material.md](../specs/material.md#biomes)). Single blocks keep `quart` as it is, and a test compares the two over random blocks and seeds.
+- **The zoom's fiddles once per quart** (`BiomeZoom` in `spyglass-blocks`). `quart` hashes 8 corners per block, each an LCG chain of 8 steps, but a corner's three fiddles depend only on the quart and the seed. A batch form computes each quart's fiddles once and each block's distances from them, with the same operations in the same order ([material.md](../../specs/material.md#biomes)). Single blocks keep `quart` as it is, and a test compares the two over random blocks and seeds.
 
 ### Threads within a query
 
-- **How a library call uses threads.** Today only the search runner uses rayon, in a pool it owns ([ADR 0021](../adr/0021-search-engine.md)). A `par_iter` inside a query runs on whichever pool it's called from:
-  - inside a search's checks, that's the search's pool, where [ADR 0046](../adr/0046-the-viewers-search-yields-to-the-map.md)'s throttle holds threads back;
+- **How a library call uses threads.** Today only the search runner uses rayon, in a pool it owns ([ADR 0021](../../adr/0021-search-engine.md)). A `par_iter` inside a query runs on whichever pool it's called from:
+  - inside a search's checks, that's the search's pool, where [ADR 0046](../../adr/0046-the-viewers-search-yields-to-the-map.md)'s throttle holds threads back;
   - in the viewer's tile workers, plain threads, it's rayon's global pool, which would compete with the workers for the same cores.
   - The ADR decides between using whatever pool is current, a pool passed in through the options, and parallel only when the caller asks. It also says what happens to nested parallelism in a search.
-- **Stronghold rings** (`ConcentricRings::positions` in `spyglass-structure`): `points` is sequential and draws the ring's random; `settle_point` gives each point its own fork. Settling the points in parallel and collecting them in order gives the same list ([structure-placement.md](../specs/structure-placement.md#concentric-rings)). The game does the same with its background executor. To check:
+- **Stronghold rings** (`ConcentricRings::positions` in `spyglass-structure`): `points` is sequential and draws the ring's random; `settle_point` gives each point its own fork. Settling the points in parallel and collecting them in order gives the same list ([structure-placement.md](../../specs/structure-placement.md#concentric-rings)). The game does the same with its background executor. To check:
   - that `Biomes` is `Sync`;
-  - that nothing it caches can change an answer, which matters for tied cells ([biome-lookup.md](../specs/biome-lookup.md#ties)).
+  - that nothing it caches can change an answer, which matters for tied cells ([biome-lookup.md](../../specs/biome-lookup.md#ties)).
 - **Features** (`Session::nearest_feature`, `Session::features_in` in `spyglass/src/features.rs`):
   - Each chunk's placing is independent given its neighbours' carved blocks. `features_in`'s rows share those through a row cache, and `nearest_feature`'s rings through one `Cache`. Parallel work needs that cache shared between threads or rebuilt per thread; measure which.
-  - Results must come out in the order [locate.md](../specs/locate.md#features) gives: z then x for an area, by distance for nearest. A ring is placed whole before the stopping test, as it is today.
+  - Results must come out in the order [locate.md](../../specs/locate.md#features) gives: z then x for an area, by distance for nearest. A ring is placed whole before the stopping test, as it is today.
 - **Contention.** The per-seed caches (`CornerCache`, `CornerStore`, `SurfaceLevels`) are `Mutex<HashMap>`s, which threads sharing one session would fight over. The profile with threads says whether that matters.
 
 ### Build-level gains
 
 - **PGO** with `cargo-pgo`, trained on the bench. A trial first, on the bench's lines.
-  - Profiling data from a training run isn't deterministic, which conflicts with reproducible release archives ([ADR 0038](../adr/0038-how-release-archives-are-built.md)). Kept for releases only if the profile can be produced reproducibly, or kept for local `dist` and bench builds only, as the ADR records.
+  - Profiling data from a training run isn't deterministic, which conflicts with reproducible release archives ([ADR 0038](../../adr/0038-how-release-archives-are-built.md)). Kept for releases only if the profile can be produced reproducibly, or kept for local `dist` and bench builds only, as the ADR records.
 - **A global allocator** (`mimalloc`) in `spyglass-cli` and `spyglass-viewer`. It builds C code, so check every `cargo xtask dist` target and the MSRV build.
 - **A faster hasher** (`rustc-hash` or `foldhash`) for the hot maps keyed by coordinates or pointers: the volume memo, the aquifer's maps, the chunk caches. Choose them from the profile, not all 107 `HashMap`s.
 - **Each dependency kept** gets its `deny.toml` license check and one ADR covering the build changes.
 
 ### Biome bounds in searches
 
-- **The idea.** Biome constraints sample whole climate noises today: biome presence within 500 blocks is 8 ms a seed. Each octave is seeded from its own name (`"octave_<index>"`, [noise.md](../specs/noise.md)), so a noise's low octaves can be built and sampled alone with the same values. The rest add at most the sum of their amplitudes. From that come intervals for the climate parameters, and from those a set of biomes a sample could be. A seed with no possible target at any sample point is rejected without the full evaluation, a necessary condition as [ADR 0021](../adr/0021-search-engine.md) asks.
+- **The idea.** Biome constraints sample whole climate noises today: biome presence within 500 blocks is 8 ms a seed. Each octave is seeded from its own name (`"octave_<index>"`, [noise.md](../../specs/noise.md)), so a noise's low octaves can be built and sampled alone with the same values. The rest add at most the sum of their amplitudes. From that come intervals for the climate parameters, and from those a set of biomes a sample could be. A seed with no possible target at any sample point is rejected without the full evaluation, a necessary condition as [ADR 0021](../../adr/0021-search-engine.md) asks.
 - **The prototype measures:** how many seeds the bounds reject for biome presence and coverage queries, the cost of a bounded sample against a full one, and how many octaves to build.
   - The bound must hold for the noise as the game sums it: the `NormalNoise` value factor, amplitudes and both stacks.
   - The biome parameter search must be answered over intervals, not points. That is new code in `spyglass-biome`.
@@ -75,7 +75,7 @@ Phase 1's profiles put biome lookup ahead of noise in chunk work ([notes](#notes
 ### Phase 1: measure
 
 - [x] The bench, three rounds each for 26.3 and 26.2, recorded in the notes.
-- [x] A profiler that runs on this machine, documented in [getting-started.md](../getting-started.md). `cargo xtask profile` ([profiling](../getting-started.md#profiling)), with the bench's new `--runs`.
+- [x] A profiler that runs on this machine, documented in [getting-started.md](../../getting-started.md). `cargo xtask profile` ([profiling](../../getting-started.md#profiling)), with the bench's new `--runs`.
 - [x] Profiles of a carved chunk, a dungeon tile at 1:2, `nearest_feature`, a 1:4 height map and a biome-presence evaluation, summarized in the notes.
 - [x] The 1:4 height map against milestone 14's close, back to back; bisected and fixed if it's a regression. No regression (notes).
 - [x] Targets confirmed or changed with the user, and written into the milestone. Agreed 2026-11-06, with the biome-lookup phase added ahead of threads.
@@ -85,13 +85,13 @@ Phase 1's profiles put biome lookup ahead of noise in chunk work ([notes](#notes
 - [x] Warm-started parameter search; the warm-against-brute-force test (`warm_starts_give_the_cold_answer`); `biome_at`'s per-thread buffer.
 - [x] Per-seed chunk biome windows for `chunk_biomes`, the outline and the surface.
 - [x] Zoom fiddles kept per quart in `ChunkBiomes`; the kept-against-fresh test (`kept_fiddles_zoom_as_fresh_ones`).
-- [x] [biome-lookup.md](../specs/biome-lookup.md#search) and [material.md](../specs/material.md#biomes) updated.
+- [x] [biome-lookup.md](../../specs/biome-lookup.md#search) and [material.md](../../specs/material.md#biomes) updated.
 - [x] Bench lines, three rounds: the three changes together against 848fcfd (notes).
 - [x] Profile again before phase 3 (notes).
 
 ### Phase 3: threads within a query
 
-- [x] ADR: how library queries use threads, alongside the search's pool, its throttle and the viewer's tile workers ([ADR 0063](../adr/0063-threads-within-library-queries.md): the current pool, sequential in a search's checks).
+- [x] ADR: how library queries use threads, alongside the search's pool, its throttle and the viewer's tile workers ([ADR 0063](../../adr/0063-threads-within-library-queries.md): the current pool, sequential in a search's checks).
 - [x] Stronghold ring positions settled in parallel; a test that one thread and many give the same positions and flags (`rings_settle_the_same_on_any_number_of_threads`).
 - [x] `nearest_feature` and `features_in` in parallel, with the carved-chunk cache shared: one cell per chunk, so no chunk is carved twice; the same test (`features_are_the_same_on_any_number_of_threads`).
 - [x] Bench lines for each, three rounds (notes).
@@ -103,7 +103,7 @@ Phase 1's profiles put biome lookup ahead of noise in chunk work ([notes](#notes
 - [x] PGO trial on the bench; decision on releases against ADR 0038. Local builds only: `cargo xtask bench --pgo` and `cargo xtask dist --pgo` (notes).
 - [x] `mimalloc` trial in the CLI and viewer; every `dist` target and the MSRV build checked. Kept; Windows `dist --pgo` and a Linux build in the profile container pass, and MSRV; macOS is left to the release workflow.
 - [x] A faster hasher for the maps the profile shows are hot: `FxHashMap` for `corners_of`'s cells and `NoiseChunk`'s two maps.
-- [x] ADR for the changes kept; the numbers for the ones dropped in the notes ([ADR 0064](../adr/0064-build-level-speedups.md)).
+- [x] ADR for the changes kept; the numbers for the ones dropped in the notes ([ADR 0064](../../adr/0064-build-level-speedups.md)).
 
 ### Phase 5: biome bounds
 
@@ -113,8 +113,8 @@ Phase 1's profiles put biome lookup ahead of noise in chunk work ([notes](#notes
 ### Phase 6: records
 
 - [x] The GPU and SIMD assessment in `docs/research/`, with sources, and the roadmap's stretch goal updated.
-- [x] Specs' cost lines updated ([locate.md](../specs/locate.md#features) and others the changes touch).
-- [x] Results table in the milestone: baseline against after ([results](../roadmap/21-faster-queries.md#results)).
+- [x] Specs' cost lines updated ([locate.md](../../specs/locate.md#features) and others the changes touch).
+- [x] Results table in the milestone: baseline against after ([results](../../roadmap/completed/21-faster-queries.md#results)).
 - [x] `cargo xtask check` and `cargo xtask oracle-test` for every supported version (2026-11-08: 26.2, 26.3, 26.4-snapshot-5 to 7 and the testpack bundle, the three thread tests included).
 
 ## Verification
@@ -126,15 +126,15 @@ Phase 1's profiles put biome lookup ahead of noise in chunk work ([notes](#notes
 
 ## Durable outputs
 
-- [x] ADR: threads within library queries ([0063](../adr/0063-threads-within-library-queries.md)).
-- [x] ADR: build-level changes kept (PGO, allocator, hasher), if any ([0064](../adr/0064-build-level-speedups.md)).
+- [x] ADR: threads within library queries ([0063](../../adr/0063-threads-within-library-queries.md)).
+- [x] ADR: build-level changes kept (PGO, allocator, hasher), if any ([0064](../../adr/0064-build-level-speedups.md)).
 - [x] ADR: the biome-bounds stage, if built. Not built.
-- [x] [search.md](../specs/search.md): the new stage, if built. Not built.
-- [x] [biome-lookup.md](../specs/biome-lookup.md) and [material.md](../specs/material.md#biomes): the hinted search and the batched zoom, if either spec describes how spyglass computes them.
-- [x] [locate.md](../specs/locate.md) and [structure-placement.md](../specs/structure-placement.md): cost lines, and that ring positions are settled independently.
-- [x] [getting-started.md](../getting-started.md): how to profile, and profile-guided builds.
-- [x] `docs/research/`: the GPU and SIMD assessment ([gpu-and-simd.md](../research/gpu-and-simd.md)).
-- [x] [architecture.md](../architecture.md), if the use of threads changes what it says about crates or front ends: a paragraph in [front ends](../architecture.md#front-ends).
+- [x] [search.md](../../specs/search.md): the new stage, if built. Not built.
+- [x] [biome-lookup.md](../../specs/biome-lookup.md) and [material.md](../../specs/material.md#biomes): the hinted search and the batched zoom, if either spec describes how spyglass computes them.
+- [x] [locate.md](../../specs/locate.md) and [structure-placement.md](../../specs/structure-placement.md): cost lines, and that ring positions are settled independently.
+- [x] [getting-started.md](../../getting-started.md): how to profile, and profile-guided builds.
+- [x] `docs/research/`: the GPU and SIMD assessment ([gpu-and-simd.md](../../research/gpu-and-simd.md)).
+- [x] [architecture.md](../../architecture.md), if the use of threads changes what it says about crates or front ends: a paragraph in [front ends](../../architecture.md#front-ends).
 
 ## Notes
 
@@ -208,7 +208,7 @@ Phase 1's profiles put biome lookup ahead of noise in chunk work ([notes](#notes
 
   - **The shared cache won without a per-thread trial:** a carved chunk is a neighbour of up to 9 placed ones, and a cache per thread would carve most of them again. Threads wait for a chunk another is carving rather than repeat it.
   - **Short of 16×:** a ring of chunks around `nearest_feature`'s centre holds `8r` chunks, and a tile's row only its width, so the first rings and the rows' ends leave threads idle. A chunk ruled out from the outline costs far less than one placed, so the jobs are uneven.
-  - **The search doesn't change,** as [ADR 0063](../adr/0063-threads-within-library-queries.md) intends.
+  - **The search doesn't change,** as [ADR 0063](../../adr/0063-threads-within-library-queries.md) intends.
   - **Found on review:** parallel work inside a `OnceLock`'s initializer can deadlock, since a waiting thread runs other jobs that may read the same cell. `ring_positions` settles its points before filling `all`, and the ADR states the rule.
 
 - 2026-11-07: **Stronghold rings in parallel.** `locate_structure` stronghold in a new session, three alternating rounds against 104721e: 26.3 0.95–1.14 s → 124–167 ms, 26.2 3.24–3.59 s → 340–386 ms, on 16 threads. `evaluate stronghold` settles only the few points near its area, so it doesn't change (5.7–10.9 ms both ways on 26.3).
@@ -311,6 +311,6 @@ Phase 1's profiles put biome lookup ahead of noise in chunk work ([notes](#notes
     - Consumer GPUs run `f64` at 1/32 to 1/64 of their `f32` rate.
     - Shader precision rules allow division and square root to be off by a few ULP, compilers may fuse multiply-adds, and denormals may be flushed to zero.
     - The branchy work (jigsaw, features, loops driven by the RNG) diverges across lanes.
-    - A second implementation of every algorithm would go against [ADR 0026](../adr/0026-how-game-versions-coexist.md)'s one code path per algorithm.
+    - A second implementation of every algorithm would go against [ADR 0026](../../adr/0026-how-game-versions-coexist.md)'s one code path per algorithm.
   - **SIMD:** nothing new since ADR 0031's prototype.
   - **1:4 heights:** milestone 14 found that at 1:4 each column sits on its own noise-cell corner, so neighbours share nothing. Batching like a chunk's volume doesn't apply; what's open there is the possible regression (there was none; see above).

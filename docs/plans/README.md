@@ -12,8 +12,4 @@ For milestone [20](../roadmap/20-loot.md), after [m20-tables](completed/m20-tabl
 
 - [m20-queries](m20-queries.md): loot in the API, the CLI, the viewer and both searches.
 
-For milestone [21](../roadmap/21-faster-queries.md):
-
-- [m21-faster-queries](m21-faster-queries.md): a profiler, threads within single queries, build-level gains and biome bounds for searches.
-
 The follow-ups of milestones 08 and 11 ([roadmap](../roadmap/README.md#follow-ups)) need no plan of their own.

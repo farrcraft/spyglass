@@ -26,7 +26,7 @@ The milestones build toward the goals in the [README](../../README.md#goals): co
 | 18  | [Surface rules, ore veins, caves, carvers](completed/18-surface-veins-and-carvers.md) | A chunk's blocks before features, and layers to show them.          | Completed   |
 | 19  | [Features](completed/19-features.md)                                                  | Dungeons, geodes, wells, fossils and lava lakes, certain or not.    | Completed   |
 | 20  | [Loot](20-loot.md)                                                                    | What's in the chests, and searching for it.                         | In progress |
-| 21  | [Faster queries](21-faster-queries.md)                                                | Single queries on every core, cheaper biome searches, a profiler.   | In progress |
+| 21  | [Faster queries](completed/21-faster-queries.md)                                      | Single queries on every core, cheaper biome searches, a profiler.   | Completed   |
 
 ## Follow-ups
 
@@ -35,6 +35,7 @@ Open items from completed milestones, too small for a plan:
 - **08:** each new 26.4 snapshot, pre-release, release candidate and the release, added by [the guide](../adding-a-version.md). 26.4-snapshot-7 was the first added from the guide as written (exit criterion 3).
 - **11:** the first-run guide followed on a clean macOS and Linux machine (exit criterion 2).
 - **11:** reproducibility on Linux and macOS: two builds of one commit compared, the result recorded in [ADR 0038](../adr/0038-how-release-archives-are-built.md) (exit criterion 3).
+- **21:** biome presence within 500 at 5 ms or less, missed at about 6 ms; and whether the `nearest_feature`, one-thread tile and `chunk_blocks` medians meet their targets, timed on a quieter machine ([results](completed/21-faster-queries.md#results)).
 
 ## Not yet planned
 

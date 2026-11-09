@@ -1,12 +1,12 @@
 # 21. Faster queries
 
-- Status: In progress
-- Depends on: [19](completed/19-features.md)
-- Plans: [m21-faster-queries](../plans/m21-faster-queries.md)
+- Status: Completed
+- Depends on: [19](19-features.md)
+- Plans: [m21-faster-queries](../../plans/completed/m21-faster-queries.md)
 
 ## Goal
 
-Single queries and searches take less time on the same machine, with the same answers bit for bit. Milestones [09](completed/09-fast-density.md) and [14](completed/14-viewer-performance.md) made terrain and the map's tiles cheaper. What's slow now:
+Single queries and searches take less time on the same machine, with the same answers bit for bit. Milestones [09](09-fast-density.md) and [14](14-viewer-performance.md) made terrain and the map's tiles cheaper. What's slow now:
 
 - chunk work that looks up biomes more often, and from further away, than it needs to;
 - single queries that use one core while the rest sit idle;
@@ -31,7 +31,7 @@ GPU computation and SIMD are assessed and the result recorded, not built.
 | Placement prefilter rejecting everything    | 257–384 billion seeds/s |
 
 - The search already scales about 8× on 16 threads. Within a single query, nothing runs in parallel: rayon is used only by the search's runner.
-- Biome lookup (the parameter search and the zoom) is the largest single cost in chunk work, ahead of noise: about 40% of a dungeon tile ([the plan's profiles](../plans/m21-faster-queries.md#notes)).
+- Biome lookup (the parameter search and the zoom) is the largest single cost in chunk work, ahead of noise: about 40% of a dungeon tile ([the plan's profiles](../../plans/completed/m21-faster-queries.md#notes)).
 
 ## Scope
 
@@ -45,15 +45,15 @@ GPU computation and SIMD are assessed and the result recorded, not built.
   - stronghold ring positions, whose biome searches each draw from their own fork of the ring's random;
   - `nearest_feature`'s rings of chunks and `features_in`'s chunks.
   - The same treatment applies to any later query of the same shape, such as loot's nearest container once milestone 20 has it.
-  - An ADR says how library calls use threads inside a search's pool and the viewer's tile workers without fighting [ADR 0046](../adr/0046-the-viewers-search-yields-to-the-map.md)'s throttle.
-- **Build-level gains** that can't change arithmetic, since Rust never applies fast-math optimizations: profile-guided optimization, a global allocator and a faster hasher for the hot maps. Each is kept only where the bench shows it beats noise, and without breaking reproducible release builds ([ADR 0038](../adr/0038-how-release-archives-are-built.md)).
-- **Fewer full biome samples in searches.** Each octave is seeded by its own name, so a noise's low octaves can be built alone, giving the same values. The high octaves' contribution is bounded by their amplitudes. Together they give an interval for each climate value, and a stage that rejects seeds whose intervals can't reach the target biomes. That is a necessary condition, as [ADR 0021](../adr/0021-search-engine.md) requires. Built only if a prototype shows it pays.
+  - An ADR says how library calls use threads inside a search's pool and the viewer's tile workers without fighting [ADR 0046](../../adr/0046-the-viewers-search-yields-to-the-map.md)'s throttle.
+- **Build-level gains** that can't change arithmetic, since Rust never applies fast-math optimizations: profile-guided optimization, a global allocator and a faster hasher for the hot maps. Each is kept only where the bench shows it beats noise, and without breaking reproducible release builds ([ADR 0038](../../adr/0038-how-release-archives-are-built.md)).
+- **Fewer full biome samples in searches.** Each octave is seeded by its own name, so a noise's low octaves can be built alone, giving the same values. The high octaves' contribution is bounded by their amplitudes. Together they give an interval for each climate value, and a stage that rejects seeds whose intervals can't reach the target biomes. That is a necessary condition, as [ADR 0021](../../adr/0021-search-engine.md) requires. Built only if a prototype shows it pays.
 - **GPU and SIMD, assessed and recorded** in `docs/research/`, with the roadmap's GPU stretch goal updated to match.
 
 Not in scope:
 
 - Anything that changes results: every change matches the game exactly, and the oracle comparisons confirm it.
-- GPU computation and SIMD dependencies. [ADR 0032](../adr/0032-density-programs-only-where-they-pay.md) stands unless the profile shows a kernel bound by arithmetic width.
+- GPU computation and SIMD dependencies. [ADR 0032](../../adr/0032-density-programs-only-where-they-pay.md) stands unless the profile shows a kernel bound by arithmetic width.
 - The viewer's tile scheduling, which was milestone 14's.
 - 26.2's carved chunks (about 100 ms, against 17 to 30 ms in 26.3), unless the profile shows a fix that's cheap.
 
@@ -80,7 +80,7 @@ What they show:
 ## Exit criteria
 
 - [x] A baseline: the bench, three rounds for 26.3 and 26.2, and a profile of each workload named in the scope, recorded in the plan.
-- [ ] Targets set from the baseline and the profile, written here, and met. Agreed 2026-11-06, for 26.3 on the dev machine, under `cargo xtask bench`:
+- [x] Targets set from the baseline and the profile, written here, and met. Accepted by the user on 2026-11-09 as the [results](#results) left them: the stronghold met, three met at the minimum but not the median, biome presence missed (follow-ups in the [roadmap](../README.md#follow-ups)). Agreed 2026-11-06, for 26.3 on the dev machine, under `cargo xtask bench`:
   - `locate_structure` stronghold, new session: 0.3 s or less (baseline 0.97–1.37 s);
   - `nearest_feature monster_room`, new session: 1 s or less (2.52–3.11 s);
   - 128 × 128 dungeon tile at 1:2, one thread: 9 s or less (11.9–13.9 s);
@@ -88,5 +88,5 @@ What they show:
   - biome presence within 500, one evaluation: 5 ms or less (6.99–7.46 ms). The biome-bounds prototype didn't pay, so the stage wasn't built and the target stays (2026-11-08, the plan's notes).
 - [x] Every parallel query gives the same answer on one thread as on many, checked by tests.
 - [x] Every build change kept beats the bench's noise over three rounds; each one dropped is recorded with its numbers.
-- [x] The GPU and SIMD assessment is in `docs/research/` ([gpu-and-simd.md](../research/gpu-and-simd.md)).
+- [x] The GPU and SIMD assessment is in `docs/research/` ([gpu-and-simd.md](../../research/gpu-and-simd.md)).
 - [x] `cargo xtask oracle-test` passes for every supported version, as well as `cargo xtask check`.

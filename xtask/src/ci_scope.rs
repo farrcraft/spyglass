@@ -154,7 +154,10 @@ mod tests {
             docs: true,
             ..Scope::default()
         };
-        assert_eq!(scope(&["README.md", "docs/images/viewer-search.png"]), docs);
+        assert_eq!(
+            scope(&["README.md", "docs/guide/src/images/viewer-search.png"]),
+            docs
+        );
         assert_eq!(scope(&["docs/adr/0041-x.md", "CHANGELOG.md"]), docs);
     }
 

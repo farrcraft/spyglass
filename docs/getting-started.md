@@ -425,7 +425,7 @@ cargo run --release -p spyglass-viewer
 
 The viewer opens the newest release in the bundles folder (or the newest snapshot if there's no release) (choose another folder from the side panel) and shows seed 0. Without a bundle it offers to extract one: pick where the data goes (beside the viewer, your per-user data folder or another folder), pick a game version and press Extract. It needs Java, as the extractor does. **Add a game version** in the side panel's World section extracts more later.
 
-![The viewer's side panel and a biome map of seed 8675309 at 8 blocks per pixel, with villages, outposts, swamp huts, temples, mansions and monuments marked](images/viewer-overworld.png)
+![The viewer's side panel and a biome map of seed 8675309 at 8 blocks per pixel, with villages, outposts, swamp huts, temples, mansions and monuments marked](guide/src/images/viewer-overworld.png)
 
 - **Move around:** drag to pan, scroll to zoom around the pointer, or use the arrow keys and `+`/`-`. **Go to** takes `x z` or `x y z`. The status bar shows the block, chunk and biome under the pointer.
 - **Seed or save:** type a seed and press **Show**, or open a save from the launchers' list or any folder. A save opens on its player, in the player's dimension, with anything that makes its answers inexact listed.
@@ -448,15 +448,15 @@ Two environment variables are for measuring the viewer. `SPYGLASS_VIEWER_TIMING=
 
 Up close, with **Relief** and **Biomes at the surface** on, and the bounds of a plains village drawn:
 
-![A close-up at 1 block per pixel: shaded terrain, rivers, and a village's outline](images/viewer-relief.png)
+![A close-up at 1 block per pixel: shaded terrain, rivers, and a village's outline](guide/src/images/viewer-relief.png)
 
 The Nether, with fortresses and bastions marked:
 
-![The Nether's biomes at 4 blocks per pixel, with fortress and bastion markers](images/viewer-nether.png)
+![The Nether's biomes at 4 blocks per pixel, with fortress and bastion markers](guide/src/images/viewer-nether.png)
 
 A search's results, the best seed opened, and what its constraints matched ringed:
 
-![The Search section listing ten ranked seeds, and the best one's two swamp huts and cherry grove ringed on the map](images/viewer-search.png)
+![The Search section listing ten ranked seeds, and the best one's two swamp huts and cherry grove ringed on the map](guide/src/images/viewer-search.png)
 
 ## Next steps
 

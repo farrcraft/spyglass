@@ -516,52 +516,71 @@ mod tests {
         strings
     }
 
+    /// Every version pinned after `marker` (`cargo-about@`) in each of `files`, each file's
+    /// failing the test if it pins none.
+    fn pins<'a>(files: &[&'a str], marker: &str) -> Vec<(&'a str, String)> {
+        let mut pins = Vec::new();
+        for &file in files {
+            let text = std::fs::read_to_string(repo_root().join(file)).unwrap();
+            let before = pins.len();
+            for (at, _) in text.match_indices(marker) {
+                let version: String = text[at + marker.len()..]
+                    .chars()
+                    .take_while(|c| c.is_ascii_digit() || *c == '.')
+                    .collect();
+                pins.push((file, version));
+            }
+            assert!(
+                pins.len() > before,
+                "{file} doesn't install {marker}<version>"
+            );
+        }
+        pins
+    }
+
     /// The setup scripts and the release workflow install the same cargo-about.
     #[test]
     fn one_cargo_about_version() {
-        let pins: Vec<(&str, String)> = [
-            "scripts/setup.sh",
-            "scripts/setup.ps1",
-            ".github/workflows/release.yml",
-        ]
-        .into_iter()
-        .map(|file| {
-            let text = std::fs::read_to_string(repo_root().join(file)).unwrap();
-            let (_, rest) = text
-                .split_once("cargo-about@")
-                .unwrap_or_else(|| panic!("{file} doesn't install cargo-about@<version>"));
-            let version: String = rest
-                .chars()
-                .take_while(|c| c.is_ascii_digit() || *c == '.')
-                .collect();
-            (file, version)
-        })
-        .collect();
+        let pins = pins(
+            &[
+                "scripts/setup.sh",
+                "scripts/setup.ps1",
+                ".github/workflows/release.yml",
+            ],
+            "cargo-about@",
+        );
         assert!(pins.iter().all(|(_, v)| *v == pins[0].1), "{pins:?}");
     }
 
     /// The setup scripts and CI's docs job install the same pre-commit.
     #[test]
     fn one_pre_commit_version() {
-        let pins: Vec<(&str, String)> = [
-            "scripts/setup.sh",
-            "scripts/setup.ps1",
-            ".github/workflows/ci.yml",
-        ]
-        .into_iter()
-        .map(|file| {
-            let text = std::fs::read_to_string(repo_root().join(file)).unwrap();
-            let (_, rest) = text
-                .split_once("pre-commit==")
-                .unwrap_or_else(|| panic!("{file} doesn't install pre-commit==<version>"));
-            let version: String = rest
-                .chars()
-                .take_while(|c| c.is_ascii_digit() || *c == '.')
-                .collect();
-            (file, version)
-        })
-        .collect();
+        let pins = pins(
+            &[
+                "scripts/setup.sh",
+                "scripts/setup.ps1",
+                ".github/workflows/ci.yml",
+            ],
+            "pre-commit==",
+        );
         assert!(pins.iter().all(|(_, v)| *v == pins[0].1), "{pins:?}");
+    }
+
+    /// The setup scripts and CI install the mdBook that `cargo xtask guide` expects.
+    #[test]
+    fn one_mdbook_version() {
+        let pins = pins(
+            &[
+                "scripts/setup.sh",
+                "scripts/setup.ps1",
+                ".github/workflows/ci.yml",
+            ],
+            "mdbook@",
+        );
+        assert!(
+            pins.iter().all(|(_, v)| v == crate::guide::MDBOOK_VERSION),
+            "{pins:?}"
+        );
     }
 
     #[test]

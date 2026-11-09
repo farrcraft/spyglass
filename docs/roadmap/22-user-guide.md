@@ -1,6 +1,6 @@
 # 22. User guide
 
-- Status: Planned
+- Status: In progress
 - Depends on: [11](completed/11-releases.md), [12](completed/12-first-run.md)
 - Plans: [m22-user-guide](../plans/m22-user-guide.md)
 
@@ -18,7 +18,7 @@ Someone who downloads a release, and never clones the repo, can learn everything
   - your own worlds;
   - troubleshooting and FAQ: missing Java, a version not supported, what "certain" means for features.
 - **Moving content.** getting-started.md §8–10 move into the guide and getting-started.md keeps contributor setup. The README's Install and Documentation sections link to the site. `GETTING-STARTED.txt` shrinks to an offline quick start that links to it.
-- **Screenshots** from [docs/images/](../images/) and new ones taken with the viewer, from a seed and settings the page states.
+- **Screenshots** from [docs/guide/src/images/](../guide/src/images/), moved there from `docs/images/`, and new ones taken with the viewer, from a seed and settings the page states.
 - **Tooling.**
   - mdBook pinned in both setup scripts, and checked by `cargo xtask doctor`.
   - `cargo xtask guide [--serve]` builds the book, or serves it locally.

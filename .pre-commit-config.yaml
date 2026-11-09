@@ -67,6 +67,13 @@ repos:
         entry: cargo xtask links
         files: \.md$
         pass_filenames: false
+      # The user guide builds without warnings (docs/adr/0066-a-user-guide-on-github-pages.md).
+      - id: guide
+        name: the user guide builds
+        language: system
+        entry: cargo xtask guide
+        files: ^docs/guide/
+        pass_filenames: false
 
   - repo: local
     hooks:

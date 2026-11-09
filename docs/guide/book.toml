@@ -1,0 +1,16 @@
+# The user guide (docs/adr/0066-a-user-guide-on-github-pages.md). Build it with `cargo xtask guide`.
+[book]
+title = "spyglass"
+description = "A local seed explorer for Minecraft: Java Edition."
+language = "en"
+
+[build]
+# Inside the workspace's target/, which is gitignored.
+build-dir = "../../target/guide"
+# A page SUMMARY.md names but that doesn't exist is an error, not an empty page.
+create-missing = false
+
+[output.html]
+git-repository-url = "https://github.com/farrcraft/spyglass"
+edit-url-template = "https://github.com/farrcraft/spyglass/edit/main/docs/guide/{path}"
+site-url = "/spyglass/"

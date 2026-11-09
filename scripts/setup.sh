@@ -42,9 +42,9 @@ fi
 msrv=$(cargo xtask msrv --print)
 rustup toolchain install "$msrv" --profile minimal
 
-# Cargo tools the hooks call. They only build reliably with --locked, so pre-commit can't install
+# Cargo tools the hooks call (mdBook builds the user guide). They only build reliably with --locked, so pre-commit can't install
 # them itself. Keep the versions in step with setup.ps1. The first install compiles for a few minutes.
-cargo install --locked cargo-nextest@0.9.149 cargo-shear@1.14.0
+cargo install --locked cargo-nextest@0.9.149 cargo-shear@1.14.0 mdbook@0.5.4
 
 # cargo xtask dist writes the third-party licenses with cargo-about (ADR 0038). Its binary needs
 # the cli feature. Keep the version in step with setup.ps1.

@@ -1,6 +1,6 @@
 # m22. User guide
 
-- Status: Draft
+- Status: In progress
 - Milestone: [22. User guide](../roadmap/22-user-guide.md)
 - Started: 2026-11-09
 - Completed:
@@ -87,13 +87,13 @@ A new `.github/workflows/pages.yml`:
 
 ### Tooling
 
-- [ ] Pin mdBook in both setup scripts and CI, with a test keeping the pins in step.
-- [ ] `docs/guide/book.toml` and a `SUMMARY.md` with an introduction page, building into `target/guide/`.
-- [ ] `cargo xtask guide [--serve] [--open]`, failing on mdBook warnings.
-- [ ] The `guide` commit hook, with CI's docs job installing mdBook.
-- [ ] `cargo xtask doctor` checks mdBook.
-- [ ] `cargo xtask links`: relative links in `docs/guide/` stay inside it, with a test.
-- [ ] `git mv docs/images docs/guide/src/images`, and fix the README's image paths.
+- [x] Pin mdBook in both setup scripts and CI, with a test keeping the pins in step.
+- [x] `docs/guide/book.toml` and a `SUMMARY.md` with an introduction page, building into `target/guide/`.
+- [x] `cargo xtask guide [--serve] [--open]`, failing on mdBook warnings.
+- [x] The `guide` commit hook, with CI's docs job installing mdBook.
+- [x] `cargo xtask doctor` checks mdBook.
+- [x] `cargo xtask links`: relative links in `docs/guide/` stay inside it, with a test.
+- [x] `git mv docs/images docs/guide/src/images`, and fix the README's image paths.
 
 ### Content
 
@@ -134,3 +134,5 @@ A new `.github/workflows/pages.yml`:
 - [ ] The guide itself.
 
 ## Notes
+
+- **mdBook 0.5.4** exits with failure on a chapter `SUMMARY.md` names but that's missing (with `create-missing = false`), and says nothing about a missing image or a broken link. `cargo xtask links` covers those, but only for files git tracks, so a new page is checked once it's staged.

@@ -14,6 +14,7 @@ mod ci_scope;
 mod code_diff;
 mod dist;
 mod fuzz;
+mod guide;
 mod java_report;
 mod links;
 mod linux_check;
@@ -63,6 +64,9 @@ enum Cmd {
     Dist(dist::Dist),
     /// Fuzz a reader of untrusted files with cargo-fuzz on nightly: `nbt` or `region`.
     Fuzz(fuzz::Fuzz),
+    /// Build the user guide, `docs/guide/`, into `target/guide/`, failing on mdBook's warnings
+    /// (docs/adr/0066-a-user-guide-on-github-pages.md); with `--serve`, serve it while writing.
+    Guide(guide::Guide),
     /// Report whether this machine is ready to work on spyglass. Never installs anything.
     Doctor {
         /// Game version whose Java requirement to check: an id, `latest` or `latest-snapshot`.
@@ -140,6 +144,7 @@ fn main() -> ExitCode {
         Cmd::Dist(args) => dist::run(&args),
         Cmd::Doctor { game_version, java } => doctor(&game_version, java.as_deref()),
         Cmd::Fuzz(args) => fuzz::run(&args),
+        Cmd::Guide(args) => guide::run(&args),
         Cmd::JdkStatus { game_version } => jdk_status(&game_version),
         Cmd::JavaReport(args) => java_report::run(&args),
         Cmd::LinuxCheck(args) => linux_check::run(&args),
@@ -467,6 +472,22 @@ fn rust_checks(r: &mut Report, setup: &str) {
                 Some(setup),
             ),
         }
+    }
+    // The `guide` hook builds the user guide with it, when the guide changes.
+    match guide::installed_version() {
+        Some(v) if v == guide::MDBOOK_VERSION => r.line(Status::Ok, "mdBook", &v, None),
+        Some(v) => r.line(
+            Status::Warn,
+            "mdBook",
+            &format!("{v}; the guide is built with {}", guide::MDBOOK_VERSION),
+            Some(setup),
+        ),
+        None => r.line(
+            Status::Fail,
+            "mdBook",
+            "not installed; the git hooks need it",
+            Some(setup),
+        ),
     }
     // Only `cargo xtask dist` needs it, so it's never a failure.
     match first_line("cargo", &["about", "--version"]) {

@@ -2,12 +2,14 @@
 //! context random, and the check's height from terrain (`findSuitableY`). See
 //! `docs/specs/structure-placement.md`.
 
+use std::sync::Arc;
+
 use serde_json::{Map, Value};
 use spyglass_data::codec::{At, LoadErrorKind, LoadResult, field, float, object};
-use spyglass_rng::{LegacyRandomSource, RandomSource};
+use spyglass_rng::{LegacyRandomSource, RandomSource, worldgen};
 use spyglass_terrain::{Heightmap, Terrain};
 
-use crate::jigsaw::{JigsawLoader, Rotation};
+use crate::jigsaw::{BoundingBox, JigsawLoader, Rotation, Template};
 
 /// `RuinedPortalPiece.VerticalPlacement`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,10 +44,32 @@ pub struct Setup {
 pub struct RuinedPortal {
     /// `setups`, in file order, which the weighted pick walks.
     pub setups: Vec<Setup>,
-    /// `STRUCTURE_LOCATION_PORTALS`' sizes: `ruined_portal/portal_1` to `portal_10`.
-    portals: Vec<[i32; 3]>,
-    /// `STRUCTURE_LOCATION_GIANT_PORTALS`' sizes: `ruined_portal/giant_portal_1` to `_3`.
-    giants: Vec<[i32; 3]>,
+    /// `STRUCTURE_LOCATION_PORTALS`: `ruined_portal/portal_1` to `portal_10`.
+    portals: Vec<Arc<Template>>,
+    /// `STRUCTURE_LOCATION_GIANT_PORTALS`: `ruined_portal/giant_portal_1` to `_3`.
+    giants: Vec<Arc<Template>>,
+}
+
+/// A ruined portal's one piece, as its start lays it out (`RuinedPortalPiece`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PortalLayout {
+    /// The template.
+    pub template: Arc<Template>,
+    /// Where the template's corner goes: the start chunk's corner, at the height
+    /// `findSuitableY` gives.
+    pub pos: [i32; 3],
+    /// Its rotation.
+    pub rotation: Rotation,
+    /// Whether it's mirrored front to back.
+    pub front_back: bool,
+    /// The rotation's pivot, `(size.x / 2, 0, size.z / 2)`.
+    pub pivot: [i32; 3],
+    /// The setup's placement.
+    pub placement: VerticalPlacement,
+    /// Whether it keeps the air in its template (`airPocket`).
+    pub air_pocket: bool,
+    /// Its box (`StructureTemplate.getBoundingBox`).
+    pub bounds: BoundingBox,
 }
 
 impl RuinedPortal {
@@ -69,11 +93,7 @@ impl RuinedPortal {
         }
         let mut sizes = |prefix: &str, n: usize| {
             (1..=n)
-                .map(|i| {
-                    templates
-                        .template(&format!("minecraft:ruined_portal/{prefix}_{i}"))
-                        .map(|t| t.size)
-                })
+                .map(|i| templates.template(&format!("minecraft:ruined_portal/{prefix}_{i}")))
                 .collect::<LoadResult<Vec<_>>>()
         };
         Ok(RuinedPortal {
@@ -92,13 +112,37 @@ impl RuinedPortal {
         level_min_y: i32,
         random: &mut LegacyRandomSource,
     ) -> [i32; 3] {
+        self.draw(chunk, terrain, level_min_y, random).pos
+    }
+
+    /// The piece a start in `chunk` lays out for world `seed` (`findGenerationPoint`), from
+    /// the context random, `setLargeFeatureSeed(seed, chunk)`.
+    pub fn layout(
+        &self,
+        seed: i64,
+        chunk: [i32; 2],
+        terrain: &Terrain,
+        level_min_y: i32,
+    ) -> PortalLayout {
+        let mut random = worldgen::large_feature(seed, chunk[0], chunk[1]);
+        self.draw(chunk, terrain, level_min_y, &mut random)
+    }
+
+    fn draw(
+        &self,
+        chunk: [i32; 2],
+        terrain: &Terrain,
+        level_min_y: i32,
+        random: &mut LegacyRandomSource,
+    ) -> PortalLayout {
         let setup = self.choose_setup(random);
         let air_pocket = sample(random, setup.air_pocket_probability);
-        let size = if random.next_float() < 0.05 {
-            self.giants[random.next_int_bounded(self.giants.len() as i32) as usize]
+        let template = if random.next_float() < 0.05 {
+            &self.giants[random.next_int_bounded(self.giants.len() as i32) as usize]
         } else {
-            self.portals[random.next_int_bounded(self.portals.len() as i32) as usize]
+            &self.portals[random.next_int_bounded(self.portals.len() as i32) as usize]
         };
+        let size = template.size;
         let rotation = Rotation::random(random);
         let front_back = random.next_float() >= 0.5;
         // StructureTemplate.getBoundingBox(chunk origin, rotation, pivot, mirror).
@@ -129,7 +173,19 @@ impl RuinedPortal {
             [box_min, box_max],
             level_min_y,
         );
-        [min_x, y, min_z]
+        PortalLayout {
+            template: template.clone(),
+            pos: [min_x, y, min_z],
+            rotation,
+            front_back,
+            pivot: [pivot[0], 0, pivot[1]],
+            placement: setup.placement,
+            air_pocket,
+            bounds: BoundingBox {
+                min: [box_min[0], y, box_min[1]],
+                max: [box_max[0], y + size[1] - 1, box_max[1]],
+            },
+        }
     }
 
     /// With several setups, `f = nextFloat()`, minus each `weight / total` until it's
@@ -237,13 +293,8 @@ fn transform(
     rotation: Rotation,
     [px, pz]: [i32; 2],
 ) -> [i32; 2] {
-    let x = if front_back { -x } else { x };
-    match rotation {
-        Rotation::Counterclockwise90 => [px - pz + z, px + pz - x],
-        Rotation::Clockwise90 => [px + pz - z, pz - px + x],
-        Rotation::Clockwise180 => [px + px - x, pz + pz - z],
-        Rotation::None => [x, z],
-    }
+    let [x, _, z] = rotation.transform_about([x, 0, z], front_back, [px, 0, pz]);
+    [x, z]
 }
 
 /// `RuinedPortalStructure.Setup.CODEC`'s fields the check uses.
@@ -298,6 +349,10 @@ mod tests {
         );
     }
 
+    fn unit() -> Arc<Template> {
+        Arc::new(Template::for_test([1, 1, 1], Vec::new()))
+    }
+
     fn portal(weights: &[f32]) -> RuinedPortal {
         RuinedPortal {
             setups: weights
@@ -308,8 +363,8 @@ mod tests {
                     weight,
                 })
                 .collect(),
-            portals: vec![[1, 1, 1]; 10],
-            giants: vec![[1, 1, 1]; 3],
+            portals: (0..10).map(|_| unit()).collect(),
+            giants: (0..3).map(|_| unit()).collect(),
         }
     }
 

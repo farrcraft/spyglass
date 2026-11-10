@@ -40,6 +40,10 @@ pub(crate) enum Input {
     Features,
     /// The Overworld feature file of `oracle::DUNGEON_SEED`, which a test needs in particular.
     DungeonSeed,
+    /// The container files.
+    Containers,
+    /// The loot files.
+    Loot,
 }
 
 impl Input {
@@ -66,6 +70,8 @@ impl Input {
             Input::Heights => "heights",
             Input::Blocks => "blocks",
             Input::Features => "features",
+            Input::Containers => "containers",
+            Input::Loot => "loot",
             Input::DungeonSeed => {
                 return root
                     .join("oracle-out")
@@ -98,6 +104,8 @@ impl Input {
             Input::Heights => "cargo xtask oracle heights",
             Input::Blocks | Input::BlocksNoCarvers => "cargo xtask oracle blocks",
             Input::Features | Input::DungeonSeed => "cargo xtask oracle features",
+            Input::Containers => "cargo xtask oracle containers",
+            Input::Loot => "cargo xtask oracle loot",
         }
     }
 }
@@ -194,6 +202,31 @@ pub(crate) const TESTS: &[(&str, &str, &[Input])] = &[
         &[Input::Features, Input::Bundle],
     ),
     (
+        "spyglass-feature",
+        "structure_containers_match_the_game",
+        &[Input::Containers, Input::Bundle],
+    ),
+    (
+        "spyglass-feature",
+        "container_contents_match_the_game",
+        &[Input::Containers, Input::Bundle],
+    ),
+    (
+        "spyglass-structure",
+        "map_targets_match_the_game",
+        &[Input::Locate, Input::Bundle],
+    ),
+    (
+        "spyglass-loot",
+        "every_container_table_loads_and_fills",
+        &[Input::Bundle],
+    ),
+    (
+        "spyglass-loot",
+        "every_fill_matches_the_game",
+        &[Input::Loot, Input::Bundle],
+    ),
+    (
         "spyglass",
         "blocks_through_the_api_are_the_game_s",
         &[Input::Blocks, Input::BlocksNoCarvers, Input::Bundle],
@@ -241,6 +274,11 @@ pub(crate) const TESTS: &[(&str, &str, &[Input])] = &[
     (
         "spyglass-structure",
         "computes_stronghold_rings",
+        &[Input::Bundle],
+    ),
+    (
+        "spyglass-structure",
+        "rings_settle_the_same_on_any_number_of_threads",
         &[Input::Bundle],
     ),
     (
@@ -305,6 +343,26 @@ pub(crate) const TESTS: &[(&str, &str, &[Input])] = &[
     ),
     (
         "spyglass",
+        "features::tests::features_are_the_same_on_any_number_of_threads",
+        &[Input::Bundle],
+    ),
+    (
+        "spyglass",
+        "containers_in_are_the_game_s",
+        &[Input::Containers, Input::Bundle],
+    ),
+    (
+        "spyglass",
+        "loot::tests::containers_are_the_same_on_any_number_of_threads",
+        &[Input::Bundle],
+    ),
+    (
+        "spyglass",
+        "item_queries_resolve_ids_tags_and_enchantments",
+        &[Input::Bundle],
+    ),
+    (
+        "spyglass",
         "two_dungeon_seeds_are_the_game_s",
         &[Input::Features, Input::DungeonSeed, Input::Bundle],
     ),
@@ -323,6 +381,26 @@ pub(crate) const TESTS: &[(&str, &str, &[Input])] = &[
         "find_feature_targets_skip_themselves",
         &[Input::Bundle],
     ),
+    (
+        "spyglass",
+        "loot_constraints_count_containers_holding",
+        &[Input::Bundle],
+    ),
+    (
+        "spyglass",
+        "the_fast_path_agrees_with_evaluate_for_loot",
+        &[Input::Bundle],
+    ),
+    (
+        "spyglass",
+        "find_loot_targets_skip_themselves",
+        &[Input::Bundle],
+    ),
+    (
+        "spyglass",
+        "loot_search_containers_are_the_game_s",
+        &[Input::Containers, Input::Bundle],
+    ),
     ("spyglass", "each_dimension_opens", &[Input::Bundle]),
     ("spyglass", "a_game_spans_the_dimensions", &[Input::Bundle]),
     (
@@ -334,6 +412,11 @@ pub(crate) const TESTS: &[(&str, &str, &[Input])] = &[
     ("spyglass-cli", "jigsaw_bounds", &[Input::Extracted]),
     ("spyglass-cli", "biomes", &[Input::Extracted]),
     ("spyglass-cli", "slime_and_spawn", &[Input::Extracted]),
+    (
+        "spyglass-cli",
+        "loot_answers_are_the_library_s",
+        &[Input::Extracted],
+    ),
     ("spyglass-cli", "a_default_world", &[Input::Extracted]),
     (
         "spyglass-cli",

@@ -144,8 +144,14 @@ impl SearchTree {
         self.lookup_with(target, &mut Vec::new())
     }
 
-    /// [`lookup`](Self::lookup), reusing `hits` as scratch space.
+    /// [`lookup`](Self::lookup), reusing `hits` as scratch space, which also warm-starts the
+    /// search. The first point `hits` holds from the previous lookup is at some distance from
+    /// this target, which bounds the minimum from above, so the search starts pruning from there
+    /// instead of from nothing. Every point at the minimum is still visited, ties included, so
+    /// the answer is the same whatever `hits` held. It's faster when the previous target was near
+    /// this one, as neighbouring quarts' are.
     pub fn lookup_with(&self, target: &TargetPoint, hits: &mut Vec<u32>) -> Lookup {
+        let hint = hits.first().and_then(|&i| self.list.get(i as usize));
         hits.clear();
         if target
             .0
@@ -157,7 +163,9 @@ impl SearchTree {
             // The offset's dimension is measured against 0.
             let mut target_with_offset = [0; DIMENSIONS];
             target_with_offset[..6].copy_from_slice(&target.0);
-            let mut best = i64::MAX;
+            // The hint's distance as the tree measures its box. The prune is strict, so the hint
+            // itself is still visited and offered, as is anything else at that distance.
+            let mut best = hint.map_or(i64::MAX, |p| distance(&target_with_offset, &bounds(p)));
             self.visit(0, &target_with_offset, &mut best, hits);
         }
         self.resolve(hits)
@@ -353,6 +361,43 @@ mod tests {
                 let (fast, slow) = (tree.lookup(&target), tree.brute_force(&target));
                 assert_eq!(fast, slow, "{target:?} with {n} points");
                 tied += usize::from(fast.is_tied());
+            }
+        }
+        assert!(
+            tied > 100,
+            "only {tied} ties; the test isn't exercising them"
+        );
+    }
+
+    #[test]
+    fn warm_starts_give_the_cold_answer() {
+        let mut rng = Rng(0x2545_f491_4f6c_dd1d);
+        let mut tied = 0;
+        for n in [1, 9, 40, 300] {
+            let list = random_list(&mut rng, n, 5);
+            let tree = SearchTree::new(&list);
+            // Neighbouring targets, as a batch's quarts are, one scratch carrying each answer to
+            // the next; and arbitrary hints, some not in the list at all.
+            let mut scratch = Vec::new();
+            let mut target = [0i64; 6];
+            for _ in 0..2000 {
+                for v in &mut target {
+                    // Half the list's grid, so the walk lands on box edges and midpoints, where
+                    // ties are.
+                    *v = (*v + rng.range(-2500, 2500)).clamp(-12_000, 12_000) / 1250 * 1250;
+                }
+                let near = TargetPoint(target);
+                let warm = tree.lookup_with(&near, &mut scratch);
+                assert_eq!(warm, tree.brute_force(&near), "{near:?} with {n} points");
+                tied += usize::from(warm.is_tied());
+
+                let far = TargetPoint(std::array::from_fn(|_| rng.range(-12_000, 12_000)));
+                let mut hint = vec![rng.range(0, n as i64 + 3) as u32];
+                assert_eq!(
+                    tree.lookup_with(&far, &mut hint),
+                    tree.brute_force(&far),
+                    "{far:?} with {n} points"
+                );
             }
         }
         assert!(

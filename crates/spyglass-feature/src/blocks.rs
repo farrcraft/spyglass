@@ -260,6 +260,37 @@ impl Blocks {
         self.entries[usize::from(s)].tags & (1 << tag.0) != 0
     }
 
+    /// Whether block `id` (`minecraft:chest`) is in `tag`.
+    pub fn block_in(&self, id: &str, tag: Tag) -> bool {
+        self.tags[usize::from(tag.0)].contains(id)
+    }
+
+    /// Whether block `id`'s block entity takes a loot table and seed; `None` where the bundle's
+    /// block report predates the flag, or doesn't know the block.
+    pub fn loot_container(&self, id: &str) -> Option<bool> {
+        if !self.source.knows_loot_containers() {
+            return None;
+        }
+        self.source.of(id).map(|b| b.loot_container)
+    }
+
+    /// The slots block `id`'s loot container has, which its table fills; `None` where the
+    /// block isn't a loot container, or the bundle's block report predates slot counts.
+    pub fn container_slots(&self, id: &str) -> Option<usize> {
+        if !self.source.knows_container_slots() {
+            return None;
+        }
+        self.source
+            .of(id)
+            .filter(|b| b.loot_container)
+            .map(|b| usize::from(b.container_slots))
+    }
+
+    /// Whether the bundle's block report says which faces support (format 3 on).
+    pub fn knows_support(&self) -> bool {
+        self.source.knows_support()
+    }
+
     /// The heightmaps a state counts for, a bit per [`Heightmap`] by its order.
     pub fn heightmap_bits(&self, s: State) -> u8 {
         self.entries[usize::from(s)].heightmaps

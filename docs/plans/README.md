@@ -6,8 +6,7 @@ Code must not reference plans. Anything durable a plan produces belongs in a spe
 
 ## Active
 
+- [m22-user-guide](m22-user-guide.md): the user guide on GitHub Pages, for milestone [22](../roadmap/22-user-guide.md).
 - [m08-ci-plan](m08-ci-plan.md): oracle CI planned by cost, for milestone [08](../roadmap/completed/08-dimensions-and-versions.md)'s versions.
-
-No milestone is in progress. The next is [20](../roadmap/20-loot.md).
 
 The follow-ups of milestones 08 and 11 ([roadmap](../roadmap/README.md#follow-ups)) need no plan of their own.

@@ -1,23 +1,11 @@
-//! Tags (`tags/<registry>/*.json`), resolved to the ids they hold: block tags here, and any
-//! other registry's for the crates above.
-
-use std::collections::HashSet;
+//! Tags (`tags/<registry>/*.json`), resolved to the ids they hold, for every loader that reads
+//! them: block tags, placed features' and carvers', and loot's items and enchantments.
 
 use serde_json::Value;
 use spyglass_data::bundle::BundleError;
 use spyglass_data::codec::{At, LoadError, LoadErrorKind, full_id};
-use spyglass_density::Resources;
 
-/// The registry path of block tags.
-const BLOCK_TAG: &str = "tags/block";
-
-/// The block ids in tag `id`, as [`tag`] resolves them.
-pub(crate) fn block_tag<R: Resources + ?Sized>(
-    resources: &R,
-    id: &str,
-) -> Result<HashSet<String>, LoadError> {
-    Ok(tag(resources, BLOCK_TAG, id)?.into_iter().collect())
-}
+use crate::Resources;
 
 /// The ids in tag `id` of `registry` (a tag registry path, e.g. `tags/block`), nested tags
 /// included (`TagEntry.CODEC`: an id, a `#tag`, or `{"id": ..., "required": bool}`), each once,
@@ -110,6 +98,10 @@ mod tests {
 
     use super::*;
 
+    fn block_tag(map: &HashMap<String, Value>, id: &str) -> Result<Vec<String>, LoadError> {
+        tag(map, "tags/block", id)
+    }
+
     fn tags(entries: &[(&str, Value)]) -> HashMap<String, Value> {
         entries
             .iter()
@@ -129,11 +121,11 @@ mod tests {
                 json!({"values": ["minecraft:dirt", {"id": "mod:x", "required": false}]}),
             ),
         ]);
-        let got = block_tag(&map, "a").unwrap();
-        let want: HashSet<String> = ["minecraft:stone", "minecraft:dirt", "mod:x"]
-            .map(String::from)
-            .into();
-        assert_eq!(got, want);
+        // In the order the entries first name them, nested tags in place: loot's picks depend on it.
+        assert_eq!(
+            block_tag(&map, "a").unwrap(),
+            ["minecraft:stone", "minecraft:dirt", "mod:x"]
+        );
     }
 
     #[test]

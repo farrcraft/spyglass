@@ -29,6 +29,7 @@
 mod blocks;
 mod features;
 mod game;
+mod loot;
 mod render;
 mod save;
 mod search;
@@ -51,6 +52,9 @@ use spyglass_terrain::{Terrain, TerrainSettings};
 pub use blocks::{BlockAt, BlockColumn, Carvers, ChunkBlocks};
 pub use features::{FeatureLocate, FeatureOptions, FeatureQuery, FoundFeature, Neighbours};
 pub use game::{Game, GameSession};
+pub use loot::{
+    ContainerLocate, ContainerSource, FoundContainer, Item, ItemQuery, MapDestination, Slot,
+};
 pub use render::{
     BiomeMap, CarverKind, CarvingMap, DEFAULT_MAP_Y, HeightMap, Image, Layers, MARKER_REACH,
     MAX_FEATURE_SCALE, MAX_PIXELS, MAX_SCALE, MAX_SIDE, MAX_SLIME_SCALE, MAX_TERRAIN_SCALE,
@@ -457,6 +461,8 @@ pub struct World {
     blocks: OnceLock<BlockSettings>,
     /// Loaded on first feature query.
     features: OnceLock<features::FeatureWorld>,
+    /// Loaded on first loot query.
+    loot: OnceLock<loot::LootWorld>,
     /// Each biome's map colour, by [`BiomeId`].
     palette: Vec<[u8; 3]>,
 }
@@ -507,6 +513,7 @@ impl World {
             pools: OnceLock::new(),
             blocks: OnceLock::new(),
             features: OnceLock::new(),
+            loot: OnceLock::new(),
             palette,
         })
     }
@@ -621,7 +628,17 @@ impl World {
             placements,
             terrain: OnceLock::new(),
             chunks: OnceLock::new(),
+            parallel: true,
         })
+    }
+
+    /// [`session`](Self::session) for a search's checks, whose queries run on the calling
+    /// thread: the search's threads already work on a seed each (ADR 0063).
+    pub(crate) fn search_session(&self, seed: i64) -> Result<Session<'_>> {
+        let mut session = self.session(seed)?;
+        session.placements = session.placements.sequential();
+        session.parallel = false;
+        Ok(session)
     }
 
     fn exists(&self, registry: &str, id: &str) -> bool {
@@ -867,6 +884,9 @@ pub struct Session<'w> {
     terrain: OnceLock<Terrain>,
     /// Bound on first block query.
     chunks: OnceLock<ChunkGenerator<'w>>,
+    /// Whether queries run their independent parts in parallel, on the calling thread's rayon
+    /// pool; not in a search's checks (ADR 0063).
+    parallel: bool,
 }
 
 /// The biome at a position.
@@ -1254,11 +1274,11 @@ impl<'w> Session<'w> {
         out
     }
 
-    /// The pieces of jigsaw structure or mineshaft `structure` (an id, e.g.
-    /// `minecraft:village_plains`) if it starts in `chunk`, as the game lays them out, with its
-    /// bounds. Whether it starts there is [`structures_in`](Self::structures_in)'s question;
-    /// this one assumes it does. `None` if the structure is neither, or a jigsaw with no start
-    /// piece there. Binds the seed's terrain, and the first call for a jigsaw in a world loads
+    /// The pieces of `structure` (an id, e.g. `minecraft:village_plains`) if it starts in
+    /// `chunk`, as the game lays them out, with its bounds: jigsaw structures, mineshafts,
+    /// strongholds, fortresses, end cities, mansions and ocean ruins. Whether it starts there is
+    /// [`structures_in`](Self::structures_in)'s question; this one assumes it does. `None` for
+    /// another type, or a jigsaw with no start piece there. Binds the seed's terrain, and the first call for a jigsaw in a world loads
     /// its template pools, which takes a while (about a second for 26.3).
     pub fn structure_layout(
         &self,
@@ -1273,12 +1293,10 @@ impl<'w> Session<'w> {
                 id: structure.to_string(),
             })?;
         let definition = &sets.structures()[index];
-        let starts = if definition.mineshaft.is_some() {
-            self.starts(true)
-        } else if definition.jigsaw.is_some() {
+        let starts = if definition.jigsaw.is_some() {
             self.starts(true).with_pools(self.world.pools()?)
         } else {
-            return Ok(None);
+            self.starts(true)
         };
         Ok(match starts.assemble(index, chunk) {
             Some(Assembly::Built(layout)) => Some(StructureLayout {

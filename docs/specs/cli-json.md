@@ -1,6 +1,6 @@
 # CLI JSON output
 
-Status: stable, format 1. Covers `spyglass locate`, `spyglass heights`, `spyglass blocks`, `spyglass render`, `spyglass search`, `spyglass find` and `spyglass world` with `--json`.
+Status: stable, format 1. Covers `spyglass locate`, `spyglass loot`, `spyglass heights`, `spyglass blocks`, `spyglass render`, `spyglass search`, `spyglass find` and `spyglass world` with `--json`.
 
 Scripts depend on this format, so it's versioned. Within a format version, fields are only ever added. Removing or changing the meaning of a field bumps `format`. The CLI writes the JSON from the library's results ([ADR 0014](../adr/0014-public-api-world-and-session.md)); the library types themselves aren't the format.
 
@@ -13,15 +13,15 @@ Scripts depend on this format, so it's versioned. Within a format version, field
 - Paths are strings. Characters that aren't valid Unicode are replaced with U+FFFD.
 - `seed` is the 64-bit seed after text seeds are hashed ([locate.md](locate.md#text-seeds)).
 
-Every `locate`, `heights`, `blocks` and `render` object starts with:
+Every `locate`, `features`, `loot`, `heights`, `blocks` and `render` object starts with:
 
-| Field       | Type   | Meaning                                                                                                                                                              |
-| ----------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `format`    | int    | This format's version: `1`.                                                                                                                                          |
-| `command`   | string | `locate structure`, `locate biome`, `locate slime`, `locate spawn`, `heights`, `blocks` or `render`.                                                                 |
-| `version`   | string | The game version of the bundle used, e.g. `26.3`.                                                                                                                    |
-| `dimension` | string | The dimension answered for: `minecraft:overworld`, `minecraft:the_nether` or `minecraft:the_end` (`--dimension`, or the player's when the position is the player's). |
-| `seed`      | int    | The world seed.                                                                                                                                                      |
+| Field       | Type   | Meaning                                                                                                                                                               |
+| ----------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `format`    | int    | This format's version: `1`.                                                                                                                                           |
+| `command`   | string | `locate structure`, `locate biome`, `locate feature`, `locate slime`, `locate spawn`, `features`, `loot at`, `loot in`, `loot find`, `heights`, `blocks` or `render`. |
+| `version`   | string | The game version of the bundle used, e.g. `26.3`.                                                                                                                     |
+| `dimension` | string | The dimension answered for: `minecraft:overworld`, `minecraft:the_nether` or `minecraft:the_end` (`--dimension`, or the player's when the position is the player's).  |
+| `seed`      | int    | The world seed.                                                                                                                                                       |
 
 With `--world`, two more:
 
@@ -90,6 +90,32 @@ Each hit ([locate.md](locate.md#features)): `feature` (the placed feature), `pos
 
 `target`, `min` and `max` (`[x, z]`, the region asked for) and `features`: each feature in the region, chunk by chunk, as `locate feature`'s hits without `blocks_away`.
 
+## `loot`
+
+Loot containers and their contents ([locate.md](locate.md#loot)). With `--world`, contents are as the seed generates them, not what a container holds now.
+
+- **`loot at`:** `position` (`[x, y, z]`, the block asked about) and `containers`: every answer there, usually one, several where candidates differ in their seeds. Empty: spyglass places none there.
+- **`loot in`:** `min` and `max` (`[x, z]`, the region asked for), `item` (the item asked for with `--item`, with its enchantment, or null) and `containers`: each container in the region holding it, or that might (a candidate without contents whose table could hold it), all of them without `--item`, chunk by chunk.
+- **`loot find`:** `item` (as `loot in`'s), `from` (`[x, y, z]`), `radius` (chunks searched around `from`'s), `complete` (whether the hits end at one certainly holding the item) and `hits`: nearest first, every candidate nearer than the nearest certain one, then that one, each with `blocks_away` (horizontal, rounded down).
+
+Each container:
+
+| Field              | Type           | Meaning                                                                                                                     |
+| ------------------ | -------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `position`         | `{x, y, z}`    | The block, or a chest minecart's rail.                                                                                      |
+| `chunk`            | `[x, z]`       | The chunk whose decoration placed it; a dungeon's or ruined portal's chest may be beside it.                                |
+| `holder`           | string         | The block or entity, e.g. `minecraft:chest`, `minecraft:chest_minecart`.                                                    |
+| `source`           | object         | What placed it: `kind` (`structure` or `feature`) and `id`, e.g. `minecraft:village_plains`, `minecraft:monster_room_deep`. |
+| `table`            | string         | The loot table.                                                                                                             |
+| `loot_seed`        | int or null    | The loot seed; null where it isn't known.                                                                                   |
+| `certain`          | bool           | Whether the container is certain on its own, table and seed included.                                                       |
+| `reason`           | string or null | Why it's a candidate.                                                                                                       |
+| `contents`         | array or null  | The filled slots in order; null without a seed.                                                                             |
+| `contents_certain` | bool           | Whether the contents are certainly the game's.                                                                              |
+| `contents_doubt`   | string or null | Why the contents may not be the game's, or aren't known: a tied biome, a map's target that isn't certain, an unknown seed.  |
+
+Each slot has `slot` (from 0), `item` and `count`, and the components its table set, each left out when unset: `damage`, `enchantments` and `stored_enchantments` (objects of levels by id), `potion`, `stew_effects` (`{effect, duration}` in ticks), `instrument`, `name` (the text component), `ominous_bottle_amplifier` and `map` (`target` as `{x, z}`, `decoration` and `zoom`).
+
 ## `locate slime`
 
 `from` (`[x, y, z]`), `radius` (in chunks) and `chunks`: every slime chunk in the square of `radius` chunks around `from`'s chunk, nearest first.
@@ -142,16 +168,17 @@ A column's `blocks` is its states from `min_y` to the level's top, as runs: `[st
 
 The image is written to the file given; the JSON describes it ([render.md](render.md)).
 
-| Field          | Type              | Meaning                                                                                                                                                                                                                                       |
-| -------------- | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `output`       | string            | The PNG written.                                                                                                                                                                                                                              |
-| `area`         | object            | `min` (`[x, z]`, the top-left pixel's corner block), `size` (`[width, height]` in pixels), `scale` (blocks per pixel) and `y`.                                                                                                                |
-| `layers`       | object            | What was drawn: `biomes`, `ties`, `slime_chunks`, `spawn`, `confirm` (markers decided with terrain), `relief`, `surface`, `veins`, `noise_caves` and `carvers` (bools), `highlight`, `structures` and `features` (the ids and tags as given). |
-| `structures`   | array             | The structure markers drawn, in drawing order. Each is a `locate structure` hit without `blocks_away`.                                                                                                                                        |
-| `features`     | array             | The feature markers drawn, in drawing order: certain and likely answers, each a `locate feature` hit without `blocks_away`.                                                                                                                   |
-| `slime_chunks` | array of `[x, z]` | The slime chunks shaded, by z, then x. Empty unless asked for.                                                                                                                                                                                |
-| `spawn`        | object or null    | The spawn marker, as `locate spawn`'s fields; null if not asked for or not in view.                                                                                                                                                           |
-| `pins`         | array             | The `--pin` pins drawn, in order: each has `position` (`x`, `z`) and `colour` (`#rrggbb`, lowercase). Pins out of view aren't listed.                                                                                                         |
+| Field          | Type              | Meaning                                                                                                                                                                                                                                                                                |
+| -------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `output`       | string            | The PNG written.                                                                                                                                                                                                                                                                       |
+| `area`         | object            | `min` (`[x, z]`, the top-left pixel's corner block), `size` (`[width, height]` in pixels), `scale` (blocks per pixel) and `y`.                                                                                                                                                         |
+| `layers`       | object            | What was drawn: `biomes`, `ties`, `slime_chunks`, `spawn`, `confirm` (markers decided with terrain), `relief`, `surface`, `veins`, `noise_caves` and `carvers` (bools), `highlight`, `structures` and `features` (the ids and tags as given), and `loot` (the item as given, or null). |
+| `structures`   | array             | The structure markers drawn, in drawing order. Each is a `locate structure` hit without `blocks_away`.                                                                                                                                                                                 |
+| `features`     | array             | The feature markers drawn, in drawing order: certain and likely answers, each a `locate feature` hit without `blocks_away`.                                                                                                                                                            |
+| `containers`   | array             | The loot rings drawn, in drawing order: each a [`loot`](#loot) container without `blocks_away`.                                                                                                                                                                                        |
+| `slime_chunks` | array of `[x, z]` | The slime chunks shaded, by z, then x. Empty unless asked for.                                                                                                                                                                                                                         |
+| `spawn`        | object or null    | The spawn marker, as `locate spawn`'s fields; null if not asked for or not in view.                                                                                                                                                                                                    |
+| `pins`         | array             | The `--pin` pins drawn, in order: each has `position` (`x`, `z`) and `colour` (`#rrggbb`, lowercase). Pins out of view aren't listed.                                                                                                                                                  |
 
 ## `search`
 
@@ -190,6 +217,7 @@ Feature kinds; more may be added within format 1:
 
 - `structure`: a `locate structure` hit without `blocks_away`.
 - `feature`: a `locate feature` hit without `blocks_away`.
+- `container`: a loot container, as [`loot`](#loot)'s, without `blocks_away`.
 - `slime_chunk`: `chunk`.
 - `biome`: `position` (`x`, `y`, `z`), `biome`, `tied` (as `locate biome`) and `certain`.
 - `spawn`: `locate spawn`'s fields.
@@ -212,7 +240,7 @@ Places in one seed or save that fit a `find` query ([search.md](search.md#search
 | `elapsed_seconds` | float    | How long it took.                                                                                    |
 | `matches`         | array    | Nearest first.                                                                                       |
 
-Each match has `position` (`{x, z}`), `distance` (from the place's centre, rounded down), `target` (the structure start, feature or biome sample, as in `search`, or null for a point), `score`, `verdict`, and `constraints`, as a `search` hit's, without the `find` line.
+Each match has `position` (`{x, z}`), `distance` (from the place's centre, rounded down), `target` (the structure start, feature, container or biome sample, as in `search`, or null for a point), `score`, `verdict`, and `constraints`, as a `search` hit's, without the `find` line.
 
 ## `world info`
 

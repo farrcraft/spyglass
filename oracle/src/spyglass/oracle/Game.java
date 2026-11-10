@@ -4,7 +4,9 @@ import java.nio.file.Path;
 import java.util.List;
 
 import net.minecraft.SharedConstants;
+import net.minecraft.core.LayeredRegistryAccess;
 import net.minecraft.core.RegistryAccess;
+import net.minecraft.server.RegistryLayer;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
@@ -18,6 +20,8 @@ import net.minecraft.world.level.levelgen.WorldDimensions;
  */
 final class Game {
     final RegistryAccess.Frozen access;
+    /** The registry layers {@code access} is made of, which the loot tables load over. */
+    final LayeredRegistryAccess<RegistryLayer> layers;
     /** The data packs, for structure templates. */
     final MultiPackResourceManager resources;
     final WorldDimensions dimensions;
@@ -28,9 +32,10 @@ final class Game {
      * {@code packs} are the test packs loaded over the vanilla one, which the version's name
      * records: {@code <version>+<folder name>} for each.
      */
-    Game(RegistryAccess.Frozen access, MultiPackResourceManager resources, WorldDimensions dimensions,
-            List<Path> packs) {
+    Game(RegistryAccess.Frozen access, LayeredRegistryAccess<RegistryLayer> layers, MultiPackResourceManager resources,
+            WorldDimensions dimensions, List<Path> packs) {
         this.access = access;
+        this.layers = layers;
         this.resources = resources;
         this.dimensions = dimensions;
         var current = SharedConstants.getCurrentVersion();

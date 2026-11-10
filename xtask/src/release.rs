@@ -163,8 +163,8 @@ pub struct ReleaseNotes {
 
 /// Checks that this commit's version can be released, writes its release notes, and prints its
 /// tag (`v0.1.0`) on stdout. The notes are the version's changelog section, or Unreleased for a
-/// pre-release, with relative links made absolute to the tag. The tag mustn't exist on origin
-/// yet: publishing a release makes it.
+/// pre-release, with relative links made absolute to the tag, and a link to the user guide. The
+/// tag mustn't exist on origin yet: publishing a release makes it.
 pub fn notes(args: &ReleaseNotes) -> Result<()> {
     let version = toml_string("Cargo.toml", &["workspace", "package", "version"])?;
     let parsed = Version::parse(&version)?;
@@ -190,12 +190,19 @@ pub fn notes(args: &ReleaseNotes) -> Result<()> {
     }
     .filter(|text| !text.trim().is_empty())
     .with_context(|| format!("CHANGELOG.md has nothing for {version}"))?;
-    std::fs::write(
-        &args.out,
-        format!("{}\n", absolute_links(text.trim(), &tag)),
-    )?;
+    std::fs::write(&args.out, release_notes(text, &tag))?;
     println!("{tag}");
     Ok(())
+}
+
+/// A release's notes: its changelog section, with links made absolute to `tag`, then a link to
+/// the user guide, which the Pages workflow publishes from the same tag.
+fn release_notes(section: &str, tag: &str) -> String {
+    format!(
+        "{}\n\nThe [user guide]({}) covers installing and using spyglass.\n",
+        absolute_links(section.trim(), tag),
+        crate::guide::SITE
+    )
 }
 
 /// `text` with each relative Markdown link target made a link to the file at `tag` on GitHub,
@@ -358,6 +365,16 @@ mod tests {
             ),
             "See [the spec](https://github.com/farrcraft/spyglass/blob/v0.1.0/docs/specs/\
              cli-json.md#warnings), [SemVer](https://semver.org/) and [below](#added)."
+        );
+    }
+
+    #[test]
+    fn notes_end_with_the_guide() {
+        assert_eq!(
+            release_notes("\n### Added\n\n- [Loot](docs/specs/loot.md).\n", "v0.3.0"),
+            "### Added\n\n- [Loot](https://github.com/farrcraft/spyglass/blob/v0.3.0/docs/specs/\
+             loot.md).\n\nThe [user guide](https://farrcraft.github.io/spyglass/) covers \
+             installing and using spyglass.\n"
         );
     }
 

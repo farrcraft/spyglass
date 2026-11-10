@@ -36,7 +36,8 @@ pub enum Command {
     /// biomes, slime chunks and spawn, in any dimension.
     Search(Search),
     /// Places in one seed or world save that fit a `find` query, nearest first: a target (a
-    /// structure, a biome or a grid point) and constraints around it.
+    /// structure, a feature, a loot container holding an item, a biome or a grid point) and
+    /// constraints around it.
     Find(Find),
     /// Terrain heights before structures, carvers and features, as structures are placed by:
     /// one column or a region.
@@ -47,6 +48,77 @@ pub enum Command {
     /// Features in a region: dungeons, geodes, desert wells, fossils and lava lakes, each
     /// certain or a candidate.
     Features(Features),
+    /// What's in the chests: the loot containers structures and dungeons place, with their
+    /// contents as the seed generates them.
+    Loot {
+        #[command(subcommand)]
+        what: Loot,
+    },
+}
+
+/// `spyglass loot` (`docs/specs/locate.md#loot`).
+#[derive(Subcommand)]
+pub enum Loot {
+    /// The container at a block, `x,y,z`, slot by slot.
+    At {
+        /// The container's block, `x,y,z` (a chest minecart's rail).
+        #[arg(allow_hyphen_values = true, value_parser = xyz)]
+        position: [i32; 3],
+        #[command(flatten)]
+        common: Common,
+    },
+    /// The containers in a region, each with what it holds.
+    In {
+        /// A region's corner, `x,z` in blocks, with `--max`: every chunk they touch.
+        #[arg(long, allow_hyphen_values = true, value_parser = xz)]
+        min: [i32; 2],
+        /// The region's other corner, `x,z`.
+        #[arg(long, allow_hyphen_values = true, value_parser = xz)]
+        max: [i32; 2],
+        /// Only containers holding this item, an id or an item `#tag`.
+        #[arg(long)]
+        item: Option<String>,
+        #[command(flatten)]
+        enchantment: Enchantment,
+        #[command(flatten)]
+        common: Common,
+    },
+    /// The nearest container holding an item, an id or an item `#tag`, e.g.
+    /// `minecraft:enchanted_golden_apple`.
+    Find {
+        /// The item, an id or an item `#tag`.
+        item: String,
+        #[command(flatten)]
+        enchantment: Enchantment,
+        #[command(flatten)]
+        common: Common,
+        #[command(flatten)]
+        from: From,
+        /// How far to search, in chunks. Each chunk a container structure or dungeon reaches
+        /// takes a while to place.
+        #[arg(long, default_value_t = 8)]
+        radius: i32,
+    },
+}
+
+impl Loot {
+    /// The options every loot command has.
+    pub fn common(&self) -> &Common {
+        match self {
+            Loot::At { common, .. } | Loot::In { common, .. } | Loot::Find { common, .. } => common,
+        }
+    }
+}
+
+/// An enchantment the item must have, with `--item` or `loot find`.
+#[derive(Args)]
+pub struct Enchantment {
+    /// An enchantment the item must have, on it or stored in a book, e.g. `minecraft:mending`.
+    #[arg(long)]
+    pub enchantment: Option<String>,
+    /// The enchantment's least level.
+    #[arg(long, requires = "enchantment")]
+    pub level: Option<i32>,
 }
 
 /// `spyglass features` (`docs/specs/locate.md#features`).
@@ -336,6 +408,11 @@ pub struct Render {
     /// takes a while.
     #[arg(long, value_delimiter = ',')]
     pub features: Vec<String>,
+    /// Ring the loot containers holding this item, an id or an item `#tag` (scales up to 2),
+    /// and the candidates that might. Each chunk a container could be in is placed, which takes
+    /// a while.
+    #[arg(long)]
+    pub loot: Option<String>,
     /// Biomes to keep bright, separated by commas; the rest are dimmed.
     #[arg(long, value_delimiter = ',')]
     pub highlight: Vec<String>,

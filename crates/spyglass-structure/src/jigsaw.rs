@@ -49,19 +49,43 @@ impl Rotation {
         Rotation::Counterclockwise90,
     ];
 
+    /// `Rotation.getRotated`: this turn, then `by`.
+    pub(crate) fn rotated(self, by: Rotation) -> Rotation {
+        let index = |r: Rotation| Self::ALL.iter().position(|&x| x == r).unwrap_or(0);
+        Self::ALL[(index(self) + index(by)) % 4]
+    }
+
     /// `Rotation.getRandom`: `values()[nextInt(4)]`.
     pub fn random(random: &mut LegacyRandomSource) -> Self {
         Self::ALL[random.next_int_bounded(4) as usize]
     }
 
     /// `StructureTemplate.transform(pos, Mirror.NONE, rotation, pivot)` with pivot `(0, 0, 0)`.
-    fn transform(self, [x, y, z]: [i32; 3]) -> [i32; 3] {
+    pub fn transform(self, [x, y, z]: [i32; 3]) -> [i32; 3] {
         match self {
             Rotation::None => [x, y, z],
             Rotation::Counterclockwise90 => [z, y, x.wrapping_neg()],
             Rotation::Clockwise90 => [z.wrapping_neg(), y, x],
             Rotation::Clockwise180 => [x.wrapping_neg(), y, z.wrapping_neg()],
         }
+    }
+
+    /// `StructureTemplate.transform(pos, mirror, rotation, pivot)`: the mirror (front-back
+    /// negates x), then the rotation about `pivot`'s x and z.
+    pub fn transform_about(
+        self,
+        [x, y, z]: [i32; 3],
+        front_back: bool,
+        [px, _, pz]: [i32; 3],
+    ) -> [i32; 3] {
+        let x = if front_back { x.wrapping_neg() } else { x };
+        let [x, z] = match self {
+            Rotation::Counterclockwise90 => [px - pz + z, px + pz - x],
+            Rotation::Clockwise90 => [px + pz - z, pz - px + x],
+            Rotation::Clockwise180 => [px + px - x, pz + pz - z],
+            Rotation::None => [x, z],
+        };
+        [x, y, z]
     }
 
     /// `Rotation.rotate(Direction)`: horizontal directions turn, up and down stay.
@@ -176,7 +200,7 @@ impl BoundingBox {
     }
 
     /// `isInside(pos)`.
-    pub(crate) fn contains(&self, p: [i32; 3]) -> bool {
+    pub fn contains(&self, p: [i32; 3]) -> bool {
         (0..3).all(|i| self.min[i] <= p[i] && p[i] <= self.max[i])
     }
 
@@ -186,7 +210,7 @@ impl BoundingBox {
     }
 
     /// Whether the boxes share a block.
-    pub(crate) fn intersects(&self, other: &BoundingBox) -> bool {
+    pub fn intersects(&self, other: &BoundingBox) -> bool {
         (0..3).all(|i| self.min[i] <= other.max[i] && other.min[i] <= self.max[i])
     }
 
@@ -281,13 +305,44 @@ impl PlacedJigsaw<'_> {
     }
 }
 
-/// A structure template (`StructureTemplate`), reduced to its size and jigsaw blocks.
+/// A structure template (`StructureTemplate`), reduced to its size, jigsaw blocks and the other
+/// blocks with block-entity NBT.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Template {
+    /// Its id, e.g. `minecraft:village/plains/houses/plains_small_house_1`.
+    pub id: String,
     /// `size`.
     pub size: [i32; 3],
     /// Each palette's jigsaw blocks, in the template's block order: sorted by y, then x, then z.
     palettes: Vec<Vec<TemplateJigsaw>>,
+    /// Each palette's other blocks with block-entity NBT but structure blocks, in the template's
+    /// block order: the blocks `placeInWorld` may draw a loot seed for.
+    nbt_blocks: Vec<Vec<NbtBlock>>,
+    /// Each palette's data markers, in the template's block order.
+    markers: Vec<Vec<Marker>>,
+}
+
+/// A template's data marker: a structure block in `DATA` mode, which a template piece hands to
+/// its `handleDataMarker` (`TemplateStructurePiece.postProcess`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Marker {
+    /// Template-local position, unrotated.
+    pub pos: [i32; 3],
+    /// Its `metadata`, e.g. `chest`.
+    pub name: String,
+}
+
+/// A template block with block-entity NBT, as the template saves it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NbtBlock {
+    /// Template-local position, unrotated.
+    pub pos: [i32; 3],
+    /// The block's id, e.g. `minecraft:chest`.
+    pub block: String,
+    /// The block's properties as saved, sorted by name.
+    pub properties: Vec<(String, String)>,
+    /// The NBT's `LootTable`, if it has one.
+    pub loot_table: Option<String>,
 }
 
 impl Template {
@@ -324,6 +379,8 @@ impl Template {
                 // Jigsaw blocks have block-entity NBT, so they're all in the template's list of
                 // block entities, which is stably sorted by (y, x, z).
                 let mut jigsaws = Vec::new();
+                let mut nbt_blocks = Vec::new();
+                let mut markers = Vec::new();
                 for (i, block) in blocks.iter().enumerate() {
                     let state = block.get("state").and_then(Tag::as_int).unwrap_or(0);
                     let entry = usize::try_from(state).ok().and_then(|s| palette.get(s));
@@ -332,7 +389,43 @@ impl Template {
                     let name = entry
                         .and_then(|p| p.get("id").or_else(|| p.get("Name")))
                         .and_then(Tag::as_str);
-                    if name.map(full_id).as_deref() != Some("minecraft:jigsaw") {
+                    let name = name.map(full_id);
+                    if name.as_deref() != Some("minecraft:jigsaw") {
+                        let block_at = || at.child("blocks").child(&format!("[{i}]"));
+                        if let Some(nbt) = block.get("nbt")
+                            && name.as_deref() == Some("minecraft:structure_block")
+                            && nbt.get("mode").and_then(Tag::as_str) == Some("DATA")
+                        {
+                            markers.push(Marker {
+                                pos: int3(block.get("pos"), &block_at().child("pos"))?,
+                                name: nbt
+                                    .get("metadata")
+                                    .and_then(Tag::as_str)
+                                    .unwrap_or_default()
+                                    .to_string(),
+                            });
+                        }
+                        // Structure blocks are dropped before placing (`BlockIgnoreProcessor`).
+                        if let Some(nbt) = block.get("nbt")
+                            && let Some(name) = name
+                            && name != "minecraft:structure_block"
+                        {
+                            let pos = int3(block.get("pos"), &block_at().child("pos"))?;
+                            let mut properties: Vec<(String, String)> = entry
+                                .and_then(|p| p.get("properties").or_else(|| p.get("Properties")))
+                                .and_then(Tag::as_compound)
+                                .into_iter()
+                                .flatten()
+                                .filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_string())))
+                                .collect();
+                            properties.sort();
+                            nbt_blocks.push(NbtBlock {
+                                pos,
+                                block: name,
+                                properties,
+                                loot_table: nbt.get("LootTable").and_then(Tag::as_str).map(full_id),
+                            });
+                        }
                         continue;
                     }
                     let blocks_at = at.child("blocks");
@@ -355,10 +448,20 @@ impl Template {
                     });
                 }
                 jigsaws.sort_by_key(|j| (j.pos[1], j.pos[0], j.pos[2]));
-                Ok(jigsaws)
+                nbt_blocks.sort_by_key(|b| (b.pos[1], b.pos[0], b.pos[2]));
+                markers.sort_by_key(|m| (m.pos[1], m.pos[0], m.pos[2]));
+                Ok(((jigsaws, nbt_blocks), markers))
             })
             .collect::<LoadResult<Vec<_>>>()?;
-        Ok(Template { size, palettes })
+        let (palettes, markers): (Vec<_>, Vec<_>) = palettes.into_iter().unzip();
+        let (palettes, nbt_blocks) = palettes.into_iter().unzip();
+        Ok(Template {
+            id: id.to_string(),
+            size,
+            palettes,
+            nbt_blocks,
+            markers,
+        })
     }
 
     /// `StructureTemplate.getBoundingBox(settings with rotation, pos)`: the box of the rotated
@@ -368,18 +471,36 @@ impl Template {
         BoundingBox::from_corners(rotation.transform([0; 3]), rotation.transform(far)).moved(pos)
     }
 
-    /// `StructureTemplate.getJigsaws(pos, rotation)`: one palette's jigsaw blocks, rotated and
-    /// moved to `pos`. With several palettes, one is picked by a random seeded from `pos`
-    /// (`StructurePlaceSettings.getRandomPalette`), not from the structure's random.
-    fn jigsaws(&self, pos: [i32; 3], rotation: Rotation) -> Vec<PlacedJigsaw<'_>> {
+    /// The palette a piece at `pos` uses: with several, one picked by a random seeded from `pos`
+    /// (`StructurePlaceSettings.getRandomPalette`), not from the structure's random. `None`
+    /// without palettes.
+    pub fn palette_at(&self, pos: [i32; 3]) -> Option<usize> {
         if self.palettes.is_empty() {
-            return Vec::new();
+            return None;
         }
         let mut palette_random =
             LegacyRandomSource::new(spyglass_rng::block_seed(pos[0], pos[1], pos[2]));
-        let palette =
-            &self.palettes[palette_random.next_int_bounded(self.palettes.len() as i32) as usize];
-        palette
+        Some(palette_random.next_int_bounded(self.palettes.len() as i32) as usize)
+    }
+
+    /// Palette `palette`'s blocks with block-entity NBT but jigsaws and structure blocks, in the
+    /// template's block order.
+    pub fn nbt_blocks(&self, palette: usize) -> &[NbtBlock] {
+        &self.nbt_blocks[palette]
+    }
+
+    /// Palette `palette`'s data markers, in the template's block order.
+    pub fn markers(&self, palette: usize) -> &[Marker] {
+        &self.markers[palette]
+    }
+
+    /// `StructureTemplate.getJigsaws(pos, rotation)`: one palette's jigsaw blocks
+    /// ([`Template::palette_at`]), rotated and moved to `pos`.
+    fn jigsaws(&self, pos: [i32; 3], rotation: Rotation) -> Vec<PlacedJigsaw<'_>> {
+        let Some(palette) = self.palette_at(pos) else {
+            return Vec::new();
+        };
+        self.palettes[palette]
             .iter()
             .map(|j| {
                 let rotated = rotation.transform(j.pos);
@@ -455,21 +576,27 @@ pub enum Projection {
 }
 
 /// A pool element (`StructurePoolElement`).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PoolElement {
-    /// `single_pool_element` or `legacy_single_pool_element`: one template.
-    Single(Arc<Template>, Projection),
+    /// `single_pool_element` or `legacy_single_pool_element`: one template, and its processors
+    /// ([`Processors`]).
+    Single(Arc<Template>, Projection, Processors),
     /// `list_pool_element`: several elements placed together.
     List(Vec<PoolElement>, Projection),
     /// `feature_pool_element`: a placed feature, with a 1 × 1 × 1 box. The flag is the
     /// `feature_jigsaw_named_bottom` switch: whether its jigsaw is named `minecraft:bottom`.
-    Feature(Projection, bool),
+    /// The id is the placed feature's, `None` for one written inline.
+    Feature(Projection, bool, Option<String>),
     /// `empty_pool_element`.
     Empty,
     /// Any of the others with a `corner_constraint` (26.4-snapshot-6 on), which a piece of it
     /// must pass to be placed.
     Constrained(Box<PoolElement>, Arc<CornerConstraint>),
 }
+
+/// A single element's processors: its processor list's `processors`, resolved from the list's id
+/// if it names one, as JSON text.
+pub type Processors = Arc<str>;
 
 impl PoolElement {
     /// The element without its corner constraint.
@@ -491,7 +618,9 @@ impl PoolElement {
     /// `getProjection`. The empty element is never placed, so its projection doesn't matter.
     pub(crate) fn projection(&self) -> Projection {
         match self {
-            PoolElement::Single(_, p) | PoolElement::List(_, p) | PoolElement::Feature(p, _) => *p,
+            PoolElement::Single(_, p, _)
+            | PoolElement::List(_, p)
+            | PoolElement::Feature(p, ..) => *p,
             PoolElement::Empty => Projection::Rigid,
             PoolElement::Constrained(element, _) => element.projection(),
         }
@@ -500,7 +629,7 @@ impl PoolElement {
     /// `StructurePoolElement.getBoundingBox(manager, pos, rotation)`.
     pub(crate) fn bounding_box(&self, pos: [i32; 3], rotation: Rotation) -> Option<BoundingBox> {
         match self {
-            PoolElement::Single(template, _) => Some(template.bounding_box(pos, rotation)),
+            PoolElement::Single(template, ..) => Some(template.bounding_box(pos, rotation)),
             // ListPoolElement: the box around every non-empty element's box.
             PoolElement::List(elements, _) => elements
                 .iter()
@@ -522,7 +651,7 @@ impl PoolElement {
         random: &mut LegacyRandomSource,
     ) -> Vec<PlacedJigsaw<'_>> {
         match self {
-            PoolElement::Single(template, _) => {
+            PoolElement::Single(template, ..) => {
                 let mut jigsaws = template.jigsaws(pos, rotation);
                 shuffle(&mut jigsaws, random);
                 jigsaws.sort_by_key(|j| std::cmp::Reverse(j.data.selection_priority));
@@ -532,7 +661,7 @@ impl PoolElement {
                 .first()
                 .map(|e| e.shuffled_jigsaws(pos, rotation, random))
                 .unwrap_or_default(),
-            PoolElement::Feature(_, named_bottom) => vec![PlacedJigsaw {
+            PoolElement::Feature(_, named_bottom, _) => vec![PlacedJigsaw {
                 pos,
                 front: Direction::Down,
                 top: Direction::South,
@@ -550,7 +679,7 @@ impl PoolElement {
     /// Every template the element places.
     fn templates(&self) -> Vec<&Template> {
         match self {
-            PoolElement::Single(t, _) => vec![t],
+            PoolElement::Single(t, ..) => vec![t],
             PoolElement::List(elements, _) => elements.iter().flat_map(|e| e.templates()).collect(),
             PoolElement::Feature(..) | PoolElement::Empty => Vec::new(),
             PoolElement::Constrained(element, _) => element.templates(),
@@ -1089,7 +1218,9 @@ impl<'a> JigsawLoader<'a> {
                     .and_then(Value::as_str)
                     .ok_or_else(|| at.error(LoadErrorKind::Missing("location")))?;
                 check_liquid_settings(json, at)?;
-                PoolElement::Single(self.template(&full_id(location))?, projection)
+                let processors =
+                    self.processors(json.get("processors"), &at.child("processors"))?;
+                PoolElement::Single(self.template(&full_id(location))?, projection, processors)
             }
             "minecraft:list_pool_element" => {
                 let list_at = at.child("elements");
@@ -1104,7 +1235,8 @@ impl<'a> JigsawLoader<'a> {
                 PoolElement::List(elements, projection)
             }
             "minecraft:feature_pool_element" => {
-                PoolElement::Feature(projection, self.feature_jigsaw_named_bottom)
+                let feature = json.get("feature").and_then(Value::as_str).map(full_id);
+                PoolElement::Feature(projection, self.feature_jigsaw_named_bottom, feature)
             }
             _ => {
                 return Err(at.child("element_type").error(LoadErrorKind::Unsupported {
@@ -1125,6 +1257,32 @@ impl<'a> JigsawLoader<'a> {
                 PoolElement::Constrained(Box::new(element), Arc::new(corner))
             }
         })
+    }
+
+    /// A single element's processors (`StructureProcessorType.LIST_CODEC`): a processor list's
+    /// id, an inline list object, or a bare list; none if absent.
+    fn processors(&mut self, json: Option<&Value>, at: &At<'_>) -> LoadResult<Processors> {
+        let owned;
+        let json = match json {
+            None => return Ok(Arc::from("[]")),
+            Some(Value::String(id)) => {
+                let id = full_id(id);
+                owned = self
+                    .bundle
+                    .resource("worldgen/processor_list", &id)
+                    .map_err(|e| At::root(&id).error(e.into()))?;
+                &owned
+            }
+            Some(other) => other,
+        };
+        let list = match json {
+            Value::Object(o) => o.get("processors").unwrap_or(&Value::Null),
+            other => other,
+        };
+        if !list.is_array() {
+            return Err(at.error(LoadErrorKind::Shape("a list of processors")));
+        }
+        Ok(Arc::from(list.to_string()))
     }
 
     /// The noises the corner constraints' functions use, by full id.
@@ -1148,8 +1306,11 @@ impl<'a> JigsawLoader<'a> {
                 Template::from_nbt(&root, id, data_version)?
             }
             Err(BundleError::NotFound(_)) => Template {
+                id: id.to_string(),
                 size: [0; 3],
                 palettes: Vec::new(),
+                nbt_blocks: Vec::new(),
+                markers: Vec::new(),
             },
             Err(e) => return Err(error(e.into())),
         };
@@ -1323,8 +1484,11 @@ impl Template {
             .collect();
         palette.sort_by_key(|j| (j.pos[1], j.pos[0], j.pos[2]));
         Template {
+            id: String::new(),
             size,
             palettes: vec![palette],
+            nbt_blocks: vec![Vec::new()],
+            markers: vec![Vec::new()],
         }
     }
 }
@@ -1335,8 +1499,11 @@ mod tests {
 
     fn template(size: [i32; 3]) -> Template {
         Template {
+            id: String::new(),
             size,
             palettes: vec![vec![]],
+            nbt_blocks: vec![vec![]],
+            markers: vec![vec![]],
         }
     }
 

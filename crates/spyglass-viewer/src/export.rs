@@ -41,6 +41,8 @@ pub struct Export {
     pub structures: Vec<String>,
     /// Placed feature ids, drawn up close.
     pub features: Vec<String>,
+    /// The item whose loot containers are ringed, up close; empty for none.
+    pub loot: String,
     /// Biome ids to keep bright.
     pub highlight: Vec<String>,
     // The layers, as the library's `Layers` names them.
@@ -113,6 +115,9 @@ impl Export {
         }
         if !self.features.is_empty() && self.area.scale <= MAX_FEATURE_SCALE {
             add("--features", self.features.join(","));
+        }
+        if !self.loot.is_empty() && self.area.scale <= MAX_FEATURE_SCALE {
+            add("--loot", self.loot.clone());
         }
         if !self.highlight.is_empty() {
             add("--highlight", self.highlight.join(","));
@@ -201,6 +206,7 @@ mod tests {
                 "minecraft:stronghold".into(),
             ],
             features: vec!["minecraft:monster_room".into()],
+            loot: String::new(),
             highlight: vec!["minecraft:river".into()],
             ties: true,
             slime_chunks: true,
@@ -245,6 +251,7 @@ mod tests {
             bundles: Some(PathBuf::from("D:/bundles")),
             structures: Vec::new(),
             features: Vec::new(),
+            loot: String::new(),
             highlight: Vec::new(),
             ties: false,
             slime_chunks: true,

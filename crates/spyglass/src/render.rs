@@ -16,8 +16,9 @@ pub use underground::{
 };
 
 use crate::{
-    BiomeAt, BiomeQuery, Dimension, Error, FeatureOptions, FeatureQuery, FoundFeature, Heightmap,
-    Result, Session, SpawnOrigin, StructureQuery, StructureStart, World,
+    BiomeAt, BiomeQuery, Dimension, Error, FeatureOptions, FeatureQuery, FoundContainer,
+    FoundFeature, Heightmap, ItemQuery, Result, Session, SpawnOrigin, StructureQuery,
+    StructureStart, World,
 };
 
 /// The height biomes are sampled at unless asked otherwise.
@@ -47,6 +48,8 @@ const SLIME: [u8; 3] = [0x40, 0xe0, 0x40];
 const SLIME_ALPHA: u32 = 128;
 const BLACK: [u8; 3] = [0, 0, 0];
 const WHITE: [u8; 3] = [0xff, 0xff, 0xff];
+/// The ring around a loot container holding the item asked for: gold.
+const LOOT: [u8; 3] = [0xff, 0xc8, 0x30];
 
 /// A rectangle of the map: which blocks, at what scale, and the height biomes are sampled at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -181,6 +184,9 @@ pub struct Layers {
     /// Features to mark, at scales up to [`MAX_FEATURE_SCALE`]: their certain and likely
     /// answers.
     pub features: Vec<FeatureQuery>,
+    /// An item whose containers to ring, at scales up to [`MAX_FEATURE_SCALE`]: those holding
+    /// it, and candidates that might ([`Session::containers_holding`]).
+    pub loot: Option<ItemQuery>,
     /// Slime chunks, at scales up to [`MAX_SLIME_SCALE`].
     pub slime_chunks: bool,
     /// The world spawn's origin.
@@ -226,6 +232,7 @@ impl Default for Layers {
             highlight: Vec::new(),
             structures: Vec::new(),
             features: Vec::new(),
+            loot: None,
             slime_chunks: false,
             spawn: false,
             confirm: false,
@@ -280,6 +287,9 @@ pub struct MapFeatures {
     /// Features, certain and likely, in drawing order: by z, then x, then y, then placed
     /// feature.
     pub features: Vec<FoundFeature>,
+    /// Loot containers holding [`Layers::loot`]'s item, or that might, in drawing order: by z,
+    /// then x, then y.
+    pub containers: Vec<FoundContainer>,
     /// Slime chunks overlapping the area, by z, then x.
     pub slime_chunks: Vec<[i32; 2]>,
     /// The spawn's origin, if its marker reaches the area.
@@ -638,6 +648,17 @@ fn feature_marker(colour: [u8; 3], certain: bool) -> impl Fn(i64, i64) -> Option
     }
 }
 
+/// A loot ring: gold from radius 3 to 4 inside a black one out to 5, dotted for a candidate,
+/// so a dungeon's diamond shows through it.
+fn loot_marker(certain: bool) -> impl Fn(i64, i64) -> Option<[u8; 3]> {
+    move |dx, dy| match dx * dx + dy * dy {
+        9..=16 if certain || (dx + dy).rem_euclid(3) != 0 => Some(LOOT),
+        9..=16 => Some(BLACK),
+        17..=25 => Some(BLACK),
+        _ => None,
+    }
+}
+
 /// The spawn marker: a white cross over a wider black one.
 fn spawn_marker(dx: i64, dy: i64) -> Option<[u8; 3]> {
     let (ax, ay) = (dx.abs(), dy.abs());
@@ -870,6 +891,24 @@ impl Session<'_> {
                 key(a).cmp(&key(b)).then_with(|| a.feature.cmp(&b.feature))
             });
         }
+        if let Some(query) = &layers.loot {
+            if area.scale > MAX_FEATURE_SCALE {
+                return Err(invalid(format!(
+                    "loot is drawn at scales up to {MAX_FEATURE_SCALE}, not {}",
+                    area.scale
+                )));
+            }
+            let [[x0, x1], [z0, z1]] = area.reach_blocks();
+            let min = [saturate(x0 >> 4), saturate(z0 >> 4)];
+            let max = [saturate(x1 >> 4), saturate(z1 >> 4)];
+            let mut found = self.containers_holding(query, min, max)?;
+            found.retain(|c| area.reaches([c.position[0], c.position[2]]));
+            found.sort_by_key(|c| (c.position[2], c.position[0], c.position[1]));
+            found.dedup_by(|a, b| {
+                a.position == b.position && a.contents_certain() == b.contents_certain()
+            });
+            features.containers = found;
+        }
         if layers.slime_chunks {
             if area.scale > MAX_SLIME_SCALE {
                 return Err(invalid(format!(
@@ -959,7 +998,7 @@ impl Image {
     }
 
     /// Draws `features` over the image of `area`, which must be the image's size: slime chunks,
-    /// then structure markers, then feature markers, then the spawn, then pins. [`Session::render`] is
+    /// then structure markers, then feature markers, then loot rings, then the spawn, then pins. [`Session::render`] is
     /// [`BiomeMap::colorize`] (or [`background`](Self::background)), then this, with
     /// [`Session::map_features`]; front ends that cache biome maps can do the steps
     /// themselves, and leave out features they draw another way.
@@ -985,6 +1024,10 @@ impl Image {
                 4,
                 feature_marker(feature_colour(&found.feature), found.certain),
             );
+        }
+        for container in &features.containers {
+            let centre = area.pixel([container.position[0], container.position[2]]);
+            self.stamp(centre, 5, loot_marker(container.contents_certain()));
         }
         if let Some(origin) = &features.spawn {
             self.stamp(area.pixel(origin.map_block()), 5, spawn_marker);

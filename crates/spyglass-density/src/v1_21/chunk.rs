@@ -21,6 +21,7 @@ use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
+use rustc_hash::FxHashMap;
 use spyglass_noise::mth;
 
 use super::bind::{Ctx, Function, Own, next_stamp, reserve_stamps};
@@ -57,7 +58,7 @@ pub struct NoiseChunk {
     /// Each marker slot's table, made on first use.
     tables: Vec<OnceCell<Box<[OnceCell<f64>]>>>,
     /// `preliminarySurfaceLevelCache`.
-    surface_levels: RefCell<HashMap<(i32, i32), i32>>,
+    surface_levels: RefCell<FxHashMap<(i32, i32), i32>>,
     /// The memo stamp of corner 0 ([`corner`](Self::corner)); each corner has its own, so the
     /// functions interpolated at one corner share what they have in common.
     corner_stamps: u64,
@@ -65,7 +66,7 @@ pub struct NoiseChunk {
     /// router entries asked at one block share what they have in common.
     last_point: Cell<Option<([i32; 3], u64)>>,
     /// The memo's column stamp of each column contexts have been made at.
-    columns: RefCell<HashMap<(i32, i32), u64>>,
+    columns: RefCell<FxHashMap<(i32, i32), u64>>,
     /// Whether the chunk evaluates the bound functions themselves, not their program: the
     /// reference the program is tested against.
     reference: bool,
@@ -136,10 +137,10 @@ impl NoiseChunk {
             first_noise_x: x0 >> 2,
             first_noise_z: z0 >> 2,
             noise_size_xz,
-            surface_levels: RefCell::new(HashMap::new()),
+            surface_levels: RefCell::default(),
             corner_stamps: reserve_stamps(corners),
             last_point: Cell::new(None),
-            columns: RefCell::new(HashMap::new()),
+            columns: RefCell::default(),
             reference: false,
             shared_corners: None,
             fetched_columns: RefCell::new(Vec::new()),

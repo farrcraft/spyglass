@@ -85,6 +85,11 @@ impl JigsawPools {
         CornerSamplers::new(&self.noises, seed, self.legacy_random_source, self.anchors)
     }
 
+    /// Every element of every pool, each as often as its weight.
+    pub fn elements(&self) -> impl Iterator<Item = &PoolElement> {
+        self.pools.values().flat_map(|p| p.templates.iter())
+    }
+
     fn get(&self, id: &str) -> Option<&Pool> {
         self.pools.get(id).map(|p| &**p)
     }
@@ -92,17 +97,31 @@ impl JigsawPools {
 
 /// A jigsaw start's pieces: `JigsawPlacement.addPieces`, as `StructureStart` holds them before
 /// any is placed.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Layout {
     /// Each piece's box, in the game's order: the start piece first.
     pub pieces: Vec<BoundingBox>,
+    /// What each piece places and where, in the same order; empty for a mineshaft, whose pieces
+    /// aren't pool elements.
+    pub placed: Vec<LaidPiece>,
     /// `StructureStart.getBoundingBox`: the box around every piece, grown by 12 on every side if
     /// the structure adapts terrain.
     pub bounds: BoundingBox,
 }
 
+/// A placed piece (`PoolElementStructurePiece`): what it places, from where, turned how.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LaidPiece {
+    /// Its element.
+    pub element: PoolElement,
+    /// Its template origin (`position`).
+    pub pos: [i32; 3],
+    /// How it's turned.
+    pub rotation: Rotation,
+}
+
 /// What assembly found.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Assembly {
     /// No start: no start piece, a start outside the padding or failing its corner constraint,
     /// or `size` 0.
@@ -542,6 +561,15 @@ impl Jigsaw {
             next = placer.queue.pop();
         }
         let pieces: Vec<BoundingBox> = placer.pieces.iter().map(|p| p.bbox).collect();
+        let placed = placer
+            .pieces
+            .iter()
+            .map(|p| LaidPiece {
+                element: p.element.clone(),
+                pos: p.pos,
+                rotation: p.rotation,
+            })
+            .collect();
         let union = pieces
             .iter()
             .copied()
@@ -552,7 +580,11 @@ impl Jigsaw {
         } else {
             union
         };
-        Assembly::Built(Layout { pieces, bounds })
+        Assembly::Built(Layout {
+            pieces,
+            placed,
+            bounds,
+        })
     }
 }
 
@@ -603,13 +635,21 @@ mod tests {
                 ([2, 0, 1], East, Up, data("t:hub", "t:links", "t:link")),
             ],
         );
-        let start = pool(vec![PoolElement::Single(Arc::new(hub), Projection::Rigid)]);
+        let start = pool(vec![PoolElement::Single(
+            Arc::new(hub),
+            Projection::Rigid,
+            Arc::from("[]"),
+        )]);
         let pools = JigsawPools {
             pools: HashMap::from([
                 ("t:start".to_string(), start.clone()),
                 (
                     "t:links".to_string(),
-                    pool(vec![PoolElement::Single(Arc::new(link), links)]),
+                    pool(vec![PoolElement::Single(
+                        Arc::new(link),
+                        links,
+                        Arc::from("[]"),
+                    )]),
                 ),
                 (EMPTY_POOL.to_string(), pool(Vec::new())),
             ]),

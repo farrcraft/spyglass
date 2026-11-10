@@ -58,6 +58,7 @@ const LINUX_ONLY: &[&str] = &[
     ".github/dependabot.yml",
     ".github/workflows/fuzz.yml",
     ".github/workflows/release.yml",
+    ".github/workflows/pages.yml",
 ];
 
 /// What a change to `path` needs.
@@ -154,7 +155,10 @@ mod tests {
             docs: true,
             ..Scope::default()
         };
-        assert_eq!(scope(&["README.md", "docs/images/viewer-search.png"]), docs);
+        assert_eq!(
+            scope(&["README.md", "docs/guide/src/images/viewer-search.png"]),
+            docs
+        );
         assert_eq!(scope(&["docs/adr/0041-x.md", "CHANGELOG.md"]), docs);
     }
 

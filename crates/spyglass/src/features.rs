@@ -3,6 +3,9 @@
 
 use std::collections::HashMap;
 use std::ops::ControlFlow;
+use std::sync::{Arc, Mutex, OnceLock};
+
+use rayon::prelude::*;
 
 use spyglass_biome::BiomeId;
 use spyglass_blocks::Chunk;
@@ -239,12 +242,13 @@ pub struct FeatureLocate {
 pub(crate) struct Placings(HashMap<(Vec<PlacedRef>, FeatureOptions, [i32; 2]), Vec<FoundFeature>>);
 
 /// What a query keeps between chunks: carved chunks, stored biomes and the terrain in
-/// outline.
+/// outline. Chunks placed at once share it; each entry depends only on its chunk.
 struct Cache<'g> {
-    /// Carved chunks, by chunk coordinates: each is a neighbour of up to 9 placed chunks.
-    carved: HashMap<[i32; 2], Chunk>,
+    /// Carved chunks, by chunk coordinates: each is a neighbour of up to 9 placed chunks. A
+    /// cell per chunk, so one carved by one thread is waited for, not carved again, by another.
+    carved: Mutex<HashMap<[i32; 2], Arc<OnceLock<Chunk>>>>,
     /// Each chunk's stored biomes, for what earlier features and neighbours could write.
-    biomes: HashMap<[i32; 2], Vec<BiomeId>>,
+    biomes: Mutex<HashMap<[i32; 2], Vec<BiomeId>>>,
     /// The terrain in outline, for ruling chunks out: none when the unlikely candidates are
     /// asked for (then no chunk is ruled out), or where the outline can't be drawn.
     outline: Option<Outline<'g>>,
@@ -253,14 +257,46 @@ struct Cache<'g> {
 impl<'g> Cache<'g> {
     fn new(generator: &'g spyglass_blocks::ChunkGenerator<'g>, options: FeatureOptions) -> Self {
         Cache {
-            carved: HashMap::new(),
-            biomes: HashMap::new(),
+            carved: Mutex::default(),
+            biomes: Mutex::default(),
             outline: if options.unlikely {
                 None
             } else {
                 Outline::new(generator)
             },
         }
+    }
+
+    /// Forgets the chunks in rows before `cz`.
+    fn keep_rows_from(&mut self, cz: i32) {
+        let carved = self.carved.get_mut().unwrap_or_else(|e| e.into_inner());
+        carved.retain(|c, _| c[1] >= cz);
+        let biomes = self.biomes.get_mut().unwrap_or_else(|e| e.into_inner());
+        biomes.retain(|c, _| c[1] >= cz);
+    }
+
+    /// Chunk `chunk` carved.
+    fn carved(&self, generator: &spyglass_blocks::ChunkGenerator<'_>, chunk: [i32; 2]) -> Chunk {
+        let cell = {
+            let mut carved = self.carved.lock().unwrap_or_else(|e| e.into_inner());
+            carved.entry(chunk).or_default().clone()
+        };
+        cell.get_or_init(|| generator.carved_chunk(chunk[0], chunk[1]))
+            .clone()
+    }
+
+    /// Chunk `chunk`'s stored biomes.
+    fn biomes(
+        &self,
+        generator: &spyglass_blocks::ChunkGenerator<'_>,
+        chunk: [i32; 2],
+    ) -> Vec<BiomeId> {
+        let lock = || self.biomes.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(kept) = lock().get(&chunk) {
+            return kept.clone();
+        }
+        let biomes = generator.chunk_biomes(chunk[0], chunk[1]);
+        lock().entry(chunk).or_insert(biomes).clone()
     }
 }
 
@@ -309,12 +345,32 @@ impl<'w> Session<'w> {
         mut visit: impl FnMut(FoundFeature) -> ControlFlow<()>,
     ) -> Result<()> {
         self.check_world(query.world, &query.argument)?;
-        let mut cache = None;
+        let mut cache: Option<Cache<'_>> = None;
         for cz in min[1]..=max[1] {
             // The rows before this one's neighbours aren't read again.
-            if let Some(Cache { carved, biomes, .. }) = &mut cache {
-                carved.retain(|c, _| c[1] >= cz - 1);
-                biomes.retain(|c, _| c[1] >= cz - 1);
+            if let Some(cache) = &mut cache {
+                cache.keep_rows_from(cz - 1);
+            }
+            if self.parallel {
+                // The row's chunks placed at once, then visited in order below. A visit that
+                // breaks early leaves the rest of the row placed but unread.
+                let key = |cx| (query.targets.clone(), options, [cx, cz]);
+                let todo: Vec<i32> = (min[0]..=max[0])
+                    .filter(|&cx| wanted([cx, cz]) && !placings.0.contains_key(&key(cx)))
+                    .collect();
+                if !todo.is_empty() {
+                    if cache.is_none() {
+                        cache = Some(Cache::new(self.chunks()?, options));
+                    }
+                    let shared = cache.as_ref().expect("made above");
+                    let placed: Vec<Vec<FoundFeature>> = todo
+                        .par_iter()
+                        .map(|&cx| self.chunk_features(query, [cx, cz], options, shared))
+                        .collect::<Result<_>>()?;
+                    for (cx, found) in todo.into_iter().zip(placed) {
+                        placings.0.insert(key(cx), found);
+                    }
+                }
             }
             for cx in (min[0]..=max[0]).filter(|&cx| wanted([cx, cz])) {
                 let key = (query.targets.clone(), options, [cx, cz]);
@@ -324,7 +380,7 @@ impl<'w> Session<'w> {
                         if cache.is_none() {
                             cache = Some(Cache::new(self.chunks()?, options));
                         }
-                        let cache = cache.as_mut().expect("made above");
+                        let cache = cache.as_ref().expect("made above");
                         let found = self.chunk_features(query, [cx, cz], options, cache)?;
                         placings.0.insert(key, found.clone());
                         found
@@ -350,7 +406,7 @@ impl<'w> Session<'w> {
         options: FeatureOptions,
     ) -> Result<FeatureLocate> {
         self.check_world(query.world, &query.argument)?;
-        let mut cache = Cache::new(self.chunks()?, options);
+        let cache = Cache::new(self.chunks()?, options);
         let centre = [from[0] >> 4, from[2] >> 4];
         let distance_sqr = |p: [i32; 3]| {
             let (dx, dz) = (i64::from(p[0] - from[0]), i64::from(p[2] - from[2]));
@@ -369,23 +425,27 @@ impl<'w> Session<'w> {
                     break;
                 }
             }
-            for dz in -ring..=ring {
-                for dx in -ring..=ring {
-                    if dx.abs().max(dz.abs()) != ring {
-                        continue;
-                    }
-                    let chunk = [centre[0] + dx, centre[1] + dz];
-                    for feature in self.chunk_features(query, chunk, options, &mut cache)? {
-                        if feature.certain {
-                            nearest_certain = Some(
-                                nearest_certain.map_or(distance_sqr(feature.position), |nearest| {
-                                    nearest.min(distance_sqr(feature.position))
-                                }),
-                            );
-                        }
-                        found.push(feature);
-                    }
+            // The ring's chunks, z then x, each placed whole before the stopping test.
+            let chunks: Vec<[i32; 2]> = (-ring..=ring)
+                .flat_map(|dz| (-ring..=ring).map(move |dx| [dx, dz]))
+                .filter(|[dx, dz]| dx.abs().max(dz.abs()) == ring)
+                .map(|[dx, dz]| [centre[0] + dx, centre[1] + dz])
+                .collect();
+            let place = |&chunk: &[i32; 2]| self.chunk_features(query, chunk, options, &cache);
+            let placed: Vec<Vec<FoundFeature>> = if self.parallel {
+                chunks.par_iter().map(place).collect::<Result<_>>()?
+            } else {
+                chunks.iter().map(place).collect::<Result<_>>()?
+            };
+            for feature in placed.into_iter().flatten() {
+                if feature.certain {
+                    nearest_certain = Some(
+                        nearest_certain.map_or(distance_sqr(feature.position), |nearest| {
+                            nearest.min(distance_sqr(feature.position))
+                        }),
+                    );
                 }
+                found.push(feature);
             }
         }
         // Nearest first, ending at the nearest certain one: the candidates before it may be
@@ -419,7 +479,7 @@ impl<'w> Session<'w> {
         query: &FeatureQuery,
         chunk: [i32; 2],
         options: FeatureOptions,
-        cache: &mut Cache<'_>,
+        cache: &Cache<'_>,
     ) -> Result<Vec<FoundFeature>> {
         let world = self.world;
         let features = world.feature_world()?;
@@ -445,19 +505,9 @@ impl<'w> Session<'w> {
         if !reaches {
             return Ok(Vec::new());
         }
-        let Cache {
-            carved,
-            biomes: stored,
-            outline,
-        } = cache;
-        let mut biomes = |chunk: [i32; 2]| {
-            stored
-                .entry(chunk)
-                .or_insert_with(|| generator.chunk_biomes(chunk[0], chunk[1]))
-                .clone()
-        };
+        let mut biomes = |chunk: [i32; 2]| cache.biomes(generator, chunk);
         // Nothing could place on its own, from the terrain in outline: no likely answer.
-        if let Some(outline) = outline {
+        if let Some(outline) = &cache.outline {
             let (level_min, level_top) = generator.level();
             let placed = Decorator::of(
                 &features.settings,
@@ -507,11 +557,7 @@ impl<'w> Session<'w> {
         let mut chunks = Vec::with_capacity(9);
         for dz in -1..=1 {
             for dx in -1..=1 {
-                let key = [chunk[0] + dx, chunk[1] + dz];
-                let neighbour = carved
-                    .entry(key)
-                    .or_insert_with(|| generator.carved_chunk(key[0], key[1]));
-                chunks.push(neighbour.clone());
+                chunks.push(cache.carved(generator, [chunk[0] + dx, chunk[1] + dz]));
             }
         }
         let mut region = Region::new(&features.blocks, chunk, chunks);
@@ -600,5 +646,51 @@ impl<'w> Session<'w> {
                 })
             })
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A seed's dungeons near the origin, sequentially as a search's checks run them, and in
+    /// parallel on one thread and on several: the same answers in the same order.
+    #[test]
+    #[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
+    fn features_are_the_same_on_any_number_of_threads() {
+        let version = spyglass_oracle::version();
+        let world = World::open(spyglass_oracle::bundle_dir())
+            .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {version}"));
+        let query = world.feature_query("minecraft:monster_room").unwrap();
+        for seed in [0, 12_345] {
+            for unlikely in [false, true] {
+                let options = FeatureOptions {
+                    unlikely,
+                    ..Default::default()
+                };
+                let answers = |session: &Session<'_>| {
+                    let area = session
+                        .features_in(&query, [-4, -4], [3, 3], options)
+                        .unwrap();
+                    let nearest = session
+                        .nearest_feature(&query, [40, 0, -40], 8, options)
+                        .unwrap();
+                    (area, nearest.hits, nearest.complete)
+                };
+                let alone = answers(&world.search_session(seed).unwrap());
+                assert!(!alone.0.is_empty(), "seed {seed}: no dungeons to compare");
+                for threads in [1, 8] {
+                    let pool = rayon::ThreadPoolBuilder::new()
+                        .num_threads(threads)
+                        .build()
+                        .unwrap();
+                    let parallel = pool.install(|| answers(&world.session(seed).unwrap()));
+                    assert_eq!(
+                        parallel, alone,
+                        "seed {seed}, unlikely {unlikely}, {threads} threads"
+                    );
+                }
+            }
+        }
     }
 }

@@ -34,6 +34,12 @@ fn extracts_26_3_reproducibly() {
     for report in write::REPORTS {
         assert!(first.manifest.files.contains_key(*report), "{report}");
     }
+    for dir in write::REPORT_DIRS {
+        assert!(
+            first.manifest.files.keys().any(|p| p.starts_with(dir)),
+            "{dir}"
+        );
+    }
     assert_eq!(
         spyglass_data::bundle::verify(&first.dir).unwrap(),
         first.manifest

@@ -13,7 +13,7 @@ pub fn run(args: &Features) -> Result<()> {
     let (min, max) = (args.min, args.max);
     let chunks = [min[0] >> 4, min[1] >> 4, max[0] >> 4, max[1] >> 4];
     let size = [chunks[2] - chunks[0] + 1, chunks[3] - chunks[1] + 1].map(i64::from);
-    if size.iter().any(|&s| s <= 0) {
+    if min[0] > max[0] || min[1] > max[1] {
         bail!("--max must be at least --min on both axes");
     }
     if size[0].saturating_mul(size[1]) > MAX_CHUNKS {

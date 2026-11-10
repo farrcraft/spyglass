@@ -35,6 +35,17 @@ pub enum Doubt {
     Waterlogging,
 }
 
+/// A container a feature placed with a loot table (`docs/specs/loot.md#containers`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Container {
+    /// Where.
+    pub pos: [i32; 3],
+    /// The loot table's id, e.g. `minecraft:chests/simple_dungeon`.
+    pub table: String,
+    /// The loot seed, the feature random's `nextLong()` when it set the table.
+    pub seed: i64,
+}
+
 /// One chunk of the region, with its heightmaps as first free y per column.
 #[derive(Debug, Clone)]
 struct Column {
@@ -55,6 +66,8 @@ pub struct Region<'b> {
     height: i32,
     /// The first doubt since the caller last cleared it.
     doubt: Option<Doubt>,
+    /// The containers placed since the caller last took them.
+    containers: Vec<Container>,
 }
 
 impl<'b> Region<'b> {
@@ -113,6 +126,7 @@ impl<'b> Region<'b> {
             min_y,
             height,
             doubt: None,
+            containers: Vec::new(),
         }
     }
 
@@ -242,6 +256,20 @@ impl<'b> Region<'b> {
     /// Puts what follows in doubt, so the blocks it writes are too. The first reason is kept.
     pub fn doubt(&mut self, why: Doubt) {
         self.doubt.get_or_insert(why);
+    }
+
+    /// Records a container placed at `pos` with loot table `table` and loot seed `seed`.
+    pub fn container(&mut self, pos: [i32; 3], table: &str, seed: i64) {
+        self.containers.push(Container {
+            pos,
+            table: table.to_string(),
+            seed,
+        });
+    }
+
+    /// The containers placed since the last [`Region::take_containers`], in the order they were.
+    pub fn take_containers(&mut self) -> Vec<Container> {
+        std::mem::take(&mut self.containers)
     }
 
     /// The chunk being decorated, as it is now.

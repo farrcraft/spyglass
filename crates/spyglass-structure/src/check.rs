@@ -9,10 +9,16 @@ use spyglass_terrain::{Block, Heightmap, Terrain};
 
 use crate::assembly::{Assembly, JigsawPools};
 use crate::biomes::BiomeSet;
+use crate::end_city::{self, CityPiece};
+use crate::fortress::{self, FortressPiece};
 use crate::jigsaw::{Jigsaw, JigsawCheck};
 use crate::load::{Structure, StructureType};
-use crate::mineshaft::{self, Heights};
+use crate::mansion::{self, MansionPiece};
+use crate::mineshaft::{self, Heights, ShaftPiece};
+use crate::ocean_ruin::{self, RuinPiece};
 use crate::placement::Placements;
+use crate::portal::PortalLayout;
+use crate::stronghold::{self, StrongholdPiece};
 
 /// What spyglass can say about one structure's biome check in one chunk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,11 +125,12 @@ impl<'a> Starts<'a> {
         }
     }
 
-    /// A jigsaw structure's or a mineshaft's pieces and bounds if it starts in `chunk`
-    /// (`JigsawPlacement.addPieces`, `MineshaftStructure.generatePiecesAndAdjust`), whether or
-    /// not its biome check passes. Pieces that follow the terrain, and mesa mineshafts, need it:
-    /// without, the answer is [`Assembly::NeedsTerrain`]. `None` for other types, and for
-    /// jigsaws without pools.
+    /// A jigsaw structure's, a mineshaft's, an end city's, a mansion's, a fortress's, a stronghold's or an ocean ruin's pieces and bounds if it starts in
+    /// `chunk` (`JigsawPlacement.addPieces`, `MineshaftStructure.generatePiecesAndAdjust`,
+    /// `EndCityPieces.startHouseTower`, `WoodlandMansionPieces.generateMansion`, `OceanRuinPieces.addPieces`, `NetherFortressStructure.generatePieces`, `StrongholdStructure.generatePieces`), whether or not its
+    /// biome check passes. Pieces that
+    /// follow the terrain, mesa mineshafts, end cities and mansions need it: without, the answer is
+    /// [`Assembly::NeedsTerrain`]. `None` for other types, and for jigsaws without pools.
     pub fn assemble(&self, structure: usize, chunk: [i32; 2]) -> Option<Assembly> {
         let sets = self.placements.sets();
         let config = &sets.structures()[structure];
@@ -131,6 +138,40 @@ impl<'a> Starts<'a> {
         let mut first_free = |x: i32, z: i32, heightmap: Heightmap| {
             terrain.map(|t| t.first_free_height(x, z, heightmap))
         };
+        if config.kind == StructureType::Stronghold {
+            let (_, layout) = stronghold::layout(
+                self.placements.seed(),
+                chunk,
+                &self.mineshaft_heights(),
+                config.adapts_terrain,
+            );
+            return Some(Assembly::Built(layout));
+        }
+        if config.kind == StructureType::Fortress {
+            let (_, layout) =
+                fortress::layout(self.placements.seed(), chunk, config.adapts_terrain);
+            return Some(Assembly::Built(layout));
+        }
+        if let Some(ruin) = &config.ocean_ruin {
+            let pieces = ruin.pieces(&config.templates, self.placements.seed(), chunk);
+            return Some(ocean_ruin::layout(&pieces).map_or(Assembly::NoStart, Assembly::Built));
+        }
+        if config.kind == StructureType::WoodlandMansion {
+            return Some(match self.mansion_pieces(structure, chunk) {
+                Some(pieces) => mansion::layout(&pieces).map_or(Assembly::NoStart, Assembly::Built),
+                None if self.terrain.is_some() => Assembly::NoStart,
+                None => Assembly::NeedsTerrain,
+            });
+        }
+        if config.kind == StructureType::EndCity {
+            return Some(match self.end_city_pieces(structure, chunk) {
+                Some(pieces) => {
+                    end_city::layout(&pieces).map_or(Assembly::NoStart, Assembly::Built)
+                }
+                None if self.terrain.is_some() => Assembly::NoStart,
+                None => Assembly::NeedsTerrain,
+            });
+        }
         if let Some(shaft) = &config.mineshaft {
             return Some(shaft.assemble(
                 self.placements.seed(),
@@ -147,6 +188,104 @@ impl<'a> Starts<'a> {
             self.pools?,
             &mut first_free,
         ))
+    }
+
+    /// An end city's pieces if it starts in `chunk`, whether or not its biome check passes, in
+    /// the game's order; `None` for other types, and without terrain, which its height needs.
+    pub fn end_city_pieces(&self, structure: usize, chunk: [i32; 2]) -> Option<Vec<CityPiece>> {
+        let config = &self.placements.sets().structures()[structure];
+        if config.kind != StructureType::EndCity {
+            return None;
+        }
+        let at = self.stub(structure, chunk)?;
+        Some(end_city::pieces(
+            &config.templates,
+            self.placements.seed(),
+            chunk,
+            at,
+        ))
+    }
+
+    /// A mansion's pieces if it starts in `chunk`, whether or not its biome check passes, in the
+    /// game's order; `None` for other types, and without terrain, which its height needs.
+    pub fn mansion_pieces(&self, structure: usize, chunk: [i32; 2]) -> Option<Vec<MansionPiece>> {
+        let config = &self.placements.sets().structures()[structure];
+        if config.kind != StructureType::WoodlandMansion {
+            return None;
+        }
+        let at = self.stub(structure, chunk)?;
+        Some(mansion::pieces(
+            &config.templates,
+            self.placements.seed(),
+            chunk,
+            at,
+        ))
+    }
+
+    /// An ocean ruin's pieces if it starts in `chunk`, whether or not its biome check passes, in
+    /// the game's order, at y 90; `None` for other types. Nothing about them reads the world.
+    pub fn ocean_ruin_pieces(&self, structure: usize, chunk: [i32; 2]) -> Option<Vec<RuinPiece>> {
+        let config = &self.placements.sets().structures()[structure];
+        let ruin = config.ocean_ruin.as_ref()?;
+        Some(ruin.pieces(&config.templates, self.placements.seed(), chunk))
+    }
+
+    /// A fortress's pieces if it starts in `chunk`, whether or not its biome check passes, in
+    /// the game's order; `None` for other types. Nothing about them reads the world.
+    pub fn fortress_pieces(&self, structure: usize, chunk: [i32; 2]) -> Option<Vec<FortressPiece>> {
+        let config = &self.placements.sets().structures()[structure];
+        (config.kind == StructureType::Fortress)
+            .then(|| fortress::layout(self.placements.seed(), chunk, config.adapts_terrain).0)
+    }
+
+    /// A stronghold's pieces if it starts in `chunk`, whether or not its biome check passes, in
+    /// the game's order; `None` for other types. Nothing about them reads the world.
+    pub fn stronghold_pieces(
+        &self,
+        structure: usize,
+        chunk: [i32; 2],
+    ) -> Option<Vec<StrongholdPiece>> {
+        let config = &self.placements.sets().structures()[structure];
+        (config.kind == StructureType::Stronghold).then(|| {
+            stronghold::layout(
+                self.placements.seed(),
+                chunk,
+                &self.mineshaft_heights(),
+                config.adapts_terrain,
+            )
+            .0
+        })
+    }
+
+    /// A ruined portal's piece if it starts in `chunk`, whether or not its biome check passes;
+    /// `None` for other types, and without terrain, which its height needs.
+    pub fn ruined_portal(&self, structure: usize, chunk: [i32; 2]) -> Option<PortalLayout> {
+        let config = &self.placements.sets().structures()[structure];
+        let terrain = self.terrain?;
+        let level_min_y = self.placements.sets().heights().level_min_y;
+        Some(config.ruined_portal.as_ref()?.layout(
+            self.placements.seed(),
+            chunk,
+            terrain,
+            level_min_y,
+        ))
+    }
+
+    /// A mineshaft's pieces if it starts in `chunk`, whether or not its biome check passes,
+    /// each with what placing it needs; `None` for other types, and for a mesa's without
+    /// terrain.
+    pub fn mineshaft_pieces(&self, structure: usize, chunk: [i32; 2]) -> Option<Vec<ShaftPiece>> {
+        let config = &self.placements.sets().structures()[structure];
+        let terrain = self.terrain;
+        let mut first_free = |x: i32, z: i32, heightmap: Heightmap| {
+            terrain.map(|t| t.first_free_height(x, z, heightmap))
+        };
+        config.mineshaft.as_ref()?.shaft_pieces(
+            self.placements.seed(),
+            chunk,
+            &self.mineshaft_heights(),
+            &mut first_free,
+        )
     }
 
     /// What a mineshaft's layout needs from the dimension.
@@ -393,7 +532,7 @@ impl<'a> Starts<'a> {
                     terrain.map(|t| t.first_free_height(x, z, heightmap))
                 };
                 let seed = self.placements.seed();
-                if let Some((_, dy)) =
+                if let Some((_, dy, _)) =
                     shaft.layout(seed, chunk, &self.mineshaft_heights(), &mut first_free)
                 {
                     return fixed([mid_x, mineshaft::START_Y.wrapping_add(dy), min_z]);

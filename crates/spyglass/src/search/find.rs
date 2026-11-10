@@ -9,6 +9,7 @@ use spyglass_search::{Anchor, Checked, Place, distance_sqr, map_prefix_throttled
 use super::evaluate::{Area, Here, Sessions, check_at, evaluate_at, lookup, sample, starts_in};
 use super::{Looked, SearchQuery, SearchStop, SearchThrottle, convert};
 use crate::features::Placings;
+use crate::loot::LootPlacings;
 use crate::{
     Dimension, Error, Evaluation, Feature, FeatureOptions, GameSession, Outcome, Result, Session,
     StructureStart,
@@ -336,6 +337,31 @@ fn enumerate(
             )?;
             found
         }
+        Looked::Loot(item) => {
+            let (min, max) = area.bounds();
+            let mut found = Vec::new();
+            // A chest can be beside the chunk that placed it, so the neighbours are placed too.
+            session.each_container(
+                item,
+                min.map(|v| (v >> 4) - 1),
+                max.map(|v| (v >> 4) + 1),
+                |chunk| area.near_chunk(chunk),
+                &mut LootPlacings::default(),
+                |c| {
+                    let position = [c.position[0], c.position[2]];
+                    if area.distance(position).is_some() {
+                        found.push(Target {
+                            position,
+                            distance_sqr: distance_sqr(centre, position),
+                            certain: c.contents_certain(),
+                            feature: Some(Feature::Container(c)),
+                        });
+                    }
+                    ControlFlow::Continue(())
+                },
+            )?;
+            found
+        }
         Looked::Point => area
             .grid(find.sampling.step)
             .into_iter()
@@ -374,11 +400,16 @@ fn judge<'w>(
         Some(Feature::Placed(f)) => Some((dimension, f.feature.clone(), f.position)),
         _ => None,
     };
+    let container = match &target.feature {
+        Some(Feature::Container(c)) => Some((dimension, c.position)),
+        _ => None,
+    };
     let here = Here {
         dimension,
         position: target.position,
         start,
         feature,
+        container,
     };
     let checked = check_at(
         sessions,

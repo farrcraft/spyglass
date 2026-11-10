@@ -88,6 +88,25 @@ impl Template {
         blocks: &mut Blocks,
         id: &str,
     ) -> Result<Template, LoadError> {
+        Self::load_with(resources, blocks, id, true)
+    }
+
+    /// [`load`](Self::load) for what its blocks are, not how they face: properties that turn
+    /// but aren't ported keep their template value under every rotation.
+    pub fn load_unturned(
+        resources: &dyn Resources,
+        blocks: &mut Blocks,
+        id: &str,
+    ) -> Result<Template, LoadError> {
+        Self::load_with(resources, blocks, id, false)
+    }
+
+    fn load_with(
+        resources: &dyn Resources,
+        blocks: &mut Blocks,
+        id: &str,
+        turning: bool,
+    ) -> Result<Template, LoadError> {
         let at = At::root(id);
         let bytes = match resources.structure_template(id) {
             Ok(bytes) => bytes,
@@ -122,6 +141,7 @@ impl Template {
                     blocks,
                     entry,
                     &at.child("palette").child(&i.to_string()),
+                    turning,
                 )?);
             }
             let mut blocks_of = Vec::new();
@@ -188,7 +208,14 @@ impl Template {
 }
 
 /// A palette entry's state under each rotation (`BlockState.rotate`).
-fn rotated_states(blocks: &mut Blocks, entry: &Tag, at: &At<'_>) -> Result<[State; 4], LoadError> {
+/// A palette entry's state under each rotation; with `turning`, refusing a property that turns
+/// but isn't ported.
+fn rotated_states(
+    blocks: &mut Blocks,
+    entry: &Tag,
+    at: &At<'_>,
+    turning: bool,
+) -> Result<[State; 4], LoadError> {
     let id = entry
         .get("id")
         .or_else(|| entry.get("Name"))
@@ -208,7 +235,7 @@ fn rotated_states(blocks: &mut Blocks, entry: &Tag, at: &At<'_>) -> Result<[Stat
             properties.insert(k.clone(), Value::from(v));
         }
     }
-    if let Some(k) = ROTATING.iter().find(|k| properties.contains_key(**k)) {
+    if turning && let Some(k) = ROTATING.iter().find(|k| properties.contains_key(**k)) {
         return Err(at.error(LoadErrorKind::Unsupported {
             what: "rotating block property in a feature's template",
             name: format!("{id}[{k}]"),

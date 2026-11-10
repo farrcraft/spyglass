@@ -63,6 +63,41 @@ final class FeatureStep {
         LevelHeightAccessor height;
         Decoration.Cache cache;
         int entities;
+        /** The decoration's structures, which mobs' variants test for (a village's cats). */
+        net.minecraft.world.level.StructureManager structures;
+        /** Its dimension, which mobs remember places by (a piglin brute's home). */
+        net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level> dimension;
+
+        @Override
+        public net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level> dimension() {
+            return dimension;
+        }
+
+        /** Structures' entities make sounds (an end city's item frame); no one hears them. */
+        @Override
+        public void playSound(net.minecraft.world.entity.Entity source, double x, double y, double z,
+                net.minecraft.sounds.SoundEvent sound, net.minecraft.sounds.SoundSource category, float volume,
+                float pitch) {}
+
+        @Override
+        public void playSound(net.minecraft.world.entity.Entity source, double x, double y, double z,
+                net.minecraft.core.Holder<net.minecraft.sounds.SoundEvent> sound,
+                net.minecraft.sounds.SoundSource category, float volume, float pitch) {}
+
+        @Override
+        public void playSeededSound(net.minecraft.world.entity.Entity source, double x, double y, double z,
+                net.minecraft.core.Holder<net.minecraft.sounds.SoundEvent> sound,
+                net.minecraft.sounds.SoundSource category, float volume, float pitch, long seed) {}
+
+        @Override
+        public void playSeededSound(net.minecraft.world.entity.Entity except, net.minecraft.world.entity.Entity source,
+                net.minecraft.core.Holder<net.minecraft.sounds.SoundEvent> sound,
+                net.minecraft.sounds.SoundSource category, float volume, float pitch, long seed) {}
+
+        @Override
+        public net.minecraft.world.level.StructureManager structureManager() {
+            return structures;
+        }
 
         /** Never run: instances are made by {@link StandIns#allocate}. */
         Server() {

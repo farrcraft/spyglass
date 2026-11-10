@@ -57,6 +57,9 @@ pub enum OracleCmd {
     /// Write spawn golden files (the spawn origin and the climate search behind it) for the
     /// golden seeds and dimensions into `oracle-out/<version>/spawn/`.
     Spawn(Common),
+    /// Write loot golden files (every container loot table filled by the game for a fixed list
+    /// of seeds) into `oracle-out/<version>/loot/`.
+    Loot(Common),
     /// Write height golden files (the generator's worldgen heightmaps and block columns) for the
     /// golden seeds and dimensions into `oracle-out/<version>/heights/`.
     Heights {
@@ -88,6 +91,19 @@ pub enum OracleCmd {
         #[arg(long)]
         threads: Option<usize>,
         /// Only these seeds, instead of the golden ones and seed 56.
+        #[arg(long = "seed")]
+        seeds: Vec<String>,
+    },
+    /// Write container golden files (the nearest start of each structure, and every chunk it
+    /// reaches decorated on its own with structures, with each container decoration made) for
+    /// the golden seeds, in every dimension, into `oracle-out/<version>/containers/`.
+    Containers {
+        #[command(flatten)]
+        common: Common,
+        /// Parallel chunks. Defaults to the number of CPUs.
+        #[arg(long)]
+        threads: Option<usize>,
+        /// Only these seeds, instead of the golden ones.
         #[arg(long = "seed")]
         seeds: Vec<String>,
     },
@@ -271,6 +287,10 @@ pub fn run(cmd: OracleCmd) -> Result<()> {
             let harness = build(&common)?;
             harness.spawn()
         }
+        OracleCmd::Loot(common) => {
+            let harness = build(&common)?;
+            harness.loot()
+        }
         OracleCmd::Heights { common, threads } => {
             let harness = build(&common)?;
             harness.heights(threads, GOLDEN_SEEDS)
@@ -300,6 +320,19 @@ pub fn run(cmd: OracleCmd) -> Result<()> {
                 seeds.iter().map(String::as_str).collect()
             };
             harness.features(threads, &seeds)
+        }
+        OracleCmd::Containers {
+            common,
+            threads,
+            seeds,
+        } => {
+            let harness = build(&common)?;
+            let seeds: Vec<&str> = if seeds.is_empty() {
+                GOLDEN_SEEDS.to_vec()
+            } else {
+                seeds.iter().map(String::as_str).collect()
+            };
+            harness.containers(threads, &seeds)
         }
         OracleCmd::Column {
             common,
@@ -469,7 +502,8 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-/// Every golden file: probes, structures, spawn, heights, blocks, features, and the biome grids.
+/// Every golden file: probes, structures, spawn, heights, blocks, features, containers, the
+/// biome grids and loot.
 fn golden(common: &Common, threads: Option<usize>) -> Result<()> {
     let mut harness = build(common)?;
     harness.probe()?;
@@ -478,7 +512,9 @@ fn golden(common: &Common, threads: Option<usize>) -> Result<()> {
     harness.heights(threads, GOLDEN_SEEDS)?;
     blocks(&mut harness, threads, GOLDEN_SEEDS)?;
     harness.features(threads, &feature_seeds())?;
+    harness.containers(threads, GOLDEN_SEEDS)?;
     harness.golden_biomes(threads)?;
+    harness.loot()?;
     println!(
         "golden files in {}",
         repo_root()
@@ -607,6 +643,18 @@ impl Harness {
         self.per_dimension("spawn", &[], GOLDEN_SEEDS)
     }
 
+    /// Writes `oracle-out/<version>/loot/`, replacing what was there.
+    pub(crate) fn loot(&self) -> Result<()> {
+        let dir = repo_root()
+            .join("oracle-out")
+            .join(&self.version)
+            .join("loot");
+        if dir.exists() {
+            fs::remove_dir_all(&dir)?;
+        }
+        self.run(&["loot".into(), dir.into()])
+    }
+
     /// Writes `oracle-out/<version>/heights/<dimension>/` for each golden dimension, replacing
     /// what was there.
     pub(crate) fn heights(&self, threads: Option<usize>, seeds: &[&str]) -> Result<()> {
@@ -635,6 +683,16 @@ impl Harness {
             extra.extend(["--threads".into(), threads.to_string().into()]);
         }
         self.per_dimension("features", &extra, seeds)
+    }
+
+    /// Writes `oracle-out/<version>/containers/<dimension>/` for each golden dimension, replacing
+    /// what was there.
+    pub(crate) fn containers(&self, threads: Option<usize>, seeds: &[&str]) -> Result<()> {
+        let mut extra: Vec<OsString> = Vec::new();
+        if let Some(threads) = threads {
+            extra.extend(["--threads".into(), threads.to_string().into()]);
+        }
+        self.per_dimension("containers", &extra, seeds)
     }
 
     /// Runs harness command `kind` for `seeds` once per golden dimension, into

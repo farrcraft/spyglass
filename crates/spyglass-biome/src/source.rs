@@ -2,6 +2,7 @@
 //! the Overworld's and the Nether's), the End's (`TheEndBiomeSource`) or a checkerboard
 //! (`CheckerboardColumnBiomeSource`, which no vanilla preset uses); and its lookups for one seed.
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 
 use serde_json::Value;
@@ -299,8 +300,15 @@ impl Biomes<'_> {
     }
 
     /// The biome at quart `(qx, qy, qz)`, with ties.
+    ///
+    /// The search's scratch is kept per thread, so each lookup warm-starts from the thread's
+    /// previous answer ([`SearchTree::lookup_with`]). Callers mostly ask about quarts near the
+    /// last one, which is when that prunes most. The answer never depends on it.
     pub fn biome_at(&self, qx: i32, qy: i32, qz: i32) -> Lookup {
-        self.lookup_at(qx, qy, qz, &mut Vec::new())
+        thread_local! {
+            static SCRATCH: RefCell<Vec<u32>> = const { RefCell::new(Vec::new()) };
+        }
+        SCRATCH.with_borrow_mut(|scratch| self.lookup_at(qx, qy, qz, scratch))
     }
 
     /// [`biome_at`](Self::biome_at), with a buffer the multi-noise search reuses.

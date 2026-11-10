@@ -10,6 +10,9 @@ pub mod state;
 pub mod temperature;
 pub mod zoom;
 
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
 use spyglass_biome::{BiomeRegion, BiomeSource, Biomes};
 use spyglass_data::bundle::Bundle;
 use spyglass_data::codec::LoadError;
@@ -159,6 +162,7 @@ impl BlockSettings {
                 self.biomes.biome_names(),
                 &self.climates,
             )?,
+            windows: Mutex::new(HashMap::new()),
         })
     }
 }
@@ -170,7 +174,16 @@ pub struct ChunkGenerator<'s> {
     terrain: Terrain,
     biomes: Biomes<'s>,
     material: BoundMaterial,
+    /// Chunks' biome windows ([`ChunkGenerator::biome_window`]), kept because a feature query
+    /// asks for the same chunk's several times: the outline, the filter on which features can
+    /// place and the surface. Each depends only on its chunk, so keeping it changes no answer.
+    /// Cleared when it holds [`MAX_KEPT_WINDOWS`].
+    windows: Mutex<HashMap<[i32; 2], Arc<BiomeRegion>>>,
 }
+
+/// How many chunks' biome windows a [`ChunkGenerator`] keeps, about 7 KB each: enough for the
+/// rows of chunks a feature query keeps around the one it's placing.
+const MAX_KEPT_WINDOWS: usize = 2048;
 
 impl ChunkGenerator<'_> {
     /// The biome block `pos` has, as chunk generation sees it (`BiomeManager.getBiome`): the
@@ -188,17 +201,14 @@ impl ChunkGenerator<'_> {
     /// level's height, and a quart's border around, since 26.4's upscaled biomes can take a
     /// neighbouring quart's. Decoration runs a placed feature only where one of these lists it.
     pub fn chunk_biomes(&self, cx: i32, cz: i32) -> Vec<spyglass_biome::BiomeId> {
-        let terrain = &self.settings.terrain;
-        let min_qy = terrain.level_min_y >> 2;
+        let window = self.biome_window(cx, cz);
+        let [min_qx, min_qy, min_qz] = window.min();
+        let [size_x, size_y, size_z] = window.size().map(|s| s as i32);
         let mut out = Vec::new();
-        for qz in -1..5 {
-            for qx in -1..5 {
-                for qy in min_qy..min_qy + (terrain.level_height >> 2) {
-                    let lookup = self.biomes.biome_at(
-                        cx.wrapping_mul(4).wrapping_add(qx),
-                        qy,
-                        cz.wrapping_mul(4).wrapping_add(qz),
-                    );
+        for qz in min_qz..min_qz + size_z {
+            for qx in min_qx..min_qx + size_x {
+                for qy in min_qy..min_qy + size_y {
+                    let lookup = window.get(qx, qy, qz).expect("inside the window");
                     for b in
                         std::iter::once(lookup.biome()).chain(lookup.candidates().iter().copied())
                     {
@@ -210,6 +220,28 @@ impl ChunkGenerator<'_> {
             }
         }
         out
+    }
+
+    /// The biomes of chunk `(cx, cz)`'s quarts and one more on every horizontal side, over the
+    /// level's height: what its surface reads, and what [`chunk_biomes`](Self::chunk_biomes)
+    /// lists.
+    fn biome_window(&self, cx: i32, cz: i32) -> Arc<BiomeRegion> {
+        let lock = || self.windows.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(window) = lock().get(&[cx, cz]) {
+            return window.clone();
+        }
+        let terrain = &self.settings.terrain;
+        let (x0, z0) = (cx.wrapping_shl(4), cz.wrapping_shl(4));
+        let window = Arc::new(self.biomes.biomes_in(
+            [(x0 >> 2) - 1, terrain.level_min_y >> 2, (z0 >> 2) - 1],
+            [6, (terrain.level_height >> 2) as u32, 6],
+        ));
+        let mut kept = lock();
+        if kept.len() >= MAX_KEPT_WINDOWS {
+            kept.clear();
+        }
+        kept.insert([cx, cz], window.clone());
+        window
     }
 
     /// `Biome.BIOME_INFO_NOISE` at `(x, z)`, which placement's noise counts sample.
@@ -428,7 +460,6 @@ impl ChunkGenerator<'_> {
     fn built_chunk(&self, cx: i32, cz: i32, carvers: bool) -> Chunk {
         let settings = self.settings;
         let (min_y, height) = (settings.terrain.level_min_y, settings.terrain.level_height);
-        let (x0, z0) = (cx.wrapping_shl(4), cz.wrapping_shl(4));
         // NoiseChunk.prepareColumn: the aquifer's answer up to each column's top.
         let mut columns: Vec<NoiseColumn> = Vec::with_capacity(256);
         for column in self.terrain.base_columns(cx, cz) {
@@ -476,10 +507,7 @@ impl ChunkGenerator<'_> {
             mask
         });
         let mut chunk = Chunk::new([cx, cz], min_y, height);
-        let region = self.biomes.biomes_in(
-            [(x0 >> 2) - 1, min_y >> 2, (z0 >> 2) - 1],
-            [6, (height >> 2) as u32, 6],
-        );
+        let region = self.biome_window(cx, cz);
         let biomes = ChunkBiomes::new(&region, min_y, height);
         let mut substances = self.terrain.substances();
         self.material.build_terrain(
@@ -560,7 +588,7 @@ impl ChunkGenerator<'_> {
     }
 
     /// The chunk after the noise fill and the material rule, and the biome region around it.
-    fn surface(&self, cx: i32, cz: i32) -> (Chunk, BiomeRegion) {
+    fn surface(&self, cx: i32, cz: i32) -> (Chunk, Arc<BiomeRegion>) {
         let settings = self.settings;
         let (min_y, height) = (settings.terrain.level_min_y, settings.terrain.level_height);
         let mut chunk = Chunk::new([cx, cz], min_y, height);
@@ -568,7 +596,6 @@ impl ChunkGenerator<'_> {
             .material
             .default_block()
             .expect("chunks filled by default block have one");
-        let (x0, z0) = (cx.wrapping_shl(4), cz.wrapping_shl(4));
         let columns = self.terrain.base_columns(cx, cz);
         for dz in 0..16 {
             for dx in 0..16 {
@@ -586,11 +613,7 @@ impl ChunkGenerator<'_> {
             }
         }
         chunk.prime_heightmap(&settings.palette);
-        let quarts = height >> 2;
-        let region = self.biomes.biomes_in(
-            [(x0 >> 2) - 1, min_y >> 2, (z0 >> 2) - 1],
-            [6, quarts as u32, 6],
-        );
+        let region = self.biome_window(cx, cz);
         let biomes = ChunkBiomes::new(&region, min_y, height);
         self.material
             .build_surface(&mut chunk, &settings.palette, &biomes, &self.terrain);

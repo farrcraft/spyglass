@@ -829,6 +829,7 @@ fn the_real_world_renders_the_same_in_tiles() {
             } else {
                 Vec::new()
             },
+            loot: None,
             slime_chunks: scale <= spyglass::MAX_SLIME_SCALE,
             spawn: true,
             confirm: true,

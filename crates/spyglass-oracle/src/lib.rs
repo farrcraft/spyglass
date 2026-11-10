@@ -15,9 +15,11 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 pub mod blocks;
+pub mod containers;
 pub mod features;
 pub mod fixtures;
 pub mod probe;
+pub mod stacks;
 
 /// What a golden biome file starts with.
 const MAGIC: &[u8; 8] = b"SPYBIOME";

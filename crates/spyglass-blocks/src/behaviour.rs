@@ -54,6 +54,22 @@ pub struct Behaviour {
     pub blocks_motion: bool,
     /// The block is a `LeavesBlock`.
     pub leaves: bool,
+    /// Its block entity is a `RandomizableContainer`: it takes a loot table and seed. Only in
+    /// reports of format 2 on ([`BlockBehaviour::knows_loot_containers`]).
+    pub loot_container: bool,
+    /// A loot container's slots, `Container.getContainerSize()`: what its table fills. 0 for a
+    /// block that isn't one. Only in reports of format 4 on
+    /// ([`BlockBehaviour::knows_container_slots`]).
+    pub container_slots: u8,
+    /// The faces `isFaceSturdy` holds for, a full face's support: bit `i` for
+    /// `Direction.values()[i]`, down, up, north, south, west, east ([`Behaviour::sturdy`]).
+    /// Only in reports of format 3 on ([`BlockBehaviour::knows_support`]).
+    pub sturdy_faces: u8,
+    /// `Block.canSupportCenter(DOWN)`: its bottom face holds what hangs from its centre. From
+    /// format 3.
+    pub center_down: bool,
+    /// The block is a `FallingBlock`. From format 3.
+    pub falling: bool,
     /// A neighbour's change can change the block (`updateShape`): a fence joins, a plant
     /// breaks. False for blocks whose override only schedules a tick ([`TICK_ONLY`]).
     pub updates_shape: bool,
@@ -65,6 +81,80 @@ pub struct Behaviour {
 #[derive(Debug, Clone, Default)]
 pub struct BlockBehaviour {
     states: HashMap<String, Behaviour>,
+    /// The report's format.
+    format: u64,
+}
+
+/// A direction, in `Direction.values()`'s order, for [`Behaviour::sturdy`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Face {
+    /// −y.
+    Down,
+    /// +y.
+    Up,
+    /// −z.
+    North,
+    /// +z.
+    South,
+    /// −x.
+    West,
+    /// +x.
+    East,
+}
+
+impl Face {
+    /// `Direction.values()`.
+    pub const ALL: [Face; 6] = [
+        Face::Down,
+        Face::Up,
+        Face::North,
+        Face::South,
+        Face::West,
+        Face::East,
+    ];
+
+    /// The name the report gives it.
+    fn name(self) -> &'static str {
+        match self {
+            Face::Down => "down",
+            Face::Up => "up",
+            Face::North => "north",
+            Face::South => "south",
+            Face::West => "west",
+            Face::East => "east",
+        }
+    }
+
+    /// One block along it.
+    pub fn step(self) -> [i32; 3] {
+        match self {
+            Face::Down => [0, -1, 0],
+            Face::Up => [0, 1, 0],
+            Face::North => [0, 0, -1],
+            Face::South => [0, 0, 1],
+            Face::West => [-1, 0, 0],
+            Face::East => [1, 0, 0],
+        }
+    }
+
+    /// The other way.
+    pub fn opposite(self) -> Face {
+        match self {
+            Face::Down => Face::Up,
+            Face::Up => Face::Down,
+            Face::North => Face::South,
+            Face::South => Face::North,
+            Face::West => Face::East,
+            Face::East => Face::West,
+        }
+    }
+}
+
+impl Behaviour {
+    /// `isFaceSturdy(face)`: whether the face fully supports what's against it.
+    pub fn sturdy(&self, face: Face) -> bool {
+        self.sturdy_faces >> (face as u8) & 1 == 1
+    }
 }
 
 impl BlockBehaviour {
@@ -85,6 +175,13 @@ impl BlockBehaviour {
         })?;
         let names = state_names(resources)?;
         let report = object(&report, &root)?;
+        let format = report.get("format").and_then(Value::as_u64);
+        if !matches!(format, Some(1..=4)) {
+            return Err(root.child("format").error(LoadErrorKind::Unsupported {
+                what: "block behaviour report format",
+                name: format!("{format:?}"),
+            }));
+        }
         let list = report
             .get("states")
             .and_then(Value::as_array)
@@ -103,6 +200,22 @@ impl BlockBehaviour {
                 ))
             })?;
             let flag = |k: &str| o.get(k).and_then(Value::as_bool).unwrap_or(false);
+            let mut sturdy_faces = 0u8;
+            for face in o
+                .get("sturdy")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let i = Face::ALL
+                    .iter()
+                    .position(|f| Some(f.name()) == face.as_str())
+                    .ok_or_else(|| {
+                        at.child("sturdy")
+                            .error(LoadErrorKind::Shape("a direction"))
+                    })?;
+                sturdy_faces |= 1 << i;
+            }
             let fluid = match o.get("fluid") {
                 None => None,
                 Some(f) => Some(fluid(f, &at.child("fluid"))?),
@@ -117,6 +230,21 @@ impl BlockBehaviour {
                     solid_render: flag("solid_render"),
                     blocks_motion: flag("blocks_motion"),
                     leaves: flag("leaves"),
+                    loot_container: flag("loot_container"),
+                    container_slots: match o.get("slots") {
+                        None => 0,
+                        Some(v) => {
+                            v.as_u64()
+                                .and_then(|n| u8::try_from(n).ok())
+                                .ok_or_else(|| {
+                                    at.child("slots")
+                                        .error(LoadErrorKind::Shape("a slot count"))
+                                })?
+                        }
+                    },
+                    sturdy_faces,
+                    center_down: flag("center_down"),
+                    falling: flag("falling"),
                     updates_shape: o
                         .get("shape_updater")
                         .and_then(Value::as_str)
@@ -125,7 +253,29 @@ impl BlockBehaviour {
                 },
             );
         }
-        Ok(BlockBehaviour { states })
+        Ok(BlockBehaviour {
+            states,
+            format: format.unwrap_or(1),
+        })
+    }
+
+    /// Whether [`Behaviour::loot_container`] is known: false for a bundle extracted before the
+    /// report had it.
+    pub fn knows_loot_containers(&self) -> bool {
+        self.format >= 2
+    }
+
+    /// Whether [`Behaviour::container_slots`] is known: false for a bundle extracted before the
+    /// report had it.
+    pub fn knows_container_slots(&self) -> bool {
+        self.format >= 4
+    }
+
+    /// Whether [`Behaviour::sturdy_faces`], [`Behaviour::center_down`] and
+    /// [`Behaviour::falling`] are known: false for a bundle extracted before the report had
+    /// them.
+    pub fn knows_support(&self) -> bool {
+        self.format >= 3
     }
 
     /// The behaviour of the state named `name`, as a palette names it.

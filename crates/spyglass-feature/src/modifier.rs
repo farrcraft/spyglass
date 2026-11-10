@@ -42,6 +42,9 @@ pub enum Modifier {
     HeightRange(HeightProvider),
     /// `biome`: the position, if the biome at its block lists the placed feature.
     Biome,
+    /// `fixed_placement`: each of `positions` in the chunk of the position, in order, in place
+    /// of it. No draws.
+    Fixed(Vec<[i32; 3]>),
     /// `offset` (26.3 on), or 26.2's `random_offset` (`xz_spread` for x and z, `y_spread`):
     /// the position moved by `x`, `y` and `z`, sampled in that order.
     Offset([IntProvider; 3]),
@@ -187,6 +190,28 @@ impl Modifier {
                 &at.child("height"),
             )?),
             "minecraft:biome" => Modifier::Biome,
+            "minecraft:fixed_placement" => {
+                let positions_at = at.child("positions");
+                let list = field(o, "positions", at)?
+                    .as_array()
+                    .ok_or_else(|| positions_at.error(LoadErrorKind::Invalid("expected a list")))?;
+                let positions = list
+                    .iter()
+                    .enumerate()
+                    .map(|(i, p)| {
+                        let p_at = positions_at.child(&format!("[{i}]"));
+                        let xyz = p.as_array().filter(|a| a.len() == 3).ok_or_else(|| {
+                            p_at.error(LoadErrorKind::Invalid("expected [x, y, z]"))
+                        })?;
+                        Ok([
+                            int(&xyz[0], &p_at.child("[0]"))?,
+                            int(&xyz[1], &p_at.child("[1]"))?,
+                            int(&xyz[2], &p_at.child("[2]"))?,
+                        ])
+                    })
+                    .collect::<Result<Vec<_>, LoadError>>()?;
+                Modifier::Fixed(positions)
+            }
             "minecraft:random_offset" => {
                 // 26.2's: x, y, then z, the spread across sampled for each of x and z.
                 let xz = IntProvider::parse(field(o, "xz_spread", at)?, &at.child("xz_spread"))?;

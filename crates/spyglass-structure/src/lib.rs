@@ -10,24 +10,41 @@ mod assembly;
 mod biomes;
 mod check;
 mod corner;
+mod end_city;
+mod fortress;
 mod jigsaw;
 mod load;
 mod locate;
+mod mansion;
 mod mineshaft;
+mod ocean_ruin;
 mod placement;
 mod portal;
+mod scattered;
 mod slime;
+mod stronghold;
+mod template_piece;
 
-pub use assembly::{Assembly, JigsawPools, Layout};
+pub use assembly::{Assembly, JigsawPools, LaidPiece, Layout};
 pub use biomes::BiomeSet;
 pub use check::{Check, Selection, Starts};
-pub use jigsaw::{BoundingBox, GenerationHeights, HeightProvider, Jigsaw, JigsawCheck};
+pub use end_city::CityPiece;
+pub use fortress::{FortressKind, FortressPiece};
+pub use jigsaw::{
+    BoundingBox, GenerationHeights, HeightProvider, Jigsaw, JigsawCheck, Marker, NbtBlock,
+    PoolElement, Processors, Projection, Rotation, Template,
+};
 pub use load::{Entry, STEPS, Structure, StructureSet, StructureSets, StructureType};
 pub use locate::{LOCATE_RADIUS, MAX_UNCERTAIN, StructureHit, StructureSearch};
-pub use mineshaft::Mineshaft;
+pub use mansion::{MansionPiece, Mirror};
+pub use mineshaft::{Mineshaft, ShaftPiece};
+pub use ocean_ruin::{OceanRuin, RuinPiece};
 pub use placement::{
     ConcentricRings, ExclusionZone, FrequencyReduction, Placement, PlacementKind, Placements,
     RandomSpread, RingPosition, SeedPlacements, SpreadType,
 };
-pub use portal::{RuinedPortal, Setup, VerticalPlacement};
+pub use portal::{PortalLayout, RuinedPortal, Setup, VerticalPlacement};
+pub use scattered::{Facing, ScatteredPiece, world_pos};
 pub use slime::is_slime_chunk;
+pub use stronghold::{StrongholdKind, StrongholdPiece};
+pub use template_piece::{TemplatePiece, template_pieces};

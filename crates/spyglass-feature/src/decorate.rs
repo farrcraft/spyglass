@@ -445,6 +445,17 @@ impl Boxes<'_, '_> {
                     self.apply(rest, add(lo, least), add(hi, greatest));
                 }
             }
+            Modifier::Fixed(positions) => {
+                // Each position in a chunk the range reaches.
+                let chunk = |v: i32| v >> 4;
+                for &p in positions {
+                    if (chunk(lo[0])..=chunk(hi[0])).contains(&chunk(p[0]))
+                        && (chunk(lo[2])..=chunk(hi[2])).contains(&chunk(p[2]))
+                    {
+                        self.apply(rest, p, p);
+                    }
+                }
+            }
             Modifier::Biome => {
                 // A single column can be ruled out, at every height it can be.
                 if lo[0] == hi[0] && lo[2] == hi[2] && hi[1] - lo[1] <= 512 {
@@ -555,6 +566,13 @@ impl Run<'_, '_, '_, '_> {
                     rest,
                     [x.wrapping_add(dx), y.wrapping_add(dy), z.wrapping_add(dz)],
                 );
+            }
+            Modifier::Fixed(positions) => {
+                for &p in positions {
+                    if p[0] >> 4 == x >> 4 && p[2] >> 4 == z >> 4 {
+                        self.apply(rest, p);
+                    }
+                }
             }
             Modifier::Biome => {
                 let lookup = self.decorator.generator.block_biome(pos);

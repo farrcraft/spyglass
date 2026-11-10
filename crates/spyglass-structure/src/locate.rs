@@ -6,6 +6,7 @@ use serde_json::Value;
 use spyglass_data::bundle::Bundle;
 
 use crate::check::{Check, Starts};
+use crate::jigsaw::BoundingBox;
 use spyglass_data::codec::{At, LoadErrorKind, LoadResult, full_id};
 
 use crate::load::StructureSets;
@@ -194,6 +195,184 @@ impl Starts<'_> {
     /// overall is replaced only by a strictly nearer one; the search ends after the first ring
     /// with an answer. Distances are `BlockPos.distSqr` from `from` to the locate position.
     pub fn locate(&self, targets: &[usize], from: [i32; 3], radius: i32) -> StructureSearch {
+        self.search(targets, from, radius, &[])
+    }
+
+    /// An exploration map's search (`findNearestMapStructure` with `skipKnownStructures`,
+    /// `docs/specs/loot.md#maps`): as [`locate`](Self::locate), passing over the starts already
+    /// `claimed` by a reference, each a set and its placement chunk. A start takes one
+    /// reference, and a map claims the one it finds; in a fresh world nothing is claimed but
+    /// what the container stands in.
+    pub fn map_search(
+        &self,
+        targets: &[usize],
+        from: [i32; 3],
+        radius: i32,
+        claimed: &[(usize, [i32; 2])],
+    ) -> StructureSearch {
+        self.search(targets, from, radius, claimed)
+    }
+
+    /// Where an exploration map from a container at `from` points
+    /// (`ExplorationMapFunction`, `docs/specs/loot.md#maps`): the search for `targets` within
+    /// `radius` cells. One that skips known structures (`skip`) first claims the destination
+    /// start whose box holds the container (where `claims_containing`, the versions that do),
+    /// then passes over every start in `claims`, and claims what it finds. `claims` carries a
+    /// world's references from map to map; a fresh world starts with none.
+    ///
+    /// `Ok(None)` if it surely finds nothing; `Err` with the search where spyglass can't tell
+    /// which hit is the game's, or which start the container stands in.
+    pub fn map_target(
+        &self,
+        targets: &[usize],
+        from: [i32; 3],
+        radius: i32,
+        skip: bool,
+        claims_containing: bool,
+        claims: &mut Vec<(usize, [i32; 2])>,
+    ) -> Result<Option<StructureHit>, Option<StructureSearch>> {
+        if skip && claims_containing {
+            match self.start_holding(targets, from) {
+                Err(()) => return Err(None),
+                Ok(Some(start)) if !claims.contains(&start) => claims.push(start),
+                Ok(_) => {}
+            }
+        }
+        let search = self.map_search(targets, from, radius, if skip { claims } else { &[] });
+        // Certain only if every hit is: then the game's answer is the nearest certain one.
+        if !search.complete || search.hits.iter().any(|h| !h.certain) {
+            return Err(Some(search));
+        }
+        let Some(i) = search.certain_answer else {
+            return Ok(None);
+        };
+        let hit = search.hits[i].clone();
+        if skip {
+            claims.push((hit.set, hit.chunk));
+        }
+        Ok(Some(hit))
+    }
+
+    /// The start of one of `targets` whose box holds `pos`, as `StructureManager.getStructureAt`
+    /// finds it among the references of `pos`'s chunk: its set and placement chunk, if spyglass
+    /// can tell. `Err` where a start it can't lay out, or one only maybe there, could hold it.
+    fn start_holding(
+        &self,
+        targets: &[usize],
+        pos: [i32; 3],
+    ) -> Result<Option<(usize, [i32; 2])>, ()> {
+        // A start reaches at most 8 chunks from its own (`createReferences`).
+        let (cx, cz) = (pos[0] >> 4, pos[2] >> 4);
+        let mut found = None;
+        for set in self.placements_for(targets) {
+            for (chunk, selection) in self.starts_in(set, [cx - 8, cz - 8], [cx + 8, cz + 8]) {
+                for &(structure, check) in &selection.tries {
+                    if !targets.contains(&structure) || check == Check::Rejected {
+                        continue;
+                    }
+                    let (bounds, exact) = self.start_bounds(structure, chunk);
+                    if !bounds.contains(pos) {
+                        continue;
+                    }
+                    if !exact {
+                        return Err(());
+                    }
+                    let sure = selection.tries.len() == 1 && check == Check::Passes;
+                    if !sure || found.is_some() {
+                        return Err(());
+                    }
+                    found = Some((set, chunk));
+                }
+            }
+        }
+        Ok(found)
+    }
+
+    /// A start's box as references see it (`StructureStart.getBoundingBox`, made when the
+    /// start is: `docs/specs/structure-placement.md#bounds`), and whether it's exact: a jigsaw's,
+    /// mineshaft's, end city's, mansion's, fortress's, stronghold's or ocean ruin's layout, a single piece's or
+    /// template's box before its height is settled, a ruined portal's template. Otherwise a box
+    /// it surely stays inside.
+    fn start_bounds(&self, structure: usize, chunk: [i32; 2]) -> (BoundingBox, bool) {
+        use crate::{ScatteredPiece, StructureType};
+        let config = &self.placements().sets().structures()[structure];
+        let seed = self.placements().seed();
+        let (x, z) = (chunk[0].wrapping_shl(4), chunk[1].wrapping_shl(4));
+        let piece = |size: [i32; 3]| (ScatteredPiece::new(seed, chunk, size).bounds, true);
+        // Within `blocks` of the start chunk on each side, over the level's height.
+        let around = |blocks: i32| {
+            let heights = self.placements().sets().heights();
+            let bottom = heights.level_min_y;
+            (
+                BoundingBox {
+                    min: [x - blocks, bottom, z - blocks],
+                    max: [
+                        x + 15 + blocks,
+                        bottom + heights.level_height - 1,
+                        z + 15 + blocks,
+                    ],
+                },
+                false,
+            )
+        };
+        // A start reaches at most 8 chunks from its own (`createReferences`).
+        let anywhere = around(8 * 16);
+        match config.kind {
+            StructureType::Jigsaw
+            | StructureType::Mineshaft
+            | StructureType::EndCity
+            | StructureType::Fortress
+            | StructureType::Stronghold
+            | StructureType::WoodlandMansion
+            | StructureType::OceanRuin => match self.assemble(structure, chunk) {
+                Some(crate::Assembly::Built(layout)) => (layout.bounds, true),
+                _ => anywhere,
+            },
+            StructureType::DesertPyramid => piece([21, 15, 21]),
+            StructureType::JungleTemple => piece([12, 10, 15]),
+            StructureType::SwampHut => piece([7, 7, 9]),
+            // One block, at the chunk's (9, 90, 9).
+            StructureType::BuriedTreasure => {
+                let at = [x + 9, 90, z + 9];
+                (BoundingBox { min: at, max: at }, true)
+            }
+            StructureType::OceanMonument => (
+                BoundingBox {
+                    min: [x - 29, 39, z - 29],
+                    max: [x - 29 + 57, 39 + 22, z - 29 + 57],
+                },
+                true,
+            ),
+            StructureType::Shipwreck | StructureType::Igloo => {
+                let pieces = crate::template_pieces(config, seed, chunk);
+                let boxes = pieces.iter().map(|p| {
+                    let far = p.template.size.map(|s| s - 1);
+                    let (a, b) = (p.world(p.pos, [0, 0, 0]), p.world(p.pos, far));
+                    BoundingBox {
+                        min: [0, 1, 2].map(|i| a[i].min(b[i])),
+                        max: [0, 1, 2].map(|i| a[i].max(b[i])),
+                    }
+                });
+                match boxes.reduce(BoundingBox::encapsulate) {
+                    Some(b) => (b, true),
+                    None => anywhere,
+                }
+            }
+            StructureType::RuinedPortal => match self.ruined_portal(structure, chunk) {
+                Some(layout) => (layout.bounds, true),
+                None => anywhere,
+            },
+            _ => anywhere,
+        }
+    }
+
+    fn search(
+        &self,
+        targets: &[usize],
+        from: [i32; 3],
+        radius: i32,
+        claimed: &[(usize, [i32; 2])],
+    ) -> StructureSearch {
         let sets = self.placements().sets();
         let placements = self.placements_for(targets);
         let mut search = StructureSearch {
@@ -234,6 +413,9 @@ impl Starts<'_> {
                 dist_sqr(centre(a.0), from).total_cmp(&dist_sqr(centre(b.0), from))
             });
             for (chunk, exact) in chunks {
+                if claimed.contains(&(set, chunk)) {
+                    continue;
+                }
                 let Some((structures, certain)) = self.targets_at(set, chunk, targets) else {
                     continue;
                 };
@@ -288,6 +470,7 @@ impl Starts<'_> {
                         if !self
                             .placements()
                             .is_structure_chunk(set, chunk[0], chunk[1])
+                            || claimed.contains(&(set, chunk))
                         {
                             continue;
                         }

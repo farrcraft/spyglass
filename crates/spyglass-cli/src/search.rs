@@ -253,6 +253,7 @@ pub(crate) fn feature_json(f: &Feature) -> json::FeatureAnswer<'_> {
             certain: s.certain,
         }),
         Feature::Placed(f) => json::FeatureAnswer::Feature(json::FeatureHit::new(f, None)),
+        Feature::Container(c) => json::FeatureAnswer::Container(json::Container::new(c, None)),
         Feature::SlimeChunk(chunk) => json::FeatureAnswer::SlimeChunk { chunk: *chunk },
         Feature::Biome {
             position: [x, y, z],

@@ -4,7 +4,8 @@
 #   viewer.ps1 start -Out <dir> [-Seed 12345] [-Version 26.3] [-Dimension overworld]
 #                    [-CentreX 0] [-CentreZ 0] [-Scale 4] [-Surface] [-Relief] [-Unconfirmed]
 #                    [-Structures minecraft:ancient_city,minecraft:igloo]
-#                    [-Features minecraft:monster_room,minecraft:monster_room_deep] [-Wait 6]
+#                    [-Features minecraft:monster_room,minecraft:monster_room_deep]
+#                    [-Containers] [-Loot minecraft:diamond] [-Wait 6]
 #   viewer.ps1 shot  -Out <file.png>
 #   viewer.ps1 click -X <px> -Y <px>        (left click, screen pixels)
 #   viewer.ps1 rclick -X <px> -Y <px>       (right click: the map's locate menu)
@@ -31,6 +32,8 @@ param(
     [switch]$Unconfirmed,
     [string[]]$Structures = @(),
     [string[]]$Features = @(),
+    [switch]$Containers,
+    [string]$Loot = '',
     [int]$Notches = 3,
     [string]$Keys,
     [int]$Wait = 6
@@ -76,7 +79,8 @@ switch ($Action) {
         $viewer = "(bundles:\`"$bundles\`",version:Some(\`"$Version\`"),seed:\`"$Seed\`"," +
             "dimension:\`"minecraft:$Dimension\`",view:(centre:($CentreX,$CentreZ),scale:$Scale,y:64)," +
             "views:{},ties:false,slime_chunks:false,spawn:true,confirm:$(& $flag (-not $Unconfirmed))," +
-            "relief:$(& $flag $Relief),surface:$(& $flag $Surface),structures:[$ids],features:[$features],highlight:[])"
+            "relief:$(& $flag $Relief),surface:$(& $flag $Surface),structures:[$ids],features:[$features]," +
+            "containers:$(& $flag $Containers),loot:\`"$Loot\`",highlight:[])"
         $window = '(normal_geometry:(outer_position_pixels:Some((x:0.0,y:0.0)),scale_factor:1.0,' +
             'inner_size_points:(x:1400.0,y:900.0)),fullscreen:false,maximized:false)'
         $settings = Join-Path $Out 'viewer.ron'

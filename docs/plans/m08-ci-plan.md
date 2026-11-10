@@ -48,9 +48,10 @@ Make every oracle job fit its hour again, and keep it that way as versions are a
 - [x] `ci.yml`: the planned matrix, the label, the build cache. No `labeled` trigger: adding a label would cancel the running checks through the concurrency group, so the label applies from the next push
 - [x] `versions.rs`: `checked_is_the_ci_matrix` removed, since the workflow no longer lists versions; `CHECKED`'s doc comment says CI plans from it
 - [x] Run `ci-plan --mode full` and `--mode pr` locally and check the job lists by eye: full is 13 jobs of ~31 to 40 minutes, a pull request touching no adapter 8
-- [ ] Push to PR #4's branch; every oracle job passes and the longest stays under 45 minutes
-- [ ] Compare the actual unit times in the logs with the estimates; correct `COSTS`
-- [ ] ADR 0058 to Accepted once CI passes on `main`
+- [x] Push to PR #4's branch; every oracle job passes and the longest stays under 45 minutes
+- [x] Compare the actual unit times in the logs with the estimates; correct `COSTS`
+- [x] ADR 0058 to Accepted once CI passes on `main`
+- [ ] The next pull request restores the build cache, and its test build takes under a minute
 
 ## Verification
 
@@ -61,7 +62,7 @@ Make every oracle job fit its hour again, and keep it that way as versions are a
 
 ## Durable outputs
 
-- [ ] [ADR 0058](../adr/0058-oracle-ci-planned-by-cost.md) accepted
+- [x] [ADR 0058](../adr/0058-oracle-ci-planned-by-cost.md) accepted
 - [x] [oracle.md](../specs/oracle.md#one-versions-ci-job): `cargo xtask ci --units`, and how CI plans the jobs
 - [x] [adding-a-version.md](../adding-a-version.md): adding `CHECKED` is the CI step; a `COSTS` entry once the first run's times are known
 - [x] [bundle-format.md](../specs/bundle-format.md#checked-versions): `CHECKED` is the list CI plans from
@@ -69,6 +70,7 @@ Make every oracle job fit its hour again, and keep it that way as versions are a
 
 ## Notes
 
+- 2026-11-04: the full run on `main` after merging PR #4 passed all 13 jobs and saved the build cache from each. PR #4's own run peaked at 39 minutes; on `main`, 26.2's job with `biomes` and `locate` took 44.4 in its ci step, estimated at 36. Their comparisons were missing from the estimates: `every_golden_cell_matches_the_game` takes 3.7 minutes and `locate_agrees_with_the_game` 4 in 26.2. `COSTS` now has 26.2's `biomes` at 7 and `locate` at 8.5, which puts them in separate jobs, all estimated at 37 to 38. One 26.2 heights seed, `-4893098694207956070`, took 9 minutes where the others take about 4.2; the estimate of 5 stays, since one seed doesn't fill a job.
 - 2026-10-31: first-fit packing filled each job to the 40-minute budget and left a small one over; dealing units to the least-loaded job of the fewest that fit gives each job the same slack instead.
 - 2026-11-01: the first planned run passed 12 of 13 jobs; 26.3 and the snapshots took 14 to 30 minutes, 26.2's 34 to 42. 26.2's job with seed `56` was cancelled at 60: `two_dungeon_seeds_are_the_game_s` took 22 minutes there (4 to 5 in later versions), estimated at 5 because the first run never finished it. `COSTS` now uses the slowest runner's per-seed times, and `setup` includes the comparisons every job runs on its own seeds (`features_in`, `placing`: about 5 minutes in 26.2), which were missing. The new plan gives 26.2 six jobs, one of them the dungeon seed alone, and 26.3 and 26.4-snapshot-5 two each: still 13 jobs, estimated at 30 to 37 minutes.
 - 2026-10-31: PR #4's logs: 26.2 `exclude heights` spent 38 minutes on goldens (33 on Overworld features), 4 building tests, 9 on `feature_search`, and was cancelled in `features.rs` at 60. 26.3's passed at 55. 26.2's heights shards took 18 and 28 minutes for five seeds each.

@@ -13,7 +13,7 @@ import java.nio.file.Path;
 
 public final class BlockReport {
     /** The report's format; bump it when its shape changes. */
-    private static final int FORMAT = 1;
+    private static final int FORMAT = 4;
 
     /** Flags every version has: the name in the report, then the `BlockState` method. */
     private static final String[][] FLAGS = {
@@ -47,6 +47,26 @@ public final class BlockReport {
         Object fluids =
                 Class.forName("net.minecraft.core.registries.BuiltInRegistries").getField("FLUID").get(null);
         Method fluidKey = fluids.getClass().getMethod("getKey", Object.class);
+        Class<?> entityBlock = Class.forName("net.minecraft.world.level.block.EntityBlock");
+        Class<?> blockPos = Class.forName("net.minecraft.core.BlockPos");
+        Class<?> blockState = Class.forName("net.minecraft.world.level.block.state.BlockState");
+        Method newBlockEntity = entityBlock.getMethod("newBlockEntity", blockPos, blockState);
+        Object origin = blockPos.getField("ZERO").get(null);
+        Class<?> randomizable = Class.forName("net.minecraft.world.RandomizableContainer");
+        Method containerSize = Class.forName("net.minecraft.world.Container").getMethod("getContainerSize");
+        java.util.Set<Object> unmade = new java.util.HashSet<>();
+        Class<?> falling = Class.forName("net.minecraft.world.level.block.FallingBlock");
+        // Faces' support, on an empty level at the origin: `isFaceSturdy` for a full face, in
+        // `Direction.values()`'s order, and a centre's below (`Block.canSupportCenter`).
+        Class<?> getter = Class.forName("net.minecraft.world.level.BlockGetter");
+        Object empty = Class.forName("net.minecraft.world.level.EmptyBlockGetter").getField("INSTANCE").get(null);
+        Class<?> direction = Class.forName("net.minecraft.core.Direction");
+        Object[] directions = (Object[]) direction.getMethod("values").invoke(null);
+        Class<?> supportType = Class.forName("net.minecraft.world.level.block.SupportType");
+        Object center = supportType.getField("CENTER").get(null);
+        Method sturdy = blockState.getMethod("isFaceSturdy", getter, blockPos, direction);
+        Method supports = blockState.getMethod("isFaceSturdy", getter, blockPos, direction, supportType);
+        Object down = direction.getField("DOWN").get(null);
 
         StringBuilder out = new StringBuilder();
         out.append("{\"format\":").append(FORMAT).append(",\"states\":[");
@@ -67,6 +87,40 @@ public final class BlockReport {
             }
             Object block = c.getMethod("getBlock").invoke(state);
             flag(out, "leaves", leaves.isInstance(block));
+            // Whether its block entity takes a loot table and seed: what a template's block draws
+            // a seed for. A block entity that can't be made outside a world (a vault, whose
+            // config makes items) is named on stderr and taken as no container.
+            boolean container = false;
+            int slots = 0;
+            if (entityBlock.isInstance(block)) {
+                try {
+                    Object entity = newBlockEntity.invoke(block, origin, state);
+                    container = randomizable.isInstance(entity);
+                    if (container) {
+                        slots = (Integer) containerSize.invoke(entity);
+                    }
+                } catch (InvocationTargetException e) {
+                    if (unmade.add(block)) {
+                        System.err.println("no block entity for " + block + ": " + e.getCause());
+                    }
+                }
+            }
+            flag(out, "loot_container", container);
+            // The slots a loot table fills: `Container.getContainerSize()`.
+            if (container) {
+                out.append(",\"slots\":").append(slots);
+            }
+            flag(out, "falling", falling.isInstance(block));
+            StringBuilder faces = new StringBuilder();
+            for (Object d : directions) {
+                if ((Boolean) sturdy.invoke(state, empty, origin, d)) {
+                    faces.append(faces.length() == 0 ? "" : ",").append('"').append(d).append('"');
+                }
+            }
+            if (faces.length() > 0) {
+                out.append(",\"sturdy\":[").append(faces).append(']');
+            }
+            flag(out, "center_down", (Boolean) supports.invoke(state, empty, origin, down, center));
             String updater = declaring(block.getClass(), behaviour, "updateShape");
             if (updater != null) {
                 out.append(",\"shape_updater\":\"").append(updater).append('"');

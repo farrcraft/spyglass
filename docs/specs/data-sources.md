@@ -91,20 +91,28 @@ It runs `SharedConstants.tryDetectVersion` and `Bootstrap.bootStrap`, then write
 
 ```json
 {
-  "format": 1,
+  "format": 3,
   "states": [
     { "id": 0, "air": true, "replaceable": true },
+    {
+      "id": 1,
+      "solid": true,
+      "solid_render": true,
+      "sturdy": ["down", "up", "north", "south", "west", "east"],
+      "center_down": true
+    },
     {
       "id": 89,
       "liquid": true,
       "replaceable": true,
+      "shape_updater": "LiquidBlock",
       "fluid": { "id": "minecraft:water", "amount": 8, "source": true }
     }
   ]
 }
 ```
 
-Only the flags that are true are written: `air` (`isAir`), `liquid`, `solid` (`isSolid`, the legacy solid flag), `replaceable` (`canBeReplaced()`), `solid_render` (`isSolidRender`), `blocks_motion` (`blocksMotion`, a method only 26.2 has: written where the version has it) and `leaves` (the block is a `LeavesBlock`). `shape_updater` is the simple name of the first class from the block's up to `BlockBehaviour` that declares `updateShape`, when one does: which override a neighbour's change runs. `fluid` is the state's fluid when it isn't empty: its id, `getAmount` and `isSource`. For 26.3 it takes about 5 seconds and lists 35,723 states (1.8 MB).
+Only the flags that are true are written: `air` (`isAir`), `liquid`, `solid` (`isSolid`, the legacy solid flag), `replaceable` (`canBeReplaced()`), `solid_render` (`isSolidRender`), `blocks_motion` (`blocksMotion`, a method only 26.2 has: written where the version has it) `leaves` (the block is a `LeavesBlock`) and, from format 2, `loot_container` (the block is an `EntityBlock` whose `newBlockEntity` is a `RandomizableContainer`: it takes a loot table and seed, [loot.md](loot.md#containers)), and from format 4 with it `slots`, that block entity's `getContainerSize()`: the slots its table fills; from format 3, `falling` (the block is a `FallingBlock`) and `center_down` (`isFaceSturdy` of its bottom face for `SupportType.CENTER`, which `Block.canSupportCenter` asks: what can hang below it). `sturdy`, from format 3, lists the faces `isFaceSturdy` holds for, a full face, in `Direction.values()`'s order, where it holds for any; both are asked of an empty level (`EmptyBlockGetter`) at the origin. `shape_updater` is the simple name of the first class from the block's up to `BlockBehaviour` that declares `updateShape`, when one does: which override a neighbour's change runs. `fluid` is the state's fluid when it isn't empty: its id, `getAmount` and `isSource`. For 26.3 it takes about 5 seconds and lists 35,723 states (3.7 MB).
 
 `cargo xtask java-report` rebuilds the class with a JDK 25's `javac --release 21`; `--check`, a commit hook, fails when the committed class isn't what the source compiles to, and skips on machines without a JDK 25.
 

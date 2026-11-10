@@ -44,9 +44,9 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 rustup toolchain install $msrv --profile minimal
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-# Cargo tools the hooks call. They only build reliably with --locked, so pre-commit can't install
+# Cargo tools the hooks call (mdBook builds the user guide). They only build reliably with --locked, so pre-commit can't install
 # them itself. Keep the versions in step with setup.sh. The first install compiles for a few minutes.
-cargo install --locked cargo-nextest@0.9.149 cargo-shear@1.14.0
+cargo install --locked cargo-nextest@0.9.149 cargo-shear@1.14.0 mdbook@0.5.4
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 # cargo xtask dist writes the third-party licenses with cargo-about (ADR 0038). Its binary needs

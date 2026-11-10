@@ -1,6 +1,6 @@
 # 0058. Oracle CI planned by cost, in full on main and in part on pull requests
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-31
 - Amends: point 4 of [0028](0028-supported-versions-and-ci.md), the schedule; point 3 of [0041](0041-ci-runs-what-a-change-can-affect.md), how a version's oracle work is split into jobs
 - See also: [0008](0008-game-derived-test-values-stay-local.md)

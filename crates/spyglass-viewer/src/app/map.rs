@@ -189,6 +189,9 @@ impl App {
             selection,
             tile,
         };
+        // Loot containers too, every one or those of the Loot item.
+        let looting = (self.settings.containers || self.selection.loot.is_some())
+            && view.scale <= spyglass::MAX_FEATURE_SCALE;
         // Finished jobs into their caches; those for another world, seed or selection are
         // dropped.
         for (finished, result) in self.pool.finished() {
@@ -218,6 +221,15 @@ impl App {
                     });
                     self.feature_markers.insert(features_key, found);
                 }
+                (JobKey::Loot(loot_key), result)
+                    if loot_key.source == source && loot_key.selection == selection =>
+                {
+                    let marks = result.and_then(|out| match out {
+                        Output::Loot(marks) => Ok(marks),
+                        _ => Err("not loot".to_string()),
+                    });
+                    self.loot_markers.insert(loot_key, marks);
+                }
                 (JobKey::Layout(layout_key), result) if layout_key.source == source => {
                     let layout = result.and_then(|out| match out {
                         Output::Layout(layout) => Ok(layout),
@@ -231,12 +243,15 @@ impl App {
         self.cache.next_frame();
         self.markers.next_frame();
         self.feature_markers.next_frame();
+        self.loot_markers.next_frame();
         self.layouts.next_frame();
         let job = |key| Job {
             key,
             session: session.clone(),
             structures: self.selection.queries.clone(),
             features: self.selection.features.clone(),
+            loot: self.selection.loot.clone(),
+            all_containers: self.settings.containers,
         };
         // The coarse tiles over the view's missing ones first: a sixteenth of the pixels each,
         // and no heights past `MAX_TERRAIN_SCALE`, so the view fills in seconds. Then the
@@ -299,6 +314,15 @@ impl App {
                     .map(|&t| feature_key(t))
                     .filter(|k| !self.feature_markers.contains(k))
                     .map(|k| job(JobKey::Features(k))),
+            );
+        }
+        if looting {
+            jobs.extend(
+                tiles
+                    .iter()
+                    .map(|&t| feature_key(t))
+                    .filter(|k| !self.loot_markers.contains(k))
+                    .map(|k| job(JobKey::Loot(k))),
             );
         }
         self.pool.want(jobs);
@@ -425,6 +449,14 @@ impl App {
                 }
             }
         }
+        let mut loot_marks: Vec<LootMark> = Vec::new();
+        if looting {
+            for &tile in &tiles {
+                if let Some(Ok(marks)) = self.loot_markers.get(&feature_key(tile)) {
+                    loot_marks.extend(marks.iter().cloned());
+                }
+            }
+        }
         self.too_many_markers = starts.len() > MAX_MARKERS;
         if self.too_many_markers {
             starts.clear();
@@ -449,6 +481,13 @@ impl App {
                 markers::pixel_centre(&view, centre, [feature.position[0], feature.position[2]]);
             if rect.expand(12.0).contains(at) {
                 placed.push((at, 11.0, Picked::Feature(feature)));
+            }
+        }
+        for mark in &loot_marks {
+            let [x, _, z] = mark.container.position;
+            let at = markers::pixel_centre(&view, centre, [x, z]);
+            if rect.expand(12.0).contains(at) {
+                placed.push((at, 8.0, Picked::Container(mark)));
             }
         }
         let spawn_at = (self.settings.spawn && self.spawn_allowed())
@@ -519,6 +558,9 @@ impl App {
                 Picked::Feature(f) if Some(i) != hovered => {
                     markers::feature(painter_for(i), *at, f, false);
                 }
+                Picked::Container(mark) if Some(i) != hovered => {
+                    markers::container(painter_for(i), *at, mark, false);
+                }
                 Picked::Spawn(_) => markers::spawn(&painter, *at),
                 Picked::Hit(hit) => markers::pin(painter_for(i), *at, hit.certain),
                 _ => {}
@@ -541,6 +583,7 @@ impl App {
                     markers::structure(ui, painter_for(i), *at, start, size, true, faded[i]);
                 }
                 Picked::Feature(f) => markers::feature(painter_for(i), *at, f, true),
+                Picked::Container(mark) => markers::container(painter_for(i), *at, mark, true),
                 _ => {}
             }
             response
@@ -558,6 +601,13 @@ impl App {
         {
             self.editing = Some(id.clone());
         }
+        // A click on a container opens its contents.
+        if response.clicked()
+            && let Some(Picked::Container(mark)) = hovered.map(|i| &placed[i].2)
+        {
+            self.open_container = Some(mark.container.clone());
+        }
+        self.container_window(ui.ctx());
         self.cursor = response
             .hover_pos()
             .map(|hover| view.block_at(offset(hover)).map(|b| b.floor() as i32));
@@ -645,6 +695,17 @@ impl App {
                     }
                 }
             });
+            if let Some(query) = &self.selection.loot {
+                let text = format!("Nearest {}", spyglass::display_name(query.argument()));
+                if ui
+                    .button(text)
+                    .on_hover_text("The nearest container holding the Loot item")
+                    .clicked()
+                {
+                    action = Some(Action::Locate(Target::Loot(query.argument().to_string())));
+                    ui.close();
+                }
+            }
             ui.menu_button("Nearest biome", |ui| {
                 egui::ScrollArea::vertical()
                     .max_height(320.0)
@@ -1225,6 +1286,67 @@ fn thousands(n: u32) -> String {
     out
 }
 
+impl App {
+    /// The open container's contents, slot by slot, in a window until it's closed.
+    fn container_window(&mut self, ctx: &egui::Context) {
+        let Some(c) = &self.open_container else {
+            return;
+        };
+        let [x, y, z] = c.position;
+        let mut open = true;
+        egui::Window::new(format!(
+            "{} at {x} {y} {z}",
+            spyglass::display_name(&c.holder)
+        ))
+        .open(&mut open)
+        .resizable(false)
+        .collapsible(false)
+        .show(ctx, |ui| {
+            ui.label(egui::RichText::new(&c.table).color(style::MUTED));
+            if let Some(seed) = c.seed {
+                ui.label(style::mono(format!("Loot seed {seed}")).color(style::MUTED));
+            }
+            if c.contents_certain() {
+                ui.colored_label(style::GOOD, "Certain, contents included");
+            } else if let Some(why) = c.reason.as_ref().or(c.contents_doubt.as_ref()) {
+                ui.label(format!("Not certain: {why}."));
+            }
+            ui.separator();
+            match &c.contents {
+                None => {
+                    ui.label("Its contents aren't known.");
+                }
+                Some(slots) if slots.is_empty() => {
+                    ui.label("Empty");
+                }
+                Some(slots) => {
+                    egui::Grid::new("container slots")
+                        .striped(true)
+                        .show(ui, |ui| {
+                            for s in slots {
+                                ui.label(style::mono(format!("{:>2}", s.slot)).color(style::MUTED));
+                                for line in contents_lines(std::slice::from_ref(s)) {
+                                    ui.label(line);
+                                }
+                                ui.end_row();
+                            }
+                        });
+                }
+            }
+            ui.label(
+                egui::RichText::new(
+                    "As the seed generates it: a chest already opened in a world may hold \
+                         something else.",
+                )
+                .color(style::MUTED),
+            );
+        });
+        if !open {
+            self.open_container = None;
+        }
+    }
+}
+
 /// What the map's context menu asked for.
 pub(super) enum Action {
     /// Find the nearest of something from the block clicked.
@@ -1305,6 +1427,36 @@ pub(super) fn describe(ui: &mut egui::Ui, picked: &Picked<'_>, done: bool) {
                     .color(style::MUTED),
             );
         }
+        Picked::Container(mark) => {
+            let c = &mark.container;
+            let [x, y, z] = c.position;
+            ui.strong(spyglass::display_name(&c.holder));
+            ui.label(style::mono(format!("{x} {y} {z}")));
+            let by = match &c.source {
+                spyglass::ContainerSource::Structure(id)
+                | spyglass::ContainerSource::Feature(id) => spyglass::display_name(id),
+                _ => String::new(),
+            };
+            ui.label(format!("In {by}"));
+            ui.label(egui::RichText::new(&c.table).color(style::MUTED));
+            if c.contents_certain() {
+                ui.colored_label(style::GOOD, "Certain, contents included");
+            } else if c.certain {
+                ui.label("Certain, but its contents may not be the game's.");
+            } else {
+                ui.label("Candidate: something spyglass can't know could change it.");
+            }
+            if let Some(reason) = c.reason.as_ref().or(c.contents_doubt.as_ref()) {
+                ui.label(egui::RichText::new(reason).color(style::MUTED));
+            }
+            if let Some(slots) = &c.contents {
+                ui.separator();
+                for line in contents_lines(slots).iter().take(12) {
+                    ui.label(line);
+                }
+                ui.label(egui::RichText::new("Click to keep it open").color(style::MUTED));
+            }
+        }
         Picked::Hit(hit) => {
             ui.strong(&hit.what);
             let y = hit.y.map_or("~".to_string(), |y| y.to_string());
@@ -1337,6 +1489,49 @@ pub(super) fn describe(ui: &mut egui::Ui, picked: &Picked<'_>, done: bool) {
             ui.label(egui::RichText::new("Click to edit").color(style::MUTED));
         }
     }
+}
+
+/// A container's contents, a line per kind of stack with its total: `3 × Bread`, with the
+/// components its table set.
+pub(super) fn contents_lines(slots: &[spyglass::Slot]) -> Vec<String> {
+    let mut totals: Vec<(&spyglass::Item, i32)> = Vec::new();
+    for s in slots {
+        let same = |i: &spyglass::Item| {
+            let (mut a, mut b) = (i.clone(), s.item.clone());
+            (a.count, b.count) = (0, 0);
+            a == b
+        };
+        match totals.iter_mut().find(|(i, _)| same(i)) {
+            Some((_, total)) => *total += s.item.count,
+            None => totals.push((&s.item, s.item.count)),
+        }
+    }
+    if totals.is_empty() {
+        return vec!["Empty".to_string()];
+    }
+    totals
+        .iter()
+        .map(|(item, total)| {
+            let mut extra: Vec<String> = item
+                .enchantments
+                .iter()
+                .chain(&item.stored_enchantments)
+                .map(|(e, level)| format!("{} {level}", spyglass::display_name(e)))
+                .collect();
+            if let Some(potion) = &item.potion {
+                extra.push(spyglass::display_name(potion));
+            }
+            if let Some(map) = &item.map {
+                extra.push(format!("to {} {}", map.target[0], map.target[1]));
+            }
+            let extra = if extra.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", extra.join(", "))
+            };
+            format!("{total} × {}{extra}", spyglass::display_name(&item.id))
+        })
+        .collect()
 }
 
 /// The whole of a texture, in texture coordinates.

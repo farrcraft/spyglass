@@ -1,10 +1,10 @@
 # Seed search
 
-Status: stable. Implemented in `spyglass-search` and `spyglass`, and checked by tests (these are spyglass's semantics, not the game's). Covers the query language, how each constraint is evaluated and scored, seed sources and their order, searching within one seed with `find` queries ([below](#searching-within-a-seed), [ADR 0047](../adr/0047-search-within-a-seed.md)), and what makes results deterministic. The language is [ADR 0020](../adr/0020-search-query-language.md), with dimensions from [ADR 0024](../adr/0024-dimensions-in-the-search-language.md) and [ADR 0025](../adr/0025-inferring-dimensions-in-search-queries.md) ([below](#dimensions)) and features from [ADR 0057](../adr/0057-features-in-the-search-language.md); the engine is [ADR 0021](../adr/0021-search-engine.md).
+Status: stable. Implemented in `spyglass-search` and `spyglass`, and checked by tests (these are spyglass's semantics, not the game's). Covers the query language, how each constraint is evaluated and scored, seed sources and their order, searching within one seed with `find` queries ([below](#searching-within-a-seed), [ADR 0047](../adr/0047-search-within-a-seed.md)), and what makes results deterministic. The language is [ADR 0020](../adr/0020-search-query-language.md), with dimensions from [ADR 0024](../adr/0024-dimensions-in-the-search-language.md) and [ADR 0025](../adr/0025-inferring-dimensions-in-search-queries.md) ([below](#dimensions)) features from [ADR 0057](../adr/0057-features-in-the-search-language.md) and loot from [ADR 0065](../adr/0065-loot-in-the-search-language.md); the engine is [ADR 0021](../adr/0021-search-engine.md).
 
 A query describes a world as a list of constraints. A **required** constraint must be met for a seed to be reported; a **preferred** one adds to the seed's score. A search evaluates seeds from a source in a fixed order and keeps the best ones.
 
-These are spyglass's own semantics, not the game's: the game has no seed search. They're built on answers that are the game's: structure starts and their certainty ([structure-placement.md](structure-placement.md)), `/locate` positions ([locate.md](locate.md)), features and their certainty ([features.md](features.md)), biomes and ties ([biome-lookup.md](biome-lookup.md)), the spawn origin ([spawn.md](spawn.md)) and slime chunks.
+These are spyglass's own semantics, not the game's: the game has no seed search. They're built on answers that are the game's: structure starts and their certainty ([structure-placement.md](structure-placement.md)), `/locate` positions ([locate.md](locate.md)), features and their certainty ([features.md](features.md)), loot containers and their contents ([locate.md](locate.md#loot)), biomes and ties ([biome-lookup.md](biome-lookup.md)), the spawn origin ([spawn.md](spawn.md)) and slime chunks.
 
 ## The language
 
@@ -14,18 +14,18 @@ UTF-8 text, one constraint per line, after an optional `find` line ([below](#sea
 
 - Tokens are separated by spaces or tabs.
 - A **comment** runs from a `#` to the end of the line when the `#` is the first non-blank character of the line, or is followed by a space, a tab or the end of the line. Otherwise `#` begins a structure tag.
-- **Keywords** are lowercase: `require`, `prefer`, `weight`, `no`, `cluster`, `within`, `of`, `each`, `other`, `in`, `to`, `spawn`, `slime`, `biome`, `feature`, `covers`, `at`, `y`, `step`, `height`, `flat`, `find`, `here`, `apart`, `point`, and the dimensions `overworld`, `nether` and `end`. A keyword is never read as an id; write such an id with its namespace (`minecraft:spawn`).
+- **Keywords** are lowercase: `require`, `prefer`, `weight`, `no`, `cluster`, `within`, `of`, `each`, `other`, `in`, `to`, `spawn`, `slime`, `biome`, `feature`, `loot`, `with`, `covers`, `at`, `y`, `step`, `height`, `flat`, `find`, `here`, `apart`, `point`, and the dimensions `overworld`, `nether` and `end`. A keyword is never read as an id; write such an id with its namespace (`minecraft:spawn`).
 - An **integer** is decimal digits, with a leading `-` where a signed value is allowed (coordinates and `y`).
 - A **point** is `X,Z`: two integers and a comma, no spaces.
 - A **percentage** is an integer followed by `%`.
-- An **id** is a resource location, `namespace:path` or just `path` (namespace `minecraft`). A **structure** is an id or a `#`-prefixed tag, as `/locate structure` takes them. A **biome** is an id or a `#`-prefixed biome tag, as `/locate biome` takes them. A **feature** is an id: a placed feature, or a configured feature naming every placed feature of it, as `spyglass locate feature` takes them ([locate.md](locate.md#features)).
+- An **id** is a resource location, `namespace:path` or just `path` (namespace `minecraft`). A **structure** is an id or a `#`-prefixed tag, as `/locate structure` takes them. A **biome** is an id or a `#`-prefixed biome tag, as `/locate biome` takes them. A **feature** is an id: a placed feature, or a configured feature naming every placed feature of it, as `spyglass locate feature` takes them ([locate.md](locate.md#features)). An **item** is an item id or a `#`-prefixed item tag, with an optional enchantment id it must have (on it, or stored in a book) and least level, as `spyglass loot find` takes them ([locate.md](locate.md#loot)).
 
 ### Grammar
 
 ```text
 query       = [ find ] { statement }
 find        = "find" target [ find-place ] [ sampling ] [ "apart" INT ]
-target      = STRUCTURE | "biome" BIOME | "feature" FEATURE | "point"
+target      = STRUCTURE | "biome" BIOME | "feature" FEATURE | "loot" item | "point"
 find-place  = "within" INT | place
 statement   = "require" [ dimension ] constraint
             | "prefer" [ dimension ] constraint [ "weight" INT ]
@@ -35,6 +35,7 @@ constraint  = [ count ] STRUCTURE region
             | [ count ] "feature" FEATURE place
             | "cluster" INT STRUCTURE "within" INT "of" "each" "other" place
             | "cluster" INT "feature" FEATURE "within" INT "of" "each" "other" place
+            | [ count ] "loot" item place
             | [ count ] "slime" region
             | [ "no" ] "biome" BIOME place [ sampling ]
             | "biome" BIOME "covers" PERCENT place [ sampling ]
@@ -43,6 +44,7 @@ constraint  = [ count ] STRUCTURE region
             | "flat" INT place [ "step" INT ]
 
 count       = INT | "no"
+item        = ITEM [ "with" ENCHANTMENT [ INT ] ]
 region      = place | "within" INT "of" STRUCTURE place
 place       = "within" INT "of" ( "spawn" | POINT | "here" ) | "in" POINT "to" POINT
 point-place = "within" INT "of" ( POINT | "here" ) | "in" POINT "to" POINT
@@ -60,6 +62,7 @@ A missing count means 1. Structure anchors (`within R of STRUCTURE place`) are a
 - A biome constraint's grid, and a `find` line's biome or point grid, counted over its place's bounding box, has at most 1,048,576 points.
 - Terrain conditions: heights at most 4,096 in magnitude, `flat` 0 to 4,096, and a grid of at most 16,384 points (a column's height costs far more than its biome).
 - Features: a feature count's, a feature cluster's and a `find` line's feature place is at most 1,024 blocks on a side (a radius at most 511). Placing features takes tens of milliseconds a chunk ([features.md](features.md#ruling-out)), so 4,096 chunks already take minutes.
+- Loot: a loot count's and a `find` line's loot place is at most 2,048 blocks on a side (a radius at most 1,023). An item a dungeon can hold places every chunk, at about 15 ms a chunk on 16 threads, so a disc of radius 1,000 (about 12,300 chunks) takes minutes ([ADR 0065](../adr/0065-loot-in-the-search-language.md)). Enchantment levels: 1 to 255.
 - `apart`: as a distance, at most 30,000,000.
 - A query has at least one constraint, or a `find` line.
 
@@ -95,12 +98,20 @@ require cluster 2 feature minecraft:monster_room within 16 of each other within 
 prefer 3 feature minecraft:monster_room within 96 of spawn
 ```
 
+Loot counts containers that hold an item ([ADR 0065](../adr/0065-loot-in-the-search-language.md)):
+
+```text
+# An enchanted golden apple near the spawn, and a mending book if there's one.
+require loot minecraft:enchanted_golden_apple within 1000 of spawn
+prefer loot minecraft:enchanted_book with minecraft:mending within 500 of spawn
+```
+
 ## Dimensions
 
 Every constraint is in one dimension: the Overworld, the Nether or the End of the Default preset. `Game::search_query` resolves a query across them; `SearchQuery::dimension` says which each constraint is in.
 
-- **Inferred.** A structure or tag's dimension is the first of the Overworld, the Nether and the End that places any of its structures: some structure it names has biomes in that dimension's biome source ([structure-placement.md](structure-placement.md)). A biome's is the first whose source has it. A feature's is the first where spyglass places it (every target's is the Overworld's). A target that no dimension places is the Overworld's, and is never found there. Slime counts and `spawn` constraints are the Overworld's. Inference reads each dimension's data until one places the target, so a Nether target loads the Overworld's too.
-- **Explicit.** A dimension written after `require` or `prefer` sets it, and must place some of the target, or it's an error ("minecraft:tower isn't placed in the Nether"). That's how the rest of a tag that spans dimensions is reached: the Overworld places some of `#minecraft:ruined_portal`, so it infers the Overworld, and `nether` picks the Nether's portal.
+- **Inferred.** A structure or tag's dimension is the first of the Overworld, the Nether and the End that places any of its structures: some structure it names has biomes in that dimension's biome source ([structure-placement.md](structure-placement.md)). A biome's is the first whose source has it. A feature's is the first where spyglass places it (every target's is the Overworld's). Loot is the Overworld's: every dimension's containers choose from the same items, so the item doesn't say which is meant. A target that no dimension places is the Overworld's, and is never found there. Slime counts and `spawn` constraints are the Overworld's. Inference reads each dimension's data until one places the target, so a Nether target loads the Overworld's too.
+- **Explicit.** A dimension written after `require` or `prefer` sets it, and must place some of the target, or it's an error ("minecraft:tower isn't placed in the Nether"). For loot, it must place loot containers: `nether` reaches bastions' and fortresses' chests. That's how the rest of a tag that spans dimensions is reached: the Overworld places some of `#minecraft:ruined_portal`, so it infers the Overworld, and `nether` picks the Nether's portal.
 - **Terrain conditions** are the Overworld's unless a dimension is written, and are errors in a dimension with a ceiling (the Nether), whose surface heights are the ceiling's.
 - **Overworld only.** Slime chunks and `spawn` constraints in another dimension are errors. Structures on concentric rings (strongholds) aren't placed anywhere else, so naming them in another dimension is the error above.
 
@@ -134,6 +145,7 @@ Each feature is a point, in blocks, horizontal only:
 
 - A **structure start**: its `/locate` position, the chunk's minimum block plus the set's locate offset.
 - A **feature**: the position the game calls it with ([locate.md](locate.md#features)), which has a height too. It's in the chunk being decorated: every target spreads its tries over the chunk (`in_square`), and the desert well's offset moves only y.
+- A **loot container**: its block, or a chest minecart's rail. A dungeon's or a ruined portal's chest can be beside the chunk whose decoration placed it, so a chunk is placed when it or one of its eight neighbours touches the place.
 - A **slime chunk**: its centre, `(16x + 8, 16z + 8)`.
 - The **spawn**: the spawn origin's climate position, or the origin chunk's centre when the dimension has no spawn targets (`SpawnOrigin::map_block`). The game's final spawn block is somewhere in the 11 × 11 chunks around the origin chunk ([spawn.md](spawn.md)).
 
@@ -159,6 +171,7 @@ What's certain:
 
 - A structure start is certain when `StructureStart::certain` is true; otherwise it's a candidate. A pair of a start and a structure anchor is certain when both are.
 - A feature is certain when `FoundFeature::certain` is: it placed on spyglass's blocks, and nothing in its chunk spyglass can't know could change that, for the chunk decorated before its neighbours ([ADR 0056](../adr/0056-two-certainties-on-its-own-and-whatever-the-neighbours.md)). A likely candidate (one that placed on spyglass's blocks, but something could change it) is uncertain. An unlikely one (one that declined on spyglass's blocks) isn't counted in either case: nearly every try is one (1,531 of 1,541 dungeon answers in two of 26.3's golden squares), so counting them would make nearly every count possibly met, and every chunk would have to be placed ([features.md](features.md#ruling-out)). Confirming doesn't change features: they're always decided with the blocks.
+- A loot container **certainly holds** an item when it and its contents are certain (`FoundContainer::contents_certain`: the container is certain, its seed is known and nothing could change its fill) and its contents hold the item. It **may hold** it when it isn't certain or its contents aren't, and its contents hold the item, or it has none (its seed isn't known) but a table that could hold it (`Session::containers_holding`). Containers of unlikely dungeons aren't counted, as unlikely features aren't.
 - A biome sample **certainly matches** when every candidate of its cell (its biome, or all its tied biomes) is the target, or in the target tag, and **possibly matches** when any is. For a single biome, only an untied cell can certainly match.
 - Terrain heights are certain.
 - Slime chunks are always certain.
@@ -166,21 +179,23 @@ What's certain:
 
 Evaluating counts in each case:
 
-| Form                    | Best case counts                   | Worst case counts                 |
-| ----------------------- | ---------------------------------- | --------------------------------- |
-| `N S region` (at least) | every start, certain or candidate  | certain starts                    |
-| `no S region`           | certain starts                     | every start                       |
-| `cluster N S …`         | groups among every start           | groups among certain starts       |
-| `N feature F place`     | certain and likely features        | certain features                  |
-| `no feature F place`    | certain features                   | certain and likely features       |
-| `cluster N feature F …` | groups among certain and likely    | groups among certain features     |
-| `N slime region`        | slime chunks (both cases the same) | slime chunks                      |
-| `biome B place`         | possibly matching samples          | certainly matching samples        |
-| `no biome B place`      | certainly matching samples         | possibly matching samples         |
-| `biome B covers P% …`   | possibly matching samples          | certainly matching samples        |
-| `spawn place`           | the spawn                          | the spawn (none if platform-dep.) |
-| `height A to B place`   | the heights (both cases the same)  | the heights                       |
-| `flat D place`          | the heights (both cases the same)  | the heights                       |
+| Form                    | Best case counts                        | Worst case counts                       |
+| ----------------------- | --------------------------------------- | --------------------------------------- |
+| `N S region` (at least) | every start, certain or candidate       | certain starts                          |
+| `no S region`           | certain starts                          | every start                             |
+| `cluster N S …`         | groups among every start                | groups among certain starts             |
+| `N feature F place`     | certain and likely features             | certain features                        |
+| `no feature F place`    | certain features                        | certain and likely features             |
+| `cluster N feature F …` | groups among certain and likely         | groups among certain features           |
+| `N loot I place`        | containers that may or certainly hold I | containers that certainly hold I        |
+| `no loot I place`       | containers that certainly hold I        | containers that may or certainly hold I |
+| `N slime region`        | slime chunks (both cases the same)      | slime chunks                            |
+| `biome B place`         | possibly matching samples               | certainly matching samples              |
+| `no biome B place`      | certainly matching samples              | possibly matching samples               |
+| `biome B covers P% …`   | possibly matching samples               | certainly matching samples              |
+| `spawn place`           | the spawn                               | the spawn (none if platform-dep.)       |
+| `height A to B place`   | the heights (both cases the same)       | the heights                             |
+| `flat D place`          | the heights (both cases the same)       | the heights                             |
 
 A constraint **holds** in a case when:
 
@@ -212,7 +227,7 @@ Each preferred constraint has a **satisfaction** from 0 to 1,000, in the case th
 
 Every division below rounds down.
 
-- **At least N** (structures, features, slime chunks, biome presence, the spawn): the matching features in that case, nearest first, earn points each:
+- **At least N** (structures, features, loot containers, slime chunks, biome presence, the spawn): the matching features in that case, nearest first, earn points each:
 
   - in `within R of …`: `500 + 500 × (R − d) / R`, with `d` the distance to the anchor (the nearest qualifying anchor start for structure anchors, the nearest matching sample for biomes); 1,000 when R is 0;
   - in a box: 1,000.
@@ -234,6 +249,8 @@ Terrain only removes candidates or makes them certain, so it only narrows each c
 ### Feature cost
 
 Features are the costliest constraints, so they're checked last, after terrain, smallest place first. A feature count or cluster places every chunk of its place that its features' tries reach and the terrain doesn't rule out (`Session::features_in`, [features.md](features.md#ruling-out)); one evaluation places each chunk once, however many constraints ask for it. The fast path places a required one's chunks only until it's decided in the case the search keeps (z, then x): at least N found, a group of N, or a feature that breaks `no`. A spawn that may differ by platform decides it without placing.
+
+Loot counts are checked after features, smallest place first, and decided the same way: every chunk of the place, or beside it, that a container structure's pieces or a container feature's tries reach is placed (`Session::containers_holding`; a dungeon only when its table could hold the item), once per evaluation for each item, and the fast path stops once at least N are found or one breaks `no`.
 
 Pairs of tries aren't filtered before placing. After a dungeon's first try that the terrain doesn't rule out, the next tries' positions depend on what it drew, so a chunk that's kept could hold a pair anywhere in it: tries rule out only what ruling out chunks already does.
 
@@ -258,13 +275,14 @@ require minecraft:swamp_hut within 200 of here
 - **A structure or tag**: each start of it in the place (its `/locate` position), confirmed with terrain if the search is. A candidate start is an uncertain target.
 - **`biome B`**: each point of the place's grid (`at y`, `step`, as [biome sampling](#biome-sampling)) whose sample possibly matches. One that only possibly matches is an uncertain target.
 - **`feature F`**: each feature of it in the place that is certain or likely, as [features are counted](#outcomes). A likely one is an uncertain target.
+- **`loot I`**: each container in the place that may or certainly holds the item, as [loot is counted](#outcomes). One that only may hold it is an uncertain target.
 - **`point`**: each point of the place's grid. Every point is certain.
 
 Its dimension is the target's, inferred as for constraints ([Dimensions](#dimensions)); a point target is the Overworld's in a game, and the world's own in a world. The place is in that dimension's coordinates. `within R` with no `of` is around the **origin** the search is given (`FindOptions::origin`: `--from` in the command, the view's centre in the viewer); `spawn` is the Overworld spawn, converted. A place has at most 1,048,576 targets.
 
-**`here`.** Each target is judged by evaluating every constraint with `here` set to its position: an anchor like a point, converted into a constraint's dimension as `spawn` is, and an error between the End and another dimension. A structure target's own start (the same dimension, set and chunk) is never counted by a structure count whose region is a place around `here`, as a structure anchor never counts itself; so "another hut within 200 of here" doesn't count the target. Nor is a feature target (the same dimension, placed feature and position) counted by a feature count or cluster whose place is around `here`.
+**`here`.** Each target is judged by evaluating every constraint with `here` set to its position: an anchor like a point, converted into a constraint's dimension as `spawn` is, and an error between the End and another dimension. A structure target's own start (the same dimension, set and chunk) is never counted by a structure count whose region is a place around `here`, as a structure anchor never counts itself; so "another hut within 200 of here" doesn't count the target. Nor is a feature target (the same dimension, placed feature and position) counted by a feature count or cluster whose place is around `here`, nor a loot target (the same dimension and position) by a loot count whose place is around `here`.
 
-**Matches.** A target is a match when its verdict would make a seed search report it: met, or possibly met outside certain mode. An uncertain target's verdict is at most possibly met, and certain mode skips uncertain targets. Its score is the seed search's, in the case the search ranks by. A target within `apart` blocks (`distance ≤ apart`, when `apart` is above 0) of an earlier match is skipped: `apart` defaults to 0 for structures and features, and to 256 for biome and point targets, so one biome patch isn't a match per sample.
+**Matches.** A target is a match when its verdict would make a seed search report it: met, or possibly met outside certain mode. An uncertain target's verdict is at most possibly met, and certain mode skips uncertain targets. Its score is the seed search's, in the case the search ranks by. A target within `apart` blocks (`distance ≤ apart`, when `apart` is above 0) of an earlier match is skipped: `apart` defaults to 0 for structures, features and loot, and to 256 for biome and point targets, so one biome patch isn't a match per sample.
 
 **Order.** Targets are judged nearest first: by distance squared from the place's centre (a disc's anchor, or a box's centre rounded down), then by z, then by x. Matches are reported in that order, up to `top`, with their evaluations; scores don't reorder them.
 
@@ -306,4 +324,5 @@ Nothing in the semantics depends on floating point: positions, distances and sco
 - **Dimensions**: on a fixture bundle with an Overworld and a Nether, inference, written dimensions and canonical text, every error above, a world's queries against a game's, and a `spawn` anchor in the Nether counting exactly the starts around the Overworld spawn divided by 8. The fast path and prefilter checks above run over queries that span both dimensions, with anchors converted both ways; an ignored test repeats them on the real 26.3 game, Nether and End queries included, confirmed or not.
 - **Determinism**: equal results for 1, 2 and 8 threads, and for a range run whole or in two parts.
 - **Features** (ignored, on the real bundle): `crates/spyglass/tests/feature_search.rs` checks a feature count's and a cluster's answers against `features_in`, the fast path against `evaluate` in both modes, and a `find` query's feature targets against a plain loop that never counts a target around itself. `crates/spyglass/tests/features.rs` runs the seed search for two dungeons near the spawn, in certain mode, and checks each pair against the game's decoration in the feature golden files ([oracle.md](oracle.md#feature-golden-files)).
+- **Loot** (ignored, on the real bundle): `crates/spyglass/tests/loot_search.rs` centres each seed's queries on a filled container near the origin, with an item it holds, and checks a loot count's answers against `containers_holding`, the fast path against `evaluate` in both modes (counts, `no`, tags, enchantments and the spawn), and a `find` query's loot targets against a plain loop that never counts a target around itself. Its last test searches golden seeds for an item one of the game's containers holds, around it, and checks every container counted as certainly holding the item against the container golden files ([oracle.md](oracle.md#container-golden-files)).
 - **Within a seed** (`crates/spyglass/tests/find.rs`): on fixture bundles, matches equal a plain loop over the targets worked out by hand (a structure never counted around itself), the same at 1 and 8 threads, a stopped search's matches are a prefix, `apart`, terrain conditions against `Session::height_at`, biome tags (nested, optional, missing and cyclic) in `/locate biome` and the seed search, and every misuse an error. An ignored test runs the viewer's presets on the real bundles, confirmed, and checks each first match against the same constraints anchored at its block, and by hand against `structures_in`, `biome_at` and `height_at`.

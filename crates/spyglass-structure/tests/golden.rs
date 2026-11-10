@@ -15,7 +15,8 @@ use spyglass_biome::BiomeSource;
 use spyglass_data::bundle::Bundle;
 use spyglass_rng::worldgen;
 use spyglass_structure::{
-    Assembly, BoundingBox, Check, JigsawCheck, JigsawPools, Starts, StructureSets, is_slime_chunk,
+    Assembly, BoundingBox, Check, JigsawCheck, JigsawPools, Placements, Starts, StructureSets,
+    StructureType, is_slime_chunk,
 };
 use spyglass_terrain::{Terrain, TerrainSettings};
 
@@ -29,6 +30,20 @@ fn ints(v: &Value) -> Vec<i64> {
         .iter()
         .map(|n| n.as_i64().unwrap())
         .collect()
+}
+
+/// Whether `at` is a ring position the game tried outside the file's regions that isn't one
+/// of spyglass's: a ring placed differently (on another platform or behind a tie), which the ring
+/// comparison accounts for.
+fn off_our_rings(golden: &Value, placements: &Placements<'_>, set: usize, at: [i32; 2]) -> bool {
+    let in_regions = golden["regions"].as_array().unwrap().iter().any(|r| {
+        let (min, max) = (chunk(&r["min"]), chunk(&r["max"]));
+        (min[0]..=max[0]).contains(&at[0]) && (min[1]..=max[1]).contains(&at[1])
+    });
+    !in_regions
+        && placements
+            .ring_positions(set)
+            .is_some_and(|rings| !rings.iter().any(|p| p.chunk == at))
 }
 
 fn chunk(v: &Value) -> [i32; 2] {
@@ -221,8 +236,11 @@ fn structures_match_in(bundle: &Bundle, version: &str, folder: &str) {
             }
 
             for c in game_chunks {
-                report.chunks += 1;
                 let at = chunk(&c["chunk"]);
+                if off_our_rings(&golden, &placements, set, at) {
+                    continue;
+                }
+                report.chunks += 1;
                 let tries = c["tries"].as_array().unwrap();
                 let selection = starts.select(set, at);
                 let our_structures: Vec<usize> = selection.tries.iter().map(|t| t.0).collect();
@@ -368,12 +386,8 @@ struct TerrainReport {
     /// left open.
     decided: usize,
     open: usize,
-    /// Jigsaw starts whose pieces and bounds equal the game's, and their pieces.
-    layouts: usize,
-    pieces: usize,
-    /// The same for mineshafts.
-    mineshafts: usize,
-    mineshaft_pieces: usize,
+    /// By structure type, the starts whose pieces and bounds equal the game's, and their pieces.
+    layouts: BTreeMap<String, (usize, usize)>,
 }
 
 /// A golden `[minX, minY, minZ, maxX, maxY, maxZ]` box.
@@ -387,8 +401,8 @@ fn bounding_box(v: &Value) -> BoundingBox {
 }
 
 /// One file against [`Starts::with_terrain`]: every stub spyglass computes must be the game's,
-/// every outcome it decides must be the game's, and every jigsaw or mineshaft start's pieces and
-/// bounds must be the game's.
+/// every outcome it decides must be the game's, and every laid-out start's pieces and bounds
+/// must be the game's.
 fn with_terrain(
     path: &std::path::Path,
     sets: &StructureSets,
@@ -409,6 +423,9 @@ fn with_terrain(
         let set = sets.set_index(set_id).unwrap();
         for c in s["chunks"].as_array().unwrap() {
             let at = chunk(&c["chunk"]);
+            if off_our_rings(&golden, &placements, set, at) {
+                continue;
+            }
             let tries = c["tries"].as_array().unwrap();
             for t in tries {
                 let id = t["structure"].as_str().unwrap();
@@ -439,10 +456,19 @@ fn with_terrain(
                     )),
                     (None, None) => {}
                 }
-                // Jigsaw and mineshaft starts: every piece's box, in order, and the bounds.
+                // Laid-out starts: every piece's box, in order, and the bounds.
                 let laid_out = {
                     let s = &sets.structures()[structure];
-                    s.jigsaw.is_some() || s.mineshaft.is_some()
+                    s.jigsaw.is_some()
+                        || s.mineshaft.is_some()
+                        || matches!(
+                            s.kind,
+                            StructureType::EndCity
+                                | StructureType::Fortress
+                                | StructureType::Stronghold
+                                | StructureType::WoodlandMansion
+                                | StructureType::OceanRuin
+                        )
                 };
                 if let (Some(bounds), Some(Assembly::Built(ours))) =
                     (t.get("bounds"), starts.assemble(structure, at))
@@ -454,13 +480,10 @@ fn with_terrain(
                         .map(bounding_box)
                         .collect();
                     if ours.pieces == game && ours.bounds == bounding_box(bounds) {
-                        if sets.structures()[structure].mineshaft.is_some() {
-                            report.mineshafts += 1;
-                            report.mineshaft_pieces += game.len();
-                        } else {
-                            report.layouts += 1;
-                            report.pieces += game.len();
-                        }
+                        let kind = format!("{:?}", sets.structures()[structure].kind);
+                        let count = report.layouts.entry(kind).or_default();
+                        count.0 += 1;
+                        count.1 += game.len();
                     } else {
                         let first = ours.pieces.iter().zip(&game).position(|(a, b)| a != b);
                         report.failures.push(format!(
@@ -531,25 +554,25 @@ fn with_terrain_in(bundle: &Bundle, version: &str, folder: &str) {
         .collect();
     let mut unknown: BTreeMap<String, usize> = BTreeMap::new();
     let (mut stubs, mut tie_stubs, mut decided, mut open) = (0, 0, 0, 0);
-    let (mut layouts, mut pieces) = (0, 0);
-    let (mut mineshafts, mut mineshaft_pieces) = (0, 0);
+    let mut layouts: BTreeMap<String, (usize, usize)> = BTreeMap::new();
     let mut failures = Vec::new();
     for r in reports {
         stubs += r.stubs;
         tie_stubs += r.tie_stubs;
         decided += r.decided;
         open += r.open;
-        layouts += r.layouts;
-        pieces += r.pieces;
-        mineshafts += r.mineshafts;
-        mineshaft_pieces += r.mineshaft_pieces;
+        for (k, (starts, pieces)) in r.layouts {
+            let count = layouts.entry(k).or_default();
+            count.0 += starts;
+            count.1 += pieces;
+        }
         for (k, n) in r.unknown {
             *unknown.entry(k).or_default() += n;
         }
         failures.extend(r.failures);
     }
     println!(
-        "{} files: {stubs} stubs equal to the game's, {tie_stubs} behind a tie the game failed, unknown by type {unknown:?}; {decided} outcomes decided and equal to the game's, {open} left open; {layouts} jigsaw layouts equal to the game's ({pieces} pieces); {mineshafts} mineshaft layouts equal to the game's ({mineshaft_pieces} pieces)",
+        "{} files: {stubs} stubs equal to the game's, {tie_stubs} behind a tie the game failed, unknown by type {unknown:?}; {decided} outcomes decided and equal to the game's, {open} left open; layouts equal to the game's by type (starts, pieces) {layouts:?}",
         files.len()
     );
     assert!(

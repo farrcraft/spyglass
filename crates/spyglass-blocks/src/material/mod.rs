@@ -5,7 +5,7 @@
 
 mod rule;
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -816,6 +816,10 @@ pub struct ChunkBiomes<'r> {
     region: Region<'r>,
     min_qy: i32,
     max_qy: i32,
+    /// The zoom's displacements for each of the region's quarts, by the region's cell order,
+    /// computed the first time a block asks for them. The 64 blocks of a quart cell share their
+    /// 8 corners, so each quart's are computed once instead of for every block around it.
+    fiddles: RefCell<Vec<Option<[f64; 3]>>>,
 }
 
 /// Where [`ChunkBiomes`] reads quarts from.
@@ -827,6 +831,15 @@ enum Region<'r> {
 }
 
 impl Region<'_> {
+    /// The biome region read, if there is one.
+    fn region(&self) -> Option<&BiomeRegion> {
+        match self {
+            Region::Biomes(region) => Some(region),
+            #[cfg(test)]
+            Region::One(_) => None,
+        }
+    }
+
     fn get(&self, [qx, qy, qz]: [i32; 3]) -> spyglass_biome::Lookup {
         match self {
             Region::Biomes(region) => region
@@ -847,7 +860,35 @@ impl<'r> ChunkBiomes<'r> {
             region: Region::Biomes(region),
             min_qy,
             max_qy: min_qy + (height >> 2) - 1,
+            fiddles: RefCell::new(Vec::new()),
         }
+    }
+
+    /// The quart block `pos` takes its biome from, through `zoom`, with the corners'
+    /// displacements kept for the next block.
+    fn zoomed(&self, zoom: &BiomeZoom, pos: [i32; 3]) -> [i32; 3] {
+        let Some(region) = self.region.region() else {
+            return zoom.quart(pos);
+        };
+        let (min, size) = (region.min(), region.size());
+        let mut kept = self.fiddles.borrow_mut();
+        if kept.is_empty() {
+            kept.resize(size.iter().map(|&s| s as usize).product(), None);
+        }
+        zoom.quart_with(pos, |quart| {
+            // The region's cell order, x fastest, then z, then y; a corner outside it (below
+            // the level, where the biome is clamped but the displacement isn't) isn't kept.
+            let offset = |d: usize| {
+                let o = i64::from(quart[d]) - i64::from(min[d]);
+                (0..i64::from(size[d])).contains(&o).then_some(o as usize)
+            };
+            let [sx, _, sz] = size.map(|s| s as usize);
+            let index = match (offset(0), offset(1), offset(2)) {
+                (Some(x), Some(y), Some(z)) => (y * sz + z) * sx + x,
+                _ => return zoom.fiddles(quart),
+            };
+            *kept[index].get_or_insert_with(|| zoom.fiddles(quart))
+        })
     }
 
     /// The biome of quart `(qx, qy, qz)`, and whether it's tied.
@@ -1072,7 +1113,7 @@ impl BoundMaterial {
     /// `BiomeManager.getBiome`: the biome block `pos` takes, through the zoom, and whether its
     /// quart is tied.
     fn biome_at(&self, biomes: &ChunkBiomes<'_>, pos: [i32; 3]) -> (BiomeId, bool) {
-        biomes.quart(self.zoom.quart(pos))
+        biomes.quart(biomes.zoomed(&self.zoom, pos))
     }
 
     /// `getSurfaceDepth`.
@@ -1383,7 +1424,7 @@ impl BoundMaterial {
                 // A tied start biome may decide a pillar or an iceberg either way: then the
                 // whole column is uncertain.
                 if start_tied {
-                    let candidates = biomes.candidates(self.zoom.quart(start_pos));
+                    let candidates = biomes.candidates(biomes.zoomed(&self.zoom, start_pos));
                     let extended = |b: &BiomeId| {
                         Some(*b) == self.eroded_badlands || self.frozen_oceans.contains(&Some(*b))
                     };
@@ -1682,7 +1723,7 @@ impl BoundMaterial {
                 let start_pos = [x, start.clamp(min_y, max_y), z];
                 let (biome, start_tied) = self.biome_at(biomes, start_pos);
                 if start_tied {
-                    let candidates = biomes.candidates(self.zoom.quart(start_pos));
+                    let candidates = biomes.candidates(biomes.zoomed(&self.zoom, start_pos));
                     let extended = |b: &BiomeId| {
                         Some(*b) == self.eroded_badlands || self.frozen_oceans.contains(&Some(*b))
                     };
@@ -1964,6 +2005,7 @@ mod tests {
             region: Region::One(Lookup::Unique(BiomeId(place.biome))),
             min_qy: -16,
             max_qy: 79,
+            fiddles: RefCell::new(Vec::new()),
         };
         let cell = Cell::new(None);
         let [x, y, z] = place.pos;

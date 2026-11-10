@@ -19,6 +19,7 @@ mod find;
 mod heights;
 mod json;
 mod locate;
+mod loot;
 mod render;
 mod search;
 mod world;
@@ -32,6 +33,10 @@ use serde::Serialize;
 use spyglass::{Dimension, Game, SaveReport, Scan, Session, UncheckedVersion, World};
 
 use crate::args::{Cli, Command, Common, Locate, Origin};
+
+// Threaded queries allocate from many threads at once (ADR 0064).
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 /// How many hits human output lists; `--json` has them all.
 const SHOWN: usize = 8;
@@ -70,6 +75,7 @@ fn run(cli: Cli) -> Result<()> {
         Command::Heights(args) => heights::run(&args),
         Command::Blocks(args) => blocks::run(&args),
         Command::Features(args) => features::run(&args),
+        Command::Loot { what } => loot::run(&what),
     }
 }
 

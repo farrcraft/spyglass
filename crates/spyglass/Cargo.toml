@@ -22,15 +22,19 @@ required-features = ["timing"]
 spyglass-biome.workspace = true
 spyglass-blocks.workspace = true
 spyglass-data.workspace = true
+spyglass-density.workspace = true
 spyglass-feature.workspace = true
+spyglass-loot.workspace = true
 spyglass-search.workspace = true
 spyglass-structure.workspace = true
 spyglass-terrain.workspace = true
 spyglass-world.workspace = true
 png.workspace = true
+rayon.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+mimalloc.workspace = true
 spyglass-oracle.workspace = true
 tempfile.workspace = true

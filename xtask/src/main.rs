@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use clap::{Parser, Subcommand};
 use spyglass_extract::{java, manifest};
 
@@ -14,14 +14,18 @@ mod ci_scope;
 mod code_diff;
 mod dist;
 mod fuzz;
+mod guide;
 mod java_report;
 mod links;
 mod linux_check;
 mod locate;
 mod oracle;
 mod oracle_test;
+mod pgo;
+mod profile;
 mod release;
 mod smoke;
+mod sweep;
 mod version_diff;
 mod viewer_timing;
 
@@ -38,8 +42,13 @@ enum Cmd {
     Bench {
         /// The bundle to use: a directory or a version in `bundles/` [default: the newest release].
         bundle: Option<PathBuf>,
+        /// Build the bench profile-guided, trained first on an instrumented run of itself
+        /// (docs/adr/0064-build-level-speedups.md). Needs rustup's `llvm-tools` component.
+        #[arg(long)]
+        pgo: bool,
     },
-    /// Run every check in .pre-commit-config.yaml against the whole repo, as CI does.
+    /// Run every check in .pre-commit-config.yaml against the whole repo, as CI does, then sweep
+    /// stale build outputs from `target/`.
     Check,
     /// Run one game version's CI job: extract its bundle, regenerate every oracle output
     /// (goldens, locate and, where it loads, the test pack), and run every comparison.
@@ -55,6 +64,9 @@ enum Cmd {
     Dist(dist::Dist),
     /// Fuzz a reader of untrusted files with cargo-fuzz on nightly: `nbt` or `region`.
     Fuzz(fuzz::Fuzz),
+    /// Build the user guide, `docs/guide/`, into `target/guide/`, failing on mdBook's warnings
+    /// (docs/adr/0066-a-user-guide-on-github-pages.md); with `--serve`, serve it while writing.
+    Guide(guide::Guide),
     /// Report whether this machine is ready to work on spyglass. Never installs anything.
     Doctor {
         /// Game version whose Java requirement to check: an id, `latest` or `latest-snapshot`.
@@ -98,6 +110,9 @@ enum Cmd {
         #[command(subcommand)]
         cmd: oracle::OracleCmd,
     },
+    /// Profile the bench's lines with Linux `perf`, in a privileged Docker container, and print
+    /// where the time goes by function.
+    Profile(profile::Profile),
     /// Set the version for a release and date the changelog, for a pull request. Doesn't touch
     /// git; the Release workflow tags and drafts it from main (docs/releasing.md).
     Release(release::Release),
@@ -107,6 +122,9 @@ enum Cmd {
     /// Unpack a release archive outside the repo and run what's in it, as a user without Rust
     /// would; with `--extract`, also extract a game version and answer from it.
     Smoke(smoke::Smoke),
+    /// Delete stale build outputs from `target/`: each name's copies but the newest and those
+    /// written in the last week (docs/adr/0061-keeping-target-small.md).
+    Sweep(sweep::Sweep),
     /// Report what changed between two bundles in the data spyglass reads: ids added and
     /// removed, files changed, and new or gone JSON shapes (types, fields, value kinds).
     VersionDiff(version_diff::VersionDiff),
@@ -118,7 +136,7 @@ enum Cmd {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
-        Cmd::Bench { bundle } => bench(bundle.as_deref()),
+        Cmd::Bench { bundle, pgo } => bench(bundle.as_deref(), pgo),
         Cmd::Check => check(),
         Cmd::Ci(args) => ci::run(&args),
         Cmd::CiPlan(args) => ci_plan::run(&args),
@@ -126,6 +144,7 @@ fn main() -> ExitCode {
         Cmd::Dist(args) => dist::run(&args),
         Cmd::Doctor { game_version, java } => doctor(&game_version, java.as_deref()),
         Cmd::Fuzz(args) => fuzz::run(&args),
+        Cmd::Guide(args) => guide::run(&args),
         Cmd::JdkStatus { game_version } => jdk_status(&game_version),
         Cmd::JavaReport(args) => java_report::run(&args),
         Cmd::LinuxCheck(args) => linux_check::run(&args),
@@ -133,9 +152,11 @@ fn main() -> ExitCode {
         Cmd::Msrv { print } => msrv(print),
         Cmd::Oracle { cmd } => oracle::run(cmd),
         Cmd::OracleTest { game_version } => oracle_test::run(game_version.as_deref()),
+        Cmd::Profile(args) => profile::run(&args),
         Cmd::Release(args) => release::run(&args),
         Cmd::ReleaseNotes(args) => release::notes(&args),
         Cmd::Smoke(args) => smoke::run(&args),
+        Cmd::Sweep(args) => sweep::run(&args),
         Cmd::VersionDiff(args) => version_diff::run(&args),
         Cmd::ViewerTiming(args) => viewer_timing::run(&args),
     };
@@ -181,7 +202,26 @@ fn command(program: &str) -> Command {
     cmd
 }
 
-fn bench(bundle: Option<&Path>) -> Result<()> {
+fn bench(bundle: Option<&Path>, pgo: bool) -> Result<()> {
+    if pgo {
+        let profile = pgo::train(bundle, &[], None)?;
+        let build_dir = pgo::dir().join("use");
+        let mut cmd = pgo::cargo_dist(&build_dir, &[pgo::use_flag(&profile)], None);
+        cmd.args(["-p", "spyglass", "--example", "bench"]);
+        ensure!(
+            cmd.status().context("failed to run cargo")?.success(),
+            "the profile-guided bench didn't build"
+        );
+        let bench = pgo::output(&build_dir, None)
+            .join("examples")
+            .join(pgo::exe("bench"));
+        let status = command(&bench.to_string_lossy())
+            .args(bundle)
+            .status()
+            .context("failed to run the bench")?;
+        ensure!(status.success(), "the benchmark failed");
+        return Ok(());
+    }
     let mut cmd = command("cargo");
     cmd.args([
         "run",
@@ -234,7 +274,8 @@ fn check() -> Result<()> {
             bail!("{stage} checks failed");
         }
     }
-    Ok(())
+    // The checks build in several ways (clippy, nextest, doc, MSRV), each leaving outputs.
+    sweep::run(&sweep::Sweep::default())
 }
 
 /// `rust-version` from the workspace Cargo.toml's `[workspace.package]`.
@@ -342,6 +383,7 @@ fn doctor(game_version: &str, explicit_java: Option<&Path>) -> Result<()> {
     hook_checks(&mut report, setup);
     java_checks(&mut report, game_version, explicit_java);
     bundles_check(&mut report);
+    target_check(&mut report);
     docker_check(&mut report);
     println!();
     if report.failures > 0 {
@@ -378,6 +420,32 @@ fn bundles_check(r: &mut Report) {
     );
 }
 
+/// Stale build outputs in `target/`, which `cargo xtask sweep` deletes. A warning past
+/// [`STALE_WARNING`], never a failure.
+fn target_check(r: &mut Report) {
+    let target = sweep::target_dir();
+    match sweep::stale(&target, sweep::DEFAULT_DAYS) {
+        Ok(stale) => {
+            let bytes: u64 = stale.iter().map(|s| s.bytes).sum();
+            let detail = format!(
+                "{} of stale build outputs in {}",
+                sweep::human(bytes),
+                target.display()
+            );
+            let status = if bytes > STALE_WARNING {
+                Status::Warn
+            } else {
+                Status::Ok
+            };
+            r.line(status, "build outputs", &detail, Some("cargo xtask sweep"));
+        }
+        Err(err) => r.line(Status::Warn, "build outputs", &format!("{err:#}"), None),
+    }
+}
+
+/// Stale build outputs past which `doctor` warns: 5 GB.
+const STALE_WARNING: u64 = 5 * 1024 * 1024 * 1024;
+
 /// The toolchain, its components, the cargo tools the hooks need, and the MSRV toolchain.
 fn rust_checks(r: &mut Report, setup: &str) {
     // Rust: this binary compiled, so the toolchain and linker work.
@@ -404,6 +472,22 @@ fn rust_checks(r: &mut Report, setup: &str) {
                 Some(setup),
             ),
         }
+    }
+    // The `guide` hook builds the user guide with it, when the guide changes.
+    match guide::installed_version() {
+        Some(v) if v == guide::MDBOOK_VERSION => r.line(Status::Ok, "mdBook", &v, None),
+        Some(v) => r.line(
+            Status::Warn,
+            "mdBook",
+            &format!("{v}; the guide is built with {}", guide::MDBOOK_VERSION),
+            Some(setup),
+        ),
+        None => r.line(
+            Status::Fail,
+            "mdBook",
+            "not installed; the git hooks need it",
+            Some(setup),
+        ),
     }
     // Only `cargo xtask dist` needs it, so it's never a failure.
     match first_line("cargo", &["about", "--version"]) {

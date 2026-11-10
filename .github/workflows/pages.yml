@@ -1,0 +1,71 @@
+# User guide (ADR 0066; docs/releasing.md): builds docs/guide/ with mdBook and deploys it to
+# GitHub Pages when a release is published, from that release's tag, so the site describes what
+# people can download. Pre-releases are skipped. Run it by hand with a tag to redeploy, such as
+# after Pages is first turned on, or with a fix to the guide alone.
+#
+# The owner publishes releases by hand, so the release event fires; a release published with a
+# workflow's GITHUB_TOKEN wouldn't trigger this. Pages must be set to deploy from GitHub Actions,
+# once, in the repository's settings.
+name: Pages
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: The tag (or branch) to build the guide from, such as v0.3.0
+        required: true
+
+# One deploy at a time, and never cancelled halfway.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build the guide
+    if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.event.release.tag_name }}
+      # Cached, since it takes minutes to compile. Keep the version in step with the setup
+      # scripts; an xtask test checks it.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: mdbook
+        with:
+          path: ~/.cargo/bin/mdbook
+          key: ${{ runner.os }}-mdbook@0.5.4
+      - if: steps.mdbook.outputs.cache-hit != 'true'
+        run: cargo install --locked mdbook@0.5.4
+      # The same build as the commit hook's: it fails on mdBook's warnings.
+      - run: cargo xtask guide
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: target/guide
+
+  deploy:
+    name: Deploy to Pages
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # The only job that can write: the site, with the token Pages checks it by.
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+        id: deploy

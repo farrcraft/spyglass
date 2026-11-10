@@ -20,13 +20,16 @@ cargo xtask oracle golden                     # regenerate the game's answers (o
 cargo xtask oracle-test                       # ignored comparisons with the game, where inputs exist
 cargo xtask ci --game-version <v>             # one version's CI job: extract, regenerate, compare (--units splits it)
 cargo xtask ci-plan --mode <full|pr>          # CI's oracle jobs, planned from estimated costs to fit the hour
-cargo xtask bench                             # time the public API's main operations
+cargo xtask bench [--pgo]                     # time the public API's main operations (--pgo: profile-guided)
+cargo xtask profile <v> --only <line>         # where a bench line's time goes, by function (perf in Docker)
 cargo xtask viewer-timing [<scenario>...]     # time the viewer's cold start in fixed scenarios
 cargo xtask dist [--target <triple>]          # one target's release archive, in target/archives/
 cargo xtask release <version>                 # set the version and date the changelog, for a PR
 cargo xtask doctor                            # is this machine ready? (check-only)
+cargo xtask sweep                             # delete stale build outputs from target/ (ADR 0061)
 cargo xtask java-report [--check]             # rebuild (or check) the extractor's block report class
 cargo xtask links                             # every relative Markdown link and anchor resolves
+cargo xtask guide [--serve]                   # build (or serve) the user guide, docs/guide/, with mdBook
 cargo xtask fuzz <nbt|region>                 # fuzz a reader of untrusted files (nightly, cargo-fuzz)
 cargo xtask msrv                              # build with the minimum supported Rust version
 cargo xtask linux-check [--full]              # fresh clone + setup + extract on Ubuntu, in Docker
@@ -38,7 +41,7 @@ All checks are defined in `.pre-commit-config.yaml` and run as git hooks (commit
 ## Layout
 
 - `crates/` holds one crate per layer (rng → noise → density → biome/terrain → structure → search, with `data` feeding versioned parameters and `viewer` on top). Keep dependencies flowing in that direction; lower crates must not depend on higher ones.
-- `docs/` holds getting-started, architecture, the development process, `specs/` (behavior the code must match), `adr/` (decision records), `research/` (prior art, open questions), `roadmap/` (one file per milestone) and `plans/` (implementation plans). `roadmap/` and `plans/` each have a `completed/` subdirectory.
+- `docs/` holds the user guide (`guide/`, an mdBook published to GitHub Pages from each release's tag; [ADR 0066](docs/adr/0066-a-user-guide-on-github-pages.md)), getting-started for contributors, architecture, the development process, `specs/` (behavior the code must match), `adr/` (decision records), `research/` (prior art, open questions), `roadmap/` (one file per milestone) and `plans/` (implementation plans). `roadmap/` and `plans/` each have a `completed/` subdirectory.
 - `xtask/` holds project commands (`cargo xtask <cmd>`; [ADR 0003](docs/adr/0003-cargo-xtask-for-project-commands.md)). It's tooling: no crate may depend on it. Add new project commands here, in Rust, rather than as scripts.
 - `extractor-java/` holds the extractor's block report, the only Java outside `oracle/`: a reflection-only program and its committed class, rebuilt with `cargo xtask java-report` ([ADR 0054](docs/adr/0054-block-behaviour-from-the-running-game.md)).
 - `fuzz/` holds cargo-fuzz targets for the readers of untrusted files, a workspace of its own that needs nightly ([ADR 0036](docs/adr/0036-fuzzing-with-cargo-fuzz.md)).
@@ -53,6 +56,7 @@ All checks are defined in `.pre-commit-config.yaml` and run as git hooks (commit
 - **Readable over terse.** Names say what a value means (`spread`, `crack_threshold`, `bud_sites`), not `d9`, `s`, `t`, `ns`. Single letters are fine for coordinates, loop indices and short closures, and in close ports of game math (noise, RNG) that follow the game's structure. A name kept from the game for parity is explained where it's defined. A non-obvious algorithm opens with a comment on its idea (what shape a feature draws and why), and comments say why where the code says what. Struct fields that hold configuration say what they control. Renaming never changes arithmetic or the order of random draws; the oracle comparisons confirm it.
 - **Correctness is checked against the oracle** (see [docs/specs/oracle.md](docs/specs/oracle.md)), not against other third-party tools.
 - New behavior that has a spec should cite the spec; if the spec is wrong or missing, update it in the same change.
+- A change users can see (a CLI flag, a viewer control, a query form) updates the user guide in `docs/guide/src/` in the same change. The guide shows commands as a user runs them (`spyglass ...`), and links outside the guide use GitHub URLs, since only the guide is published.
 - **Follow the development process** in [docs/development-process.md](docs/development-process.md): milestones → implementation plans → code. Write a plan in `docs/plans/` before starting milestone work, keep its task list current, and `git mv` it to `docs/plans/completed/` when done (milestones likewise to `docs/roadmap/completed/`). Fix relative links after any move.
 - **Code must never reference `docs/roadmap/` or `docs/plans/`**, by path or by milestone/plan name, in source, comments, tests, `Cargo.toml` or scripts. They are temporary process docs. Put durable explanations in a spec or ADR and reference that. Specs, ADRs and architecture docs may link to the roadmap and plans indexes, not to individual files.
 - Significant decisions (dependencies, formats, crate boundaries, policies) get an ADR in `docs/adr/`; use the `adr` skill. Use the `rust-review` skill to review Rust changes.

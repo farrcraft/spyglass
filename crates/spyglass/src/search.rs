@@ -8,7 +8,7 @@ use std::ops::ControlFlow;
 use std::time::Duration;
 
 use spyglass_search::{
-    Anchor, Kind, Named, Place, Prefilter, Query, Region, RunOptions, SPAWN_REACH,
+    Anchor, Kind, LootItem, Named, Place, Prefilter, Query, Region, RunOptions, SPAWN_REACH,
     Target as FindTarget,
 };
 use spyglass_structure::PlacementKind;
@@ -21,7 +21,9 @@ pub use spyglass_search::{
     Throttle as SearchThrottle,
 };
 
-use crate::{BiomeQuery, Dimension, Error, FeatureQuery, Game, Result, StructureQuery, World};
+use crate::{
+    BiomeQuery, Dimension, Error, FeatureQuery, Game, ItemQuery, Result, StructureQuery, World,
+};
 
 /// A search query parsed and resolved by [`World::search_query`] or [`Game::search_query`].
 /// Its `Display` is the canonical text.
@@ -59,6 +61,8 @@ pub(crate) enum Looked {
     Biome(BiomeQuery),
     /// A feature's tries that placed, or might have.
     Feature(FeatureQuery),
+    /// The containers that hold an item, or might.
+    Loot(ItemQuery),
     /// Every point of the grid.
     Point,
 }
@@ -69,7 +73,7 @@ struct Resolved {
     /// The dimension it counts in, whose coordinates its places are in.
     dimension: Dimension,
     /// What's counted: a structure for structure counts and clusters, a feature for feature
-    /// counts and clusters, a biome for biome constraints.
+    /// counts and clusters, an item for loot counts, a biome for biome constraints.
     target: Option<Target>,
     /// The structure of a structure anchor, and the dimension its starts are in.
     anchor: Option<(Dimension, StructureQuery)>,
@@ -81,6 +85,7 @@ enum Target {
     Structure(StructureQuery),
     Biome(BiomeQuery),
     Feature(FeatureQuery),
+    Loot(ItemQuery),
 }
 
 impl SearchQuery {
@@ -138,6 +143,9 @@ enum Subject<'q> {
     Biome(&'q str),
     /// A placed or configured feature id.
     Feature(&'q str),
+    /// Loot containers: the Overworld's unless written, in a dimension that places them
+    /// (ADR 0065).
+    Loot,
     /// Something only the Overworld has, described for errors.
     Overworld(&'static str),
     /// Terrain heights: the Overworld's unless written, and not under a ceiling.
@@ -184,6 +192,7 @@ impl<'a> Scope<'a> {
                 Err(Error::NotPlaced(_) | Error::Unknown { .. }) => false,
                 Err(e) => return Err(e),
             },
+            Subject::Loot => world.places_containers()?,
             Subject::Overworld(_) => world.dimension_kind() == Dimension::Overworld,
             Subject::Terrain => !world.has_ceiling(),
         })
@@ -196,7 +205,7 @@ impl<'a> Scope<'a> {
         let game = match (self, subject) {
             (_, Subject::Overworld(_)) => return Ok(Dimension::Overworld),
             (Scope::World(w), _) => return Ok(w.dimension_kind()),
-            (Scope::Game(_), Subject::Terrain) => return Ok(Dimension::Overworld),
+            (Scope::Game(_), Subject::Terrain | Subject::Loot) => return Ok(Dimension::Overworld),
             (Scope::Game(g), _) => g,
         };
         for d in Dimension::ALL {
@@ -273,6 +282,7 @@ fn resolve(scope: Scope<'_>, text: &str) -> Result<SearchQuery> {
                 FindTarget::Structure(s) => Subject::Structure(s),
                 FindTarget::Biome(b) => Subject::Biome(b),
                 FindTarget::Feature(f) => Subject::Feature(f),
+                FindTarget::Loot(_) => Subject::Loot,
                 FindTarget::Point => Subject::Terrain,
             };
             // A point target is the Overworld's in a game, like terrain, but may be under a
@@ -312,6 +322,7 @@ fn resolve(scope: Scope<'_>, text: &str) -> Result<SearchQuery> {
                     Looked::Biome(world.biome_query(b).map_err(at_line)?)
                 }
                 FindTarget::Feature(f) => Looked::Feature(world.feature_query(f).map_err(at_line)?),
+                FindTarget::Loot(item) => Looked::Loot(item_query(world, item).map_err(at_line)?),
                 FindTarget::Point => Looked::Point,
             };
             Some(Found { dimension, target })
@@ -347,6 +358,7 @@ fn resolve(scope: Scope<'_>, text: &str) -> Result<SearchQuery> {
             Kind::Features { feature, .. } | Kind::FeatureCluster { feature, .. } => {
                 Subject::Feature(feature)
             }
+            Kind::Loot { .. } => Subject::Loot,
             Kind::Slime { .. } => Subject::Overworld("slime chunks are"),
             Kind::Spawn { .. } => Subject::Overworld("the spawn is"),
             Kind::Height { .. } | Kind::Flat { .. } => Subject::Terrain,
@@ -367,6 +379,7 @@ fn resolve(scope: Scope<'_>, text: &str) -> Result<SearchQuery> {
                 Subject::Structure(s) => format!("{s} isn't placed in {}", dimension.name()),
                 Subject::Biome(b) => format!("{} has no {b}", dimension.name()),
                 Subject::Feature(f) => format!("{f} isn't placed in {}", dimension.name()),
+                Subject::Loot => format!("{} places no loot containers", dimension.name()),
                 Subject::Overworld(_) | Subject::Terrain => unreachable!("checked below"),
             }));
         }
@@ -442,6 +455,7 @@ fn resolve(scope: Scope<'_>, text: &str) -> Result<SearchQuery> {
             Kind::Cluster { place, .. }
             | Kind::Features { place, .. }
             | Kind::FeatureCluster { place, .. }
+            | Kind::Loot { place, .. }
             | Kind::Biome { place, .. }
             | Kind::Coverage { place, .. }
             | Kind::Spawn { place }
@@ -468,6 +482,7 @@ fn resolve(scope: Scope<'_>, text: &str) -> Result<SearchQuery> {
             Kind::Features { feature, .. } | Kind::FeatureCluster { feature, .. } => Some(
                 Target::Feature(here.feature_query(feature).map_err(at_line)?),
             ),
+            Kind::Loot { item, .. } => Some(Target::Loot(item_query(here, item).map_err(at_line)?)),
             Kind::Slime { .. } | Kind::Spawn { .. } | Kind::Height { .. } | Kind::Flat { .. } => {
                 None
             }
@@ -559,6 +574,15 @@ pub(crate) fn reject_find(query: &SearchQuery) -> Result<()> {
     }
 }
 
+/// A loot constraint's or target's item, resolved in `world`.
+fn item_query(world: &World, item: &LootItem) -> Result<ItemQuery> {
+    let enchantment = item.enchantment.as_ref().map(|(id, level)| {
+        // At most 255, by the parser.
+        (id.as_str(), level.map(|l| l as i32))
+    });
+    world.item_query(&item.item, enchantment)
+}
+
 /// Fails, saying why, unless `y` is within `world`'s build height.
 fn check_y(world: &World, dimension: Dimension, y: i32) -> std::result::Result<(), String> {
     let heights = world.sets.heights();
@@ -579,8 +603,8 @@ fn check_y(world: &World, dimension: Dimension, y: i32) -> std::result::Result<(
 /// A rough rank of how long a constraint takes to check, for ordering checks cheapest first:
 /// structures and slime chunks, then those that need the spawn (about 1 ms), the spawn itself,
 /// biome grids by size, anything on concentric rings (strongholds, about 1 s), terrain
-/// conditions by size (a few milliseconds a column), and last features by size (tens of
-/// milliseconds a chunk).
+/// conditions by size (a few milliseconds a column), features by size (tens of milliseconds a
+/// chunk), and last loot by size (its chunks decorated in passes, and their containers filled).
 fn cost(scope: Scope<'_>, kind: &Kind, resolved: &Resolved) -> Result<(u8, u64)> {
     let rings = |dimension: Dimension, structure: &StructureQuery| -> Result<bool> {
         Ok(scope.world(dimension)?.sets.sets().iter().any(|set| {
@@ -601,6 +625,7 @@ fn cost(scope: Scope<'_>, kind: &Kind, resolved: &Resolved) -> Result<(u8, u64)>
         None => false,
     };
     Ok(match kind {
+        Kind::Loot { place, .. } => (7, place.grid_bound(16)),
         Kind::Features { place, .. } | Kind::FeatureCluster { place, .. } => {
             (6, place.grid_bound(16))
         }
@@ -719,10 +744,10 @@ impl World {
                     .all(|(_, p)| p.accepts(&self.sets, seed))
             },
             |seed, threshold| {
-                self.session(seed)?
+                self.search_session(seed)?
                     .check(query, options.certain, threshold, options.confirm)
             },
-            |seed| self.session(seed)?.evaluate(query, options.confirm),
+            |seed| self.search_session(seed)?.evaluate(query, options.confirm),
             progress,
         )
     }
@@ -749,10 +774,10 @@ impl Game {
             options,
             |seed| prefilters.iter().all(|(w, p)| p.accepts(&w.sets, seed)),
             |seed, threshold| {
-                self.session(seed)
+                self.search_session(seed)
                     .check(query, options.certain, threshold, options.confirm)
             },
-            |seed| self.session(seed).evaluate(query, options.confirm),
+            |seed| self.search_session(seed).evaluate(query, options.confirm),
             progress,
         )
     }

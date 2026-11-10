@@ -58,8 +58,12 @@ import net.minecraft.util.datafix.DataFixers;
  * stand-ins for the server level, its chunk cache and the chunk holders ({@link StandIns}).
  */
 final class Decoration {
-    /** The data packs' structure templates, for fossils; made by {@link #record}. */
-    private static StructureTemplateManager templates;
+    /**
+     * The data packs' structure templates, for fossils and structure pieces: one manager a
+     * thread, since a template's palettes cache their filtered blocks in a plain map. Made by
+     * {@link #record}.
+     */
+    private static ThreadLocal<StructureTemplateManager> templates;
 
     private Decoration() {}
 
@@ -71,8 +75,14 @@ final class Decoration {
     static void record(Game game, Set<String> placed) throws Exception {
         // As Structures makes its own: the storage stays open while templates are read.
         var storage = LevelStorageSource.createDefault(java.nio.file.Path.of("oracle-levels")).createAccess("features");
-        templates = new StructureTemplateManager(game.resources, storage, DataFixers.getDataFixer(),
-                game.access.lookupOrThrow(Registries.BLOCK));
+        // Made one at a time: the storage's paths are a plain map too.
+        templates = ThreadLocal.withInitial(() -> {
+            synchronized (Decoration.class) {
+                var manager = new StructureTemplateManager(game.resources, storage, DataFixers.getDataFixer(),
+                        game.access.lookupOrThrow(Registries.BLOCK));
+                return manager;
+            }
+        });
         Field value = Holder.Reference.class.getDeclaredField("value");
         value.setAccessible(true);
         var registry = game.access.lookupOrThrow(Registries.PLACED_FEATURE);
@@ -88,6 +98,11 @@ final class Decoration {
                 value.set(reference, wrap(reference.value()));
             }
         }
+    }
+
+    /** This thread's structure templates; after {@link #record}. */
+    static StructureTemplateManager templates() {
+        return templates.get();
     }
 
     private static <FC extends FeatureConfiguration> ConfiguredFeature<FC, Recording<FC>> wrap(
@@ -108,8 +123,9 @@ final class Decoration {
 
         @Override
         public boolean place(FeaturePlaceContext<FC> context) {
+            var before = Features.containers(context.level(), context.origin());
             boolean placed = inner.place(context);
-            Features.record(context.origin(), placed);
+            Features.record(context.level(), context.origin(), placed, before);
             return placed;
         }
     }
@@ -121,7 +137,8 @@ final class Decoration {
      * x ascending, recording nothing; otherwise none is.
      */
     static void decorate(Game game, NoiseBasedChunkGenerator generator, LevelHeightAccessor height,
-            RandomState random, long seed, ChunkPos pos, boolean neighboursFirst) {
+            RandomState random, long seed, ChunkPos pos, boolean neighboursFirst, StructureManager structures) {
+        StructureManager manager = structures != null ? structures : StandIns.allocate(Manager.class);
         int reach = neighboursFirst ? 2 : 1;
         Map<ChunkPos, ChunkAccess> chunks = new HashMap<>();
         for (int dz = -reach; dz <= reach; dz++) {
@@ -139,6 +156,8 @@ final class Decoration {
         level.type = typeOf(game, generator);
         level.game = game;
         level.height = height;
+        level.structures = manager;
+        level.dimension = dimensionOf(game, generator);
         Cache cache = StandIns.allocate(Cache.class);
         cache.level = level;
         level.cache = cache;
@@ -147,17 +166,17 @@ final class Decoration {
                 for (int dx = -1; dx <= 1; dx++) {
                     if (dx != 0 || dz != 0) {
                         ChunkPos neighbour = new ChunkPos(pos.x() + dx, pos.z() + dz);
-                        Features.quiet(() -> decorateOne(level, generator, chunks, neighbour));
+                        Features.quiet(() -> decorateOne(level, generator, chunks, neighbour, manager));
                     }
                 }
             }
         }
-        decorateOne(level, generator, chunks, pos);
+        decorateOne(level, generator, chunks, pos, manager);
     }
 
     /** One chunk's {@code generateFeatures}, over the chunks around it in {@code chunks}. */
     private static void decorateOne(FeatureStep.Server level, NoiseBasedChunkGenerator generator,
-            Map<ChunkPos, ChunkAccess> chunks, ChunkPos pos) {
+            Map<ChunkPos, ChunkAccess> chunks, ChunkPos pos, StructureManager structures) {
         ChunkStep step = ChunkPyramid.GENERATION_PYRAMID.getStepTo(ChunkStatus.FEATURES);
         var deps = step.directDependencies();
         for (int dz = -1; dz <= 1; dz++) {
@@ -175,9 +194,20 @@ final class Decoration {
         ChunkAccess center = chunks.get(pos);
         FeatureStep.beforeFeatures(center);
         WorldGenRegion region = new Region(level, holders, step, center);
-        Manager structures = StandIns.allocate(Manager.class);
         generator.applyBiomeDecoration(region, center, structures);
+        Containers.finish(region);
         Blender.generateBorderTicks(region, center);
+    }
+
+    /** The level key of the dimension {@code generator} is. */
+    private static net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level> dimensionOf(Game game,
+            ChunkGenerator generator) {
+        for (var entry : game.dimensions.dimensions().entrySet()) {
+            if (entry.getValue().generator() == generator) {
+                return Registries.levelStemToLevel(entry.getKey());
+            }
+        }
+        throw new IllegalStateException("no dimension has this generator");
     }
 
     /** The dimension type of the dimension {@code generator} is. */
@@ -200,6 +230,16 @@ final class Decoration {
         public void setCurrentlyGenerating(Supplier<String> what) {
             super.setCurrentlyGenerating(what);
             Features.generating(what);
+            Containers.generating(this, what);
+        }
+
+        /**
+         * A fresh world's difficulty, for mobs structures spawn (an ocean ruin's drowned). It
+         * changes only the mob, whose draws are its own.
+         */
+        @Override
+        public net.minecraft.world.DifficultyInstance getCurrentDifficultyAt(BlockPos pos) {
+            return new net.minecraft.world.DifficultyInstance(net.minecraft.world.Difficulty.NORMAL, 0, 0, 0);
         }
     }
 
@@ -212,7 +252,7 @@ final class Decoration {
 
         @Override
         public StructureTemplateManager getStructureManager() {
-            return templates;
+            return templates.get();
         }
     }
 

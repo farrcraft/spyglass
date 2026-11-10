@@ -1,6 +1,7 @@
 //! Loading structure sets and structures from a bundle, mirroring the game's codecs (ADR 0010).
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use serde_json::{Map, Value};
 use spyglass_biome::{BiomeNames, BiomeSource, SpawnTargets};
@@ -14,13 +15,15 @@ use spyglass_noise::NormalNoiseParameters;
 
 use crate::biomes::{BiomeSet, Tags};
 use crate::corner::CornerSamplers;
-use crate::jigsaw::{GenerationHeights, HeightProvider, Jigsaw, JigsawLoader};
+use crate::jigsaw::{GenerationHeights, HeightProvider, Jigsaw, JigsawLoader, Template};
 use crate::mineshaft::Mineshaft;
+use crate::ocean_ruin::OceanRuin;
 use crate::placement::{
     ConcentricRings, ExclusionZone, FrequencyReduction, Placement, PlacementKind, RandomSpread,
     SpreadType,
 };
 use crate::portal::RuinedPortal;
+use crate::template_piece;
 
 const STRUCTURE_SET: &str = "worldgen/structure_set";
 const STRUCTURE: &str = "worldgen/structure";
@@ -103,13 +106,29 @@ pub struct Structure {
     pub beached: bool,
     /// For [`StructureType::RuinedPortal`], its setups and templates.
     pub ruined_portal: Option<RuinedPortal>,
+    /// The templates a [`StructureType::Shipwreck`] picks from (`STRUCTURE_LOCATION_BEACHED`
+    /// or `_OCEAN`), a [`StructureType::Igloo`]'s top, ladder and laboratory, or a
+    /// [`StructureType::EndCity`]'s or a [`StructureType::WoodlandMansion`]'s pieces, or a
+    /// [`StructureType::OceanRuin`]'s, warm or cold; empty for other types.
+    pub templates: Vec<Arc<Template>>,
+    /// Whether its `terrain_adaptation` isn't `none`, which grows its bounds by 12.
+    pub adapts_terrain: bool,
     /// For [`StructureType::NetherFossil`], `height`: where its scan starts.
     pub height: Option<HeightProvider>,
     /// For [`StructureType::Mineshaft`], its type and terrain adaptation.
     pub mineshaft: Option<Mineshaft>,
+    /// For [`StructureType::OceanRuin`], its kind and how often it's large or clustered.
+    pub ocean_ruin: Option<OceanRuin>,
+    /// For [`StructureType::Mineshaft`], `#mineshaft_blocking`: biomes where its pieces aren't
+    /// placed (`isInInvalidLocation`). Empty for other types.
+    pub mineshaft_blocking: BiomeSet,
     /// `step`: the decoration step it places its pieces in, before that step's features, as
     /// an index into [`STEPS`].
     pub step: usize,
+    /// Its place among every structure of the registry in its step, which the registry orders
+    /// by id (path, then namespace): the index its random is seeded with when decorating
+    /// (`setFeatureSeed`).
+    pub step_index: usize,
 }
 
 /// `GenerationStep.Decoration`, in order.
@@ -248,6 +267,27 @@ impl StructureSets {
         } else {
             None
         };
+        // Each structure's index in its step, among every structure of the registry, near or not.
+        let mut registry: Vec<(String, String, usize)> = Vec::new();
+        for id in bundle.registry_ids(STRUCTURE) {
+            let json = bundle
+                .resource(STRUCTURE, &id)
+                .map_err(|e| At::root(&id).error(e.into()))?;
+            let name = json.get("step").and_then(Value::as_str).unwrap_or_default();
+            if let Some(step) = STEPS.iter().position(|s| *s == name) {
+                let (namespace, path) = id.split_once(':').unwrap_or(("minecraft", &id));
+                registry.push((path.to_string(), namespace.to_string(), step));
+            }
+        }
+        registry.sort();
+        for structure in &mut loader.structures {
+            let (namespace, path) = structure.id.split_once(':').unwrap_or(("minecraft", ""));
+            structure.step_index = registry
+                .iter()
+                .filter(|(_, _, step)| *step == structure.step)
+                .position(|(p, n, _)| p == path && n == namespace)
+                .unwrap_or(0);
+        }
         let sets = StructureSets {
             spawn,
             sets,
@@ -525,6 +565,26 @@ impl SetLoader<'_> {
         };
         let beached = kind == StructureType::Shipwreck
             && obj.get("is_beached").and_then(Value::as_bool) == Some(true);
+        let ocean_ruin = match kind {
+            StructureType::OceanRuin => Some(Self::ocean_ruin(obj, &root)?),
+            _ => None,
+        };
+        let template_ids: &[&str] = match kind {
+            StructureType::Shipwreck if beached => &template_piece::SHIPWRECKS_BEACHED,
+            StructureType::Shipwreck => &template_piece::SHIPWRECKS_OCEAN,
+            StructureType::Igloo => &template_piece::IGLOO,
+            StructureType::EndCity => &crate::end_city::TEMPLATES,
+            StructureType::WoodlandMansion => &crate::mansion::TEMPLATES,
+            StructureType::OceanRuin if ocean_ruin.is_some_and(|r| r.cold) => {
+                &crate::ocean_ruin::COLD
+            }
+            StructureType::OceanRuin => &crate::ocean_ruin::WARM,
+            _ => &[],
+        };
+        let templates = template_ids
+            .iter()
+            .map(|id| self.jigsaw.template(&format!("minecraft:{id}")))
+            .collect::<LoadResult<Vec<_>>>()?;
         let height = match kind {
             StructureType::NetherFossil => Some(HeightProvider::parse(
                 field(obj, "height", &root)?,
@@ -535,6 +595,13 @@ impl SetLoader<'_> {
         let mineshaft = match kind {
             StructureType::Mineshaft => Some(Self::mineshaft(obj, &root)?),
             _ => None,
+        };
+        let mineshaft_blocking = match kind {
+            StructureType::Mineshaft => self.tags.holder_set(
+                &Value::String("#minecraft:mineshaft_blocking".into()),
+                &root,
+            )?,
+            _ => BiomeSet::default(),
         };
         let step_name = field(obj, "step", &root)?.as_str().unwrap_or_default();
         let step = STEPS.iter().position(|s| *s == step_name).ok_or_else(|| {
@@ -550,9 +617,18 @@ impl SetLoader<'_> {
             jigsaw,
             beached,
             ruined_portal,
+            templates,
+            adapts_terrain: obj
+                .get("terrain_adaptation")
+                .and_then(Value::as_str)
+                .is_some_and(|t| t != "none"),
             height,
             mineshaft,
+            ocean_ruin,
+            mineshaft_blocking,
             step,
+            // Set once every structure is loaded.
+            step_index: 0,
         });
         let index = self.structures.len() - 1;
         self.structure_index.insert(id, index);
@@ -581,6 +657,36 @@ impl SetLoader<'_> {
         Ok(Mineshaft {
             mesa,
             adapts_terrain,
+        })
+    }
+
+    /// `OceanRuinStructure.CODEC`'s own fields: `biome_temp` (`warm` or `cold`), and
+    /// `large_probability` and `cluster_probability`, floats from 0 to 1.
+    fn ocean_ruin(obj: &Map<String, Value>, root: &At<'_>) -> LoadResult<OceanRuin> {
+        let at = root.child("biome_temp");
+        let cold = match field(obj, "biome_temp", root)?.as_str() {
+            Some("cold") => true,
+            Some("warm") => false,
+            Some(other) => {
+                return Err(at.error(LoadErrorKind::Unsupported {
+                    what: "ocean ruin type",
+                    name: other.to_string(),
+                }));
+            }
+            None => return Err(at.error(LoadErrorKind::Shape("a string"))),
+        };
+        let probability = |name: &'static str| -> LoadResult<f32> {
+            let at = root.child(name);
+            let p = codec::float(field(obj, name, root)?, &at)?;
+            if !(0.0..=1.0).contains(&p) {
+                return Err(at.error(LoadErrorKind::Invalid("must be 0 to 1")));
+            }
+            Ok(p)
+        };
+        Ok(OceanRuin {
+            cold,
+            large_probability: probability("large_probability")?,
+            cluster_probability: probability("cluster_probability")?,
         })
     }
 

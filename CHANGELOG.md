@@ -6,6 +6,28 @@ Changes go under **Unreleased** as they're made. `cargo xtask release` turns tha
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-09
+
+### Game versions
+
+Checked against the game for 26.2, 26.3, 26.4-snapshot-5, 26.4-snapshot-6, 26.4-snapshot-7.
+
+### Added
+
+- **A user guide** at <https://farrcraft.github.io/spyglass/>, published with each release: installing, game data, the viewer, the `spyglass` command, maps, seed searches with worked queries, searching within a seed, your own worlds, reading the answers, and troubleshooting. Release notes link to it.
+- **26.4-snapshot-7**, checked against the game.
+- **Pieces of strongholds, fortresses, end cities, woodland mansions and ocean ruins**, laid out as the game lays them out and checked against the game in every supported version. `Session::structure_layout` gives them, so their exact bounds show where jigsaw structures' and mineshafts' already did. Features near them, and near mineshafts, are decided by those pieces rather than by everything within 8 chunks, which settles most of the dungeons that were candidates for that reason ([structure-placement.md](docs/specs/structure-placement.md#legacy-pieces)).
+- **Loot:** `spyglass loot at x,y,z` shows a container slot by slot, `spyglass loot in` lists the containers in a region (`--item` keeps those holding an item), and `spyglass loot find minecraft:enchanted_golden_apple` finds the nearest holding one, with `--enchantment` and `--level`, on a seed or a world save, with `--json` ([cli-json.md](docs/specs/cli-json.md#loot)). Maps ring the containers holding an item up close: `spyglass render --loot minecraft:diamond`, `Layers::loot`, and in the viewer a **Loot** section in the Layers tab that marks every container and rings those holding an item; clicking one opens its contents, and **Nearest** the item is in the map's menu ([render.md](docs/specs/render.md#layers)). In the library, `Session::containers_in` gives the loot containers structures and dungeons place in an area, each certain or a candidate with its table, seed and contents: every stack with its count, enchantments, damage, potion, name and an exploration map's destination. `Session::containers_holding` those holding an item, and `Session::nearest_container` the nearest holding an item or item tag, optionally with an enchantment (`World::item_query`). Checked against the game's containers in every supported version ([locate.md](docs/specs/locate.md#loot)).
+- **Loot in searches:** `loot I` counts the containers holding an item or item tag in a place, with `with E [level]` for an enchantment, and `find loot I` searches one seed for them: `require loot minecraft:enchanted_golden_apple within 1000 of spawn` finds seeds with one near the spawn. Each seed's chunks are placed until one is found, so that search takes about a minute a seed; a loot place is at most 2,048 blocks on a side. Loot is the Overworld's unless a dimension is written. In `--json`, a search's matches have a `container` kind ([search.md](docs/specs/search.md#outcomes), [ADR 0065](docs/adr/0065-loot-in-the-search-language.md)).
+
+### Changed
+
+- `GETTING-STARTED.txt` in the archives is a short quick start: the first run, getting game data, and a few commands, with the user guide for the rest.
+
+### Fixed
+
+- `spyglass find --help` names every kind of target a query can find: structures, features, loot containers holding an item, biomes and grid points.
+
 ## [0.2.0] - 2026-11-01
 
 ### Game versions
@@ -76,6 +98,7 @@ The first release.
 - A warning for a game version this build wasn't checked against. Its answers may differ from the game's ([bundle-format.md](docs/specs/bundle-format.md#checked-versions)).
 - `--version` names the build and the game versions it was checked against.
 
-[Unreleased]: https://github.com/farrcraft/spyglass/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/farrcraft/spyglass/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/farrcraft/spyglass/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/farrcraft/spyglass/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/farrcraft/spyglass/releases/tag/v0.1.0

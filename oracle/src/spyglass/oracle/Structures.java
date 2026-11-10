@@ -48,6 +48,9 @@ final class Structures {
     /** A chunk region, inclusive. */
     record Region(String name, int minX, int minZ, int maxX, int maxZ) {}
 
+    /** How far the search for a set with no start in the regions goes, in chunks from the origin on each axis. */
+    static final int FAR_SEARCH = 1024;
+
     static final List<Region> REGIONS = List.of(
             new Region("origin", -64, -64, 63, 63),
             new Region("far-pos", 62_500, 62_500, 62_531, 62_531),
@@ -90,7 +93,7 @@ final class Structures {
                 net.minecraft.resources.Identifier.parse(dimension));
 
         var root = new JsonObject();
-        root.addProperty("format", 2);
+        root.addProperty("format", 3);
         root.addProperty("harness", Main.HARNESS_VERSION);
         root.addProperty("version", game.version);
         root.addProperty("data_version", game.dataVersion);
@@ -129,11 +132,36 @@ final class Structures {
                         if (!set.placement().isStructureChunk(state, x, z)) {
                             continue;
                         }
-                        var chunk = new JsonObject();
-                        chunk.add("chunk", pair(x, z));
-                        chunk.add("tries", tries(game, generator, random, templates, height, level, seed, set,
+                        chunks.add(chunk(game, generator, random, templates, height, level, seed, set,
                                 new ChunkPos(x, z)));
-                        chunks.add(chunk);
+                    }
+                }
+            }
+            // A ring set's positions mostly lie outside the regions: try each of those too, in order.
+            if (set.placement() instanceof ConcentricRingsStructurePlacement rp) {
+                for (ChunkPos p : state.getRingPositionsFor(rp)) {
+                    if (!inRegions(p)) {
+                        chunks.add(chunk(game, generator, random, templates, height, level, seed, set, p));
+                    }
+                }
+            } else if (chunks.asList().stream().noneMatch(c -> started(c.getAsJsonObject()))) {
+                // A set that starts too rarely to be in the regions (mansions): placement chunks
+                // further out, square by square, until one starts.
+                search:
+                for (int d = 1; d <= FAR_SEARCH; d++) {
+                    for (int z = -d; z <= d; z++) {
+                        for (int x = -d; x <= d; x++) {
+                            if (Math.max(Math.abs(x), Math.abs(z)) != d || inRegions(new ChunkPos(x, z))
+                                    || !set.placement().isStructureChunk(state, x, z)) {
+                                continue;
+                            }
+                            var c = chunk(game, generator, random, templates, height, level, seed, set,
+                                    new ChunkPos(x, z));
+                            if (started(c)) {
+                                chunks.add(c);
+                                break search;
+                            }
+                        }
                     }
                 }
             }
@@ -163,6 +191,36 @@ final class Structures {
         }
         root.add("slime", slime);
         return root;
+    }
+
+    /** A placement chunk and its tries. */
+    private static JsonObject chunk(Game game, ChunkGenerator generator, RandomState random,
+            StructureTemplateManager templates, LevelHeightAccessor height,
+            ResourceKey<net.minecraft.world.level.Level> level, long seed, StructureSet set, ChunkPos at)
+            throws ReflectiveOperationException {
+        var chunk = new JsonObject();
+        chunk.add("chunk", pair(at.x(), at.z()));
+        chunk.add("tries", tries(game, generator, random, templates, height, level, seed, set, at));
+        return chunk;
+    }
+
+    /** Whether one of the chunk's tries started. */
+    private static boolean started(JsonObject chunk) {
+        for (var t : chunk.getAsJsonArray("tries")) {
+            if (t.getAsJsonObject().get("start").getAsBoolean()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean inRegions(ChunkPos p) {
+        for (Region r : REGIONS) {
+            if (r.minX() <= p.x() && p.x() <= r.maxX() && r.minZ() <= p.z() && p.z() <= r.maxZ()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** ChunkGenerator.createStructures' choice in one placement chunk, recording every try. */

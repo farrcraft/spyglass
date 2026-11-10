@@ -26,7 +26,7 @@ pub struct Ci {
     game_version: String,
     /// Make only these units of the version's oracle work, comma-separated, and run only the
     /// tests that read what they make: `probe`, `biomes`, `structures`, `spawn`, `locate`,
-    /// `bundle` (the tests that read only the bundle, and the test pack), or `heights`, `blocks`
+    /// `loot`, `bundle` (the tests that read only the bundle, and the test pack), or `heights`, `blocks`
     /// or `features` for one seed, as `heights:0`. `cargo xtask ci-plan` divides a version this
     /// way between CI's jobs. Every unit by default.
     #[arg(long, value_parser = Unit::parse, value_delimiter = ',')]
@@ -110,6 +110,8 @@ pub fn run(args: &Ci) -> Result<()> {
                     Kind::Heights => harness.heights(args.threads, &seeds),
                     Kind::Blocks => oracle::blocks(&mut harness, args.threads, &seeds),
                     Kind::Features => harness.features(args.threads, &seeds),
+                    Kind::Containers => harness.containers(args.threads, &seeds),
+                    Kind::Loot => harness.loot(),
                     Kind::Locate | Kind::Bundle => Ok(()),
                 })?;
             }

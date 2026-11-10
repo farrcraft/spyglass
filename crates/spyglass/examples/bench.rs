@@ -2,7 +2,8 @@
 //! `cargo run --profile dist -p spyglass --example bench -- [bundle dir or version] [--only text]`.
 //! Needs a bundle: a directory, a version in `bundles/`, or by default the newest release there.
 //! Each line is the median of several runs; `--only` runs just the lines whose names contain
-//! the text.
+//! the text, and `--runs n` runs each timed line n times, so a profile of a short line isn't
+//! mostly the world loading.
 
 use std::hint::black_box;
 use std::path::{Path, PathBuf};
@@ -11,8 +12,14 @@ use std::time::{Duration, Instant};
 
 use spyglass::{Dimension, Game, Layers, MapArea, Session, World};
 
+// As the CLI and viewer allocate (ADR 0064).
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 /// The text a line's name must contain to run, from `--only`.
 static ONLY: OnceLock<Option<String>> = OnceLock::new();
+/// How many times each timed line runs, from `--runs`, in place of the line's own count.
+static RUNS: OnceLock<Option<usize>> = OnceLock::new();
 
 const SEEDS: [i64; 5] = [
     0,
@@ -25,15 +32,23 @@ const SEEDS: [i64; 5] = [
 fn main() -> spyglass::Result<()> {
     let mut bundle = None;
     let mut only = None;
+    let mut runs = None;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         if arg == "--only" {
             only = args.next();
+        } else if arg == "--runs" {
+            runs = args
+                .next()
+                .and_then(|n| n.parse::<usize>().ok())
+                .filter(|&n| n > 0);
+            assert!(runs.is_some(), "--runs needs a positive count");
         } else {
             bundle = Some(arg);
         }
     }
     ONLY.set(only).expect("set once");
+    RUNS.set(runs).expect("set once");
     let dir: PathBuf = match bundle {
         Some(arg) if Path::new(&arg).join("bundle.json").is_file() => arg.into(),
         version => spyglass::find_bundle("bundles", version.as_deref())?.dir,
@@ -151,6 +166,16 @@ fn main() -> spyglass::Result<()> {
                 .unwrap(),
         );
     });
+    // The legacy and template layouts, at seed 0's starts.
+    for (structure, chunk) in [
+        ("minecraft:stronghold", [-13, -106]),
+        ("minecraft:ocean_ruin_cold", [9, -37]),
+        ("minecraft:mansion", [-221, -52]),
+    ] {
+        report(&format!("structure_layout {structure}"), 5, || {
+            black_box(session.structure_layout(structure, chunk).unwrap());
+        });
+    }
     let stronghold = world.structure_query("minecraft:stronghold")?;
     report("locate_structure stronghold, new session", 5, || {
         let session = world.session(*seeds.next().unwrap()).unwrap();
@@ -317,6 +342,36 @@ fn main() -> spyglass::Result<()> {
                 .unwrap(),
         );
     });
+    // Loot: the nearest saddle, from dungeons and structures, and every container of an area.
+    let saddle = world.item_query("minecraft:saddle", None)?;
+    report("nearest_container saddle, new session", 3, || {
+        let session = world.session(*seeds.next().unwrap()).unwrap();
+        black_box(session.nearest_container(&saddle, [0, 64, 0], 32).unwrap());
+    });
+    report("containers_in 8 x 8 chunks, new session", 3, || {
+        let session = world.session(*seeds.next().unwrap()).unwrap();
+        black_box(session.containers_in([-4, -4], [3, 3]).unwrap());
+    });
+    // A loot search (ADR 0065): dungeons and mineshafts can hold the apple, so each seed places
+    // every chunk of the disc, about 600, unless one is found first.
+    let apple =
+        world.search_query("require loot minecraft:enchanted_golden_apple within 200 of spawn")?;
+    report("evaluate golden apple near spawn, new session", 3, || {
+        let session = world.session(*seeds.next().unwrap()).unwrap();
+        black_box(session.evaluate(&apple, false).unwrap());
+    });
+    rate_world(
+        &world,
+        "search, golden apple near spawn, all threads",
+        &apple,
+        spyglass::SeedSource::Range {
+            first: 0,
+            last: i64::MAX,
+        },
+        16,
+        None,
+        false,
+    );
     let pair = world.search_query(
         "require cluster 2 feature minecraft:monster_room within 16 of each other within 96 of spawn",
     )?;
@@ -417,6 +472,21 @@ fn main() -> spyglass::Result<()> {
     });
     report("End World::session", 20, || {
         black_box(end.session(*seeds.next().unwrap()).unwrap());
+    });
+    let (nether_0, end_0) = (nether.session(0)?, end.session(0)?);
+    report("structure_layout minecraft:fortress", 5, || {
+        black_box(
+            nether_0
+                .structure_layout("minecraft:fortress", [15, 2])
+                .unwrap(),
+        );
+    });
+    report("structure_layout minecraft:end_city", 5, || {
+        black_box(
+            end_0
+                .structure_layout("minecraft:end_city", [-1_874_997, -1_874_995])
+                .unwrap(),
+        );
     });
     let fortress = nether.structure_query("minecraft:fortress")?;
     for confirm in [false, true] {
@@ -703,6 +773,7 @@ fn report_after<T>(name: &str, runs: usize, mut setup: impl FnMut() -> T, mut f:
     if !wanted(name) {
         return;
     }
+    let runs = RUNS.get().copied().flatten().unwrap_or(runs);
     let mut times: Vec<Duration> = (0..runs)
         .map(|_| {
             let input = setup();

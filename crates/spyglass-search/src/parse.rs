@@ -3,9 +3,9 @@
 use spyglass_data::dimension::Dimension;
 
 use crate::query::{
-    Anchor, Constraint, Count, DEFAULT_STEP, Find, Importance, Kind, MAX_COORDINATE,
-    MAX_FEATURE_SIDE, MAX_HEIGHT, MAX_HEIGHT_SAMPLES, MAX_PLACE_SIDE, MAX_SAMPLES, Place, Region,
-    Sampling, Target, keyword,
+    Anchor, Constraint, Count, DEFAULT_STEP, Find, Importance, Kind, LootItem, MAX_COORDINATE,
+    MAX_ENCHANTMENT_LEVEL, MAX_FEATURE_SIDE, MAX_HEIGHT, MAX_HEIGHT_SAMPLES, MAX_LOOT_SIDE,
+    MAX_PLACE_SIDE, MAX_SAMPLES, Place, Region, Sampling, Target, keyword,
 };
 
 /// Why a query's text didn't parse, and where.
@@ -21,9 +21,11 @@ pub struct ParseError {
 }
 
 /// The query language's words, which a bare id can't be (`minecraft:end` can).
-const KEYWORDS: [&str; 28] = [
+const KEYWORDS: [&str; 30] = [
     "find",
     "feature",
+    "loot",
+    "with",
     "here",
     "apart",
     "point",
@@ -233,6 +235,8 @@ impl<'a> Parser<'_, 'a> {
             Target::Biome(self.biome()?)
         } else if self.eat("feature") {
             Target::Feature(self.id("a feature")?)
+        } else if self.eat("loot") {
+            Target::Loot(self.loot_item()?)
         } else if self.eat("point") {
             Target::Point
         } else {
@@ -259,10 +263,13 @@ impl<'a> Parser<'_, 'a> {
             place?
         };
         if matches!(target, Target::Feature(_)) && !place.fits_features() {
-            return Err(self.too_wide(start));
+            return Err(self.too_wide(start, Limited::Features));
+        }
+        if matches!(target, Target::Loot(_)) && !place.fits_loot() {
+            return Err(self.too_wide(start, Limited::Loot));
         }
         let sampling = match target {
-            Target::Structure(_) | Target::Feature(_) => Sampling::default(),
+            Target::Structure(_) | Target::Feature(_) | Target::Loot(_) => Sampling::default(),
             Target::Biome(_) | Target::Point => self.sampling(&place)?,
         };
         let apart = if self.eat("apart") {
@@ -336,7 +343,7 @@ impl<'a> Parser<'_, 'a> {
                     self.keyword(word)?;
                 }
                 let place = if feature {
-                    self.feature_place()?
+                    self.limited_place(Limited::Features)?
                 } else {
                     self.place(true)?
                 };
@@ -412,12 +419,17 @@ impl<'a> Parser<'_, 'a> {
                 }
                 if self.eat("feature") {
                     let feature = self.id("a feature")?;
-                    let place = self.feature_place()?;
+                    let place = self.limited_place(Limited::Features)?;
                     return Ok(Kind::Features {
                         count,
                         feature,
                         place,
                     });
+                }
+                if self.eat("loot") {
+                    let item = self.loot_item()?;
+                    let place = self.limited_place(Limited::Loot)?;
+                    return Ok(Kind::Loot { count, item, place });
                 }
                 let structure = self.structure()?;
                 let region = self.region()?;
@@ -557,24 +569,30 @@ impl<'a> Parser<'_, 'a> {
         Ok(sampling)
     }
 
-    /// The place of a feature count or cluster, which is at most [`MAX_FEATURE_SIDE`] blocks on
-    /// a side.
-    fn feature_place(&mut self) -> Parsed<Place> {
+    /// The place of a feature count or cluster, or of a loot count, which is at most
+    /// [`MAX_FEATURE_SIDE`] or [`MAX_LOOT_SIDE`] blocks on a side.
+    fn limited_place(&mut self, limited: Limited) -> Parsed<Place> {
         let start = self.peek();
         let place = self.place(true)?;
-        if place.fits_features() {
+        let fits = match limited {
+            Limited::Features => place.fits_features(),
+            Limited::Loot => place.fits_loot(),
+        };
+        if fits {
             Ok(place)
         } else {
-            Err(self.too_wide(start))
+            Err(self.too_wide(start, limited))
         }
     }
 
-    /// A feature place too wide to place, starting at `start`.
-    fn too_wide(&self, start: Option<Token<'_>>) -> ParseError {
-        let message = format!(
-            "features are placed over at most {MAX_FEATURE_SIDE} blocks on a side: use a smaller \
-             place"
-        );
+    /// A feature or loot place too wide to place, starting at `start`.
+    fn too_wide(&self, start: Option<Token<'_>>, limited: Limited) -> ParseError {
+        let (what, side) = match limited {
+            Limited::Features => ("features are", MAX_FEATURE_SIDE),
+            Limited::Loot => ("containers are", MAX_LOOT_SIDE),
+        };
+        let message =
+            format!("{what} placed over at most {side} blocks on a side: use a smaller place");
         match start {
             Some(t) => self.error_at(t, message),
             None => self.error(message),
@@ -604,20 +622,34 @@ impl<'a> Parser<'_, 'a> {
 
     /// A biome id, or `#` and a biome tag.
     fn biome(&mut self) -> Parsed<String> {
-        let token = self.peek().ok_or_else(|| self.expected("a biome"))?;
-        match token.text.strip_prefix('#') {
-            Some(tag) => {
-                self.next += 1;
-                let id = full_id(tag)
-                    .ok_or_else(|| self.error_at(token, format!("`{}` isn't a tag", token.text)))?;
-                Ok(format!("#{id}"))
-            }
-            None => self.id("a biome"),
-        }
+        self.id_or_tag("a biome")
     }
 
     fn structure(&mut self) -> Parsed<String> {
-        let token = self.peek().ok_or_else(|| self.expected("a structure"))?;
+        self.id_or_tag("a structure")
+    }
+
+    /// `ITEM [with ENCHANTMENT [LEVEL]]`: an item id or `#` and an item tag.
+    fn loot_item(&mut self) -> Parsed<LootItem> {
+        let item = self.id_or_tag("an item")?;
+        let enchantment = if self.eat("with") {
+            let enchantment = self.id("an enchantment")?;
+            let level = match self.peek() {
+                Some(t) if t.text.starts_with(|c: char| c.is_ascii_digit()) => {
+                    Some(self.number("an enchantment level", 1, MAX_ENCHANTMENT_LEVEL)?)
+                }
+                _ => None,
+            };
+            Some((enchantment, level))
+        } else {
+            None
+        };
+        Ok(LootItem { item, enchantment })
+    }
+
+    /// An id, or `#` and a tag id; `what` names it in errors.
+    fn id_or_tag(&mut self, what: &str) -> Parsed<String> {
+        let token = self.peek().ok_or_else(|| self.expected(what))?;
         match token.text.strip_prefix('#') {
             Some(tag) => {
                 self.next += 1;
@@ -625,7 +657,7 @@ impl<'a> Parser<'_, 'a> {
                     .ok_or_else(|| self.error_at(token, format!("`{}` isn't a tag", token.text)))?;
                 Ok(format!("#{id}"))
             }
-            None => self.id("a structure"),
+            None => self.id(what),
         }
     }
 
@@ -714,6 +746,13 @@ impl<'a> Parser<'_, 'a> {
         }
         Ok(xz)
     }
+}
+
+/// What a place is limited for: features or loot, each placing chunks.
+#[derive(Clone, Copy)]
+enum Limited {
+    Features,
+    Loot,
 }
 
 /// A decimal integer with an optional leading `-`.
@@ -1074,6 +1113,88 @@ mod tests {
     }
 
     #[test]
+    fn loot() {
+        let q = Query::parse(
+            "find loot #minecraft:planks within 1000\n\
+             require loot enchanted_golden_apple within 1000 of spawn\n\
+             prefer 2 loot minecraft:enchanted_book with mending in 0,0 to 2047,9 weight 4\n\
+             require no loot enchanted_book with minecraft:sharpness 5 within 64 of here",
+        )
+        .unwrap();
+        let planks = LootItem {
+            item: "#minecraft:planks".to_string(),
+            enchantment: None,
+        };
+        assert_eq!(q.find().unwrap().target, Target::Loot(planks));
+        assert_eq!(q.find().unwrap().apart, 0);
+        assert_eq!(
+            q.constraints()[0].kind,
+            Kind::Loot {
+                count: Count::AtLeast(1),
+                item: LootItem {
+                    item: "minecraft:enchanted_golden_apple".to_string(),
+                    enchantment: None,
+                },
+                place: Place::Within {
+                    radius: 1000,
+                    anchor: Anchor::Spawn
+                },
+            }
+        );
+        assert_eq!(
+            q.constraints()[2].kind,
+            Kind::Loot {
+                count: Count::No,
+                item: LootItem {
+                    item: "minecraft:enchanted_book".to_string(),
+                    enchantment: Some(("minecraft:sharpness".to_string(), Some(5))),
+                },
+                place: Place::Within {
+                    radius: 64,
+                    anchor: Anchor::Here
+                },
+            }
+        );
+        assert_eq!(
+            q.to_string(),
+            "find loot #minecraft:planks within 1000\n\
+             require loot minecraft:enchanted_golden_apple within 1000 of spawn\n\
+             prefer 2 loot minecraft:enchanted_book with minecraft:mending in 0,0 to 2047,9 weight 4\n\
+             require no loot minecraft:enchanted_book with minecraft:sharpness 5 within 64 of here\n"
+        );
+        // Places are at most 2,048 blocks on a side.
+        assert!(Query::parse("require loot apple within 1023 of 0,0").is_ok());
+        for (text, column) in [
+            ("require loot apple within 1024 of 0,0", 20),
+            ("require loot apple in 0,0 to 2048,5", 20),
+            ("find loot apple within 1024", 17),
+        ] {
+            let e = error(text);
+            assert_eq!(e.column, column, "{text}: {e}");
+            assert!(e.message.contains("2048"), "{text}: {e}");
+        }
+        for (text, column) in [
+            // No structure anchors, no clusters, and levels from 1 to 255.
+            (
+                "require loot apple within 9 of village within 9 of spawn",
+                32,
+            ),
+            (
+                "require cluster 2 loot apple within 9 of each other within 9 of spawn",
+                19,
+            ),
+            ("require loot within 9 of spawn", 14),
+            ("require loot book with within 9 of spawn", 24),
+            ("require loot book with mending 0 within 9 of spawn", 32),
+            ("require loot book with mending 256 within 9 of spawn", 32),
+            ("require loot #Bad within 9 of spawn", 14),
+        ] {
+            let e = error(text);
+            assert_eq!(e.column, column, "{text}: {e}");
+        }
+    }
+
+    #[test]
     fn biome_tags_and_terrain() {
         let c = parse(
             "require biome #required_ocean_monument_surrounding covers 100% within 128 of 0,0\n\
@@ -1280,6 +1401,9 @@ mod tests {
             "#is_ocean",
             "feature",
             "monster_room",
+            "loot",
+            "with",
+            "mending",
         ];
         let mut state = 0x2545_f491_u32;
         let mut next = |n: usize| {

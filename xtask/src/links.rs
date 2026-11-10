@@ -1,7 +1,8 @@
 //! `cargo xtask links`: every relative link in the repo's Markdown points at a file that exists,
 //! and every anchor at a heading in it, as GitHub renders them. A commit hook runs it
 //! (.pre-commit-config.yaml), so moving a document can't silently break links to it
-//! (docs/development-process.md).
+//! (docs/development-process.md). Links in the user guide must also stay inside it, since only
+//! the guide is published (docs/adr/0066-a-user-guide-on-github-pages.md).
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -16,6 +17,9 @@ use crate::{command, repo_root};
 fn placeholders(file: &str) -> bool {
     file == "template.md" || file.ends_with("/template.md") || file.starts_with(".claude/skills/")
 }
+
+/// The user guide's pages, the only Markdown published to the site.
+const GUIDE: &str = "docs/guide/src";
 
 pub(crate) fn run() -> Result<()> {
     let root = repo_root();
@@ -79,6 +83,11 @@ fn check_link(
     if !resolved.exists() {
         return Ok(Some(format!("no file {target}")));
     }
+    if leaves_the_guide(root, file, &resolved)? {
+        return Ok(Some(format!(
+            "{target} is outside {GUIDE}, which isn't published; link to it on GitHub"
+        )));
+    }
     let markdown = resolved.extension().is_some_and(|e| e == "md");
     if anchor.is_empty() || !markdown {
         return Ok(None);
@@ -88,6 +97,23 @@ fn check_link(
     } else {
         Ok(Some(format!("no heading for {target}")))
     }
+}
+
+/// Whether `file` is a page of the guide and `resolved`, an existing path it links to, isn't in
+/// the guide.
+fn leaves_the_guide(root: &Path, file: &Path, resolved: &Path) -> Result<bool> {
+    let guide = root.join(GUIDE);
+    if !file.starts_with(&guide) {
+        return Ok(false);
+    }
+    // Canonical, so a link that climbs out and back in (`../src/a.md`) stays inside.
+    let guide = guide
+        .canonicalize()
+        .with_context(|| format!("failed to resolve {}", guide.display()))?;
+    let resolved = resolved
+        .canonicalize()
+        .with_context(|| format!("failed to resolve {}", resolved.display()))?;
+    Ok(!resolved.starts_with(guide))
 }
 
 /// Whether `target` names a scheme (`https:`, `mailto:`), so isn't a path in the repo.
@@ -348,6 +374,39 @@ mod tests {
                 "docs/a.md:4: no heading for b.md#no",
                 "docs/a.md:4: no file c.md",
                 "docs/a.md:4: no heading for #bottom",
+            ]
+        );
+    }
+
+    #[test]
+    fn guide_links_stay_in_the_guide() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("docs/guide/src/images")).unwrap();
+        fs::write(
+            root.join("docs/guide/src/a.md"),
+            "[ok](b.md) [ok](images/map.png) [ok](../src/b.md)
+             [ok](https://github.com/farrcraft/spyglass/blob/main/docs/spec.md)
+             [bad](../../spec.md) [bad](/docs/spec.md) [bad](../book.toml)
+",
+        )
+        .unwrap();
+        fs::write(root.join("docs/guide/src/b.md"), "").unwrap();
+        fs::write(root.join("docs/guide/src/images/map.png"), "").unwrap();
+        fs::write(root.join("docs/guide/book.toml"), "").unwrap();
+        fs::write(
+            root.join("docs/spec.md"),
+            "[ok](guide/src/a.md)
+",
+        )
+        .unwrap();
+        let outside = "is outside docs/guide/src, which isn't published; link to it on GitHub";
+        assert_eq!(
+            check(root, &["docs/guide/src/a.md", "docs/spec.md"]).unwrap(),
+            [
+                format!("docs/guide/src/a.md:3: ../../spec.md {outside}"),
+                format!("docs/guide/src/a.md:3: /docs/spec.md {outside}"),
+                format!("docs/guide/src/a.md:3: ../book.toml {outside}"),
             ]
         );
     }

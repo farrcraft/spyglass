@@ -1,14 +1,14 @@
 # spyglass
 
-![spyglass logo: a blocky robot looking through a spyglass](docs/images/logo.png)
+![spyglass logo: a blocky robot looking through a spyglass](docs/guide/src/images/logo.png)
 
 A local-only seed explorer for Minecraft: Java Edition. Describe what you want in a world, and spyglass searches for the seeds that fit best, shows them on a map, and finds where things are in worlds you already play. Output aims to match the game exactly on current versions.
 
-> Status: early. For game versions 26.2, 26.3 and the 26.4 snapshots so far (26.4-snapshot-5 and 26.4-snapshot-6), each checked against the real game, the `spyglass` command answers `/locate`-style questions (structures, biomes, slime chunks, spawn) for any seed or a world save, in the Overworld, the Nether and the End, with `--json` for scripts, draws maps of them, and searches for the seeds that best fit a query of required and preferred constraints, which can span dimensions ("a fortress near the spawn's portal"). The viewer shows the same maps, pannable and zoomable, with layers you choose and a dimension switch, and runs the same searches. Terrain heights decide which structures really generate, so locate answers match the game's `/locate`, with exact bounds for villages, bastions and other jigsaw structures; maps can show terrain relief up close. New versions are added as they come out, snapshots included, and stay supported ([adding a version](docs/adding-a-version.md)).
+> Status: early. For game versions 26.2, 26.3 and the 26.4 snapshots so far (26.4-snapshot-5 to 26.4-snapshot-7), each checked against the real game, the `spyglass` command answers `/locate`-style questions (structures, biomes, slime chunks, spawn) for any seed or a world save, in the Overworld, the Nether and the End, with `--json` for scripts, draws maps of them, and searches for the seeds that best fit a query of required and preferred constraints, which can span dimensions ("a fortress near the spawn's portal"). The viewer shows the same maps, pannable and zoomable, with layers you choose and a dimension switch, and runs the same searches. Terrain heights decide which structures really generate, so locate answers match the game's `/locate`, with exact bounds for villages, bastions and other jigsaw structures; maps can show terrain relief up close. New versions are added as they come out, snapshots included, and stay supported ([adding a version](docs/adding-a-version.md)).
 
-![The spyglass viewer showing the best seed from a search for two swamp huts near spawn, with the huts and a cherry grove ringed on a biome map](docs/images/viewer-search.png)
+![The spyglass viewer showing the best seed from a search for two swamp huts near spawn, with the huts and a cherry grove ringed on a biome map](docs/guide/src/images/viewer-search.png)
 
-More of the viewer is in [getting started](docs/getting-started.md#10-the-viewer).
+More of the viewer is in the [user guide](https://farrcraft.github.io/spyglass/viewer.html).
 
 Not affiliated with or endorsed by Mojang or Microsoft.
 
@@ -29,7 +29,7 @@ Mojang's data and code are never committed or redistributed. The extractor runs 
 
 ## Install
 
-Download the archive for your system from the [releases page](https://github.com/farrcraft/spyglass/releases/latest): Windows, Linux, or macOS (Apple silicon or Intel). Unpack it into a folder of its own and start `spyglass-viewer`. With no game data yet, it extracts some for you, into a `bundles` folder beside it; that needs a Java runtime matching the game version. `GETTING-STARTED.txt` in the archive covers the rest, including the `spyglass` command and the warnings unsigned programs get on Windows and macOS. No Rust is needed.
+Download the archive for your system from the [releases page](https://github.com/farrcraft/spyglass/releases/latest): Windows, Linux, or macOS (Apple silicon or Intel). Unpack it into a folder of its own and start `spyglass-viewer`. With no game data yet, it extracts some for you, into a `bundles` folder beside it; that needs a Java runtime matching the game version. No Rust is needed. The [user guide](https://farrcraft.github.io/spyglass/) covers the rest: the warnings unsigned programs get on Windows and macOS, game data, the viewer and the `spyglass` command.
 
 ## Build from source
 
@@ -62,7 +62,7 @@ cargo run --release -p spyglass-cli -- search -q 'require minecraft:fortress wit
 cargo run --release -p spyglass-viewer
 ```
 
-See [docs/getting-started.md](docs/getting-started.md) for the full walkthrough, including installing Rust by hand, the [`spyglass` command](docs/getting-started.md#9-the-spyglass-command) and [the viewer](docs/getting-started.md#10-the-viewer).
+See [docs/getting-started.md](docs/getting-started.md) for the full walkthrough, including installing Rust by hand, and the [user guide](https://farrcraft.github.io/spyglass/) for [the `spyglass` command](https://farrcraft.github.io/spyglass/command.html) and [the viewer](https://farrcraft.github.io/spyglass/viewer.html).
 
 ## Crates
 
@@ -87,7 +87,8 @@ See [docs/architecture.md](docs/architecture.md) for how they fit together.
 
 ## Documentation
 
-- [Getting started](docs/getting-started.md)
+- [User guide](https://farrcraft.github.io/spyglass/) ([source](docs/guide/src/SUMMARY.md))
+- [Getting started](docs/getting-started.md), for working on spyglass
 - [Architecture](docs/architecture.md)
 - [Specs](docs/specs/)
 - [Adding a game version](docs/adding-a-version.md)

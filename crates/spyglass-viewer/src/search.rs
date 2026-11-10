@@ -12,9 +12,9 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use spyglass::query::{Anchor, Constraint, ConstraintKind, Importance, Place, Query, Region};
 use spyglass::{
-    Dimension, Evaluation, Feature, FindMatch, FindOptions, FindOutcome, FindProgress, Game,
-    SearchOptions, SearchOutcome, SearchProgress, SearchQuery, SearchStop, SearchThrottle,
-    SeedSource,
+    Dimension, Evaluation, Feature, FindMatch, FindOptions, FindOutcome, FindProgress,
+    FoundContainer, Game, SearchOptions, SearchOutcome, SearchProgress, SearchQuery, SearchStop,
+    SearchThrottle, SeedSource,
 };
 
 use crate::userdata::{self, Kind};
@@ -373,6 +373,12 @@ fn place_of(feature: &Feature) -> Option<userdata::Place> {
     }
 }
 
+/// A container's tooltip: what it is and its table, e.g. `minecraft:chest,
+/// minecraft:chests/simple_dungeon`.
+fn container_name(container: &FoundContainer) -> String {
+    format!("{}, {}", container.holder, container.table)
+}
+
 /// A query's constraint lines in canonical text: without a `find` line.
 pub fn constraint_lines(query: &SearchQuery) -> Vec<String> {
     let skip = usize::from(query.query().find().is_some());
@@ -392,6 +398,7 @@ pub fn matches(query: &SearchQuery, evaluation: &Evaluation) -> Vec<Match> {
             let (what, certain) = match feature {
                 Feature::Structure(s) => (s.structures.join(" or "), s.certain),
                 Feature::Placed(f) => (f.feature.clone(), f.certain),
+                Feature::Container(c) => (container_name(c), c.contents_certain()),
                 Feature::SlimeChunk(_) => ("Slime chunk".to_string(), true),
                 Feature::Biome { biome, certain, .. } => (biome.biome.clone(), *certain),
                 Feature::Spawn(s) => ("World spawn".to_string(), !s.platform_dependent),
@@ -416,6 +423,7 @@ pub fn find_matches(query: &SearchQuery, dimension: Dimension, found: &FindMatch
     let (what, certain) = match &found.target {
         Some(Feature::Structure(s)) => (s.structures.join(" or "), s.certain),
         Some(Feature::Placed(f)) => (f.feature.clone(), f.certain),
+        Some(Feature::Container(c)) => (container_name(c), c.contents_certain()),
         Some(Feature::Biome { biome, certain, .. }) => (biome.biome.clone(), *certain),
         _ => ("Here".to_string(), true),
     };
@@ -468,6 +476,7 @@ fn place(kind: &ConstraintKind) -> Place {
         ConstraintKind::Cluster { place, .. }
         | ConstraintKind::Features { place, .. }
         | ConstraintKind::FeatureCluster { place, .. }
+        | ConstraintKind::Loot { place, .. }
         | ConstraintKind::Biome { place, .. }
         | ConstraintKind::Coverage { place, .. }
         | ConstraintKind::Spawn { place }

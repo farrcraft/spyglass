@@ -1,6 +1,7 @@
 //! The `--json` output, as types (`docs/specs/cli-json.md`). Every answer is a [`Header`] and the
 //! command's own fields. Keys are printed sorted, so field order here doesn't matter.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::Result;
@@ -314,6 +315,7 @@ pub struct RenderAnswer<'a> {
     pub layers: RenderLayers<'a>,
     pub structures: Vec<StructureMark<'a>>,
     pub features: Vec<FeatureHit<'a>>,
+    pub containers: Vec<Container<'a>>,
     pub slime_chunks: Vec<[i32; 2]>,
     pub spawn: Option<SpawnAnswer>,
     pub pins: Vec<PinMark>,
@@ -355,6 +357,7 @@ pub struct RenderLayers<'a> {
     pub highlight: &'a [String],
     pub structures: &'a [String],
     pub features: &'a [String],
+    pub loot: Option<&'a str>,
     pub slime_chunks: bool,
     pub spawn: bool,
     pub confirm: bool,
@@ -547,6 +550,7 @@ pub struct ConstraintAnswer<'a> {
 pub enum FeatureAnswer<'a> {
     Structure(StructureMark<'a>),
     Feature(FeatureHit<'a>),
+    Container(Container<'a>),
     SlimeChunk {
         chunk: [i32; 2],
     },
@@ -577,5 +581,164 @@ mod tests {
                 .contains("99.1 is newer")
         );
         assert!(value[0].get("dimension").is_none());
+    }
+}
+
+#[derive(Serialize)]
+pub struct LootAtAnswer<'a> {
+    pub position: [i32; 3],
+    /// Every container spyglass answers there: one, or each candidate.
+    pub containers: Vec<Container<'a>>,
+}
+
+#[derive(Serialize)]
+pub struct LootInAnswer<'a> {
+    pub min: [i32; 2],
+    pub max: [i32; 2],
+    pub item: Option<&'a str>,
+    pub containers: Vec<Container<'a>>,
+}
+
+#[derive(Serialize)]
+pub struct LootFindAnswer<'a> {
+    pub item: &'a str,
+    pub from: [i32; 3],
+    pub radius: i32,
+    pub complete: bool,
+    pub hits: Vec<Container<'a>>,
+}
+
+/// A loot container (`docs/specs/locate.md#loot`).
+#[derive(Serialize)]
+pub struct Container<'a> {
+    pub position: Xyz,
+    pub chunk: [i32; 2],
+    pub holder: &'a str,
+    pub source: ContainerSource<'a>,
+    pub table: &'a str,
+    pub loot_seed: Option<i64>,
+    pub certain: bool,
+    pub reason: Option<&'a str>,
+    pub contents: Option<Vec<Stack<'a>>>,
+    pub contents_certain: bool,
+    pub contents_doubt: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocks_away: Option<i32>,
+}
+
+#[derive(Serialize)]
+pub struct ContainerSource<'a> {
+    /// `structure` or `feature`.
+    pub kind: &'static str,
+    pub id: &'a str,
+}
+
+/// A filled slot.
+#[derive(Serialize)]
+pub struct Stack<'a> {
+    pub slot: usize,
+    pub item: &'a str,
+    pub count: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub damage: Option<i32>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub enchantments: BTreeMap<&'a str, i32>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub stored_enchantments: BTreeMap<&'a str, i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub potion: Option<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub stew_effects: Vec<StewEffect<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instrument: Option<&'a str>,
+    /// The text component, as JSON.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ominous_bottle_amplifier: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub map: Option<MapAnswer<'a>>,
+}
+
+#[derive(Serialize)]
+pub struct StewEffect<'a> {
+    pub effect: &'a str,
+    pub duration: i32,
+}
+
+#[derive(Serialize)]
+pub struct MapAnswer<'a> {
+    pub target: Xz,
+    pub decoration: &'a str,
+    pub zoom: i32,
+}
+
+impl<'a> Container<'a> {
+    pub fn new(c: &'a spyglass::FoundContainer, from: Option<[i32; 3]>) -> Self {
+        let [x, y, z] = c.position;
+        let (kind, id) = match &c.source {
+            spyglass::ContainerSource::Feature(id) => ("feature", id.as_str()),
+            spyglass::ContainerSource::Structure(id) => ("structure", id.as_str()),
+            _ => ("other", ""),
+        };
+        Container {
+            position: Xyz { x, y, z },
+            chunk: c.chunk,
+            holder: &c.holder,
+            source: ContainerSource { kind, id },
+            table: &c.table,
+            loot_seed: c.seed,
+            certain: c.certain,
+            reason: c.reason.as_deref(),
+            contents: c
+                .contents
+                .as_ref()
+                .map(|slots| slots.iter().map(Stack::new).collect()),
+            contents_certain: c.contents_certain(),
+            contents_doubt: c.contents_doubt.as_deref(),
+            blocks_away: from.map(|o| {
+                let (dx, dz) = (i64::from(x - o[0]), i64::from(z - o[2]));
+                ((dx * dx + dz * dz) as f64).sqrt() as i32
+            }),
+        }
+    }
+}
+
+impl<'a> Stack<'a> {
+    fn new(s: &'a spyglass::Slot) -> Self {
+        let item = &s.item;
+        let levels =
+            |list: &'a [(String, i32)]| list.iter().map(|(e, l)| (e.as_str(), *l)).collect();
+        Stack {
+            slot: s.slot,
+            item: &item.id,
+            count: item.count,
+            damage: item.damage,
+            enchantments: levels(&item.enchantments),
+            stored_enchantments: levels(&item.stored_enchantments),
+            potion: item.potion.as_deref(),
+            stew_effects: item
+                .stew_effects
+                .iter()
+                .map(|(effect, duration)| StewEffect {
+                    effect,
+                    duration: *duration,
+                })
+                .collect(),
+            instrument: item.instrument.as_deref(),
+            name: item
+                .name
+                .as_deref()
+                .map(|text| serde_json::from_str(text).unwrap_or_else(|_| text.into())),
+            ominous_bottle_amplifier: item.ominous_bottle_amplifier,
+            map: item.map.as_ref().map(|m| MapAnswer {
+                target: Xz {
+                    x: m.target[0],
+                    z: m.target[1],
+                },
+                decoration: &m.decoration,
+                zoom: m.zoom,
+            }),
+        }
     }
 }

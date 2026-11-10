@@ -13,6 +13,8 @@ use eframe::egui::{
 };
 use spyglass::{FoundFeature, SpawnOrigin, StructureStart, feature_colour, structure_colour};
 
+use crate::tiles::LootMark;
+
 use crate::icons;
 use crate::locate::Hit;
 use crate::style;
@@ -96,6 +98,38 @@ pub fn feature(painter: &Painter, centre: Pos2, found: &FoundFeature, hovered: b
         (style::GROUND, Stroke::new(2.5, colour))
     };
     painter.add(Shape::convex_polygon(diamond(half), fill, stroke));
+}
+
+/// A loot container's icon: a small chest-brown square, ringed in gold when it holds the Loot
+/// item (a full ring when that's certain, a thin one when it might), larger when hovered.
+pub fn container(painter: &Painter, centre: Pos2, mark: &LootMark, hovered: bool) {
+    let half = if hovered { 6.0 } else { 4.0 };
+    let square = Rect::from_center_size(centre, Vec2::splat(half * 2.0));
+    painter.rect(
+        square,
+        CornerRadius::same(1),
+        Color32::from_rgb(0x9c, 0x6a, 0x2c),
+        Stroke::new(1.0, style::GROUND),
+        StrokeKind::Outside,
+    );
+    if mark.ringed {
+        let gold = Color32::from_rgb(0xff, 0xc8, 0x30);
+        let width = if mark.container.contents_certain() {
+            3.0
+        } else {
+            1.5
+        };
+        painter.circle_stroke(centre, half + 5.0, Stroke::new(width + 2.0, style::GROUND));
+        painter.circle_stroke(centre, half + 5.0, Stroke::new(width, gold));
+    }
+    if hovered {
+        painter.rect_stroke(
+            square.expand(3.0),
+            CornerRadius::same(2),
+            Stroke::new(2.0, Color32::WHITE),
+            StrokeKind::Outside,
+        );
+    }
 }
 
 /// A structure start's icon: its family's glyph on a badge in its set's colour, filled if it's
@@ -294,6 +328,8 @@ pub enum Picked<'a> {
     Structure(&'a StructureStart),
     /// A feature's icon.
     Feature(&'a FoundFeature),
+    /// A loot container.
+    Container(&'a LootMark),
     /// The world spawn.
     Spawn(&'a SpawnOrigin),
     /// A locate hit's pin.
@@ -316,6 +352,11 @@ impl Picked<'_> {
             Picked::Hit(hit) => Some(hit.place.clone()),
             Picked::Match(found) => found.place.clone(),
             Picked::Feature(feature) => Some(crate::locate::feature_place(feature)),
+            Picked::Container(mark) => Some(Place {
+                kind: Kind::Place,
+                id: String::new(),
+                at: [mark.container.position[0], mark.container.position[2]],
+            }),
             Picked::Spawn(_) | Picked::Marker(_) => None,
         }
     }

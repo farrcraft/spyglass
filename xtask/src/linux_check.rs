@@ -11,7 +11,7 @@ use spyglass_extract::extract;
 use crate::{command, first_line, repo_root};
 
 /// The image built from the Dockerfile's `base` stage.
-const IMAGE: &str = "spyglass-linux-check";
+pub(crate) const IMAGE: &str = "spyglass-linux-check";
 /// One check at a time; a leftover container from an interrupted run is replaced.
 const CONTAINER: &str = "spyglass-linux-check";
 /// The base image's non-root user, so the check runs as a contributor would.
@@ -121,7 +121,19 @@ fn text(out: &Output) -> String {
 }
 
 /// `channel` from rust-toolchain.toml.
-fn pinned_channel() -> Result<String> {
+/// Builds [`IMAGE`] from the Dockerfile's `base` stage: a clean Ubuntu, as getting-started
+/// assumes. `cargo xtask profile` starts from it too.
+pub(crate) fn build_image() -> Result<()> {
+    let status = command("docker")
+        .args(["build", "--target", "base", "--tag", IMAGE])
+        .args(["--file", ".devcontainer/Dockerfile", ".devcontainer"])
+        .status()
+        .context("failed to run docker build")?;
+    ensure!(status.success(), "docker build failed");
+    Ok(())
+}
+
+pub(crate) fn pinned_channel() -> Result<String> {
     crate::toml_string("rust-toolchain.toml", &["toolchain", "channel"])
 }
 
@@ -130,12 +142,7 @@ pub fn run(args: &LinuxCheck) -> Result<()> {
     let target = preflight(&args.game_version)?;
 
     step("build image");
-    let status = command("docker")
-        .args(["build", "--target", "base", "--tag", IMAGE])
-        .args(["--file", ".devcontainer/Dockerfile", ".devcontainer"])
-        .status()
-        .context("failed to run docker build")?;
-    ensure!(status.success(), "docker build failed");
+    build_image()?;
     let mut container = Container::start()?;
     container.keep = args.keep;
 
@@ -219,7 +226,7 @@ fn clone_and_set_up(c: &Container, target: &Target) -> Result<()> {
 }
 
 /// `text` as one POSIX shell word: single-quoted, with each `'` written as `'\''`.
-fn sh_quote(text: &str) -> String {
+pub(crate) fn sh_quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', r"'\''"))
 }
 

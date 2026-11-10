@@ -8,11 +8,13 @@ use spyglass_search::{
     Anchor, Checked, Count, Importance, Kind, Place, Region, Sampling, distance_sqr, largest_group,
 };
 
-use super::{Resolved, SearchQuery, Target, convert};
+use super::{Resolved, SearchQuery, Target, convert, spawn_anchored};
 use crate::features::Placings;
+use crate::loot::LootPlacings;
 use crate::{
-    BiomeAt, BiomeQuery, Dimension, Error, FeatureOptions, FeatureQuery, FoundFeature, GameSession,
-    Heightmap, Result, Session, SpawnOrigin, StructureQuery, StructureStart,
+    BiomeAt, BiomeQuery, Dimension, Error, FeatureOptions, FeatureQuery, FoundContainer,
+    FoundFeature, GameSession, Heightmap, ItemQuery, Result, Session, SpawnOrigin, StructureQuery,
+    StructureStart,
 };
 
 /// Whether a constraint, or a seed, meets a query (`docs/specs/search.md#outcomes`).
@@ -88,6 +90,9 @@ pub enum Feature {
     Structure(StructureStart),
     /// A feature that placed, or likely placed: a candidate isn't certain.
     Placed(FoundFeature),
+    /// A loot container that holds the item, or might: it certainly does only if its contents
+    /// are certain ([`FoundContainer::contents_certain`]).
+    Container(FoundContainer),
     /// A slime chunk.
     SlimeChunk([i32; 2]),
     /// A biome sample.
@@ -104,13 +109,14 @@ pub enum Feature {
 }
 
 impl Feature {
-    /// Where the feature is on a map, as block `[x, z]`: a structure's, a placed feature's or a
-    /// biome sample's position, a slime chunk's centre, or the spawn's map block
-    /// (`docs/specs/search.md#positions-and-regions`).
+    /// Where the feature is on a map, as block `[x, z]`: a structure's, a placed feature's, a
+    /// container's or a biome sample's position, a slime chunk's centre, or the spawn's map
+    /// block (`docs/specs/search.md#positions-and-regions`).
     pub fn map_block(&self) -> [i32; 2] {
         match self {
             Feature::Structure(s) => [s.position[0], s.position[2]],
             Feature::Placed(f) => [f.position[0], f.position[2]],
+            Feature::Container(c) => [c.position[0], c.position[2]],
             Feature::SlimeChunk(chunk) => chunk.map(|c| c.wrapping_mul(16).wrapping_add(8)),
             Feature::Biome { position, .. } => [position[0], position[2]],
             Feature::Spawn(spawn) => spawn.map_block(),
@@ -231,6 +237,8 @@ pub(crate) struct Here {
     /// A feature target's dimension, placed feature and position: it isn't counted around
     /// itself either.
     pub feature: Option<(Dimension, String, [i32; 3])>,
+    /// A loot target's dimension and container position, likewise.
+    pub container: Option<(Dimension, [i32; 3])>,
 }
 
 /// One evaluation's view of a seed's sessions: the spawn origin is found once, when first
@@ -246,6 +254,8 @@ struct Judge<'a, 'w> {
     here: Option<&'a Here>,
     /// The chunks placed so far, which the constraints share.
     placings: RefCell<Placings>,
+    /// The chunks placed for loot so far, by item, which the constraints share.
+    containers: RefCell<LootPlacings>,
 }
 
 impl<'a, 'w> Judge<'a, 'w> {
@@ -256,6 +266,7 @@ impl<'a, 'w> Judge<'a, 'w> {
             confirm,
             here,
             placings: RefCell::default(),
+            containers: RefCell::default(),
         }
     }
 
@@ -490,6 +501,12 @@ impl Area {
             }
             Area::Box { min, max } => (0..2).all(|i| lo[i] <= max[i] && min[i] <= hi[i]),
         }
+    }
+
+    /// Whether chunk `chunk` or one of its eight neighbours touches the place: what a container
+    /// in the place may have been placed by.
+    pub(super) fn near_chunk(self, [cx, cz]: [i32; 2]) -> bool {
+        (-1..=1).any(|dz| (-1..=1).any(|dx| self.touches_chunk([cx + dx, cz + dz])))
     }
 
     /// The biome grid's points, z then x, each with its distance from the centre.
@@ -735,6 +752,30 @@ impl<'a, 'w> Judge<'a, 'w> {
                     .collect();
                 Judged { features, ..judged }
             }
+            (Kind::Loot { count, place, .. }, Some(Target::Loot(item))) => {
+                let area = self.area(place, dimension)?;
+                let mut found = Vec::new();
+                self.containers(session, item, place, area, dimension, |c| {
+                    found.push(c);
+                    ControlFlow::Continue(())
+                })?;
+                // Every container answered holds the item or might; only one whose contents
+                // are certain certainly does.
+                let candidates: Vec<Candidate> = found
+                    .iter()
+                    .map(|c| Candidate {
+                        position: [c.position[0], c.position[2]],
+                        certain: c.contents_certain(),
+                        start: None,
+                    })
+                    .collect();
+                let (matched, judged) = count_matches(*count, &Within::Area(area), &candidates);
+                let features = matched
+                    .iter()
+                    .map(|m| Feature::Container(found[m.index].clone()))
+                    .collect();
+                Judged { features, ..judged }
+            }
             (
                 Kind::FeatureCluster {
                     size, apart, place, ..
@@ -915,6 +956,11 @@ impl<'a, 'w> Judge<'a, 'w> {
     /// cluster stops placing chunks once it's decided.
     fn kept(&self, kind: &Kind, resolved: &Resolved, certain: bool) -> Result<bool> {
         let dimension = resolved.dimension;
+        if let (Kind::Loot { count, place, .. }, Some(Target::Loot(item))) =
+            (kind, &resolved.target)
+        {
+            return self.loot_kept(*count, place, item, dimension, certain);
+        }
         let feature = match (kind, &resolved.target) {
             (
                 Kind::Features { place, .. } | Kind::FeatureCluster { place, .. },
@@ -996,6 +1042,87 @@ impl<'a, 'w> Judge<'a, 'w> {
                 ..
             }
         )))
+    }
+
+    /// [`kept`](Self::kept) for a loot count: containers are counted as their chunks are
+    /// placed, which stops once the count is decided in the case kept.
+    fn loot_kept(
+        &self,
+        count: Count,
+        place: &Place,
+        item: &ItemQuery,
+        dimension: Dimension,
+        certain: bool,
+    ) -> Result<bool> {
+        // A spawn that may differ by platform makes it possibly met, whatever's placed.
+        if spawn_anchored(place) && self.spawn()?.platform_dependent {
+            return Ok(!certain);
+        }
+        let session = self.session(dimension)?;
+        let area = self.area(place, dimension)?;
+        // Certain mode keeps the worst case, which counts only containers that certainly hold
+        // the item towards "at least" and every one against "no"; otherwise the best case.
+        let mut counted = 0;
+        let mut decided = None;
+        self.containers(session, item, place, area, dimension, |c| {
+            let counts = !certain || c.contents_certain();
+            match count {
+                Count::AtLeast(n) => {
+                    counted += usize::from(counts);
+                    if counted >= n as usize {
+                        decided = Some(true);
+                    }
+                }
+                Count::No => {
+                    if certain || c.contents_certain() {
+                        decided = Some(false);
+                    }
+                }
+            }
+            if decided.is_some() {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
+        })?;
+        // Every container placed and nothing decided: "no" holds, "at least" doesn't.
+        Ok(decided.unwrap_or(count == Count::No))
+    }
+
+    /// The containers holding `item`, or that might, in `area` (`place` in `dimension`), chunk
+    /// by chunk, each handed to `visit` until it breaks. A chunk is placed if it or a neighbour
+    /// touches the area, since a dungeon's or a ruined portal's chest can be beside the chunk
+    /// that placed it. A `find` query's loot target isn't one of them when the place is around
+    /// it.
+    fn containers(
+        &self,
+        session: &Session<'_>,
+        item: &ItemQuery,
+        place: &Place,
+        area: Area,
+        dimension: Dimension,
+        mut visit: impl FnMut(FoundContainer) -> ControlFlow<()>,
+    ) -> Result<()> {
+        let (min, max) = area.bounds();
+        let own = self
+            .here
+            .and_then(|h| h.container.as_ref())
+            .filter(|_| around_here(place));
+        session.each_container(
+            item,
+            min.map(|v| (v >> 4) - 1),
+            max.map(|v| (v >> 4) + 1),
+            |chunk| area.near_chunk(chunk),
+            &mut self.containers.borrow_mut(),
+            |c| {
+                if area.distance([c.position[0], c.position[2]]).is_none()
+                    || own.is_some_and(|(d, pos)| *d == dimension && *pos == c.position)
+                {
+                    return ControlFlow::Continue(());
+                }
+                visit(c)
+            },
+        )
     }
 
     /// The features of `query` in `area` (`place` in `dimension`), chunk by chunk, each handed
@@ -1320,6 +1447,7 @@ pub(super) fn uses_spawn(kind: &Kind) -> bool {
         Kind::Cluster { place: p, .. }
         | Kind::Features { place: p, .. }
         | Kind::FeatureCluster { place: p, .. }
+        | Kind::Loot { place: p, .. }
         | Kind::Biome { place: p, .. }
         | Kind::Coverage { place: p, .. }
         | Kind::Height { place: p, .. }

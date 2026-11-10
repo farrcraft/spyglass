@@ -146,8 +146,8 @@ impl App {
         let show_done = self.settings.show_done;
         let view = self.settings.view;
         let tiles = view.tiles([rect.width(), rect.height()]);
-        // Terrain layers by each tile's own scale, so the coarser tiles shown while one loads
-        // are found under the keys they were made with.
+        // Terrain layers on the view's own tiles, and on the coarser ones shown while they load
+        // only where heights are cheap, so the stand-ins fill in quickly.
         let terrain_here = self.terrain_allowed();
         let (relief, surface) = (
             self.settings.relief && terrain_here,
@@ -158,7 +158,7 @@ impl App {
         let underground = self.underground();
         // The key each tile's biomes are kept under, with the layers that tile can have.
         let key = |tile: Tile| {
-            let terrain = tile.scale <= MAX_TERRAIN_SCALE;
+            let terrain = tile.has_terrain(view.scale);
             let deep = tile.scale == view.scale && tile.scale <= MAX_UNDERGROUND_SCALE;
             TileKey {
                 source,
@@ -254,8 +254,8 @@ impl App {
             all_containers: self.settings.containers,
         };
         // The coarse tiles over the view's missing ones first: a sixteenth of the pixels each,
-        // and no heights past `MAX_TERRAIN_SCALE`, so the view fills in seconds. Then the
-        // view's own biomes and markers, each nearest the centre first.
+        // and no heights past `view::MAX_COARSE_TERRAIN_SCALE`, so the view fills in seconds.
+        // Then the view's own biomes and markers, each nearest the centre first.
         let missing: Vec<Tile> = tiles
             .iter()
             .copied()
@@ -1078,9 +1078,7 @@ impl App {
             if let (Some([x, z]), Some(shown)) = (self.cursor, &self.shown) {
                 let session = &shown.session;
                 let height = session.height_at([x, z], Heightmap::WorldSurfaceWg);
-                let surface = self.settings.surface
-                    && self.terrain_allowed()
-                    && self.settings.view.scale <= MAX_TERRAIN_SCALE;
+                let surface = self.settings.surface && self.terrain_allowed();
                 let at = if surface {
                     session.surface_biome_at([x, z])
                 } else {

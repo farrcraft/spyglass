@@ -4,8 +4,7 @@
 use std::path::PathBuf;
 
 use spyglass::{
-    Dimension, MAX_FEATURE_SCALE, MAX_SLIME_SCALE, MAX_TERRAIN_SCALE, MAX_UNDERGROUND_SCALE,
-    MapArea, Pin,
+    Dimension, MAX_FEATURE_SCALE, MAX_SLIME_SCALE, MAX_UNDERGROUND_SCALE, MapArea, Pin,
 };
 
 use crate::view::View;
@@ -134,11 +133,10 @@ impl Export {
         if self.confirm && !self.structures.is_empty() {
             args.push("--confirm".to_string());
         }
-        let terrain = self.area.scale <= MAX_TERRAIN_SCALE;
-        if self.relief && terrain {
+        if self.relief {
             args.push("--relief".to_string());
         }
-        if self.surface && terrain {
+        if self.surface {
             args.push("--surface".to_string());
         }
         if self.area.scale <= MAX_UNDERGROUND_SCALE {
@@ -219,13 +217,13 @@ mod tests {
             carvers: true,
             pins: Vec::new(),
         };
-        // Terrain and underground layers aren't drawn past scale 4, so the command doesn't ask
-        // for them.
+        // Underground layers aren't drawn past scale 4, so the command doesn't ask for them;
+        // terrain layers are drawn at every scale.
         assert_eq!(
             export.command("map.png"),
             "spyglass render --seed -5 --game-version 26.3 --centre 1000,-336 --size 1013x775 \
              --scale 8 --y 70 --structures minecraft:village_plains,minecraft:stronghold \
-             --highlight minecraft:river --ties --slime --spawn --confirm -o map.png"
+             --highlight minecraft:river --ties --slime --spawn --confirm --relief -o map.png"
         );
         let close = Export {
             area: MapArea::centred_on([0, 0], [10, 10], 4, 64).unwrap(),

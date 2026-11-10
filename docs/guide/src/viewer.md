@@ -17,13 +17,13 @@ Drag to pan, and scroll to zoom around the pointer, or use the arrow keys and `+
 ## Layers
 
 - **Biomes**, at the height **Height** sets, with **Surface**, **Underground** (y 0) and **Bottom** presets. Biomes you choose to highlight stay bright and the rest are dimmed.
+- **Biomes at the surface** and **Relief**: each column's biome at its own height, and the map shaded by terrain height. Each pixel needs its column's height, so both fill in slowly, and more slowly the further out you zoom: a screen takes a few seconds at 4 blocks per pixel and up to a minute or so from 32 out. The quicker biomes at **Height** show while they're worked out.
 - **Structures** to mark. Hover a marker for what it is.
 - **Tied biome cells**, **slime chunks** and **the world spawn**.
 - **Confirm with terrain** (on by default) decides structure markers and locates with the seed's terrain, as the game does, and up close draws the bounds of villages, other jigsaw structures and mineshafts.
 
 Some layers appear only when you zoom in, since they cost more to draw:
 
-- **Relief** and **Biomes at the surface**, at 4 blocks per pixel or closer: the map shaded by terrain height, and each column's biome at its own height. Both fill in slowly.
 - **Underground**, at 4 blocks per pixel or closer: ore veins (copper orange, iron blue, filler stone fainter), noise caves (darkened), and the caves and ravines carvers cut (yellow and magenta), at the height shown. Moving the height keeps the carvers already worked out.
 - **Features**, at 2 blocks per pixel or closer: dungeons, amethyst geodes, desert wells, fossils and lava lakes, as diamonds, filled when certain and outlined when likely. Each chunk is placed as the game decorates it, so they fill in slowly.
 

@@ -50,11 +50,25 @@ impl Tile {
             )
         })
     }
+
+    /// Whether this tile has terrain layers (relief, surface biomes) in a view at
+    /// `view_scale`: always as one of the view's own tiles, and as a stand-in only up to
+    /// `MAX_COARSE_TERRAIN_SCALE`.
+    pub fn has_terrain(self, view_scale: u32) -> bool {
+        self.scale == view_scale || self.scale <= MAX_COARSE_TERRAIN_SCALE
+    }
 }
 
 /// How much coarser the stand-in tiles drawn first are: four times the scale, so one covers 16
-/// of the view's tiles and, past `MAX_TERRAIN_SCALE`, needs no heights.
+/// of the view's tiles and, past `MAX_COARSE_TERRAIN_SCALE`, needs no heights.
 pub const COARSE: u32 = 4;
+
+/// The largest scale a stand-in tile has terrain layers at. Closer, neighbouring columns share
+/// noise cells, so a coarser tile's heights cost less than its children's; from scale 4 out a
+/// column costs as much or more at each coarser scale (`docs/specs/render.md#heights`), and a
+/// stand-in with heights would take as long as the tiles it stands in for. Past it, stand-ins
+/// show biomes at the view's height.
+pub const MAX_COARSE_TERRAIN_SCALE: u32 = 4;
 
 /// The coarser tiles containing `tiles`, each once, in the order first needed: what to draw
 /// first so the view fills quickly. None if the view is too coarse to have them.
@@ -263,6 +277,21 @@ mod tests {
     }
 
     #[test]
+    fn stand_ins_have_terrain_only_where_heights_are_cheap() {
+        let tile = |scale| Tile { scale, x: 0, z: 0 };
+        // The view's own tiles always have it, however far out.
+        for scale in [1, 4, 8, 64, MAX_SCALE] {
+            assert!(tile(scale).has_terrain(scale), "1:{scale}");
+        }
+        // Up close the stand-ins have it too: at 1:1 they're at 1:4.
+        assert!(tile(COARSE).has_terrain(1));
+        assert!(tile(MAX_COARSE_TERRAIN_SCALE).has_terrain(1));
+        // Past that they show biomes at the view's height.
+        assert!(!tile(MAX_COARSE_TERRAIN_SCALE * 2).has_terrain(2));
+        assert!(!tile(8 * COARSE).has_terrain(8));
+    }
+
+    #[test]
     fn tiles_have_areas_and_parents() {
         let tile = Tile {
             scale: 4,
@@ -327,6 +356,9 @@ mod tests {
             assert_eq!(inside.count(), 1, "{tile:?}");
         }
         assert!(coarse.iter().all(|c| c.scale == 4 * COARSE));
+        // Their heights would cost as much as the view's, so they have no terrain layers.
+        assert!(tiles.iter().all(|t| t.has_terrain(view.scale)));
+        assert!(coarse.iter().all(|c| !c.has_terrain(view.scale)));
         // Nearest first, as the view's tiles are.
         assert_eq!(coarse[0], super::coarse(&tiles[..1])[0]);
         // No coarser tiles than the largest scale.

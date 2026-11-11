@@ -11,14 +11,19 @@ use spyglass_extract::{java, manifest};
 mod ci;
 mod ci_plan;
 mod ci_scope;
+mod citations;
 mod code_diff;
 mod dist;
 mod fuzz;
 mod guide;
 mod java_report;
+// Only a test: the check runs with the others (cargo nextest), not as a command.
+#[cfg(test)]
+mod layers;
 mod links;
 mod linux_check;
 mod locate;
+mod math_report;
 mod oracle;
 mod oracle_test;
 mod pgo;
@@ -119,6 +124,9 @@ enum Cmd {
     /// Check that this commit's version isn't released yet, write its release notes from the
     /// changelog, and print its tag. The Release workflow's first step.
     ReleaseNotes(release::ReleaseNotes),
+    /// How often candidate implementations of Java's `Math` differ from the JDK's, from the
+    /// files `cargo xtask oracle math` writes (docs/specs/java-math.md).
+    MathReport(math_report::MathReport),
     /// Unpack a release archive outside the repo and run what's in it, as a user without Rust
     /// would; with `--extract`, also extract a game version and answer from it.
     Smoke(smoke::Smoke),
@@ -149,6 +157,7 @@ fn main() -> ExitCode {
         Cmd::JavaReport(args) => java_report::run(&args),
         Cmd::LinuxCheck(args) => linux_check::run(&args),
         Cmd::Links => links::run(),
+        Cmd::MathReport(args) => math_report::run(&args),
         Cmd::Msrv { print } => msrv(print),
         Cmd::Oracle { cmd } => oracle::run(cmd),
         Cmd::OracleTest { game_version } => oracle_test::run(game_version.as_deref()),

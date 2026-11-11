@@ -37,6 +37,8 @@ jobs:
           echo "Run the release workflow on main, not $GITHUB_REF_NAME." >&2
           exit 1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # Checks that the version isn't released yet, and that the changelog has its notes. The
       # assignment comes first: inside echo's argument, a failure wouldn't fail the step.
       - id: notes
@@ -52,7 +54,9 @@ jobs:
   ci:
     name: CI
     needs: verify
-    uses: ./.github/workflows/ci.yml
+    # zizmor suggests GitHub's newer `$/` self-repository form; this path form is the one the
+    # release has been run with.
+    uses: ./.github/workflows/ci.yml # zizmor: ignore[self-repository]
 
   build:
     name: build ${{ matrix.target }}
@@ -77,6 +81,8 @@ jobs:
             runner: macos-15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: The viewer's system libraries
         if: runner.os == 'Linux'
         run: |

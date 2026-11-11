@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-25
+- See also: [0070](0070-java-math-correctly-rounded.md), which replaces `f64::sin` and `f64::cos` with correctly rounded functions and keeps this flagging
 
 ## Context
 

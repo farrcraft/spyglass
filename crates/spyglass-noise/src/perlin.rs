@@ -228,7 +228,7 @@ impl PerlinNoise {
     /// gradients, and contributes the gradient's dot with the offset from that corner to the
     /// point. The eight are blended by the fractions' smoothsteps (the fade curve), whose zero
     /// slope at 0 and 1 hides the lattice's seams.
-    #[allow(
+    #[expect(
         clippy::too_many_arguments,
         reason = "mirrors the game's sampleAndLerp"
     )]

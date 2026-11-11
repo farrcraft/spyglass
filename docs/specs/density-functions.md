@@ -99,7 +99,7 @@ _Versions:_ (switch `clamp_positive_zero`) 26.4-snapshot-5 removes `Mth.clamp`; 
 
 Values are the same except for signed zeros and NaN: the unclamped input keeps a `−0` that a clamp at `min = +0` would turn into `+0`, and the volume path of the constant `max` and `min` keeps a NaN, and a `−0` under `min = +0` (`+0` isn't above `−0`), where its point path (`Math.max`) gives `+0`. Ranges don't change. The switch covers both the clamp and the compile choice, and is read when the function is loaded. `old_blended_noise`'s clamp of `main + 0.5` to `[0, 1]` is `Math.clamp` in 26.4 whatever the switch, but `main + 0.5` is never `−0`, so it has the same values.
 
-**`Math.pow` and `Math.log`** aren't required by Java to be correctly rounded, and spyglass uses Rust's `powf` and `ln`. So `pow`, `log` and `pow`'s range bounds may differ from the game's in the last bit of the `f64`, before it's narrowed to `f32`. No vanilla function uses them. `Math.sqrt` is correctly rounded in both.
+**`Math.pow` and `Math.log`** are `spyglass_math`'s, correctly rounded as x86-64's `Math` but for about 0.05% of `pow` arguments and 0.002% of `log`'s ([java-math.md](java-math.md)). `pow`, `log` and `pow`'s range bounds narrow the result to `f32`, which the measured differences never changed. No vanilla function uses them. `Math.sqrt` is correctly rounded in Java and Rust alike.
 
 #### `interpolated`
 
@@ -133,7 +133,7 @@ A mode samples `before + after + 1` corners per axis. 26.4's vanilla data maps e
 
 - nearest: the first sample, `s0`.
 - linear: `c1 = 1 − t`, `c2 = t`; the value is `c1·s0 + c2·s1`.
-- cosine: linear with `t` replaced by `Ease.inOutSine(t) = −(Mth.cos((double)(π_f·t)) − 1) / 2`, with `π_f` the `float` π. `Mth.cos(x)` is the game's sine table at `(long)(|x| · 10430.378350470453 + 16384.0 + 0.5) & 65535`, where entry `i` is `(float) Math.sin(i / 10430.378350470453)`, but exactly 0, 1, 0 and −1 at 0, 16384, 32768 and 49152. spyglass computes that entry with Rust's `sin`, which, as for `Math.pow` above, may differ from Java's in the last bit of the `f64` before it's narrowed. No vanilla function uses the cosine mode.
+- cosine: linear with `t` replaced by `Ease.inOutSine(t) = −(Mth.cos((double)(π_f·t)) − 1) / 2`, with `π_f` the `float` π. `Mth.cos(x)` is the game's sine table at `(long)(|x| · 10430.378350470453 + 16384.0 + 0.5) & 65535`, where entry `i` is `(float) Math.sin(i / 10430.378350470453)`, but exactly 0, 1, 0 and −1 at 0, 16384, 32768 and 49152. spyglass computes that entry with `spyglass_math::sin`, the same as every measured `Math.sin` once narrowed ([java-math.md](java-math.md)). No vanilla function uses the cosine mode.
 - cubic (Catmull-Rom): `c1 = (−0.5·cube(t) + square(t)) − 0.5·t`, `c2 = (1.5·cube(t) − 2.5·square(t)) + 1`, `c3 = (−1.5·cube(t) + 2·square(t)) + 0.5·t`, `c4 = 0.5·cube(t) − 0.5·square(t)`; the value is `((c1·s0 + c2·s1) + c3·s2) + c4·s3`.
 - b-spline: `c1 = cube(1 − t) / 6`, `c2 = ((3·cube(t) − 6·square(t)) + 4) / 6`, `c3 = (((−3·cube(t) + 3·square(t)) + 3·t) + 1) / 6`, `c4 = cube(t) / 6`, combined as cubic.
 

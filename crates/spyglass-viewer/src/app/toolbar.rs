@@ -239,7 +239,7 @@ impl App {
 
     /// Errors, warnings and notes from the toolbar's work, in one row under it.
     fn notices(&mut self, ui: &mut egui::Ui) {
-        let mut lines: Vec<(egui::Color32, String)> = Vec::new();
+        let mut lines: Vec<(Color32, String)> = Vec::new();
         if let Some(e) = &self.load_error {
             lines.push((style::ERROR, e.clone()));
         }

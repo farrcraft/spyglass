@@ -38,7 +38,7 @@ pub trait RandomSource {
 }
 
 /// `PositionalRandomFactory`: random sources derived from a fixed seed and a position or name.
-#[allow(
+#[expect(
     clippy::wrong_self_convention,
     reason = "named after the game's fromHashOf and fromSeed"
 )]

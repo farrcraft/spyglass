@@ -43,7 +43,7 @@ impl PartialEq for Interval {
     }
 }
 
-#[allow(
+#[expect(
     clippy::should_implement_trait,
     reason = "the game's static Interval.add and friends; they can fail, so they aren't operators"
 )]
@@ -266,7 +266,7 @@ impl Interval {
             return Ok(Interval::NAI);
         }
         let positive = Interval::max_of(i, Interval::exact(0.0)?)?;
-        Interval::map_monotonic(positive, |v| f64::from(v).ln() as f32)
+        Interval::map_monotonic(positive, |v| spyglass_math::log(f64::from(v)) as f32)
     }
 
     /// `sign(i)`.
@@ -383,7 +383,7 @@ fn lerp_infinite_bound(t: f32, first: f32, second: f32) -> f32 {
 
 /// `Math.pow` on `float`s widened to `double`, narrowed back.
 fn powf(base: f32, exponent: f32) -> f32 {
-    f64::from(base).powf(f64::from(exponent)) as f32
+    spyglass_math::pow(f64::from(base), f64::from(exponent)) as f32
 }
 
 /// `pow(float, Interval)`: a fixed base.

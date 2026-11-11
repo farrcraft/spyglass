@@ -531,7 +531,7 @@ impl ChunkGenerator<'_> {
                 ];
             }
         }
-        // generateCarvingMask.
+        // `NoiseBasedChunkGenerator.generateCarvingMask`.
         let anchors = settings.terrain.anchors();
         let mask_range = self.mask_range();
         let mut doubt = CarvingMask::new(mask_range.0, mask_range.1);

@@ -1,6 +1,6 @@
 # Maps
 
-`spyglass render` draws a map as a PNG: biomes, and the layers you ask for. It's the same image the viewer's **Export image…** saves for the same view, and the viewer's **Copy command** gives you the command for it.
+`spyglass render` draws a map as a PNG: biomes, and the layers you ask for. It's the same image the viewer's **Export → Image of this view…** saves for the same view, and **Export → Copy the command that draws it** gives you the command for it.
 
 ```sh
 spyglass render --seed 12345 -o map.png

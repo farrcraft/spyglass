@@ -11,6 +11,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+spyglass-math.workspace = true
 md-5.workspace = true
 
 [dev-dependencies]

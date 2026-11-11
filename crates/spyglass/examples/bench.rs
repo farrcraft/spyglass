@@ -208,7 +208,7 @@ fn main() -> spyglass::Result<()> {
         }
     });
     for scale in [1, 4, 64] {
-        let tile = spyglass::MapArea::centred_on([0, 0], [256, 256], scale, 64)?;
+        let tile = MapArea::centred_on([0, 0], [256, 256], scale, 64)?;
         report(
             &format!("biome_map, 256 x 256 tile at scale {scale}"),
             3,
@@ -218,7 +218,7 @@ fn main() -> spyglass::Result<()> {
         );
     }
     for scale in [1, 4] {
-        let tile = spyglass::MapArea::centred_on([0, 0], [256, 256], scale, 64)?;
+        let tile = MapArea::centred_on([0, 0], [256, 256], scale, 64)?;
         report(
             &format!("height_map, 256 x 256 tile at scale {scale}"),
             1,
@@ -230,12 +230,12 @@ fn main() -> spyglass::Result<()> {
     viewer_tiles(&world, &mut seeds)?;
     underground_tiles(&world, &mut seeds)?;
     feature_tiles(&world, &mut seeds)?;
-    let view = spyglass::MapArea::centred_on([0, 0], [1024, 1024], 16, 64)?;
-    let layers = spyglass::Layers {
+    let view = MapArea::centred_on([0, 0], [1024, 1024], 16, 64)?;
+    let layers = Layers {
         structures: vec![villages.clone(), stronghold.clone()],
         slime_chunks: true,
         spawn: true,
-        ..spyglass::Layers::default()
+        ..Layers::default()
     };
     report("render 1024 x 1024 at scale 16, all layers", 3, || {
         black_box(session.render(&view, &layers).unwrap());

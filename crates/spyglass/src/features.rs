@@ -333,7 +333,10 @@ impl<'w> Session<'w> {
     /// [`features_in`](Self::features_in) over the chunks `wanted` keeps, each feature handed
     /// to `visit` as it's found, until it breaks. Chunks already in `placings` aren't placed
     /// again. Keeps the carved chunks of three rows at a time.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the query and its area, the caller's filter and cache, and the visitor"
+    )]
     pub(crate) fn each_feature(
         &self,
         query: &FeatureQuery,

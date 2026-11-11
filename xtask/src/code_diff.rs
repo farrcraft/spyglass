@@ -21,7 +21,8 @@ use std::process::Command;
 use anyhow::{Context, Result, bail};
 use spyglass_extract::java;
 
-use crate::repo_root;
+use crate::citations::{self, Cite};
+use crate::{oracle_test, repo_root};
 
 /// Class-name prefixes (with `/`) of the game code spyglass ports or calls into while porting:
 /// worldgen, biomes, the chunk generator and dimension types, and `Mth`.
@@ -86,10 +87,16 @@ pub fn report(old: &str, new: &str, used: &DataNames) -> Result<String> {
         added.len(),
         removed.len()
     );
+    let mut method_changes_by_class = BTreeMap::new();
     if !changed.is_empty() {
         let _ = writeln!(out, "\nchanged (lines removed/added, normalized):");
         for (name, minus, plus) in &changed {
             let _ = writeln!(out, "  {name}  -{minus} +{plus}");
+            let methods = method_changes(&before[*name], &after[*name]);
+            for (method, change) in &methods {
+                let _ = writeln!(out, "      {}  {change}", method.key());
+            }
+            method_changes_by_class.insert(*name, methods);
         }
     }
     for (label, list) in [("added", &added), ("removed", &removed)] {
@@ -100,9 +107,150 @@ pub fn report(old: &str, new: &str, used: &DataNames) -> Result<String> {
             }
         }
     }
+    let names: Vec<&str> = before
+        .keys()
+        .chain(after.keys())
+        .map(String::as_str)
+        .collect();
+    out.push_str(&code_map(
+        &names,
+        &method_changes_by_class,
+        &citations::scan()?,
+    ));
     out.push_str(&unused_report(old, new, &before, &after, used)?);
     let _ = writeln!(out, "\nnormalized disassembly: {}", dump_dir("").display());
     Ok(out)
+}
+
+/// How many citing files, and comparisons, an entry of the code map lists before "and N more".
+const SHOWN: usize = 4;
+
+/// Where the changed methods reach spyglass's code, ranked: what's cited but no oracle comparison
+/// covers, what's cited, what's in a cited class under no name a comment gives, and the changed
+/// classes nothing cites. `names` are every ported class of both versions, for telling a nested
+/// class's own name apart; `changes` the changed methods of each changed class.
+fn code_map(
+    names: &[&str],
+    changes: &BTreeMap<&str, Vec<(Method, Change)>>,
+    cites: &BTreeMap<String, Vec<Cite>>,
+) -> String {
+    let mut innermost: BTreeMap<&str, usize> = BTreeMap::new();
+    for name in names {
+        *innermost.entry(inner(short(name))).or_default() += 1;
+    }
+    let compared: BTreeMap<&str, Vec<&str>> =
+        oracle_test::TESTS
+            .iter()
+            .fold(BTreeMap::new(), |mut by_crate, (krate, test, _)| {
+                by_crate.entry(*krate).or_insert_with(Vec::new).push(*test);
+                by_crate
+            });
+    // Each entry with how it sorts: changed bodies before changed signatures, which are more
+    // often refactors, then the most lines first.
+    let mut ranks: [Vec<(bool, usize, String)>; 4] = Default::default();
+    for (class, methods) in changes {
+        let simple = named_class(short(class));
+        let mut class_cites: Vec<&Cite> = cites.get(simple).into_iter().flatten().collect();
+        let own = inner(simple);
+        if own != simple && innermost.get(own) == Some(&1) {
+            class_cites.extend(cites.get(own).into_iter().flatten());
+        }
+        if class_cites.is_empty() {
+            let lines = methods.iter().map(|(_, change)| change.lines()).sum();
+            ranks[3].push((false, lines, simple.to_string()));
+            continue;
+        }
+        let display = simple.replace('$', ".");
+        for (method, change) in methods {
+            let named: Vec<&Cite> = class_cites
+                .iter()
+                .copied()
+                .filter(|c| c.method.as_deref() == Some(method.name.as_str()))
+                .collect();
+            let reach = if named.is_empty() {
+                &class_cites
+            } else {
+                &named
+            };
+            let tests: Vec<&str> = reach
+                .iter()
+                .flat_map(|c| compared.get(c.crate_name()).into_iter().flatten())
+                .copied()
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect();
+            let rank = match (tests.is_empty(), named.is_empty()) {
+                (true, _) => 0,
+                (false, false) => 1,
+                (false, true) => 2,
+            };
+            let mut entry = format!("  {display}.{}  {change}\n", method.key());
+            let files: Vec<String> = reach
+                .iter()
+                .map(|c| format!("{}:{}", c.file, c.line))
+                .collect();
+            let _ = writeln!(entry, "      {}", shown(&files));
+            if !tests.is_empty() {
+                let _ = writeln!(entry, "      compare: {}", shown(&tests));
+            }
+            let signature = matches!(change, Change::Signature { .. });
+            ranks[rank].push((signature, change.lines(), entry));
+        }
+    }
+    let mut out = String::from(
+        "\nwhere the changes reach spyglass's code (citations in comments: leads, not verdicts):\n",
+    );
+    let headings = [
+        "cited, but no oracle comparison covers the citing crates",
+        "cited by name, with the comparisons that cover them",
+        "in a cited class, under no name a comment gives",
+        "changed classes nothing cites",
+    ];
+    for (i, (heading, entries)) in headings.iter().zip(&mut ranks).enumerate() {
+        if entries.is_empty() {
+            continue;
+        }
+        entries.sort_by(|a, b| (a.0, b.1, &a.2).cmp(&(b.0, a.1, &b.2)));
+        let entries: Vec<&str> = entries.iter().map(|(_, _, entry)| entry.as_str()).collect();
+        let _ = writeln!(out, "\n{}. {heading}:", i + 1);
+        if i == 3 {
+            let _ = writeln!(out, "  {}", entries.join(", "));
+        } else {
+            for entry in entries {
+                out.push_str(entry);
+            }
+        }
+    }
+    out
+}
+
+/// The first [`SHOWN`] of `items`, and how many more.
+fn shown(items: &[impl AsRef<str>]) -> String {
+    let mut out: Vec<&str> = items.iter().take(SHOWN).map(AsRef::as_ref).collect();
+    let more = items.len().saturating_sub(SHOWN);
+    let more = format!("and {more} more");
+    if items.len() > SHOWN {
+        out.push(&more);
+    }
+    out.join(", ")
+}
+
+/// A nested class's innermost name: `Biome$ClimateSettings` → `ClimateSettings`.
+fn inner(class: &str) -> &str {
+    class.rsplit('$').next().unwrap_or(class)
+}
+
+/// The class a comment would name for `class`: an anonymous class's (`Outer$1`) is its outer
+/// class's, since nothing can name it.
+fn named_class(class: &str) -> &str {
+    let mut class = class;
+    while let Some((outer, last)) = class.rsplit_once('$') {
+        if !last.chars().all(|c| c.is_ascii_digit()) {
+            break;
+        }
+        class = outer;
+    }
+    class
 }
 
 /// The codec forms `new`'s classes declare that its data doesn't use: those `old` lacked are
@@ -420,6 +568,191 @@ fn lambda_numbers(word: &str) -> String {
     out
 }
 
+/// A class's methods in its normalized disassembly, by [`Method::key`]. Members are the blocks
+/// between blank lines, each opening with its declaration; a field's block has no parameter list.
+/// Lambda bodies (`lambda$sample$N`) are kept apart, under the method they're named for, since
+/// their numbers are normalized away and several may share a name.
+fn methods(body: &str) -> BTreeMap<String, (Method, String)> {
+    let mut out: BTreeMap<String, (Method, String)> = BTreeMap::new();
+    for block in body.split("\n\n") {
+        let Some(declaration) = block.lines().find(|l| !l.is_empty()) else {
+            continue;
+        };
+        let Some(method) = Method::declared(declaration) else {
+            continue;
+        };
+        let entry = out
+            .entry(method.key())
+            .or_insert_with(|| (method, String::new()));
+        entry.1.push_str(block);
+        entry.1.push('\n');
+    }
+    out
+}
+
+/// A method as a class's disassembly declares it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Method {
+    /// Its name: `sin`, `<init>` for a constructor, `<clinit>` for the static initializer.
+    pub name: String,
+    /// Its parameter types without their packages, or `None` for the lambdas of `name`.
+    pub params: Option<String>,
+}
+
+impl Method {
+    /// The method a declaration line declares, if it's a method's.
+    fn declared(line: &str) -> Option<Method> {
+        if line == "static {};" {
+            return Some(Method {
+                name: "<clinit>".into(),
+                params: Some(String::new()),
+            });
+        }
+        let (head, rest) = line.split_once('(')?;
+        let params = rest.rsplit_once(')')?.0;
+        let name = head.split_whitespace().last()?;
+        if let Some(owner) = name
+            .strip_prefix("lambda$")
+            .and_then(|n| n.split_once('$'))
+            .map(|(owner, _)| owner)
+        {
+            return Some(Method {
+                name: owner.to_string(),
+                params: None,
+            });
+        }
+        // A constructor is declared by its class's full name.
+        let name = if name.contains('.') { "<init>" } else { name };
+        Some(Method {
+            name: name.to_string(),
+            params: Some(without_packages(params)),
+        })
+    }
+
+    /// `sin(double)`, or `sample (lambdas)`.
+    pub fn key(&self) -> String {
+        match &self.params {
+            Some(params) => format!("{}({params})", self.name),
+            None => format!("{} (lambdas)", self.name),
+        }
+    }
+}
+
+/// Types with their packages cut: `java.util.function.Function<T, R>` → `Function<T, R>`.
+fn without_packages(types: &str) -> String {
+    let mut out = String::new();
+    let mut word = String::new();
+    for c in types.chars().chain(std::iter::once(' ')) {
+        if c.is_alphanumeric() || matches!(c, '_' | '$' | '.') {
+            word.push(c);
+        } else {
+            out.push_str(word.rsplit('.').next().unwrap_or(&word));
+            word.clear();
+            out.push(c);
+        }
+    }
+    out.pop();
+    out
+}
+
+/// How one method changed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Change {
+    /// Lines removed and added, normalized.
+    Changed(usize, usize),
+    /// The same name and parameter count with other types (`was`, the old ones): a refactor
+    /// more often than not, with the lines its body changed.
+    Signature {
+        was: String,
+        minus: usize,
+        plus: usize,
+    },
+    /// A new method, of this many lines.
+    Added(usize),
+    /// A method gone, of this many lines.
+    Removed(usize),
+}
+
+impl Change {
+    /// How many lines it touches, to put the largest changes first.
+    pub fn lines(&self) -> usize {
+        match *self {
+            Change::Changed(minus, plus) | Change::Signature { minus, plus, .. } => minus + plus,
+            Change::Added(lines) | Change::Removed(lines) => lines,
+        }
+    }
+}
+
+/// The methods that differ between two versions of a class's normalized disassembly. A removed
+/// method and an added one with the same name and parameter count are taken for one method whose
+/// signature changed.
+fn method_changes(a: &str, b: &str) -> Vec<(Method, Change)> {
+    let (before, after) = (methods(a), methods(b));
+    let keys: BTreeSet<&String> = before.keys().chain(after.keys()).collect();
+    let mut out = Vec::new();
+    let (mut removed, mut added) = (Vec::new(), Vec::new());
+    for key in keys {
+        match (before.get(key), after.get(key)) {
+            (None, Some(new)) => added.push(new),
+            (Some(old), None) => removed.push(old),
+            (Some((method, x)), Some((_, y))) if x != y => {
+                let (minus, plus) = line_changes(x, y);
+                out.push((method.clone(), Change::Changed(minus, plus)));
+            }
+            _ => {}
+        }
+    }
+    for (old, old_body) in removed {
+        let same = added.iter().position(|(new, _)| {
+            new.name == old.name
+                && new.params.as_deref().map(arity) == old.params.as_deref().map(arity)
+        });
+        match same {
+            Some(i) => {
+                let (new, new_body) = added.remove(i);
+                let (minus, plus) = line_changes(old_body, new_body);
+                let was = old.params.clone().unwrap_or_default();
+                out.push((new.clone(), Change::Signature { was, minus, plus }));
+            }
+            None => out.push((old.clone(), Change::Removed(old_body.lines().count()))),
+        }
+    }
+    for (new, new_body) in added {
+        out.push((new.clone(), Change::Added(new_body.lines().count())));
+    }
+    out.sort_by_key(|(method, _)| method.key());
+    out
+}
+
+/// How many parameters a parameter list has: its commas outside `<>`, plus one.
+fn arity(params: &str) -> usize {
+    if params.is_empty() {
+        return 0;
+    }
+    let mut depth = 0;
+    let mut commas = 0;
+    for c in params.chars() {
+        match c {
+            '<' => depth += 1,
+            '>' => depth -= 1,
+            ',' if depth == 0 => commas += 1,
+            _ => {}
+        }
+    }
+    commas + 1
+}
+
+impl std::fmt::Display for Change {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Change::Changed(minus, plus) => write!(f, "-{minus} +{plus}"),
+            Change::Signature { was, minus, plus } => write!(f, "-{minus} +{plus}, was ({was})"),
+            Change::Added(_) => f.write_str("added"),
+            Change::Removed(_) => f.write_str("removed"),
+        }
+    }
+}
+
 /// Lines only in `a` and lines only in `b`, counted as multisets.
 fn line_changes(a: &str, b: &str) -> (usize, usize) {
     let mut counts: BTreeMap<&str, i64> = BTreeMap::new();
@@ -518,6 +851,63 @@ invokevirtual # // Method com/mojang/serialization/codecs/PrimitiveCodec.optiona
         assert!(!Form::Type("domain_warp".into()).used_by(&data));
         assert!(Form::Field("input".into()).used_by(&data));
         assert!(!Form::Field("corner_constraint".into()).used_by(&data));
+    }
+
+    #[test]
+    fn splits_a_class_into_methods() {
+        let body = "\
+public class a.Mth {
+private static final float[] SIN;
+
+public a.Mth();
+Code:
+return
+
+public static float sin(double);
+Code:
+dload_0
+freturn
+
+private static double lambda$sample$N(java.util.function.DoubleSupplier);
+Code:
+dconst_0
+dreturn
+
+static {};
+Code:
+return
+";
+        let keys: Vec<String> = methods(body).into_keys().collect();
+        assert_eq!(
+            keys,
+            ["<clinit>()", "<init>()", "sample (lambdas)", "sin(double)"]
+        );
+        assert_eq!(
+            without_packages("java.util.function.Function<a.B, c.D>, int[]"),
+            "Function<B, D>, int[]"
+        );
+    }
+
+    #[test]
+    fn lists_changed_added_and_removed_methods() {
+        let a = "public class a.A {\n\npublic int f(int);\nCode:\niload_1\nireturn\n\n\
+                 public void g();\nCode:\nreturn\n\npublic void k(a.Registry);\nCode:\nreturn\n";
+        let b = "public class a.A {\n\npublic int f(int);\nCode:\niconst_0\nireturn\n\n\
+                 public void h();\nCode:\nreturn\n\npublic void k(a.Provider);\nCode:\nreturn\n";
+        let changes: Vec<String> = method_changes(a, b)
+            .iter()
+            .map(|(m, c)| format!("{} {c}", m.key()))
+            .collect();
+        assert_eq!(
+            changes,
+            [
+                "f(int) -1 +1",
+                "g() removed",
+                "h() added",
+                "k(Provider) -1 +1, was (Registry)"
+            ]
+        );
+        assert_eq!(arity("Map<K, V>, int"), 2);
     }
 
     #[test]

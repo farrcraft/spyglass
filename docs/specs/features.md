@@ -197,7 +197,7 @@ Each decoration step places its structures' pieces in the chunk being decorated 
 2. **The radius:** `randomBetweenInclusive(min, clamp((int)(height · ratio), min, max))` of `column_radius`'s bounds. A stalactite below the ceiling and a stalagmite above the floor each draw a bluntness, then a height scale.
 3. **Wind**, if both have at least `min_radius_for_wind` and `min_bluntness_for_wind`: a speed from `wind_speed`, an angle `nextFloat()·π`, and an offset that grows with the distance from the origin's y, at most `16 − radius`. 26.4's sine and cosine are rounded (switch `rounded_trig`).
 4. **Each root** moves back into the ceiling or floor, up to `min(10, height)` blocks, until a circle of its radius is mostly in stone; lava on the way, or halving the radius to 1, gives up on that one.
-5. **Each column** within the radius: the height at its distance (`getSpeleothemHeight`, in `double`), cut to `0.8` to `1` of it when `nextFloat() < 0.2`, then the base block into air, water or lava along it (offset by the wind), stopping at base stone once it has placed one, and for a stalagmite at the `WORLD_SURFACE_WG` heightmap.
+5. **Each column** within the radius: the height at its distance (`getSpeleothemHeight`, in `double`; its `Math.pow` and `Math.log` are `spyglass_math`'s, x86-64's `Math` but for about 0.05% of the `pow` arguments, [java-math.md](java-math.md)), cut to `0.8` to `1` of it when `nextFloat() < 0.2`, then the base block into air, water or lava along it (offset by the wind), stopping at base stone once it has placed one, and for a stalagmite at the `WORLD_SURFACE_WG` heightmap.
 
 ### Ruling out
 

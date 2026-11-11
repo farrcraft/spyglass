@@ -10,14 +10,14 @@ Drag to pan, and scroll to zoom around the pointer, or use the arrow keys and `+
 
 ## Seeds, saves and dimensions
 
-- **Seed or save:** type a seed and press **Show**, or open a save from the launchers' list or any folder. A save opens on its player, in the player's dimension, with anything that makes its answers inexact listed (see [your own worlds](your-worlds.md)).
+- **Seed or save:** type a seed and press Enter, or open a save from the launchers' list or any folder. A save opens on its player, in the player's dimension, with anything that makes its answers inexact listed (see [your own worlds](your-worlds.md)).
 - **Dimension:** switch between the Overworld, the Nether and the End. Each keeps its own view. Slime chunks and the spawn are the Overworld's, and terrain layers aren't drawn in the Nether, whose surface is its ceiling.
-- **Game version:** the World section picks the version from the bundles you have, and **Add a game version** extracts another.
+- **Game version:** **Version** in the toolbar picks one of the bundles you have, and **Add a game version** in **Settings** extracts another.
 
 ## Layers
 
 - **Biomes**, at the height **Height** sets, with **Surface**, **Underground** (y 0) and **Bottom** presets. Biomes you choose to highlight stay bright and the rest are dimmed.
-- **Biomes at the surface** and **Relief**: each column's biome at its own height, and the map shaded by terrain height. Each pixel needs its column's height, so both fill in slowly, and more slowly the further out you zoom: a screen takes a few seconds at 4 blocks per pixel and up to a minute or so from 32 out. The quicker biomes at **Height** show while they're worked out.
+- **At the surface**, under Biomes, and **Relief shading**, under Overlays: each column's biome at its own height, and the map shaded by terrain height. Each pixel needs its column's height, so both fill in slowly, and more slowly the further out you zoom: a screen takes a few seconds at 4 blocks per pixel and up to a minute or so from 32 out. The quicker biomes at **Height** show while they're worked out.
 - **Structures** to mark. Hover a marker for what it is.
 - **Tied biome cells**, **slime chunks** and **the world spawn**.
 - **Confirm with terrain** (on by default) decides structure markers and locates with the seed's terrain, as the game does, and up close draws the bounds of villages, other jigsaw structures and mineshafts.
@@ -75,7 +75,7 @@ Seed 12345 in 26.3 at 4 blocks per pixel, with villages, outposts and witch huts
 ## Sharing and exporting
 
 - **Share → Copy the view text** copies a line such as `spyglass:1;s=12345;v=26.3;d=overworld;c=0,0;sc=4;y=64;l=spawn,confirm`. Paste it into **Share → Open a view text**, or onto the map, to open the same seed, version, dimension, view and layers. Your markers aren't in it.
-- **Export image…** saves the view as a PNG, with your markers in view as pins unless you untick **Include markers**. **Copy command** copies the [`spyglass render`](maps.md) command that draws the same image.
+- **Export → Image of this view…** saves the view as a PNG, with your markers in view as pins unless you untick **Include markers**. **Export → Copy the command that draws it** copies the [`spyglass render`](maps.md) command that draws the same image.
 
 ## Searching
 

@@ -38,7 +38,7 @@ For chunk `C`, `generateCarvers` visits every chunk `S` within 8 chunks of it, x
 
 ## Shapes
 
-`Mth.sin` and `Mth.cos` read a table of 65,536 `(float) Math.sin(i / 10430.378350470453)`. In 26.3, `sin(x)` is the entry at `(int) ((long) (x · 10430.378350470453) & 65535)`, and `cos(x)` the same with 16,384 added before the cast. From 26.4 (switch `rounded_trig`), the index is rounded (`+ 0.5` before the cast), a negative `x` is taken as `−x` (with `sin` negated), and the table's entries 0, 16,384, 32,768 and 49,152 are exactly 0, 1, 0 and −1. Angles are `f32`, widened to `f64` for the table.
+`Mth.sin` and `Mth.cos` read a table of 65,536 `(float) Math.sin(i / 10430.378350470453)`. In 26.3, `sin(x)` is the entry at `(int) ((long) (x · 10430.378350470453) & 65535)`, and `cos(x)` the same with 16,384 added before the cast. From 26.4 (switch `rounded_trig`), the index is rounded (`+ 0.5` before the cast), a negative `x` is taken as `−x` (with `sin` negated), and the table's entries 0, 16,384, 32,768 and 49,152 are exactly 0, 1, 0 and −1. Angles are `f32`, widened to `f64` for the table. spyglass computes the entries with `spyglass_math::sin`; narrowed to `f32`, every entry is the same under every `Math.sin` measured, x86-64's and `StrictMath`'s among them ([java-math.md](java-math.md)).
 
 **`carveEllipsoid(C, x, y, z, h, v, skip)`:**
 

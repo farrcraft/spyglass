@@ -1510,7 +1510,7 @@ mod tests {
     #[test]
     fn weighted_alias_lists_load_as_the_codec_reads_them() {
         let at = At::root("minecraft:s");
-        let random = |targets: serde_json::Value| {
+        let random = |targets: Value| {
             alias_binding(
                 &serde_json::json!({"type": "random", "alias": "a", "targets": targets}),
                 &at,
@@ -1540,7 +1540,7 @@ mod tests {
     #[test]
     fn liquid_settings_are_the_games_two_or_absent() {
         let at = At::root("minecraft:pool");
-        let check = |v: serde_json::Value| check_liquid_settings(&v, &at).is_ok();
+        let check = |v: Value| check_liquid_settings(&v, &at).is_ok();
         assert!(check(serde_json::json!({})));
         assert!(check(
             serde_json::json!({"override_liquid_settings": "apply_waterlogging"})

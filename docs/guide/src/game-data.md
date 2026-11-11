@@ -10,7 +10,7 @@ Start `spyglass-viewer`. With no data yet, it offers to extract some:
 2. Pick a game version.
 3. Press **Extract**.
 
-**Add a game version** in the side panel's World section extracts more later.
+**Add a game version** in **Settings**, in the toolbar, extracts more later.
 
 ## From a terminal
 

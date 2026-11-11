@@ -57,6 +57,11 @@ pub enum OracleCmd {
     /// Write spawn golden files (the spawn origin and the climate search behind it) for the
     /// golden seeds and dimensions into `oracle-out/<version>/spawn/`.
     Spawn(Common),
+    /// Write the JDK's `Math`, `StrictMath` and correctly rounded results for the functions
+    /// worldgen calls, for the arguments spyglass's call sites take (docs/specs/java-math.md),
+    /// into `oracle-out/math/<os>-<arch>/`. The JDK's values, not the game's: any version's
+    /// harness gives the same ones.
+    Math(Common),
     /// Write loot golden files (every container loot table filled by the game for a fixed list
     /// of seeds) into `oracle-out/<version>/loot/`.
     Loot(Common),
@@ -179,6 +184,11 @@ impl Common {
     }
 }
 
+/// Where `cargo xtask oracle math` writes one platform's results: `oracle-out/math/<platform>/`.
+pub(crate) fn math_dir(platform: &str) -> PathBuf {
+    repo_root().join("oracle-out").join("math").join(platform)
+}
+
 /// The golden seed set. Text seeds are hashed by the game, as typed into the world-creation screen.
 pub(crate) const GOLDEN_SEEDS: &[&str] = &[
     "0",
@@ -269,6 +279,10 @@ pub fn run(cmd: OracleCmd) -> Result<()> {
         OracleCmd::Probe(common) => {
             let harness = build(&common)?;
             harness.probe()
+        }
+        OracleCmd::Math(common) => {
+            let harness = build(&common)?;
+            harness.math()
         }
         OracleCmd::Structures(common) => {
             let harness = build(&common)?;
@@ -615,6 +629,19 @@ impl Harness {
             bail!("the oracle harness failed ({status})");
         }
         Ok(())
+    }
+
+    /// Writes `oracle-out/math/<os>-<arch>/`, replacing what was there.
+    pub(crate) fn math(&self) -> Result<()> {
+        let dir = math_dir(&format!(
+            "{}-{}",
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        ));
+        if dir.exists() {
+            fs::remove_dir_all(&dir)?;
+        }
+        self.run(&["math".into(), dir.into()])
     }
 
     /// Writes `oracle-out/<version>/probe/`, replacing what was there.

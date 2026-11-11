@@ -267,8 +267,8 @@ impl ConcentricRings {
             let ring_distance = f64::from(
                 (4 * distance).wrapping_add(distance.wrapping_mul(circle).wrapping_mul(6)),
             ) + (random.next_double() - 0.5) * (f64::from(distance) * 2.5);
-            let (x, other_x) = round_trig_product(angle.cos(), ring_distance);
-            let (z, other_z) = round_trig_product(angle.sin(), ring_distance);
+            let (x, other_x) = round_trig_product(spyglass_math::cos(angle), ring_distance);
+            let (z, other_z) = round_trig_product(spyglass_math::sin(angle), ring_distance);
             points.push(RingPoint {
                 x,
                 z,

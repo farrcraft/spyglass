@@ -369,7 +369,7 @@ impl Placer {
     /// the chunk aren't known on its own, with why: those this placer doesn't place, and those
     /// it does from their first candidate on. What reads the region after them is in doubt
     /// where they could have written.
-    #[allow(
+    #[expect(
         clippy::too_many_arguments,
         reason = "the decoration's inputs, passed through"
     )]

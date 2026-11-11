@@ -184,6 +184,12 @@ pub fn read(bytes: &[u8]) -> Result<(String, Tag), NbtError> {
     read_within(bytes, u64::MAX)
 }
 
+/// [`read`] for untrusted data: a tree that would take more than `memory` bytes of memory is an
+/// error.
+pub fn read_limited(bytes: &[u8], memory: u64) -> Result<(String, Tag), NbtError> {
+    read_within(bytes, memory)
+}
+
 /// [`read`], with an error if the tree would take more than `memory` bytes.
 fn read_within(bytes: &[u8], memory: u64) -> Result<(String, Tag), NbtError> {
     let mut reader = Reader::new(bytes, memory);
@@ -194,16 +200,42 @@ fn read_within(bytes: &[u8], memory: u64) -> Result<(String, Tag), NbtError> {
     Ok((name, tag))
 }
 
+/// A scalar child of a root compound, as [`read_root_fields`] returns it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RootField {
+    /// A `TAG_Int`.
+    Int(i32),
+    /// A `TAG_Long`.
+    Long(i64),
+    /// A `TAG_String`.
+    String(String),
+}
+
 /// The `TAG_Int` child `name` of uncompressed NBT's root compound, without building the tree:
 /// `None` if the root isn't a compound or has no such int. The rest of the data is still
 /// checked as [`read`] checks it, except that strings other than names aren't decoded.
 pub fn read_root_int(bytes: &[u8], name: &str) -> Result<Option<i32>, NbtError> {
+    let [found] = read_root_fields(bytes, [name])?;
+    Ok(match found {
+        Some(RootField::Int(value)) => Some(value),
+        _ => None,
+    })
+}
+
+/// The children `names` of uncompressed NBT's root compound, each if it's an int, a long or a
+/// string, without building the tree: `None` for a name the root doesn't have, has as another
+/// type, or when the root isn't a compound. The rest of the data is still checked as [`read`]
+/// checks it, except that strings other than names and the fields asked for aren't decoded.
+pub fn read_root_fields<const N: usize>(
+    bytes: &[u8],
+    names: [&str; N],
+) -> Result<[Option<RootField>; N], NbtError> {
     // Skipping builds nothing, so needs no memory limit.
     let mut reader = Reader::new(bytes, u64::MAX);
     let id = reader.u8()?;
     reader.skip_string()?;
-    let mut found = None;
-    // 10 is TAG_Compound, 0 TAG_End and 3 TAG_Int.
+    let mut found = [const { None }; N];
+    // 10 is TAG_Compound, 0 TAG_End, 3 TAG_Int, 4 TAG_Long and 8 TAG_String.
     if id == 10 {
         loop {
             let child = reader.u8()?;
@@ -212,14 +244,20 @@ pub fn read_root_int(bytes: &[u8], name: &str) -> Result<Option<i32>, NbtError> 
             }
             let (child_name, segment) = reader.name()?;
             reader.path.push(segment);
-            if child_name != name {
-                reader.skip(child, 1)?;
-            } else if child == 3 {
-                found = Some(reader.i32()?);
-            } else {
+            match names.iter().position(|&n| n == child_name) {
+                None => reader.skip(child, 1)?,
                 // A repeated name keeps the last value, as in a compound.
-                found = None;
-                reader.skip(child, 1)?;
+                Some(i) => {
+                    found[i] = match child {
+                        3 => Some(RootField::Int(reader.i32()?)),
+                        4 => Some(RootField::Long(i64::from_be_bytes(reader.array()?))),
+                        8 => Some(RootField::String(reader.string()?)),
+                        _ => {
+                            reader.skip(child, 1)?;
+                            None
+                        }
+                    };
+                }
             }
             reader.path.pop();
         }
@@ -1033,6 +1071,38 @@ mod tests {
         assert!(matches!(
             read_root_int(&trailing, "DataVersion"),
             Err(NbtError::Trailing(1))
+        ));
+    }
+
+    #[test]
+    fn root_fields_are_read_by_type() {
+        let root = Tag::Compound(Compound::from_iter([
+            ("DataVersion".to_string(), Tag::Int(4671)),
+            (
+                "Status".to_string(),
+                Tag::String("minecraft:full".to_string()),
+            ),
+            ("InhabitedTime".to_string(), Tag::Long(1 << 40)),
+            ("Level".to_string(), Tag::Compound(Compound::new())),
+        ]));
+        let bytes = write("", &root);
+        assert_eq!(
+            read_root_fields(
+                &bytes,
+                ["Status", "InhabitedTime", "DataVersion", "Level", "x"]
+            )
+            .unwrap(),
+            [
+                Some(RootField::String("minecraft:full".to_string())),
+                Some(RootField::Long(1 << 40)),
+                Some(RootField::Int(4671)),
+                None,
+                None,
+            ]
+        );
+        assert!(matches!(
+            read_root_fields(&bytes[..bytes.len() - 1], ["Status"]),
+            Err(NbtError::Truncated { .. })
         ));
     }
 

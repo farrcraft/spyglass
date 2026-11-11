@@ -68,7 +68,24 @@ A vanilla dedicated server opening a save that enables a pack it doesn't have lo
 - A chunk is read as `RegionFile.getChunkDataInputStream` reads it: its sectors, or what's left of the file, at most 255 × 4 KiB. It's unreadable if that's under 5 bytes, if its length is 0 (even for an external chunk), or, inside the region file, if the length is negative or the data (`length − 1` bytes after the compression byte) runs past what was read. An external chunk's length is otherwise ignored.
 - A length longer than the location's sectors is malformed, as `RegionFile` treats it.
 
-The scan reads every chunk, without building its tree (`nbt::read_root_int`). The largest save checked (344,000 chunks, 4.7 GB) takes about 8 seconds.
+- Each chunk's root `Status` (a string, e.g. `minecraft:full`; bare `full` before 1.18) and `InhabitedTime` (a long: ticks players spent nearby) are kept with its data version, in `region::index`'s `ChunkIndex`: per region file, each listed chunk by header index, readable or not. `region::read_chunk` reads one chunk again from it, under the same rules.
+
+The scan reads every chunk, without building its tree (`nbt::read_root_fields`). The largest save checked (344,000 chunks, 4.6 GB) takes about 6 to 8 seconds, the same with the index as with counts alone (2026-11-11).
+
+## Structure starts in saves
+
+`/locate`, and every structure check (`StructureCheck.checkStart`), asks storage before predicting (`tryLoadFromStorage`, 26.3 bytecode, 2026-11-11):
+
+- A chunk the dimension's region files don't have is predicted from the seed, as spyglass predicts it.
+- A chunk on disk is read for `DataVersion` and `structures.starts` (`Level.Structures.Starts` before 1.18), then data-fixed to the current version. No status is read, and no data version is too old: a chunk any version saved answers. A chunk that can't be read or fixed is loaded instead (`CHUNK_LOAD_NEEDED`), so the answer waits for the chunk.
+- If the chunk has no `starts` compound, it's predicted. Otherwise each child is a start keyed by structure id, `{id, ChunkX, ChunkZ, references, Children}`; a start whose `id` is `INVALID` isn't one, and an id the registry doesn't have (a removed data pack's) is dropped. The structure is present if the chunk has its start, and absent if not, even if the seed would place it. An empty `starts` means none.
+- With `skipKnownStructures` (exploration maps), a start counts only while its `references` is 0.
+
+So for chunks the save has, the save's starts are the game's answer, including chunks an older version or a data pack generated. A start's pieces (`Children`, each with its `id` and its box `BB`, six ints) are what was placed. `ChunkMap.save` skips a chunk still at the `empty` status unless it has a valid start, and never saves a proto chunk over a full one, so a saved chunk has had its starts decided.
+
+## Containers in saves
+
+A container a structure or feature fills from a loot table (`RandomizableContainer`) stores the table as `LootTable` in its block entity, and `LootTableSeed` unless the seed is 0, which draws a seed when it's filled (26.3 bytecode, 2026-11-11). `unpackLootTable` clears the table and fills the container the first time anything reaches its contents: a player opening it, a hopper, breaking it. So a saved container with `LootTable` hasn't been filled yet, and its predicted contents stand if `LootTableSeed` is the predicted seed. One without it has been filled, and its `Items` are what it holds now. Block entities are in a chunk's `block_entities` list, with `id` and `x`, `y`, `z`; chest minecarts are entities, in the dimension's `entities/` region files since 1.17, with the same fields.
 
 ## Chunk biomes
 

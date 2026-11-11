@@ -1,6 +1,6 @@
 # 25. What a save already knows
 
-- Status: Planned
+- Status: In progress
 - Depends on: [04](completed/04-world-saves.md), [20](completed/20-loot.md)
 - Plans: [m25-what-the-save-knows](../plans/m25-what-the-save-knows.md)
 

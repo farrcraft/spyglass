@@ -1,12 +1,13 @@
-//! A region file's chunk scan on any bytes, as `r.0.0.mca`. Every chunk it can't read is
-//! counted, not an error; panics, aborts and hangs aren't fine.
+//! A region file's chunk scan on any bytes, as `r.0.0.mca`, then every chunk it lists read again
+//! whole, as a chunk and as an entity chunk. Every chunk it can't read is counted or skipped,
+//! not an error; panics, aborts and hangs aren't fine.
 #![no_main]
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
 use libfuzzer_sys::fuzz_target;
-use spyglass_world::region;
+use spyglass_world::{chunk, region};
 
 /// One file per fuzzing process, rewritten for each input.
 fn path() -> &'static PathBuf {
@@ -20,5 +21,14 @@ fn path() -> &'static PathBuf {
 
 fuzz_target!(|data: &[u8]| {
     std::fs::write(path(), data).unwrap();
-    let _ = region::file_versions(path());
+    let Ok(index) = region::index_file(path()) else {
+        return;
+    };
+    for (header_index, _) in &index.chunks {
+        let pos = index.chunk_pos(*header_index).expect("r.0.0.mca parses");
+        if let Some(raw) = region::read_chunk(&index, pos) {
+            let _ = chunk::read(&raw);
+            let _ = chunk::read_entities(&raw);
+        }
+    }
 });

@@ -11,11 +11,15 @@ use spyglass_extract::{java, manifest};
 mod ci;
 mod ci_plan;
 mod ci_scope;
+mod citations;
 mod code_diff;
 mod dist;
 mod fuzz;
 mod guide;
 mod java_report;
+// Only a test: the check runs with the others (cargo nextest), not as a command.
+#[cfg(test)]
+mod layers;
 mod links;
 mod linux_check;
 mod locate;

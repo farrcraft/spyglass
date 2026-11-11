@@ -1,9 +1,9 @@
 # m23. Parity tooling
 
-- Status: Draft
-- Milestone: [23. Parity tooling](../roadmap/23-parity-tooling.md)
-- Started:
-- Completed:
+- Status: Completed
+- Milestone: [23. Parity tooling](../../roadmap/completed/23-parity-tooling.md)
+- Started: 2026-11-11
+- Completed: 2026-11-11
 
 ## Goal
 
@@ -15,7 +15,7 @@ Every exit criterion of milestone 23: a layer check that `cargo xtask check` run
 
 An xtask unit test, `layers_match_the_architecture`, in a new `xtask/src/layers.rs`, so nextest runs it on push and in `cargo xtask check`:
 
-1. **The table.** Read [architecture.md](../architecture.md#crates)'s crate table: the crates in row order, and each row's "Depends on" cell as short names (`rng`, `noise`... and `spyglass`, `spyglass-extract` for the front ends). A row's position is its layer.
+1. **The table.** Read [architecture.md](../../architecture.md#crates)'s crate table: the crates in row order, and each row's "Depends on" cell as short names (`rng`, `noise`... and `spyglass`, `spyglass-extract` for the front ends). A row's position is its layer.
 2. **The manifests.** `cargo metadata --format-version 1 --no-deps`, parsed with `serde_json` (already an xtask dependency): each workspace package's dependencies on workspace crates, by kind.
 3. **The rules.** For each crate:
    - its normal (and build) dependencies on workspace crates are exactly the table's cell;
@@ -48,32 +48,36 @@ The map is a lead, not a verdict, as Horizon's ledger notes for its own. A citat
 
 ### Citing the game's methods
 
-CLAUDE.md's naming rule already says a name kept from the game is explained where it's defined. It gains one sentence: a function that ports a game method opens its doc comment with it (``/// `NoiseSpawnFinder.radialSearch`: ...``), which is what the code map reads. [adding-a-version.md](../adding-a-version.md)'s reading of the report gains the code map and its ranks.
+CLAUDE.md's naming rule already says a name kept from the game is explained where it's defined. It gains one sentence: a function that ports a game method opens its doc comment with it (``/// `NoiseSpawnFinder.radialSearch`: ...``), which is what the code map reads. [adding-a-version.md](../../adding-a-version.md)'s reading of the report gains the code map and its ranks.
 
 ## Tasks
 
-- [ ] `layers.rs`: read the table, read `cargo metadata`, check the rules, with tests of each rule on small hand-written inputs
-- [ ] Run it on the workspace; fix whichever of the table and the manifests is wrong, if either is
-- [ ] `code_diff.rs`: changed methods per changed class, with tests on normalized text
-- [ ] `citations.rs`: the citation scan and the crate-to-comparisons map, with tests on small source strings (ambiguous names, nested classes, non-comment text ignored)
-- [ ] `version-diff --code`: the per-method map and the ranked list
-- [ ] Run `version-diff 26.4-snapshot-7 26.4-snapshot-8 --code`; check by eye that the carving mask's bounds rank among the first, and that the ranked list is short enough to read
-- [ ] CLAUDE.md: the citation rule; adding-a-version.md: the code map
-- [ ] An ADR: the layer check and the citation rule as project policy, extending ADR 0005
+- [x] `layers.rs`: read the table, read `cargo metadata`, check the rules, with tests of each rule on small hand-written inputs
+- [x] Run it on the workspace; fix whichever of the table and the manifests is wrong, if either is
+- [x] `code_diff.rs`: changed methods per changed class, with tests on normalized text
+- [x] `citations.rs`: the citation scan and the crate-to-comparisons map, with tests on small source strings (ambiguous names, nested classes, non-comment text ignored)
+- [x] `version-diff --code`: the per-method map and the ranked list
+- [x] Run `version-diff 26.4-snapshot-7 26.4-snapshot-8 --code`; check by eye that the carving mask's bounds rank among the first, and that the ranked list is short enough to read
+- [x] CLAUDE.md: the citation rule; adding-a-version.md: the code map
+- [x] An ADR: the layer check and the citation rule as project policy, extending ADR 0005
 
 ## Verification
 
 - xtask unit tests for each layer rule, the method split and the citation scan.
 - A deliberate bad dependency (`spyglass-noise` on `spyglass-biome`) fails the layer test, in a scratch branch.
-- The snapshot-7 to snapshot-8 report, read by eye against what that snapshot is known to change ([adding-a-version.md](../adding-a-version.md#cost-log)).
+- The snapshot-7 to snapshot-8 report, read by eye against what that snapshot is known to change ([adding-a-version.md](../../adding-a-version.md#cost-log)).
 
 Nothing about worldgen changes, so `cargo xtask oracle-test` isn't needed.
 
 ## Durable outputs
 
-- [ ] The ADR on the layer check and the citation rule
-- [ ] [architecture.md](../architecture.md#crates): the rule says it's checked
-- [ ] [adding-a-version.md](../adding-a-version.md): the code map and its ranks
-- [ ] CLAUDE.md: citing the game's methods
+- [x] The ADR on the layer check and the citation rule
+- [x] [architecture.md](../../architecture.md#crates): the rule says it's checked
+- [x] [adding-a-version.md](../../adding-a-version.md): the code map and its ranks
+- [x] CLAUDE.md: citing the game's methods
 
 ## Notes
+
+- 2026-11-11: the layer test, first run, found the table five places out of date: `spyglass` (density, feature, loot), `spyglass-feature` (noise, density) and `spyglass-loot` (density) depended on crates their rows didn't name, `spyglass-extract` had no row, and `spyglass-oracle` depended on `spyglass-loot`, listed below it. The table was corrected and the oracle's row moved below loot's. Run against the old table, the test reports all of them, which stood in for the scratch-branch bad dependency.
+- Dev-dependencies run both ways today (`spyglass-rng` dev-depends on `spyglass-oracle`), so the rules cover normal and build dependencies only.
+- The snapshot-7 to snapshot-8 report was first dominated by `RegistryAccess` → `HolderGetter.Provider` signature changes, each a removed and an added method. Pairing them by name and parameter count, and sorting signature changes after changed bodies, put the carving mask first in rank 2, once its comment (`blocks/src/lib.rs`, a bare `generateCarvingMask`) cited it in backticks with its class. `Beardifier.sampleValueUnchecked` changed and nothing cites it: spyglass's beardifier is 0, a lead for structure-adjacent terrain.

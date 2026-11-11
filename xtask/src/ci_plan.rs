@@ -1,5 +1,6 @@
 //! `cargo xtask ci-plan`: CI's oracle jobs, planned from estimated costs
-//! (docs/adr/0058-oracle-ci-planned-by-cost.md). Each version's work is divided into units, an
+//! (docs/adr/0058-oracle-ci-planned-by-cost.md), for the versions each schedule checks
+//! (docs/adr/0067-older-snapshots-checked-weekly.md). Each version's work is divided into units, an
 //! oracle output for one seed or for all of them, or the tests that read only the bundle, and the
 //! units are packed into jobs that fit [`BUDGET`]. It prints the jobs as the `oracle` job's
 //! matrix, a `matrix=` line for `$GITHUB_OUTPUT`, and a summary to stderr.
@@ -15,8 +16,9 @@ use crate::oracle_test::Input;
 
 #[derive(clap::Args)]
 pub struct CiPlan {
-    /// `full` checks every version in full; `pr` checks the newest in full and the others in
-    /// part.
+    /// `full` checks every version in full, as the weekly run and the release do; `pr` and
+    /// `main` check the newest release and snapshot in full, older releases in part and older
+    /// snapshots not at all.
     #[arg(long, value_enum)]
     mode: Mode,
     /// What the pull request merges into, e.g. `origin/main`, for `pr`: a version whose harness
@@ -27,8 +29,23 @@ pub struct CiPlan {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, clap::ValueEnum)]
 enum Mode {
+    /// The weekly run and the release workflow.
     Full,
+    /// A pull request.
     Pr,
+    /// A push to `main`.
+    Main,
+}
+
+/// How much of a version a run checks.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Depth {
+    /// Every unit.
+    Full,
+    /// [`Unit::smoke`]'s.
+    Part,
+    /// None.
+    Skip,
 }
 
 /// A job's estimated minutes, setup included, that the planner keeps under. The timeout is 60;
@@ -355,9 +372,11 @@ fn pack(version: &'static str, mut units: Vec<Unit>) -> Result<Vec<Job>> {
     unreachable!("a job per unit always returns")
 }
 
-/// The versions checked in full on a pull request: the newest release, the newest snapshot if
-/// it's newer, and any whose harness adapters `changed` touches.
-fn full_on_a_pull_request(changed: &[&str]) -> Result<Vec<&'static str>> {
+/// How much of each version a pull request or a push to `main` checks, in [`CHECKED`]'s order:
+/// the newest release and the newest snapshot, if it's newer, in full, older releases in part,
+/// and older snapshots not at all. A version whose harness adapters `changed` touches is
+/// checked in full.
+fn regular_depths(changed: &[&str]) -> Result<Vec<Depth>> {
     let newest_release = CHECKED
         .iter()
         .filter(|c| Release::from_id(c.id) == Release::Release)
@@ -365,7 +384,7 @@ fn full_on_a_pull_request(changed: &[&str]) -> Result<Vec<&'static str>> {
         .max()
         .unwrap_or(0);
     let newest = CHECKED.iter().map(|c| c.data_version).max().unwrap_or(0);
-    let mut full = Vec::new();
+    let mut depths = Vec::new();
     for checked in CHECKED {
         let adapters = oracle::adapter_dirs(checked.data_version)?;
         let adapter_changed = changed.iter().any(|path| {
@@ -373,24 +392,27 @@ fn full_on_a_pull_request(changed: &[&str]) -> Result<Vec<&'static str>> {
                 .iter()
                 .any(|dir| path.starts_with(&format!("{dir}/")))
         });
-        if checked.data_version == newest_release
-            || (checked.data_version == newest && newest > newest_release)
-            || adapter_changed
-        {
-            full.push(checked.id);
-        }
+        let current = checked.data_version == newest_release
+            || (checked.data_version == newest && newest > newest_release);
+        depths.push(if current || adapter_changed {
+            Depth::Full
+        } else if Release::from_id(checked.id) == Release::Release {
+            Depth::Part
+        } else {
+            Depth::Skip
+        });
     }
-    Ok(full)
+    Ok(depths)
 }
 
-/// Every version's jobs: in full for those in `full`, in part for the others.
-fn plan(full: &[&str]) -> Result<Vec<Job>> {
+/// Every version's jobs, to `depths`, one per version in [`CHECKED`]'s order.
+fn plan(depths: &[Depth]) -> Result<Vec<Job>> {
     let mut jobs = Vec::new();
-    for checked in CHECKED {
-        let units = if full.contains(&checked.id) {
-            Unit::all()
-        } else {
-            Unit::smoke()
+    for (checked, depth) in CHECKED.iter().zip(depths) {
+        let units = match depth {
+            Depth::Full => Unit::all(),
+            Depth::Part => Unit::smoke(),
+            Depth::Skip => continue,
         };
         jobs.extend(pack(checked.id, units)?);
     }
@@ -437,21 +459,23 @@ fn matrix(jobs: &[Job]) -> serde_json::Value {
 
 /// Prints the matrix for `args.mode`, and the plan with its estimates to stderr.
 pub fn run(args: &CiPlan) -> Result<()> {
-    let full: Vec<&str> = match (args.mode, &args.base) {
-        (Mode::Full, _) => CHECKED.iter().map(|c| c.id).collect(),
+    let depths = match (args.mode, &args.base) {
+        (Mode::Full, _) => vec![Depth::Full; CHECKED.len()],
         (Mode::Pr, Some(base)) => {
             let changed = crate::ci_scope::changed_files(base)?;
             let changed: Vec<&str> = changed.iter().map(String::as_str).collect();
-            full_on_a_pull_request(&changed)?
+            regular_depths(&changed)?
         }
         (Mode::Pr, None) => bail!("--mode pr needs --base"),
+        // What merged was checked as a pull request, its changed adapters in full.
+        (Mode::Main, _) => regular_depths(&[])?,
     };
-    let jobs = plan(&full)?;
-    for checked in CHECKED {
-        let how = if full.contains(&checked.id) {
-            "in full"
-        } else {
-            "in part"
+    let jobs = plan(&depths)?;
+    for (checked, depth) in CHECKED.iter().zip(&depths) {
+        let how = match depth {
+            Depth::Full => "in full",
+            Depth::Part => "in part",
+            Depth::Skip => "not checked",
         };
         eprintln!("{} {how}:", checked.id);
         for job in jobs.iter().filter(|j| j.version == checked.id) {
@@ -494,20 +518,25 @@ mod tests {
     /// Every unit is in exactly one job, and every job but one of a single unit fits the budget.
     #[test]
     fn jobs_hold_every_unit_once_within_the_budget() {
-        let all: Vec<&str> = CHECKED.iter().map(|c| c.id).collect();
-        for full in [all.as_slice(), &[]] {
-            let jobs = plan(full).unwrap();
-            for checked in CHECKED {
+        let everything = |depth| vec![depth; CHECKED.len()];
+        for depths in [
+            everything(Depth::Full),
+            everything(Depth::Part),
+            everything(Depth::Skip),
+            regular_depths(&[]).unwrap(),
+        ] {
+            let jobs = plan(&depths).unwrap();
+            for (checked, depth) in CHECKED.iter().zip(&depths) {
                 let mut planned: Vec<Unit> = jobs
                     .iter()
                     .filter(|j| j.version == checked.id)
                     .flat_map(|j| j.units.clone())
                     .collect();
                 planned.sort();
-                let mut expected = if full.contains(&checked.id) {
-                    Unit::all()
-                } else {
-                    Unit::smoke()
+                let mut expected = match depth {
+                    Depth::Full => Unit::all(),
+                    Depth::Part => Unit::smoke(),
+                    Depth::Skip => Vec::new(),
                 };
                 expected.sort();
                 assert_eq!(planned, expected, "{}", checked.id);
@@ -525,7 +554,17 @@ mod tests {
     /// exactly one.
     #[test]
     fn a_full_plan_runs_every_test() {
-        let jobs = plan(&["26.3"]).unwrap();
+        let depths: Vec<Depth> = CHECKED
+            .iter()
+            .map(|c| {
+                if c.id == "26.3" {
+                    Depth::Full
+                } else {
+                    Depth::Skip
+                }
+            })
+            .collect();
+        let jobs = plan(&depths).unwrap();
         let jobs: Vec<&Job> = jobs.iter().filter(|j| j.version == "26.3").collect();
         for (package, name, inputs) in TESTS {
             let n = jobs
@@ -546,19 +585,36 @@ mod tests {
     }
 
     #[test]
-    fn a_pull_request_checks_the_newest_in_full() {
-        let full = full_on_a_pull_request(&["crates/spyglass-feature/src/lib.rs"]).unwrap();
+    fn regular_runs_check_the_newest_in_full_and_older_snapshots_not_at_all() {
+        let depth = |depths: &[Depth], id: &str| {
+            let i = CHECKED.iter().position(|c| c.id == id).unwrap();
+            depths[i]
+        };
+        let depths = regular_depths(&["crates/spyglass-feature/src/lib.rs"]).unwrap();
         let newest_release = CHECKED
             .iter()
             .rev()
             .find(|c| Release::from_id(c.id) == Release::Release)
             .unwrap();
-        assert!(full.contains(&newest_release.id));
+        assert_eq!(depth(&depths, newest_release.id), Depth::Full);
         let newest = CHECKED.last().unwrap();
-        assert!(full.contains(&newest.id));
-        assert!(!full.contains(&CHECKED[0].id) || CHECKED[0].id == newest_release.id);
-        // A change to 26.2's adapter checks 26.2 in full too.
-        let full = full_on_a_pull_request(&["oracle/adapters/26.2/Chunks.java"]).unwrap();
-        assert!(full.contains(&"26.2"));
+        assert_eq!(depth(&depths, newest.id), Depth::Full);
+        for checked in CHECKED {
+            if checked.id == newest_release.id || checked.id == newest.id {
+                continue;
+            }
+            let expected = if Release::from_id(checked.id) == Release::Release {
+                Depth::Part
+            } else {
+                Depth::Skip
+            };
+            assert_eq!(depth(&depths, checked.id), expected, "{}", checked.id);
+        }
+        // A change to an older snapshot's adapter, or to 26.2's, checks that version in full.
+        let depths =
+            regular_depths(&["oracle/adapters/26.4-snapshot-6/RandomStates.java"]).unwrap();
+        assert_eq!(depth(&depths, "26.4-snapshot-6"), Depth::Full);
+        let depths = regular_depths(&["oracle/adapters/26.2/Chunks.java"]).unwrap();
+        assert_eq!(depth(&depths, "26.2"), Depth::Full);
     }
 }

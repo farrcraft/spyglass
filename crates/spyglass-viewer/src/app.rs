@@ -13,9 +13,9 @@ use eframe::egui::{self, Color32, Key, Pos2, Rect, Sense, TextureOptions, Vec2};
 use serde::{Deserialize, Serialize};
 use spyglass::{
     BiomeQuery, BundleInfo, Dimension, Evaluation, FeatureQuery, FindOutcome, FoundContainer,
-    FoundFeature, Game, Heightmap, Image, ItemQuery, LauncherSave, Layers, MAX_TERRAIN_SCALE,
-    MAX_UNDERGROUND_SCALE, SaveReport, Scan, SearchOutcome, SearchQuery, Session, SpawnOrigin,
-    StructureLayout, StructureQuery, StructureStart, World,
+    FoundFeature, Game, Heightmap, Image, ItemQuery, LauncherSave, Layers, MAX_UNDERGROUND_SCALE,
+    SaveReport, Scan, SearchOutcome, SearchQuery, Session, SpawnOrigin, StructureLayout,
+    StructureQuery, StructureStart, World,
 };
 
 use crate::export::{Export, Source, visible_area};
@@ -847,9 +847,7 @@ impl App {
             slime_chunks: self.settings.slime_chunks
                 && self.slime_allowed()
                 && self.settings.view.scale <= spyglass::MAX_SLIME_SCALE,
-            relief: self.settings.relief
-                && self.terrain_allowed()
-                && self.settings.view.scale <= MAX_TERRAIN_SCALE,
+            relief: self.settings.relief && self.terrain_allowed(),
         }
     }
 

@@ -6,6 +6,20 @@ Changes go under **Unreleased** as they're made. `cargo xtask release` turns tha
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-11
+
+### Game versions
+
+Checked against the game for 26.2, 26.3, 26.4-snapshot-5, 26.4-snapshot-6, 26.4-snapshot-7, 26.4-snapshot-8.
+
+### Added
+
+- **26.4-snapshot-8**, checked against the game. Its carving mask spans the noise's heights again, within the level's, so Nether caves stop at y 120 as in snapshot-5 ([carvers.md](docs/specs/carvers.md#264-the-carving-mask-with-the-rule)).
+
+### Changed
+
+- **Biomes at the surface and relief at every scale.** They were drawn only at 4 blocks per pixel or closer, so zooming out switched the viewer from surface biomes to biomes at one height, often a cave biome under mountains. They're slow everywhere, and slower zoomed out: a screen takes a few seconds at 1:4 and up to a minute or so from 1:32 out. `spyglass render --surface` and `--relief` take any scale, and the library's `MAX_TERRAIN_SCALE` is gone ([render.md](docs/specs/render.md#heights)). In the viewer, the quicker biomes at the chosen height show while they're worked out.
+
 ## [0.3.0] - 2026-11-09
 
 ### Game versions
@@ -98,7 +112,8 @@ The first release.
 - A warning for a game version this build wasn't checked against. Its answers may differ from the game's ([bundle-format.md](docs/specs/bundle-format.md#checked-versions)).
 - `--version` names the build and the game versions it was checked against.
 
-[Unreleased]: https://github.com/farrcraft/spyglass/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/farrcraft/spyglass/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/farrcraft/spyglass/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/farrcraft/spyglass/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/farrcraft/spyglass/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/farrcraft/spyglass/releases/tag/v0.1.0

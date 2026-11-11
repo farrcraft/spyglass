@@ -4,9 +4,11 @@
 # jobs only call `cargo xtask`, so they run the same locally.
 #
 # A pull request runs only the jobs its files can affect, which `cargo xtask ci-scope` decides;
-# a push to main and the release workflow run everything (ADR 0041). `cargo xtask ci-plan` divides
-# the oracle work into jobs that fit the hour; a pull request checks the newest versions in full
-# and the others in part, unless it has the `oracle: full` label (ADR 0058).
+# a push to main, the weekly run and the release workflow run everything (ADR 0041).
+# `cargo xtask ci-plan` divides the oracle work into jobs that fit the hour (ADR 0058). A pull
+# request and a push to main check the newest release and snapshot in full, older releases in
+# part and older snapshots not at all, unless the pull request has the `oracle: full` label; the
+# weekly run and the release check every version in full (ADR 0067).
 name: CI
 
 # Pushes to main, and pull requests: a branch with a pull request runs once, not twice.
@@ -14,12 +16,16 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Every version in full, weekly, on main (ADR 0067): Mondays at 06:00 UTC.
+  schedule:
+    - cron: "0 6 * * 1"
   # The release workflow runs all of this on the commit it releases, before it builds (ADR 0037).
   workflow_call:
 
-# A newer push to the same ref cancels the run it supersedes.
+# A newer push to the same ref cancels the run it supersedes. The weekly run has a group of its
+# own, so a push to main doesn't cancel it.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -57,7 +63,13 @@ jobs:
               cargo xtask ci-plan --mode pr --base "origin/$GITHUB_BASE_REF" >> "$GITHUB_OUTPUT"
             fi
           else
-            cargo xtask ci-plan --mode full >> "$GITHUB_OUTPUT"
+            # A push to main checks what a pull request does; the weekly run and the release,
+            # every version in full.
+            if [ "$EVENT" = push ]; then
+              cargo xtask ci-plan --mode main >> "$GITHUB_OUTPUT"
+            else
+              cargo xtask ci-plan --mode full >> "$GITHUB_OUTPUT"
+            fi
             echo "check=true" >> "$GITHUB_OUTPUT"
             echo "windows=true" >> "$GITHUB_OUTPUT"
             echo "oracle=true" >> "$GITHUB_OUTPUT"

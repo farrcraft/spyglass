@@ -207,8 +207,8 @@ impl App {
                 slime_chunks: export.slime_chunks && export.area.scale <= spyglass::MAX_SLIME_SCALE,
                 spawn: export.spawn,
                 confirm: export.confirm,
-                relief: export.relief && export.area.scale <= MAX_TERRAIN_SCALE,
-                surface: export.surface && export.area.scale <= MAX_TERRAIN_SCALE,
+                relief: export.relief,
+                surface: export.surface,
                 veins: export.veins && export.area.scale <= MAX_UNDERGROUND_SCALE,
                 noise_caves: export.noise_caves && export.area.scale <= MAX_UNDERGROUND_SCALE,
                 carvers: export.carvers && export.area.scale <= MAX_UNDERGROUND_SCALE,
@@ -423,13 +423,8 @@ impl App {
     /// What's drawn on the map: biomes, overlays, structures, and whether to confirm with
     /// terrain.
     pub(super) fn layers_tab(&mut self, ui: &mut egui::Ui) {
-        let terrain_here = self.terrain_allowed();
-        let terrain = terrain_here && self.settings.view.scale <= MAX_TERRAIN_SCALE;
-        let far = if terrain_here {
-            "Zoom to 1:4 or closer to draw terrain."
-        } else {
-            "Not under a ceiling: the surface there is the ceiling."
-        };
+        let terrain = self.terrain_allowed();
+        let ceiling = "Not under a ceiling: the surface there is the ceiling.";
 
         style::heading(ui, "Biomes");
         // The height is the underground layers' too, so it stays usable for them.
@@ -443,7 +438,12 @@ impl App {
         )
         .on_hover_text("Draw each column's biome at its terrain height instead of at one y.");
         if !terrain {
-            style::hint(ui, far);
+            style::hint(ui, ceiling);
+        } else if self.settings.surface {
+            style::hint(
+                ui,
+                "Slow to draw: biomes at the height show until it's done.",
+            );
         }
         let void_shown = terrain && (self.settings.surface || self.settings.relief);
         if self
@@ -453,7 +453,7 @@ impl App {
         {
             style::hint(
                 ui,
-                "The void between the End's islands shows at 1:4 or closer, with biomes at the surface or relief: the biome alone is the same over it.",
+                "The void between the End's islands shows with biomes at the surface or relief: the biome alone is the same over it.",
             );
         }
         ui.checkbox(&mut self.settings.ties, "Tied biome cells").on_hover_text(
@@ -494,7 +494,7 @@ impl App {
         if terrain {
             style::hint(ui, "Slow to draw.");
         } else {
-            style::hint(ui, far);
+            style::hint(ui, ceiling);
         }
 
         ui.add_space(6.0);

@@ -127,6 +127,10 @@ pub const CHECKED: &[Checked] = &[
         id: "26.4-snapshot-7",
         data_version: 5127,
     },
+    Checked {
+        id: "26.4-snapshot-8",
+        data_version: 5128,
+    },
 ];
 
 /// How a data version relates to [`CHECKED`].
@@ -188,7 +192,11 @@ switches! {
     /// The carving mask spans the level's heights (`LevelHeightAccessor`), where
     /// 26.4-snapshot-5's spanned the vertical anchors' context: from 1 above the bottom to 7
     /// below the top either way.
-    carving_mask_level_bounds, "carvers.md#264-the-carving-mask-with-the-rule", [5126..];
+    carving_mask_level_bounds, "carvers.md#264-the-carving-mask-with-the-rule", [5126..5128];
+
+    /// The carving mask spans the vertical anchors' context with its top kept within the
+    /// level's: from 1 above the higher bottom to 7 below the lower top.
+    carving_mask_context_within_level, "carvers.md#264-the-carving-mask-with-the-rule", [5128..];
 
     /// A feature pool element's jigsaw is named `minecraft:bottom`, and attaches only to a parent
     /// jigsaw targeting that name exactly. Later versions leave the name empty, matching any target.

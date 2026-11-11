@@ -1,6 +1,6 @@
 # Loot
 
-Status: draft. Covers filling a container from its loot table and loot seed (`LootTable.fill`), as the game does when a container is first opened, broken or emptied by a hopper: the tables' forms, pools, entries, number providers, conditions, modifiers and enchanting, and how the items go into slots. Implemented in `spyglass-loot` ([ADR 0060](../adr/0060-loot-in-its-own-crate.md)), with the random in `spyglass-rng` ([rng.md](rng.md)) and the data from the bundle ([ADR 0059](../adr/0059-loot-data-in-the-bundle.md)). Checked against the oracle's [loot golden files](oracle.md#loot-golden-files) in 26.2, 26.3 and 26.4-snapshot-5 to 7: every fill of every container table matches.
+Status: draft. Covers filling a container from its loot table and loot seed (`LootTable.fill`), as the game does when a container is first opened, broken or emptied by a hopper: the tables' forms, pools, entries, number providers, conditions, modifiers and enchanting, and how the items go into slots. Implemented in `spyglass-loot` ([ADR 0060](../adr/0060-loot-in-its-own-crate.md)), with the random in `spyglass-rng` ([rng.md](rng.md)) and the data from the bundle ([ADR 0059](../adr/0059-loot-data-in-the-bundle.md)). Checked against the oracle's [loot golden files](oracle.md#loot-golden-files) in 26.2, 26.3 and 26.4-snapshot-5 to 8: every fill of every container table matches.
 
 Ported from the 26.2, 26.3 and 26.4-snapshot-7 bytecode. The draws are the same in all three; the JSON differs ([Forms](#forms)).
 

@@ -433,10 +433,11 @@ pub struct Render {
     /// platform-dependent results.
     #[arg(long)]
     pub confirm: bool,
-    /// Shade by terrain height (scales up to 4).
+    /// Shade by terrain height. Slow: each pixel needs its column's height.
     #[arg(long)]
     pub relief: bool,
-    /// Draw biomes at the surface instead of at `--y` (scales up to 4).
+    /// Draw biomes at the surface instead of at `--y`. Slow: each pixel needs its column's
+    /// height.
     #[arg(long, conflicts_with = "no_biomes")]
     pub surface: bool,
     /// Tint copper and iron ore veins at `--y` (scales up to 4; the Overworld).

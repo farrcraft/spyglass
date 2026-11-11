@@ -244,7 +244,6 @@ fn bad_requests_fail_without_writing() {
         &["--seed", "1", "--scale", "3", "-o", path][..],
         &["--seed", "1", "--min", "1,0", "--scale", "4", "-o", path],
         &["--seed", "1", "--scale", "32", "--slime", "-o", path],
-        &["--seed", "1", "--scale", "8", "--relief", "-o", path],
         &["--seed", "1", "--surface", "--no-biomes", "-o", path],
         &[
             "--seed",

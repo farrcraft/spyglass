@@ -31,9 +31,6 @@ pub const MAX_SIDE: u32 = 16_384;
 pub const MAX_PIXELS: u64 = 1 << 26;
 /// The largest scale slime chunks are drawn at: a chunk is at least a pixel.
 pub const MAX_SLIME_SCALE: u32 = 16;
-/// The largest scale terrain layers (relief, surface biomes) are drawn at: each pixel needs a
-/// column's height, and a chunk's heights take milliseconds.
-pub const MAX_TERRAIN_SCALE: u32 = 4;
 /// The largest scale features (dungeons, geodes and the rest) are drawn at: each chunk they
 /// could be in is placed, at about 30 ms a chunk (`docs/specs/render.md#layers`).
 pub const MAX_FEATURE_SCALE: u32 = 2;
@@ -195,10 +192,11 @@ pub struct Layers {
     /// are candidates only behind ties and platform-dependent results.
     pub confirm: bool,
     /// Shade the map by terrain height, lit from the north-west; with biomes off, the base is
-    /// grey by height. Scales up to [`MAX_TERRAIN_SCALE`].
+    /// grey by height. Each pixel needs its column's height, which is slow
+    /// ([`Session::height_map`]).
     pub relief: bool,
-    /// Sample biomes at the surface rather than at the area's `y`. Scales up to
-    /// [`MAX_TERRAIN_SCALE`].
+    /// Sample biomes at the surface rather than at the area's `y`. Each pixel needs its
+    /// column's height, which is slow ([`Session::height_map`]).
     pub surface: bool,
     /// Ore veins at the area's `y`, in dimensions that have them. Scales up to
     /// [`MAX_UNDERGROUND_SCALE`].
@@ -735,16 +733,10 @@ impl Session<'_> {
     }
 
     /// The terrain height at each pixel of `area`, and one pixel beyond its west and north
-    /// edges (`docs/specs/render.md#heights`). Binds the seed's terrain. Scales up to
-    /// [`MAX_TERRAIN_SCALE`].
+    /// edges (`docs/specs/render.md#heights`). Binds the seed's terrain. Slow at every scale,
+    /// and slower as pixels spread out, until each is in a chunk of its own.
     pub fn height_map(&self, area: &MapArea) -> Result<HeightMap> {
         area.check()?;
-        if area.scale > MAX_TERRAIN_SCALE {
-            return Err(invalid(format!(
-                "terrain is drawn at scales up to {MAX_TERRAIN_SCALE}, not {}",
-                area.scale
-            )));
-        }
         let blocks_per_pixel = i64::from(area.scale);
         // From one pixel before the area, which saturates at the edge of the coordinates: the
         // relief shade compares each pixel with its west and north neighbours, so a tile's

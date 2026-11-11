@@ -30,7 +30,7 @@ In PowerShell and cmd, put ids and queries in double quotes: `"#minecraft:villag
 
 ## Features, loot or relief are slow to appear
 
-They're drawn by placing chunks as the game does, which takes time. They appear only when you zoom in, and fill in as they're worked out.
+Features and loot are drawn by placing chunks as the game does, which takes time, so they appear only when you zoom in. Relief and biomes at the surface need every column's terrain height. All of them fill in as they're worked out.
 
 ## Something else
 

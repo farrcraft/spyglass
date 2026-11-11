@@ -266,7 +266,7 @@ fn a_view_equals_its_tiles() {
         assert_eq!(pixels, tiled(&session, &area, &layers, 32), "scale {scale}");
     }
     // Terrain layers too, and with the biome layer off.
-    for (scale, biomes) in [(1, true), (2, false), (4, true)] {
+    for (scale, biomes) in [(1, true), (2, false), (4, true), (16, true)] {
         let area = MapArea::centred_on([60, 10], [100, 70], scale, 64).unwrap();
         let layers = Layers {
             biomes,
@@ -431,7 +431,7 @@ fn terrain_layers_show_the_heights_at_their_corner() {
     let fixture = bundle();
     let world = World::open(fixture.path()).unwrap();
     let session = world.session(7).unwrap();
-    for scale in [1, 2, 4] {
+    for scale in [1, 2, 4, 16] {
         let area = MapArea::centred_on([60, -9], [40, 20], scale, 64).unwrap();
         let heights = session.height_map(&area).unwrap();
         let surface = session.surface_biome_map(&heights).unwrap();
@@ -496,7 +496,7 @@ fn columns_with_no_blocks_are_the_void() {
     let fixture = fixtures::overworld(&[void_terrain()], false);
     let world = World::open(fixture.path()).unwrap();
     let session = world.session(3).unwrap();
-    for scale in [1, 4] {
+    for scale in [1, 4, 16] {
         let area = MapArea::centred_on([0, 0], [160 / scale, 4], scale, 64).unwrap();
         let heights = session.height_map(&area).unwrap();
         let with = [
@@ -708,17 +708,6 @@ fn bad_requests_are_errors() {
         Err(Error::InvalidMap(_))
     ));
 
-    let relief = Layers {
-        relief: true,
-        ..Layers::default()
-    };
-    let far = MapArea::centred_on([0, 0], [16, 16], 8, 64).unwrap();
-    assert!(matches!(
-        session.render(&far, &relief),
-        Err(Error::InvalidMap(_))
-    ));
-    assert!(session.height_map(&far).is_err());
-
     // A dimension without ore veins has no vein layer; the underground layers stop at their
     // own scale; a carving map is for its own area.
     let near = MapArea::centred_on([0, 0], [16, 16], 1, 0).unwrap();
@@ -833,8 +822,8 @@ fn the_real_world_renders_the_same_in_tiles() {
             slime_chunks: scale <= spyglass::MAX_SLIME_SCALE,
             spawn: true,
             confirm: true,
-            relief: scale <= spyglass::MAX_TERRAIN_SCALE,
-            surface: scale <= spyglass::MAX_TERRAIN_SCALE,
+            relief: true,
+            surface: true,
             veins: scale <= spyglass::MAX_UNDERGROUND_SCALE,
             noise_caves: scale <= spyglass::MAX_UNDERGROUND_SCALE,
             carvers: scale <= spyglass::MAX_UNDERGROUND_SCALE,
@@ -880,18 +869,16 @@ fn the_real_world_renders_the_same_in_tiles() {
                 }
             }
         }
-        if scale <= spyglass::MAX_TERRAIN_SCALE {
-            let heights = session.height_map(&area).unwrap();
-            let surface = session.surface_biome_map(&heights).unwrap();
-            for [i, j] in [[0, 0], [159, 119], [80, 60], [13, 101]] {
-                let [x, z] = area.block([i, j]);
-                let h = session.height_at([x, z], Heightmap::WorldSurfaceWg);
-                assert_eq!(heights.height([i, j]), h, "scale {scale} pixel ({i}, {j})");
-                assert_eq!(
-                    world.biomes()[surface.biome([i, j])],
-                    session.biome_at([x, h.min(319), z]).biome,
-                );
-            }
+        let heights = session.height_map(&area).unwrap();
+        let surface = session.surface_biome_map(&heights).unwrap();
+        for [i, j] in [[0, 0], [159, 119], [80, 60], [13, 101]] {
+            let [x, z] = area.block([i, j]);
+            let h = session.height_at([x, z], Heightmap::WorldSurfaceWg);
+            assert_eq!(heights.height([i, j]), h, "scale {scale} pixel ({i}, {j})");
+            assert_eq!(
+                world.biomes()[surface.biome([i, j])],
+                session.biome_at([x, h.min(319), z]).biome,
+            );
         }
     }
 }

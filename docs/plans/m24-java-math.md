@@ -69,7 +69,7 @@ An ADR records, from the report:
 - [x] An fdlibm 5.3 port: not needed. `StrictMath` itself is measured, and the `libm` crate stood in for fdlibm's algorithm; both are 2 to 10% from x86-64's `Math`, so correctly rounded functions were built instead
 - [x] Correctly rounded `sin`, `cos` and `log` (and `pow` if the measurements ask for it), with unit tests against high-precision values
 - [x] Measure on Windows x86-64 locally
-- [ ] Measure on Linux x86-64 and Apple silicon: the Math workflow's `measure` job, run by hand once the branch is pushed
+- [x] Measure on Linux x86-64 and Apple silicon: the Math workflow, 2026-11-11. Linux is Windows's case for case; Apple silicon's `log` and `pow` are `StrictMath`, its `sin` and `cos` neither fdlibm nor correctly rounded, 6 to 10% from spyglass by 1 ulp (java-math.md)
 - [x] docs/specs/java-math.md: the measurements, per function, set and platform
 - [x] The ADR: implementation, crate, ADR 0012's margin, licences
 - [x] The module in its chosen crate; the call sites through it; clippy.toml's reasons

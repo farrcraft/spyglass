@@ -16,13 +16,13 @@ The oracle's new `math` command measured it on Windows x86-64 with Temurin 25 ([
 
 We will compute Java's `Math.sin`, `cos`, `log` and `pow` correctly rounded, in `spyglass-math`, a new crate below `spyglass-rng`, and route every worldgen call through it. It uses double-double arithmetic with no fused multiply-add and no platform libm, and returns a result only when Ziv's rounding test settles it to a bound well above its error. Java's special cases for `log` and `pow` are kept.
 
-ADR 0012's flagging stays as it is, with its 4-ulp margin: the game's answer on AArch64 (fdlibm with fused multiply-adds) and on other JVMs isn't x86-64's, and the measured 1-ulp gaps fit well within the margin. `clippy.toml` keeps the platform's functions disallowed, and `spyglass-math` is the only code that may call the `libm` crate, for `sin` and `cos` beyond 2^20.
+ADR 0012's flagging stays as it is, with its 4-ulp margin: the game's answer on AArch64 and on other JVMs isn't x86-64's, and the measured 1-ulp gaps fit well within the margin. Measured on CI's runners, Linux x86-64 matches Windows case for case, and Apple silicon's `log` and `pow` are exactly `StrictMath` while its `sin` and `cos` are neither fdlibm's nor correctly rounded; each is 6 to 10% from spyglass's, always by 1 ulp. `clippy.toml` keeps the platform's functions disallowed, and `spyglass-math` is the only code that may call the `libm` crate, for `sin` and `cos` beyond 2^20.
 
 ## Consequences
 
 - Every spyglass build gives the same bits for these functions, whatever system it runs on, and they're x86-64 HotSpot's but for the measured fractions. The Gaussian's `log` goes from 0.15% different on Windows to 0.002%, and the rings' and spawn's trig from 3% to 0.1%, before ADR 0012's flags.
 - The checks are repeatable: `cargo xtask oracle math` and `math-report` on any machine add its platform, and 766 committed cases test `spyglass-math` bit for bit wherever CI runs.
-- **Costs:** a crate of about 500 lines of numerical code to keep correct, where the platform's functions cost nothing. Each call is several times slower than libm's, which matters only where a call is hot (measured with `cargo xtask bench`, java-math.md). The cases x86-64's `Math` isn't correctly rounded stay wrong, as they would with any implementation but HotSpot's own. `sin` and `cos` of |x| ≥ 2^20, and `pow` results below 2^-1021, aren't correctly rounded.
+- **Costs:** a crate of about 500 lines of numerical code to keep correct, where the platform's functions cost nothing. Each call is several times slower than libm's, which matters only where a call is hot (measured with `cargo xtask bench`, java-math.md). The cases x86-64's `Math` isn't correctly rounded stay wrong, as they would with any implementation but HotSpot's own. On Apple silicon, the unflagged Gaussian `log` and dripstone `pow` differ from the game's for 7 to 9% of arguments by 1 ulp, an effect on blocks that isn't measured. `sin` and `cos` of |x| ≥ 2^20, and `pow` results below 2^-1021, aren't correctly rounded.
 
 ## Alternatives considered
 

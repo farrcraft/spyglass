@@ -14,8 +14,10 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use spyglass_biome::{BiomeRegion, BiomeSource, Biomes};
+use spyglass_data::anchor::AnchorHeights;
 use spyglass_data::bundle::Bundle;
 use spyglass_data::codec::LoadError;
+use spyglass_data::versions::Behavior;
 use spyglass_rng::LegacyRandomSource;
 use spyglass_rng::worldgen::large_feature;
 use spyglass_terrain::{Block, Probe, Substances, Terrain, TerrainSettings, VeinBlock};
@@ -41,8 +43,47 @@ pub struct BlockSettings {
     carvers: Carving,
     /// `minecraft:cave_air`, which 26.2's Nether carver fills with.
     cave_air: State,
-    /// Switch `carving_mask_level_bounds`.
-    mask_level_bounds: bool,
+    /// Which heights the carving mask spans.
+    mask_bounds: MaskBounds,
+}
+
+/// Which heights the carving mask spans, from 1 above the bottom to 7 below the top
+/// (`docs/specs/carvers.md#264-the-carving-mask-with-the-rule`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MaskBounds {
+    /// The vertical anchors' context, to 26.4-snapshot-5.
+    Context,
+    /// The level's (switch `carving_mask_level_bounds`).
+    Level,
+    /// The anchors' context, its top kept within the level's (switch
+    /// `carving_mask_context_within_level`).
+    ContextWithinLevel,
+}
+
+impl MaskBounds {
+    /// The bounds a version's switches give.
+    fn of(behavior: &Behavior) -> Self {
+        if behavior.carving_mask_level_bounds {
+            MaskBounds::Level
+        } else if behavior.carving_mask_context_within_level {
+            MaskBounds::ContextWithinLevel
+        } else {
+            MaskBounds::Context
+        }
+    }
+
+    /// The mask's lowest and highest y, given the anchors' `context` and the `level`.
+    fn range(self, context: AnchorHeights, level: AnchorHeights) -> (i32, i32) {
+        let top = |heights: AnchorHeights| heights.min_y + heights.height - 1;
+        match self {
+            MaskBounds::Context => (context.min_y + 1, top(context) - 7),
+            MaskBounds::Level => (level.min_y + 1, top(level) - 7),
+            MaskBounds::ContextWithinLevel => (
+                context.min_y.max(level.min_y) + 1,
+                top(context).min(top(level)) - 7,
+            ),
+        }
+    }
 }
 
 /// The carvers, and what applying a carving mask needs (26.3 on).
@@ -117,8 +158,7 @@ impl BlockSettings {
             veins,
             carvers,
             cave_air,
-            mask_level_bounds: spyglass_density::Resources::behavior(bundle)
-                .carving_mask_level_bounds,
+            mask_bounds: MaskBounds::of(&spyglass_density::Resources::behavior(bundle)),
         })
     }
 
@@ -330,18 +370,14 @@ impl ChunkGenerator<'_> {
         self.material.air_biomes(&self.settings.palette)
     }
 
-    /// The carving mask's range: the generation context without its bottom block and top
-    /// eight, or after 26.4-snapshot-5, the level without them (switch
-    /// `carving_mask_level_bounds`).
+    /// The carving mask's range ([`MaskBounds`]).
     fn mask_range(&self) -> (i32, i32) {
-        let settings = self.settings;
-        let anchors = settings.terrain.anchors();
-        let (bottom, depth) = if settings.mask_level_bounds {
-            (settings.terrain.level_min_y, settings.terrain.level_height)
-        } else {
-            (anchors.min_y, anchors.height)
+        let terrain = &self.settings.terrain;
+        let level = AnchorHeights {
+            min_y: terrain.level_min_y,
+            height: terrain.level_height,
         };
-        (bottom + 1, bottom + depth - 1 - 7)
+        self.settings.mask_bounds.range(terrain.anchors(), level)
     }
 
     /// The chunk at chunk `(cx, cz)` after the noise fill and the material rule, without carvers.
@@ -707,5 +743,54 @@ impl Sink for Direct<'_, '_> {
                 self.chunk.mark_uncertain(below);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_carving_mask_spans_the_bounds_each_version_gives() {
+        let heights = |min_y, height| AnchorHeights { min_y, height };
+        // The Nether: noise 128 tall in a 256-block level, so the anchors' context is 0 to 127.
+        let level = heights(0, 256);
+        let context = AnchorHeights::within_level(heights(0, 128), level);
+        assert_eq!(MaskBounds::Context.range(context, level), (1, 120));
+        assert_eq!(MaskBounds::Level.range(context, level), (1, 248));
+        assert_eq!(
+            MaskBounds::ContextWithinLevel.range(context, level),
+            (1, 120)
+        );
+        // Noise as tall as the level but starting higher: the context's top, 255, is past the
+        // level's, 191, so only keeping it within the level tells the last two apart.
+        let level = heights(-64, 256);
+        let context = AnchorHeights::within_level(heights(0, 256), level);
+        assert_eq!(MaskBounds::Context.range(context, level), (1, 248));
+        assert_eq!(MaskBounds::Level.range(context, level), (-63, 184));
+        assert_eq!(
+            MaskBounds::ContextWithinLevel.range(context, level),
+            (1, 184)
+        );
+        // The Overworld: all three agree.
+        let level = heights(-64, 384);
+        let context = AnchorHeights::within_level(level, level);
+        for bounds in [
+            MaskBounds::Context,
+            MaskBounds::Level,
+            MaskBounds::ContextWithinLevel,
+        ] {
+            assert_eq!(bounds.range(context, level), (-63, 312), "{bounds:?}");
+        }
+    }
+
+    #[test]
+    fn each_version_s_switches_choose_its_bounds() {
+        let at = |data_version| MaskBounds::of(&Behavior::of(data_version));
+        assert_eq!(at(5023), MaskBounds::Context);
+        assert_eq!(at(5125), MaskBounds::Context);
+        assert_eq!(at(5126), MaskBounds::Level);
+        assert_eq!(at(5127), MaskBounds::Level);
+        assert_eq!(at(5128), MaskBounds::ContextWithinLevel);
     }
 }

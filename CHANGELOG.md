@@ -6,6 +6,10 @@ Changes go under **Unreleased** as they're made. `cargo xtask release` turns tha
 
 ## [Unreleased]
 
+### Added
+
+- **26.4-snapshot-8**, checked against the game. Its carving mask spans the noise's heights again, within the level's, so Nether caves stop at y 120 as in snapshot-5 ([carvers.md](docs/specs/carvers.md#264-the-carving-mask-with-the-rule)).
+
 ### Changed
 
 - **Biomes at the surface and relief at every scale.** They were drawn only at 4 blocks per pixel or closer, so zooming out switched the viewer from surface biomes to biomes at one height, often a cave biome under mountains. They're slow everywhere, and slower zoomed out: a screen takes a few seconds at 1:4 and up to a minute or so from 1:32 out. `spyglass render --surface` and `--relief` take any scale, and the library's `MAX_TERRAIN_SCALE` is gone ([render.md](docs/specs/render.md#heights)). In the viewer, the quicker biomes at the chosen height show while they're worked out.

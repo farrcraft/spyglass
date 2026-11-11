@@ -1,0 +1,41 @@
+# Clippy configuration. Lint levels live in [workspace.lints] in Cargo.toml.
+
+# Float functions whose results Rust doesn't pin down: the platform's math library decides them,
+# and Java's Math may answer differently (docs/adr/0012-java-trig-results-that-depend-on-the-platform.md).
+# A call site that has been checked against what the game computes says so with
+# #[expect(clippy::disallowed_methods, reason = "...")]. sqrt is correctly rounded in both
+# languages, so it's allowed. See docs/adr/0068-float-functions-and-more-clippy-lints.md.
+disallowed-methods = [
+  { path = "f64::sin", reason = "platform-dependent; see ADR 0012" },
+  { path = "f64::cos", reason = "platform-dependent; see ADR 0012" },
+  { path = "f64::tan", reason = "platform-dependent; see ADR 0012" },
+  { path = "f64::sin_cos", reason = "platform-dependent; see ADR 0012" },
+  { path = "f64::asin", reason = "platform-dependent; see ADR 0012" },
+  { path = "f64::acos", reason = "platform-dependent; see ADR 0012" },
+  { path = "f64::atan", reason = "platform-dependent; see ADR 0012" },
+  { path = "f64::atan2", reason = "platform-dependent; see ADR 0012" },
+  { path = "f64::sinh", reason = "platform-dependent; see ADR 0012" },
+  { path = "f64::cosh", reason = "platform-dependent; see ADR 0012" },
+  { path = "f64::tanh", reason = "platform-dependent; see ADR 0012" },
+  { path = "f64::exp", reason = "platform-dependent; see ADR 0012" },
+  { path = "f64::exp2", reason = "platform-dependent; see ADR 0012" },
+  { path = "f64::exp_m1", reason = "platform-dependent; see ADR 0012" },
+  { path = "f64::ln", reason = "platform-dependent; see ADR 0012" },
+  { path = "f64::ln_1p", reason = "platform-dependent; see ADR 0012" },
+  { path = "f64::log", reason = "platform-dependent; see ADR 0012" },
+  { path = "f64::log2", reason = "platform-dependent; see ADR 0012" },
+  { path = "f64::log10", reason = "platform-dependent; see ADR 0012" },
+  { path = "f64::powf", reason = "platform-dependent; see ADR 0012" },
+  { path = "f64::powi", reason = "unspecified precision, unlike Java's Math.pow" },
+  { path = "f64::cbrt", reason = "platform-dependent; see ADR 0012" },
+  { path = "f64::hypot", reason = "platform-dependent; see ADR 0012" },
+  { path = "f64::mul_add", reason = "fused: rounds once where Java's a * b + c rounds twice" },
+  { path = "f32::sin", reason = "Java has no float sin; the game rounds a double result" },
+  { path = "f32::cos", reason = "Java has no float cos; the game rounds a double result" },
+  { path = "f32::tan", reason = "Java has no float tan; the game rounds a double result" },
+  { path = "f32::exp", reason = "Java has no float exp; the game rounds a double result" },
+  { path = "f32::ln", reason = "Java has no float log; the game rounds a double result" },
+  { path = "f32::powf", reason = "Java has no float pow; the game rounds a double result" },
+  { path = "f32::powi", reason = "unspecified precision, unlike Java's Math.pow" },
+  { path = "f32::mul_add", reason = "fused: rounds once where Java's a * b + c rounds twice" },
+]

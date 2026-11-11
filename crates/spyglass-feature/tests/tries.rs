@@ -116,6 +116,7 @@ fn check(path: &Path) -> Report {
         for t in &tries {
             by_feature.entry(name(t)).or_default().push(t);
         }
+        #[expect(clippy::iter_over_hash_type, reason = "only orders the failures")]
         for (id, game) in &calls {
             let ours = by_feature.get(*id).map(Vec::as_slice).unwrap_or(&[]);
             for (i, g) in game.iter().enumerate() {
@@ -164,6 +165,7 @@ fn check(path: &Path) -> Report {
                 ));
             }
         }
+        #[expect(clippy::iter_over_hash_type, reason = "only orders the failures")]
         for (id, ours) in &by_feature {
             if !calls.contains_key(id.as_str()) {
                 let exact = ours.iter().filter(|t| t.exact && t.certain).count();

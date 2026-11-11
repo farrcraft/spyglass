@@ -21,7 +21,7 @@ pub fn lerp2(tx: f32, ty: f32, x0y0: f32, x1y0: f32, x0y1: f32, x1y1: f32) -> f3
 }
 
 /// `Mth.lerp3(float, ...)`: corners in the game's order, x fastest, then y, then z.
-#[allow(clippy::too_many_arguments, reason = "mirrors Mth.lerp3's signature")]
+#[expect(clippy::too_many_arguments, reason = "mirrors Mth.lerp3's signature")]
 pub fn lerp3(
     tx: f32,
     ty: f32,
@@ -64,7 +64,7 @@ pub fn lerp2_f64(tx: f64, ty: f64, x0y0: f64, x1y0: f64, x0y1: f64, x1y1: f64) -
 }
 
 /// `Mth.lerp3(double, ...)`: corners in the game's order, x fastest, then y, then z.
-#[allow(clippy::too_many_arguments, reason = "mirrors Mth.lerp3's signature")]
+#[expect(clippy::too_many_arguments, reason = "mirrors Mth.lerp3's signature")]
 pub fn lerp3_f64(
     tx: f64,
     ty: f64,

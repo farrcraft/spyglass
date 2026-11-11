@@ -25,6 +25,8 @@ jobs:
         target: [nbt, region]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # Nightly floats here, unlike the pinned toolchain (ADR 0034): this job gates nothing.
       - name: Nightly and cargo-fuzz
         run: |

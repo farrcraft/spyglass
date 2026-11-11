@@ -51,7 +51,7 @@ pub struct Temperature(Noises);
 
 /// The noises, by family (ADR 0026).
 #[derive(Debug, Clone)]
-#[allow(
+#[expect(
     clippy::large_enum_variant,
     reason = "one per seed, never moved in a loop"
 )]

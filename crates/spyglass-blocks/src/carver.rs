@@ -687,6 +687,10 @@ pub enum Trig {
 fn sin_table(exact: bool) -> &'static [f32] {
     static TABLES: [OnceLock<Vec<f32>>; 2] = [OnceLock::new(), OnceLock::new()];
     TABLES[usize::from(exact)].get_or_init(|| {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "narrowed to f32, so off only on a rounding boundary (carvers.md)"
+        )]
         let mut table: Vec<f32> = (0..65_536)
             .map(|i| (f64::from(i) / ENTRIES_PER_RADIAN).sin() as f32)
             .collect();
@@ -765,7 +769,10 @@ fn can_reach(chunk: [i32; 2], x: f64, z: f64, step: i32, count: i32, thickness: 
 /// ellipsoid is where their squares sum below 1) and its y; it's what gives caves their flat
 /// floors and canyons their uneven walls. Columns outside the ellipse are left out before it's
 /// asked.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the chunk, the ellipsoid's centre and radii, and where it carves"
+)]
 fn carve_ellipsoid(
     chunk: [i32; 2],
     x: f64,
@@ -928,7 +935,10 @@ impl Tunnel {
     /// count)`, thin at the ends and widest midway. A thick tunnel splits once, at a random
     /// step in its middle half, into two thinner ones turned a quarter left and right, and
     /// ends there.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the tunnel's seed, start, shape and steps, and where it carves"
+    )]
     fn create(
         &self,
         seed: i64,
@@ -1048,7 +1058,7 @@ impl Canyon {
     }
 
     /// `doCarve`.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments, reason = "mirrors the game's doCarve")]
     fn carve_from(
         &self,
         anchors: AnchorHeights,

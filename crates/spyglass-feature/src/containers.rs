@@ -226,7 +226,7 @@ impl StructureContainers {
     /// why the random's draws aren't known, if they aren't; a feature element sets it.
     /// `reads` says why a block a processor reads (`protected_blocks`) might not be the
     /// region's, if it might not.
-    #[allow(
+    #[expect(
         clippy::too_many_arguments,
         reason = "the decoration's state, passed through"
     )]

@@ -435,6 +435,10 @@ impl Speleothem {
 /// the centre, where `ln x` goes to minus infinity, and falling to 0 at the radius, so the
 /// columns make a point. Distances within `bluntness` are taken as `bluntness`, which cuts the
 /// point off flat.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "Math.pow and Math.log, unchecked in the last bit (features.md)"
+)]
 fn speleothem_height(from_center: f64, radius: f64, scale: f64, bluntness: f64) -> f64 {
     let from_center = if from_center < bluntness {
         bluntness

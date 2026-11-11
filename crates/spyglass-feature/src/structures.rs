@@ -214,7 +214,7 @@ pub fn pieces_cached(
 /// each start referencing the chunk places its pieces from that random. Only the structures of
 /// step `step`, on the region as the steps before it left it; `reads` says why a block a
 /// structure reads might not be the region's: what placed before it could have written there.
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     reason = "the decoration's state, passed through"
 )]

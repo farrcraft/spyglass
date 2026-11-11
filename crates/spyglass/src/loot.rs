@@ -206,12 +206,12 @@ impl World {
         let loaded = loot
             .tables
             .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .unwrap_or_else(PoisonError::into_inner)
             .has(table);
         if !loaded {
             loot.tables
                 .write()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .unwrap_or_else(PoisonError::into_inner)
                 .load(&self.bundle, table)?;
         }
         Ok(())
@@ -226,10 +226,7 @@ impl World {
         }
         let loot = self.loot_world()?;
         self.load_table(loot, table)?;
-        let tables = loot
-            .tables
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let tables = loot.tables.read().unwrap_or_else(PoisonError::into_inner);
         Ok(query.could_hold(&tables.possible_items(table)))
     }
 
@@ -882,10 +879,7 @@ impl<'w> Session<'w> {
                     doubt: RefCell::new(None),
                     failed: Cell::new(false),
                 };
-                let tables = loot
-                    .tables
-                    .read()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let tables = loot.tables.read().unwrap_or_else(PoisonError::into_inner);
                 match tables.fill(&table, seed, position, slots, &world) {
                     Ok(stacks) => {
                         let slots = stacks

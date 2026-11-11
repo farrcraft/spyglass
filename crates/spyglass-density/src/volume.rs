@@ -1066,6 +1066,7 @@ fn sin_table(i: usize) -> f32 {
         0 | 32_768 => 0.0,
         16_384 => 1.0,
         49_152 => -1.0,
+        #[expect(clippy::disallowed_methods, reason = "see above; unused in vanilla")]
         _ => (i as f64 / 10_430.378_350_470_453).sin() as f32,
     }
 }
@@ -1224,7 +1225,7 @@ impl Upscaler {
 
     /// `fillCellXy`. With x linear and y nearest, x takes the step form, `a + step · (float) dx`
     /// with `step = (b − a) · (1.0f / cellSizeX)`; otherwise `tx` from the x coefficients.
-    #[allow(clippy::too_many_arguments, reason = "mirrors fillCellXy's parameters")]
+    #[expect(clippy::too_many_arguments, reason = "mirrors fillCellXy's parameters")]
     fn fill_cell_xy(
         &self,
         out: &mut [f32],

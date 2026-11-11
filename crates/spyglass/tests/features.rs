@@ -73,6 +73,7 @@ fn features_in_are_the_game_s() {
             .collect();
         let answers: HashSet<[i32; 3]> = every.iter().map(|f| f.position).collect();
         game += placed.len();
+        #[expect(clippy::iter_over_hash_type, reason = "only orders the failures")]
         for p in &placed {
             if !answers.contains(p) {
                 failures.push(format!(

@@ -32,6 +32,7 @@ impl Gaussian {
             // Mth.square(v1) + Mth.square(v2).
             let s = v1 * v1 + v2 * v2;
             if s < 1.0 && s != 0.0 {
+                #[expect(clippy::disallowed_methods, reason = "Math.log; probes match (rng.md)")]
                 let multiplier = (-2.0 * s.ln() / s).sqrt();
                 self.next = v2 * multiplier;
                 self.have_next = true;

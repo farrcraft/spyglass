@@ -1700,7 +1700,10 @@ impl BoundMaterial {
     /// z outer) into the empty `chunk`, with the rule and, where `mask` carves, the carving.
     /// `substance` is the aquifer's answer at a carved position at density 0: a state, or
     /// `None` where it's solid. `uncarvable` is by state.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the chunk, its biomes and columns, and the carving's inputs"
+    )]
     pub fn build_terrain(
         &self,
         chunk: &mut Chunk,
@@ -1765,7 +1768,10 @@ impl BoundMaterial {
     /// solid position in the level gets the rule's block, or where it's carved and the block
     /// isn't `#uncarvable`, the aquifer's substance. Dirt under a carved top block is tried
     /// again as the surface. Returns the minimum surface level if `frozen`, for the iceberg.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the column, where it is, and the carving's inputs"
+    )]
     fn fill_column(
         &self,
         chunk: &mut Chunk,

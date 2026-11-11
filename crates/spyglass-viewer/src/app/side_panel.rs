@@ -171,7 +171,7 @@ impl App {
         let session = shown.session.clone();
         self.export_note = None;
         self.exporting = Some(Pending::spawn(ctx, move || {
-            let layers = spyglass::Layers {
+            let layers = Layers {
                 loot: if export.loot.is_empty() || export.area.scale > spyglass::MAX_FEATURE_SCALE {
                     None
                 } else {
@@ -541,9 +541,9 @@ impl App {
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing.x = 4.0;
                         let (swatch, _) =
-                            ui.allocate_exact_size(egui::vec2(9.0, 9.0), egui::Sense::hover());
+                            ui.allocate_exact_size(egui::vec2(9.0, 9.0), Sense::hover());
                         ui.painter()
-                            .rect_filled(swatch, 2.0, egui::Color32::from_rgb(r, g, b));
+                            .rect_filled(swatch, 2.0, Color32::from_rgb(r, g, b));
                         ui.label(spyglass::display_name(id));
                         if ui
                             .add(egui::Button::new("×").frame(false))
@@ -644,8 +644,7 @@ impl App {
                 flip = ui
                     .add(egui::Checkbox::new(&mut all, "").indeterminate(on > 0 && on < ids.len()))
                     .changed();
-                let (rect, _) =
-                    ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), Sense::hover());
                 if let Some(badge) = world.structure_set(ids[0]).map(icons::badge) {
                     let dim = if on > 0 { 1.0 } else { 0.45 };
                     ui.painter().rect(

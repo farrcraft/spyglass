@@ -13,14 +13,25 @@ publish = false
 [workspace.lints.rust]
 unsafe_code = "forbid"
 missing_docs = "warn"
+unused_qualifications = "warn"
 
 [workspace.lints.clippy]
 # Widening casts as `T::from`, so every remaining `as` is one that can change a value.
 cast_lossless = "warn"
 dbg_macro = "warn"
 todo = "warn"
+# Lints are silenced with #[expect(lint, reason = "...")], which warns once it's no longer needed.
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+# Float functions clippy.toml disallows are checked against the game's at each call site.
+disallowed_methods = "warn"
+# Iterating a HashMap or HashSet visits it in an arbitrary order, which mustn't reach a result.
+iter_over_hash_type = "warn"
+lossy_float_literal = "warn"
 # Not enabled, deliberately: suboptimal_flops and imprecise_flops suggest mul_add and other
-# rewrites that change floating-point results, which breaks parity with the game.
+# rewrites that change floating-point results, which breaks parity with the game. float_cmp
+# would flag the exact comparisons ported from Java's ==, and cast_possible_wrap and
+# cast_sign_loss the casts ported from Java's. See docs/adr/0068-float-functions-and-more-clippy-lints.md.
 
 # rustdoc lints only fire under `cargo doc`, which the hooks run.
 [workspace.lints.rustdoc]

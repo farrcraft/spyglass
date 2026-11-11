@@ -26,7 +26,7 @@ pub enum WorldError {
         /// The file.
         path: PathBuf,
         /// The underlying error.
-        source: std::io::Error,
+        source: io::Error,
     },
     /// A file isn't valid NBT.
     #[error("{path}: {source}")]

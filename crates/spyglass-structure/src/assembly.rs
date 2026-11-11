@@ -65,6 +65,10 @@ impl JigsawPools {
         // Binding depends on the dimension, not the seed: bind every corner constraint's
         // functions once, so assembly can't fail to.
         let mut samplers = jigsaw_pools.corner_samplers(0);
+        #[expect(
+            clippy::iter_over_hash_type,
+            reason = "binding is memoized and order-free; only which error comes first varies"
+        )]
         for pool in jigsaw_pools.pools.values() {
             for element in &pool.templates {
                 for function in element

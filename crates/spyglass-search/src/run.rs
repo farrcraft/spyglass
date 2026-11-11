@@ -770,14 +770,14 @@ mod tests {
             last: 999,
         };
         let o = options(source.clone(), 0, Some(24), 5);
-        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let calls = AtomicUsize::new(0);
         let started = Instant::now();
         let out = run(
             &four(),
             &o,
             |_| true,
             |seed, threshold| {
-                calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                calls.fetch_add(1, Ordering::Relaxed);
                 std::thread::sleep(Duration::from_millis(300));
                 score(seed, threshold)
             },

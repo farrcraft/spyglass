@@ -294,7 +294,15 @@ impl SpawnSearch {
         let mut angle = 0.0_f32;
         let mut radius = step;
         while radius <= max_radius {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "flagged when 4 ulps change it (ADR 0012)"
+            )]
             let (dx, other_x) = trig_offset(angle, f64::sin, radius);
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "flagged when 4 ulps change it (ADR 0012)"
+            )]
             let (dz, other_z) = trig_offset(angle, f64::cos, radius);
             let sample = self.fitness_at(centre_x.wrapping_add(dx), centre_z.wrapping_add(dz));
             let replaces = sample.fitness < best.fitness;
@@ -596,6 +604,7 @@ mod tests {
     }
 
     #[test]
+    #[expect(clippy::disallowed_methods, reason = "tests trig_offset itself")]
     fn trig_offsets_flag_boundaries() {
         // Exact at angle 0, where cos(0) * r is an integer.
         assert_eq!(trig_offset(0.0, f64::cos, 512.0), (512, None));

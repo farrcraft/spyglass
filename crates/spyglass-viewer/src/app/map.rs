@@ -1185,8 +1185,7 @@ fn hit_card(ui: &mut egui::Ui, opened: &Opened) -> isize {
                 )
                 .on_hover_text(what);
                 ui.add(
-                    egui::Label::new(super::search_panel::highlight(&constraint.line, 12.0))
-                        .truncate(),
+                    egui::Label::new(search_panel::highlight(&constraint.line, 12.0)).truncate(),
                 );
             });
         }

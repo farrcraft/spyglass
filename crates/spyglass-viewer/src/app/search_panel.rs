@@ -820,9 +820,9 @@ pub(super) fn highlight(text: &str, size: f32) -> egui::text::LayoutJob {
                 style::MUTED
             }
         } else if word.contains(':') {
-            egui::Color32::from_rgb(0xc7, 0xb0, 0xff)
+            Color32::from_rgb(0xc7, 0xb0, 0xff)
         } else if word.trim_end_matches('%').parse::<f64>().is_ok() {
-            egui::Color32::from_rgb(0x7f, 0xd4, 0xc8)
+            Color32::from_rgb(0x7f, 0xd4, 0xc8)
         } else {
             style::TEXT
         };

@@ -7,7 +7,6 @@ Code must not reference plans. Anything durable a plan produces belongs in a spe
 ## Active
 
 - [m22-user-guide](m22-user-guide.md): the user guide on GitHub Pages, for milestone [22](../roadmap/22-user-guide.md).
-- [m24-java-math](m24-java-math.md): Java's `Math` measured and matched, for milestone [24](../roadmap/24-java-math.md).
-- [m25-what-the-save-knows](m25-what-the-save-knows.md) (draft): generated chunks, and structures and loot from a save, for milestone [25](../roadmap/25-what-the-save-knows.md).
+- [m25-what-the-save-knows](m25-what-the-save-knows.md): generated chunks, and structures and loot from a save, for milestone [25](../roadmap/25-what-the-save-knows.md).
 
 The follow-ups of milestones 08 and 11 ([roadmap](../roadmap/README.md#follow-ups)) need no plan of their own.

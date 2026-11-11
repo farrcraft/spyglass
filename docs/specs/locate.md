@@ -19,6 +19,8 @@ Status: stable. Covers `/locate structure` and `/locate biome` in the Default wo
 
 **Targets.** The argument is a structure id or a `#tag`. The API resolves it once per world (`World::structure_query`, likewise `World::biome_query`), and sessions of that world reuse the result; an unknown id or tag is an error then, not at each search. A tag's entries are expanded in order, nested tags in place, duplicates kept at their first position; optional entries that don't exist are skipped. Structures that no set the dimension can generate are dropped. The targets are grouped by the sets that place them, in order of first appearance.
 
+**Saves.** For a world save, `StructureCheck` first answers from a chunk the save holds, and only predicts the rest ([world-saves.md](world-saves.md#structure-starts-in-saves)). A session given the save (`Session::with_save`, [ADR 0071](../adr/0071-answers-from-a-save.md)) does the same in `Starts::select`: a held chunk's saved starts are its selection, certain, so the search below runs unchanged over them. Such hits say so (`StructureStart::from_save`).
+
 **"Generated" in a chunk.** `getStructureGeneratingAt` asks `StructureCheck`, which rejects a chunk if the placement's frequency restriction or `findValidGenerationPoint` fails, and otherwise generates the chunk's structure starts. So the game's answer is a chunk where its real choice ([structure-placement.md](structure-placement.md#choosing-a-structure)) is one of the targets, after the biome check, the exclusion zone and terrain validity. spyglass decides this per chunk from the selection:
 
 - a **hit** if any try of the selection is a target;

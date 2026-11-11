@@ -17,7 +17,7 @@ pub fn run(args: &Blocks) -> Result<()> {
         Carvers::On
     };
     let (world, seed, report) = crate::load(&args.common, false)?;
-    let session = world.session(seed)?;
+    let session = crate::session(&world, seed, report.as_ref())?;
     let out = Out {
         session: &session,
         json: args.common.json,

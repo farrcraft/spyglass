@@ -57,7 +57,7 @@ Answers that come from a save rather than from prediction are a correctness poli
 - [ ] Containers' save state in `containers_in`, `containers_holding` and `nearest_container`, chest minecarts included
 - [ ] The map layer in `Session::render_with`, render.md, and `spyglass render --generated`
 - [ ] The viewer's Generated toggle, and the save's answers in its panels
-- [ ] CLI text and JSON for the answers' sources; cli-json.md
+- [ ] CLI text and JSON for the answers' sources; cli-json.md. Structures done: `--world` sessions answer from the save, text says `saved`, JSON `source`; loot still to do
 - [ ] Inhabited-time shading, if it adds nothing measurable to the scan; otherwise dropped, with the reason in the notes
 - [ ] User guide: your-worlds.md for all three, and the viewer and CLI pages for the new toggle and flag
 - [ ] CHANGELOG

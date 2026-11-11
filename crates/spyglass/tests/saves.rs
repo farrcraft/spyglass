@@ -90,7 +90,7 @@ fn saved_structure_starts_are_the_predicted_ones() {
             continue;
         }
         let world = report.open_world(Dimension::Overworld).unwrap();
-        let chunks = Arc::new(report.chunks(Dimension::Overworld).unwrap());
+        let chunks = Arc::new(report.chunks(Dimension::Overworld));
         let seed = report.save.seed;
         let predicted = world.session(seed).unwrap();
         let from_save = world

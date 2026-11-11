@@ -12,6 +12,15 @@ spyglass locate structure '#minecraft:village' --world "My World" --from player
 - `world info` shows a world's seed, version, spawn and player, and anything that makes spyglass's answers inexact.
 - `--world` takes a save's folder, or its folder name in a launcher's saves. `--from player` searches from where your player is, in the player's dimension.
 
+## What the world already holds
+
+Where your world has already generated a chunk, the game answers from what it saved there, not from the seed, and so does spyglass. A structure in a chunk the world has saved is marked **saved**: it's there, even if an older version, a data pack or a mod placed it. A chunk the world saved with no structure has none, whatever the seed would put there. Everywhere else, spyglass predicts from the seed as usual. Chunks saved before 1.18 are predicted too.
+
+```text
+#village from 0 64 0 (My World, seed -4893098694207956070, Minecraft 26.3)
+        272 ~ 384           470 blocks  saved      minecraft:village_plains
+```
+
 ## When answers may differ
 
 `world info` says whether spyglass can answer for a world, and warns about what makes its answers inexact:

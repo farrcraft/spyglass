@@ -26,7 +26,7 @@ fuzz_target!(|data: &[u8]| {
     };
     for (header_index, _) in &index.chunks {
         let pos = index.chunk_pos(*header_index).expect("r.0.0.mca parses");
-        if let Some(raw) = region::read_chunk(&index, pos) {
+        if let Some(raw) = region::read_chunk(path().parent().expect("in a folder"), pos) {
             let _ = chunk::read(&raw);
             let _ = chunk::read_entities(&raw);
         }

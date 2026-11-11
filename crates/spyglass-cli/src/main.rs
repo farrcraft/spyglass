@@ -105,6 +105,18 @@ fn load(common: &Common, player: bool) -> Result<(World, i64, Option<SaveReport>
     Ok(loaded)
 }
 
+/// `world`'s session for `seed`, answering from the save where there is one: structure starts
+/// in the chunks it holds (ADR 0071).
+fn session<'w>(world: &'w World, seed: i64, report: Option<&SaveReport>) -> Result<Session<'w>> {
+    let session = world.session(seed)?;
+    Ok(match report {
+        Some(report) => {
+            session.with_save(std::sync::Arc::new(report.chunks(world.dimension_kind())))?
+        }
+        None => session,
+    })
+}
+
 /// Says on stderr, before a text answer, that its bundle's version wasn't checked (ADR 0039).
 /// JSON has it in `warnings` instead.
 fn warn_unchecked(unchecked: Option<UncheckedVersion>, json: bool) {
@@ -125,7 +137,7 @@ fn run_locate(what: &Locate) -> Result<()> {
         Locate::Spawn { .. } => false,
     };
     let (world, seed, report) = load(common, player)?;
-    let session = world.session(seed)?;
+    let session = session(&world, seed, report.as_ref())?;
     let out = Out {
         session: &session,
         json: common.json,

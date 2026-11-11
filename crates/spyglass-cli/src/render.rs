@@ -18,7 +18,7 @@ pub fn run(args: &Render) -> Result<()> {
         None => args.min.is_none() && args.common.world.is_some(),
     };
     let (world, seed, report) = crate::load(&args.common, player)?;
-    let session = world.session(seed)?;
+    let session = crate::session(&world, seed, report.as_ref())?;
     let out = Out {
         session: &session,
         json: args.common.json,

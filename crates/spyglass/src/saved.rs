@@ -3,16 +3,17 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use spyglass_structure::{StoredStarts, StructureSets};
 use spyglass_world::chunk::{self, ChunkContents, SavedStarts};
 use spyglass_world::region::{self, ChunkIndex, ChunkRecord};
 
+use crate::Dimension;
 use crate::save::SaveReport;
-use crate::{Dimension, Error, Result};
 
-/// One dimension of a save: which chunks it has generated, read whole on demand. Made with
+/// One dimension of a save: which chunks it has generated, each read whole when a query first
+/// needs it. Made with
 /// [`SaveReport::chunks`] and given to a session with
 /// [`Session::with_save`](crate::Session::with_save), whose answers then come from the save
 /// wherever the game's would. The save is read as it was: a game running on it changes it
@@ -23,8 +24,11 @@ pub struct SaveChunks {
     dimension: Dimension,
     /// The save's data version: chunks saved by an older one are marked.
     data_version: Option<i32>,
-    /// Its region files' chunks.
-    index: Arc<ChunkIndex>,
+    /// Its region files' folder, which chunks are read from directly.
+    region: PathBuf,
+    /// Its region files' chunks: [`Scan::Chunks`](crate::Scan::Chunks)'s, or read the first
+    /// time they're asked for, since structure answers don't need them.
+    index: OnceLock<Arc<ChunkIndex>>,
     /// Its entity region files' folder.
     #[expect(
         dead_code,
@@ -54,25 +58,23 @@ pub struct GeneratedChunk {
 }
 
 impl SaveReport {
-    /// The save's `dimension`, for [`Session::with_save`](crate::Session::with_save). Uses the
-    /// chunks [`Scan::Chunks`](crate::Scan::Chunks) found; after a quick scan, reads the
-    /// dimension's region files now.
-    pub fn chunks(&self, dimension: Dimension) -> Result<SaveChunks> {
+    /// The save's `dimension`, for [`Session::with_save`](crate::Session::with_save). Keeps
+    /// the chunks [`Scan::Chunks`](crate::Scan::Chunks) found; after a quick scan, which chunks
+    /// exist is read the first time it's asked for.
+    pub fn chunks(&self, dimension: Dimension) -> SaveChunks {
         let folders = &self.dimensions[dimension.index()];
-        let index = match &folders.index {
-            Some(index) => Arc::clone(index),
-            None => Arc::new(region::index(&folders.region).map_err(|source| Error::Io {
-                path: folders.region.clone(),
-                source,
-            })?),
-        };
-        Ok(SaveChunks {
+        let index = OnceLock::new();
+        if let Some(scanned) = &folders.index {
+            index.set(Arc::clone(scanned)).expect("a new cell is empty");
+        }
+        SaveChunks {
             dimension,
             data_version: self.save.data_version,
+            region: folders.region.clone(),
             index,
             entities: folders.entities.clone(),
             read: Mutex::new(HashMap::new()),
-        })
+        }
     }
 }
 
@@ -82,9 +84,16 @@ impl SaveChunks {
         self.dimension
     }
 
+    /// The dimension's chunks, read now if no scan found them. A failure to read the folder
+    /// leaves it empty, as a missing folder does.
+    fn index(&self) -> &ChunkIndex {
+        self.index
+            .get_or_init(|| Arc::new(region::index(&self.region).unwrap_or_default()))
+    }
+
     /// How many chunks the save has in this dimension, readable or not.
     pub fn len(&self) -> usize {
-        self.index.regions.iter().map(|r| r.chunks.len()).sum()
+        self.index().regions.iter().map(|r| r.chunks.len()).sum()
     }
 
     /// Whether it has none.
@@ -102,7 +111,7 @@ impl SaveChunks {
         // Region by region, so a large area costs what the save holds there, not its size.
         for region_z in (min[1] >> 5)..=(max[1] >> 5) {
             for region_x in (min[0] >> 5)..=(max[0] >> 5) {
-                let Some(region) = self.index.region_of([region_x << 5, region_z << 5]) else {
+                let Some(region) = self.index().region_of([region_x << 5, region_z << 5]) else {
                     continue;
                 };
                 for (index, record) in &region.chunks {
@@ -154,11 +163,7 @@ impl SaveChunks {
     }
 
     fn read_chunk(&self, chunk: [i32; 2]) -> Option<ChunkContents> {
-        let ChunkRecord::Read(_) = self.index.chunk(chunk)? else {
-            return None;
-        };
-        let raw = region::read_chunk(self.index.region_of(chunk)?, chunk)?;
-        chunk::read(&raw).ok()
+        chunk::read(&region::read_chunk(&self.region, chunk)?).ok()
     }
 
     /// The structures starting in `chunk` by id, if the save holds it with starts the game

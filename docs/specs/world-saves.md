@@ -68,7 +68,7 @@ A vanilla dedicated server opening a save that enables a pack it doesn't have lo
 - A chunk is read as `RegionFile.getChunkDataInputStream` reads it: its sectors, or what's left of the file, at most 255 × 4 KiB. It's unreadable if that's under 5 bytes, if its length is 0 (even for an external chunk), or, inside the region file, if the length is negative or the data (`length − 1` bytes after the compression byte) runs past what was read. An external chunk's length is otherwise ignored.
 - A length longer than the location's sectors is malformed, as `RegionFile` treats it.
 
-- Each chunk's root `Status` (a string, e.g. `minecraft:full`; bare `full` before 1.18) and `InhabitedTime` (a long: ticks players spent nearby) are kept with its data version, in `region::index`'s `ChunkIndex`: per region file, each listed chunk by header index, readable or not. `region::read_chunk` reads one chunk again from it, under the same rules.
+- Each chunk's root `Status` (a string, e.g. `minecraft:full`; bare `full` before 1.18) and `InhabitedTime` (a long: ticks players spent nearby) are kept with its data version, in `region::index`'s `ChunkIndex`: per region file, each listed chunk by header index, readable or not. `region::read_chunk` reads one chunk again, by position, from the region folder, under the same rules; it needs no index, so queries that read a few chunks don't scan the save.
 
 The scan reads every chunk, without building its tree (`nbt::read_root_fields`). The largest save checked (344,000 chunks, 4.6 GB) takes about 6 to 8 seconds, the same with the index as with counts alone (2026-11-11).
 

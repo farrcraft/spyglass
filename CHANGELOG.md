@@ -6,6 +6,10 @@ Changes go under **Unreleased** as they're made. `cargo xtask release` turns tha
 
 ## [Unreleased]
 
+### Added
+
+- **Structures in your world come from the world itself** where it has generated the chunk, as the game's `/locate` does: `--world` answers mark them `saved` (`source` in JSON), and a chunk the world saved without a structure has none, whatever the seed says. In the API, `SaveReport::chunks` and `Session::with_save` ([world-saves.md](docs/specs/world-saves.md#structure-starts-in-saves)).
+
 ### Changed
 
 - **Java's `Math.sin`, `cos`, `log` and `pow` are computed correctly rounded,** as the game computes them on x86-64 for all but 0.1% of arguments or fewer, the same on every system. Before, spyglass's Windows, Linux and macOS builds each used their system's math library, which differ from each other, and on Windows from the game in about 3% of `sin` and `cos` results. Stronghold ring positions, the spawn search, Gaussians and large dripstone heights can change where they hung on that last bit; stronghold rings and the spawn search still flag answers the game's own platforms could disagree on ([java-math.md](docs/specs/java-math.md)).

@@ -284,18 +284,19 @@ pub fn index_file(path: &Path) -> std::io::Result<RegionIndex> {
     Ok(region)
 }
 
-/// Chunk `pos`'s NBT, uncompressed, read again from `region`'s file: `None` if the file no
-/// longer lists it or it can't be read, under the scan's rules.
-pub fn read_chunk(region: &RegionIndex, pos: [i32; 2]) -> Option<Vec<u8>> {
+/// Chunk `pos`'s NBT, uncompressed, from the region files in `dir` (`r.<x>.<z>.mca`): `None`
+/// if they don't list it or it can't be read, under the scan's rules.
+pub fn read_chunk(dir: &Path, pos @ [x, z]: [i32; 2]) -> Option<Vec<u8>> {
+    let path = dir.join(format!("r.{}.{}.mca", x >> 5, z >> 5));
     let index = header_index(pos);
-    let mut file = File::open(&region.path).ok()?;
+    let mut file = File::open(&path).ok()?;
     let mut header = vec![0; 4096];
     file.read_exact(&mut header).ok()?;
     let entry = location(&header, index);
     if entry == 0 {
         return None;
     }
-    chunk_data(&region.path, &mut file, &mut Vec::new(), entry, index)
+    chunk_data(&path, &mut file, &mut Vec::new(), entry, index)
 }
 
 /// Chunk `[x, z]`'s place in its region file's header, x fastest.

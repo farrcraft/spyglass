@@ -131,6 +131,8 @@ pub struct StructureHit<'a> {
     pub set: &'a str,
     pub structures: &'a [String],
     pub certain: bool,
+    /// `save` where the start is the save's own (ADR 0071), else `seed`.
+    pub source: &'static str,
     pub blocks_away: i32,
     /// With `--bounds`, where the structure that starts is known and is a jigsaw or a
     /// mineshaft.

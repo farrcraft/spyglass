@@ -44,6 +44,7 @@ pub fn structure(
                 set: &h.start.set,
                 structures: &h.start.structures,
                 certain: h.start.certain,
+                source: if h.start.from_save { "save" } else { "seed" },
                 blocks_away: h.blocks_away,
                 bounds: layout.as_ref().map(json::Bounds::new),
             })
@@ -75,10 +76,10 @@ pub fn structure(
             x,
             z,
             h.blocks_away,
-            if h.start.certain {
-                "certain"
-            } else {
-                "candidate"
+            match (h.start.from_save, h.start.certain) {
+                (true, _) => "saved",
+                (false, true) => "certain",
+                (false, false) => "candidate",
             },
             h.start.structures.join(" or "),
         );

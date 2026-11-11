@@ -422,14 +422,15 @@ fn region_chunk_versions() {
     assert_eq!(index.chunks().count(), 6);
     assert!(matches!(index.chunk([-32, 64]), Some(ChunkRecord::Read(f)) if f.is_full()));
     // A chunk can be read again, whole.
-    let region = index.region_of([-32, 64]).unwrap();
-    let raw = region::read_chunk(region, [-32, 64]).unwrap();
+    assert!(index.region_of([-32, 64]).is_some());
+    let raw = region::read_chunk(dir.path(), [-32, 64]).unwrap();
     assert_eq!(
         nbt::read(&raw).unwrap().1.get("DataVersion"),
         Some(&Tag::Int(5023))
     );
-    assert_eq!(region::read_chunk(region, [-30, 64]), None);
-    assert_eq!(region::read_chunk(region, [-24, 65]), None);
+    assert_eq!(region::read_chunk(dir.path(), [-30, 64]), None);
+    assert_eq!(region::read_chunk(dir.path(), [-24, 65]), None);
+    assert_eq!(region::read_chunk(dir.path(), [0, 0]), None);
 
     assert_eq!(region::region_files(dir.path()), [path]);
     assert_eq!(

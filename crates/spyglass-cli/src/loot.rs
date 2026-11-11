@@ -17,7 +17,7 @@ pub fn run(what: &Loot) -> Result<()> {
         chunks_of(*min, *max)?;
     }
     let (world, seed, report) = crate::load(common, player)?;
-    let session = world.session(seed)?;
+    let session = crate::session(&world, seed, report.as_ref())?;
     let out = Out {
         session: &session,
         json: common.json,

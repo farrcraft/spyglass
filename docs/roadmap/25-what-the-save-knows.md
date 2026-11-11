@@ -2,7 +2,7 @@
 
 - Status: Planned
 - Depends on: [04](completed/04-world-saves.md), [20](completed/20-loot.md)
-- Plans: none yet
+- Plans: [m25-what-the-save-knows](../plans/m25-what-the-save-knows.md)
 
 ## Goal
 

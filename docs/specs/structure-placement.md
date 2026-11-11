@@ -86,7 +86,7 @@ From the 26.3 and 26.4-snapshot-6 bytecode (`DimensionOriginStructurePlacement`)
 
 **Each point settles on its own.** Step 4 reads only its point, its fork and the biomes, so the points can settle in any order or at once, and the list comes out the same. The game settles them on its background executor. spyglass settles them in parallel, collected in order, except in a search's checks ([ADR 0063](../adr/0063-threads-within-library-queries.md)).
 
-**Platform-dependent positions.** `Math.cos` and `Math.sin` aren't reproducible across platforms. A ring point is flagged `platform_dependent` when moving either value by up to 4 ulps changes its rounded result ([ADR 0012](../adr/0012-java-trig-results-that-depend-on-the-platform.md)).
+**Platform-dependent positions.** `Math.cos` and `Math.sin` aren't reproducible across platforms; spyglass computes them correctly rounded ([java-math.md](java-math.md)). A ring point is flagged `platform_dependent` when moving either value by up to 4 ulps changes its rounded result ([ADR 0012](../adr/0012-java-trig-results-that-depend-on-the-platform.md)).
 
 **Tie-dependent positions.** A tied biome cell can match the preferred biomes for one candidate and not another, and the game's answer depends on lookup history ([biome-lookup.md](biome-lookup.md#ties)). spyglass uses each cell's first candidate. It then replays the search for every combination of the disagreeing cells, up to 12 of them, from the same random state. A position is flagged `tie_dependent` if any replay moves it. Beyond 12 such cells it's flagged without replaying.
 

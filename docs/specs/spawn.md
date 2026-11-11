@@ -59,7 +59,7 @@ The centre stays fixed for the whole call, even when the best moves. `(int)` tru
 
 The sample positions call `Math.sin` and `Math.cos`, whose results depend on the platform ([ADR 0012](../adr/0012-java-trig-results-that-depend-on-the-platform.md)). The rounding step is the `(int)` truncation of `trig(angle) * radius`.
 
-- spyglass uses `f64::sin` and `f64::cos`, and a sample is **sensitive** if moving the trig value by up to 4 ulps either way changes its truncated product. At angle 0, sine is 0 and cosine 1 on every platform, so those samples are never sensitive. Without this exception every ring's first sample would be: `1.0 * radius` is exactly an integer.
+- spyglass uses `spyglass_math::sin` and `cos`, correctly rounded as x86-64's `Math` but for about 0.1% of angles ([java-math.md](java-math.md)), and a sample is **sensitive** if moving the trig value by up to 4 ulps either way changes its truncated product. At angle 0, sine is 0 and cosine 1 on every platform, so those samples are never sensitive. Without this exception every ring's first sample would be: `1.0 * radius` is exactly an integer.
 - A sensitive sample changes nothing if neither its position nor its other possible position beats the best so far: every platform then passes through the same bests. Otherwise `SpawnOrigin::platform_dependent` is set.
 - Measured on 26.3: none of the 10 golden seeds and none of 3,000 random seeds is flagged.
 

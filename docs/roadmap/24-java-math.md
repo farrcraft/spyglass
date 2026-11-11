@@ -1,6 +1,6 @@
 # 24. Java's `Math`, as the game computes it
 
-- Status: Planned
+- Status: In progress
 - Depends on: none
 - Plans: [m24-java-math](../plans/m24-java-math.md)
 

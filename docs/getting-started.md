@@ -141,26 +141,27 @@ It builds the `base` stage of `.devcontainer/Dockerfile` (only git, curl and a C
 
 Project-level commands live in the `xtask` crate and run as `cargo xtask <command>` (see [ADR 0003](adr/0003-cargo-xtask-for-project-commands.md)). `cargo xtask --help` lists them. The first run compiles it, which takes a few seconds.
 
-| Command                     | What it does                                                                                                              |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `cargo xtask bench`         | Times the public API's main operations (`dist` build).                                                                    |
-| `cargo xtask check`         | Every check in the pre-commit config, on all files, then a sweep of stale build outputs.                                  |
-| `cargo xtask ci`            | One game version's CI job, from extraction to comparison.                                                                 |
-| `cargo xtask ci-plan`       | CI's oracle jobs, planned from estimated costs ([ADR 0058](adr/0058-oracle-ci-planned-by-cost.md)).                       |
-| `cargo xtask ci-scope`      | Which CI jobs a pull request needs, from the files it changes ([ADR 0041](adr/0041-ci-runs-what-a-change-can-affect.md)). |
-| `cargo xtask dist`          | Builds one target's release archive into `target/archives/` ([ADR 0038](adr/0038-how-release-archives-are-built.md)).     |
-| `cargo xtask doctor`        | Reports whether this machine is ready.                                                                                    |
-| `cargo xtask fuzz`          | Fuzzes the NBT or region reader (nightly and cargo-fuzz; [ADR 0036](adr/0036-fuzzing-with-cargo-fuzz.md)).                |
-| `cargo xtask links`         | Checks every relative link and anchor in the Markdown.                                                                    |
-| `cargo xtask linux-check`   | Checks a fresh clone on a clean Linux machine, in Docker.                                                                 |
-| `cargo xtask msrv`          | Builds the workspace with its minimum Rust version.                                                                       |
-| `cargo xtask oracle`        | Builds and runs the oracle harness (below).                                                                               |
-| `cargo xtask oracle-test`   | Runs the ignored comparisons with the game (below).                                                                       |
-| `cargo xtask profile`       | Where a bench line's time goes, by function, from Linux `perf` in Docker ([profiling](#profiling)).                       |
-| `cargo xtask release`       | Sets the version and dates the changelog for a release ([releasing](releasing.md)).                                       |
-| `cargo xtask sweep`         | Deletes stale build outputs from `target/` ([ADR 0061](adr/0061-keeping-target-small.md)).                                |
-| `cargo xtask version-diff`  | Reports what changed between two bundles ([adding a version](adding-a-version.md)).                                       |
-| `cargo xtask viewer-timing` | Times the viewer's cold start in five fixed scenarios (`dist` build; [measuring the viewer](#measuring-the-viewer)).      |
+| Command                     | What it does                                                                                                                        |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `cargo xtask bench`         | Times the public API's main operations (`dist` build).                                                                              |
+| `cargo xtask check`         | Every check in the pre-commit config, on all files, then a sweep of stale build outputs.                                            |
+| `cargo xtask ci`            | One game version's CI job, from extraction to comparison.                                                                           |
+| `cargo xtask ci-plan`       | CI's oracle jobs, planned from estimated costs ([ADR 0058](adr/0058-oracle-ci-planned-by-cost.md)).                                 |
+| `cargo xtask ci-scope`      | Which CI jobs a pull request needs, from the files it changes ([ADR 0041](adr/0041-ci-runs-what-a-change-can-affect.md)).           |
+| `cargo xtask dist`          | Builds one target's release archive into `target/archives/` ([ADR 0038](adr/0038-how-release-archives-are-built.md)).               |
+| `cargo xtask doctor`        | Reports whether this machine is ready.                                                                                              |
+| `cargo xtask math-report`   | How often candidate implementations differ from Java's `Math`, from `cargo xtask oracle math` ([java-math.md](specs/java-math.md)). |
+| `cargo xtask fuzz`          | Fuzzes the NBT or region reader (nightly and cargo-fuzz; [ADR 0036](adr/0036-fuzzing-with-cargo-fuzz.md)).                          |
+| `cargo xtask links`         | Checks every relative link and anchor in the Markdown.                                                                              |
+| `cargo xtask linux-check`   | Checks a fresh clone on a clean Linux machine, in Docker.                                                                           |
+| `cargo xtask msrv`          | Builds the workspace with its minimum Rust version.                                                                                 |
+| `cargo xtask oracle`        | Builds and runs the oracle harness (below).                                                                                         |
+| `cargo xtask oracle-test`   | Runs the ignored comparisons with the game (below).                                                                                 |
+| `cargo xtask profile`       | Where a bench line's time goes, by function, from Linux `perf` in Docker ([profiling](#profiling)).                                 |
+| `cargo xtask release`       | Sets the version and dates the changelog for a release ([releasing](releasing.md)).                                                 |
+| `cargo xtask sweep`         | Deletes stale build outputs from `target/` ([ADR 0061](adr/0061-keeping-target-small.md)).                                          |
+| `cargo xtask version-diff`  | Reports what changed between two bundles ([adding a version](adding-a-version.md)).                                                 |
+| `cargo xtask viewer-timing` | Times the viewer's cold start in five fixed scenarios (`dist` build; [measuring the viewer](#measuring-the-viewer)).                |
 
 ### Profiling
 

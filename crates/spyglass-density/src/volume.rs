@@ -1058,16 +1058,14 @@ fn mth_cos(x: f64) -> f32 {
 
 /// `Mth.SIN[i]`: `(float) Math.sin(i / 10430.378350470453)`, with the quarter turns set exactly.
 ///
-/// Rust's `sin` isn't required to give Java's `Math.sin` bit for bit; both are narrowed to
-/// `f32`, so they differ only where the `f64` lies on a rounding boundary. Only the cosine mode,
-/// unused in vanilla, reads the table.
+/// Narrowed to `f32`, every entry is the same under every `Math.sin` measured
+/// (docs/specs/java-math.md). Only the cosine mode, unused in vanilla, reads the table.
 fn sin_table(i: usize) -> f32 {
     match i {
         0 | 32_768 => 0.0,
         16_384 => 1.0,
         49_152 => -1.0,
-        #[expect(clippy::disallowed_methods, reason = "see above; unused in vanilla")]
-        _ => (i as f64 / 10_430.378_350_470_453).sin() as f32,
+        _ => spyglass_math::sin(i as f64 / 10_430.378_350_470_453) as f32,
     }
 }
 

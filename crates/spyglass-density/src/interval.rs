@@ -261,16 +261,12 @@ impl Interval {
     }
 
     /// `log(i)`: NaI if every value is negative, else `ln` of the non-negative part.
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "unused in vanilla; may be off in the last bit (density-functions.md)"
-    )]
     pub fn log(i: Interval) -> IntervalResult {
         if i.max < 0.0 {
             return Ok(Interval::NAI);
         }
         let positive = Interval::max_of(i, Interval::exact(0.0)?)?;
-        Interval::map_monotonic(positive, |v| f64::from(v).ln() as f32)
+        Interval::map_monotonic(positive, |v| spyglass_math::log(f64::from(v)) as f32)
     }
 
     /// `sign(i)`.
@@ -386,12 +382,8 @@ fn lerp_infinite_bound(t: f32, first: f32, second: f32) -> f32 {
 }
 
 /// `Math.pow` on `float`s widened to `double`, narrowed back.
-#[expect(
-    clippy::disallowed_methods,
-    reason = "unused in vanilla; may be off in the last bit (density-functions.md)"
-)]
 fn powf(base: f32, exponent: f32) -> f32 {
-    f64::from(base).powf(f64::from(exponent)) as f32
+    spyglass_math::pow(f64::from(base), f64::from(exponent)) as f32
 }
 
 /// `pow(float, Interval)`: a fixed base.

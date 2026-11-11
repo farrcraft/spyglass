@@ -65,7 +65,7 @@ The seeding methods:
 
 Both sources use `MarsagliaPolarGaussian`: draw `v1 = 2·nextDouble() − 1` and `v2` likewise until `s = v1² + v2²` is in `(0, 1)`; then `m = sqrt(−2·ln(s) / s)`, return `v1·m` and cache `v2·m` for the next call. `setSeed` clears the cache. Other calls don't disturb it.
 
-`ln` is a transcendental function: Java's `Math.log` and Rust's `f64::ln` aren't guaranteed to agree in the last bit. Every probed Gaussian matches, and climate sampling doesn't use Gaussians, so no exact `log` is ported yet. If a mismatch appears, port fdlibm's `log` (what `StrictMath.log` uses) and check `Math.log` against it.
+`Math.log` isn't required to be correctly rounded, and differs between platforms. spyglass uses `spyglass_math::log`, correctly rounded, which is x86-64's `Math.log` for all but about 0.002% of the Gaussian's `s` ([java-math.md](java-math.md)). Every probed Gaussian matches.
 
 `java.util.Random.nextGaussian` is the same method with `StrictMath.log`, so it isn't an exact reference: for `new Random(42)` the first pair is `1.1419053154730547, 0.9194079489827879` with `StrictMath` but `1.141905315473055, 0.919407948982788` with `Math.log` (JDK 25, Windows x86_64, checked 2026-10-25). spyglass's values on that machine are the `Math` ones, the game's.
 

@@ -1879,11 +1879,7 @@ pub(crate) fn unary(op: Unary, x: f32) -> f32 {
         Unary::Reciprocal => 1.0 / x,
         Unary::Negate => -x,
         Unary::Squeeze => squeeze(x),
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "unused in vanilla; may be off in the last bit (density-functions.md)"
-        )]
-        Unary::Log => f64::from(x).ln() as f32,
+        Unary::Log => spyglass_math::log(f64::from(x)) as f32,
         Unary::Sign => java::signum(x),
     }
 }
@@ -1935,12 +1931,8 @@ pub(crate) fn round_to_integer(x: f32, kind: Round) -> f32 {
 }
 
 /// `(float) Math.pow(base, exponent)`.
-#[expect(
-    clippy::disallowed_methods,
-    reason = "unused in vanilla; may be off in the last bit (density-functions.md)"
-)]
 pub(crate) fn java_pow(base: f64, exponent: f64) -> f32 {
-    base.powf(exponent) as f32
+    spyglass_math::pow(base, exponent) as f32
 }
 
 impl BoundSpline {

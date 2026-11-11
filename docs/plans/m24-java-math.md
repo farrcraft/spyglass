@@ -1,8 +1,8 @@
 # m24. Java's `Math`
 
-- Status: Draft
+- Status: In progress
 - Milestone: [24. Java's `Math`, as the game computes it](../roadmap/24-java-math.md)
-- Started:
+- Started: 2026-11-11
 - Completed:
 
 ## Goal
@@ -64,18 +64,20 @@ An ADR records, from the report:
 
 ## Tasks
 
-- [ ] Oracle `math` command: the argument sets and the bit files, in the core (no adapter: the JDK's `Math` doesn't change with the game version)
-- [ ] `cargo xtask math-report`, with the platform's functions and the `libm` crate as the first candidates
-- [ ] An fdlibm 5.3 port of `sin`, `cos`, `log` and `pow` (and the FMA variants of `sin` and `cos`), each with unit tests against committed `StrictMath` values
-- [ ] Correctly rounded `sin`, `cos` and `log` (and `pow` if the measurements ask for it), with unit tests against high-precision values
-- [ ] Measure on Windows x86-64 locally, and on Linux x86-64 and Apple silicon from a `workflow_dispatch` job
-- [ ] docs/specs/java-math.md: the measurements, per function, set and platform
-- [ ] The ADR: implementation, crate, ADR 0012's margin, licences
-- [ ] The module in its chosen crate; the call sites through it; clippy.toml's reasons
-- [ ] Specs updated where they describe these calls: rng.md, carvers.md, features.md, density-functions.md, structure-placement.md, spawn.md
-- [ ] `cargo xtask bench` before and after
-- [ ] CI: the module's unit tests on macOS as well as Linux and Windows
-- [ ] `cargo xtask oracle-test` for every version on Windows, and the oracle CI jobs on Linux
+- [x] Oracle `math` command: the argument sets and the bit files, in the core (no adapter: the JDK's `Math` doesn't change with the game version)
+- [x] `cargo xtask math-report`, with the platform's functions and the `libm` crate as the first candidates
+- [x] An fdlibm 5.3 port: not needed. `StrictMath` itself is measured, and the `libm` crate stood in for fdlibm's algorithm; both are 2 to 10% from x86-64's `Math`, so correctly rounded functions were built instead
+- [x] Correctly rounded `sin`, `cos` and `log` (and `pow` if the measurements ask for it), with unit tests against high-precision values
+- [x] Measure on Windows x86-64 locally
+- [ ] Measure on Linux x86-64 and Apple silicon: the Math workflow's `measure` job, run by hand once the branch is pushed
+- [x] docs/specs/java-math.md: the measurements, per function, set and platform
+- [x] The ADR: implementation, crate, ADR 0012's margin, licences
+- [x] The module in its chosen crate; the call sites through it; clippy.toml's reasons
+- [x] Specs updated where they describe these calls: rng.md, carvers.md, features.md, density-functions.md, structure-placement.md, spawn.md
+- [x] `cargo xtask bench` before and after
+- [x] CI: the module's unit tests on macOS as well as Linux and Windows
+- [x] `cargo xtask oracle-test` for every version on Windows: all 8 passed, 2026-11-11
+- [ ] The oracle CI jobs on Linux, once the branch is pushed
 
 ## Verification
 
@@ -86,11 +88,15 @@ An ADR records, from the report:
 
 ## Durable outputs
 
-- [ ] docs/specs/java-math.md
-- [ ] The ADR, and ADR 0012's status if it's superseded
-- [ ] The specs that describe the calls
-- [ ] architecture.md, if a crate is added
+- [x] docs/specs/java-math.md
+- [x] The ADR, and ADR 0012's status if it's superseded
+- [x] The specs that describe the calls
+- [x] architecture.md, if a crate is added
 
 ## Notes
+
+- 2026-11-11, Windows x86-64, Temurin 25: `Math` is correctly rounded but for 0.1% of `sin` and `cos`, 0.002% of `log` and 0.05% of `pow`; Microsoft's libm differs from it in 3% of `sin` and `cos`; the `libm` crate and `StrictMath` 2 to 10%. Narrowed to `float`, the carvers' table and the `float` `pow` sample are the same under all of them. So correctly rounded won, and `spyglass-math` was built for it, checked against the oracle's `BigDecimal` results: it matches all 6.2 million cases. One bug on the way: `cos` returned 1 below 2^-26, where from about 2^-26.5 the answer is the double below 1 (0.5% of the broad set).
+- The correctly rounded reference is computed by the oracle itself, in `BigDecimal`, so no high-precision library was needed on the Rust side.
+- Each call is 50 to 100 times the platform's (0.24 to 0.92 µs), but no call site is hot: the bench, back to back, moved by a median of 0%. A first after-run was 30% slower on every line, unrelated ones too, which was the machine.
 
 - Horizon's `horizon_core::jmath` (MIT) is the lead: correctly rounded `sin`, `cos` and `log` in double-double arithmetic for x86-64 and Windows, fdlibm for `atan2`, `asin` and the rest, and fdlibm with fused multiply-adds on AArch64 ([prior art](../research/prior-art.md)). Its numbers are its own until the report confirms them.

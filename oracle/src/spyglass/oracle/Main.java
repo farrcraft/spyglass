@@ -31,6 +31,9 @@ import net.minecraft.world.level.levelgen.WorldOptions;
  * spawn &lt;out dir&gt; [--dimension ID] &lt;seed&gt;...
  *     One spawn golden file per seed (&lt;seed&gt;.json): the dimension's spawn origin, the climate
  *     search's phases and its fitness at fixed positions.
+ * math &lt;out dir&gt;
+ *     The JDK's Math, StrictMath and correctly rounded results for the functions worldgen calls
+ *     (JavaMath). Doesn't load the game.
  * heights &lt;out dir&gt; [--dimension ID] [--threads N] &lt;seed&gt;...
  *     One height golden file per seed (&lt;seed&gt;.json): the generator's worldgen heightmaps at
  *     every column of fixed block regions, and its block columns at a sample of positions.
@@ -53,6 +56,9 @@ public final class Main {
         }
         if (args.length < 2) {
             usage();
+        }
+        if (args[0].equals("math")) {
+            System.exit(JavaMath.run(Path.of(args[1])));
         }
         long t0 = System.nanoTime();
         Game game = Game.load(packs);

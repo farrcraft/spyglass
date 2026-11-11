@@ -29,7 +29,7 @@ The milestones build toward the goals in the [README](../../README.md#goals): co
 | 21  | [Faster queries](completed/21-faster-queries.md)                                      | Single queries on every core, cheaper biome searches, a profiler.         | Completed   |
 | 22  | [User guide](22-user-guide.md)                                                        | A user guide on GitHub Pages, published with each release.                | In progress |
 | 23  | [Parity tooling](completed/23-parity-tooling.md)                                      | A checked crate order; version diffs mapped to the code that ports them.  | Completed   |
-| 24  | [Java's `Math`](24-java-math.md)                                                      | `Math` as HotSpot computes it, so every build gives the game's answers.   | Planned     |
+| 24  | [Java's `Math`](24-java-math.md)                                                      | `Math` as HotSpot computes it, so every build gives the game's answers.   | In progress |
 | 25  | [What a save knows](25-what-the-save-knows.md)                                        | Generated chunks on the map; structures and opened loot from the save.    | Planned     |
 | 26  | [Data packs](26-data-packs.md)                                                        | Answers for worlds whose data packs change generation.                    | Planned     |
 | 27  | [Decoration order](27-decoration-order.md)                                            | Whether the order around the spawn is knowable, and a third answer if so. | Planned     |

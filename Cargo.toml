@@ -50,6 +50,7 @@ spyglass-density = { path = "crates/spyglass-density" }
 spyglass-extract = { path = "crates/spyglass-extract" }
 spyglass-feature = { path = "crates/spyglass-feature" }
 spyglass-loot = { path = "crates/spyglass-loot" }
+spyglass-math = { path = "crates/spyglass-math" }
 spyglass-noise = { path = "crates/spyglass-noise" }
 spyglass-oracle = { path = "crates/spyglass-oracle" }
 spyglass-rng = { path = "crates/spyglass-rng" }
@@ -65,6 +66,8 @@ eframe = { version = "0.37.0", features = ["persistence"] }
 # The viewer's map icons are SVGs, rasterised by egui_extras' resvg loader (ADR 0045).
 egui_extras = { version = "0.37.0", default-features = false, features = ["svg"] }
 flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs"] }
+# musl's math functions in Rust: a candidate xtask math-report measures against Java's Math.
+libm = "0.2.16"
 md-5 = "0.11.0"
 # The CLI's and viewer's global allocator, faster for threaded queries (ADR 0064).
 mimalloc = "0.1.52"

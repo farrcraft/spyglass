@@ -17,7 +17,8 @@ impl Gaussian {
 
     /// `nextGaussian()`, drawing uniform doubles from `next_double`.
     ///
-    /// Java's `Math.log` may differ from Rust's `ln` in the last bit; see `docs/specs/rng.md`.
+    /// `Math.log` is `spyglass_math::log`, as x86-64 computes it but for about 0.002% of `s`
+    /// (docs/specs/java-math.md).
     pub(crate) fn next(&mut self, mut next_double: impl FnMut() -> f64) -> f64 {
         if self.have_next {
             self.have_next = false;
@@ -32,8 +33,7 @@ impl Gaussian {
             // Mth.square(v1) + Mth.square(v2).
             let s = v1 * v1 + v2 * v2;
             if s < 1.0 && s != 0.0 {
-                #[expect(clippy::disallowed_methods, reason = "Math.log; probes match (rng.md)")]
-                let multiplier = (-2.0 * s.ln() / s).sqrt();
+                let multiplier = (-2.0 * spyglass_math::log(s) / s).sqrt();
                 self.next = v2 * multiplier;
                 self.have_next = true;
                 return v1 * multiplier;

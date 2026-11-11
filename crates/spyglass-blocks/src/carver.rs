@@ -687,12 +687,8 @@ pub enum Trig {
 fn sin_table(exact: bool) -> &'static [f32] {
     static TABLES: [OnceLock<Vec<f32>>; 2] = [OnceLock::new(), OnceLock::new()];
     TABLES[usize::from(exact)].get_or_init(|| {
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "narrowed to f32, so off only on a rounding boundary (carvers.md)"
-        )]
         let mut table: Vec<f32> = (0..65_536)
-            .map(|i| (f64::from(i) / ENTRIES_PER_RADIAN).sin() as f32)
+            .map(|i| spyglass_math::sin(f64::from(i) / ENTRIES_PER_RADIAN) as f32)
             .collect();
         if exact {
             for (i, v) in [(0, 0.0), (16_384, 1.0), (32_768, 0.0), (49_152, -1.0)] {

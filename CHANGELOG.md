@@ -9,6 +9,8 @@ Changes go under **Unreleased** as they're made. `cargo xtask release` turns tha
 ### Added
 
 - **Structures in your world come from the world itself** where it has generated the chunk, as the game's `/locate` does: `--world` answers mark them `saved` (`source` in JSON), and a chunk the world saved without a structure has none, whatever the seed says. In the API, `SaveReport::chunks` and `Session::with_save` ([world-saves.md](docs/specs/world-saves.md#structure-starts-in-saves)).
+- **Loot in your world says what's become of each container:** unopened (holding what spyglass shows), opened (with what's in it now) or gone, and `loot find` goes by what's in it now.
+- **`spyglass render --generated`** shades the chunks your world has generated, marking those an older version made.
 
 ### Changed
 

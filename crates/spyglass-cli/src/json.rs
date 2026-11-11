@@ -319,6 +319,7 @@ pub struct RenderAnswer<'a> {
     pub features: Vec<FeatureHit<'a>>,
     pub containers: Vec<Container<'a>>,
     pub slime_chunks: Vec<[i32; 2]>,
+    pub generated: Vec<GeneratedChunk>,
     pub spawn: Option<SpawnAnswer>,
     pub pins: Vec<PinMark>,
 }
@@ -361,6 +362,7 @@ pub struct RenderLayers<'a> {
     pub features: &'a [String],
     pub loot: Option<&'a str>,
     pub slime_chunks: bool,
+    pub generated: bool,
     pub spawn: bool,
     pub confirm: bool,
     pub relief: bool,
@@ -378,6 +380,30 @@ pub struct StructureMark<'a> {
     pub set: &'a str,
     pub structures: &'a [String],
     pub certain: bool,
+    /// `save` or `seed`, as a locate hit's.
+    pub source: &'static str,
+}
+
+/// A chunk a `--world` save has generated, on a map.
+#[derive(Serialize)]
+pub struct GeneratedChunk {
+    pub chunk: [i32; 2],
+    pub full: bool,
+    pub older: bool,
+    pub readable: bool,
+    pub inhabited_time: Option<i64>,
+}
+
+impl GeneratedChunk {
+    pub fn new(c: &spyglass::GeneratedChunk) -> Self {
+        GeneratedChunk {
+            chunk: c.chunk,
+            full: c.full,
+            older: c.older,
+            readable: c.readable,
+            inhabited_time: c.inhabited_time,
+        }
+    }
 }
 
 /// A save's summary: what it says, and what spyglass makes of it.

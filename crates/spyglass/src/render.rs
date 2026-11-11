@@ -17,8 +17,8 @@ pub use underground::{
 
 use crate::{
     BiomeAt, BiomeQuery, Dimension, Error, FeatureOptions, FeatureQuery, FoundContainer,
-    FoundFeature, Heightmap, ItemQuery, Result, Session, SpawnOrigin, StructureQuery,
-    StructureStart, World,
+    FoundFeature, GeneratedChunk, Heightmap, ItemQuery, Result, Session, SpawnOrigin,
+    StructureQuery, StructureStart, World,
 };
 
 /// The height biomes are sampled at unless asked otherwise.
@@ -43,6 +43,15 @@ const BACKGROUND: [u8; 3] = [0x20, 0x20, 0x20];
 const VOID: [u8; 3] = [0x0b, 0x0b, 0x12];
 const SLIME: [u8; 3] = [0x40, 0xe0, 0x40];
 const SLIME_ALPHA: u32 = 128;
+
+/// A save's generated chunks (`docs/specs/render.md#layers`): finished, generated partway, by an
+/// older version, and unreadable.
+const GENERATED: [u8; 3] = [0xff, 0x30, 0xff];
+const GENERATED_OLDER: [u8; 3] = [0xff, 0xa0, 0x20];
+const GENERATED_UNREADABLE: [u8; 3] = [0xff, 0x20, 0x20];
+/// A finished chunk's alpha, and a chunk generated partway's.
+const GENERATED_ALPHA: u32 = 112;
+const GENERATED_PARTIAL_ALPHA: u32 = 48;
 const BLACK: [u8; 3] = [0, 0, 0];
 const WHITE: [u8; 3] = [0xff, 0xff, 0xff];
 /// The ring around a loot container holding the item asked for: gold.
@@ -186,6 +195,9 @@ pub struct Layers {
     pub loot: Option<ItemQuery>,
     /// Slime chunks, at scales up to [`MAX_SLIME_SCALE`].
     pub slime_chunks: bool,
+    /// The chunks the session's save has generated ([`Session::with_save`]), at scales up to
+    /// [`MAX_SLIME_SCALE`]: an error for a session without a save.
+    pub generated: bool,
     /// The world spawn's origin.
     pub spawn: bool,
     /// Decide structure starts with the seed's terrain, as confirmed locate does, so markers
@@ -232,6 +244,7 @@ impl Default for Layers {
             features: Vec::new(),
             loot: None,
             slime_chunks: false,
+            generated: false,
             spawn: false,
             confirm: false,
             relief: false,
@@ -290,6 +303,8 @@ pub struct MapFeatures {
     pub containers: Vec<FoundContainer>,
     /// Slime chunks overlapping the area, by z, then x.
     pub slime_chunks: Vec<[i32; 2]>,
+    /// The save's generated chunks overlapping the area, by z, then x.
+    pub generated: Vec<GeneratedChunk>,
     /// The spawn's origin, if its marker reaches the area.
     pub spawn: Option<SpawnOrigin>,
     /// The pins whose marker reaches the area, in the order given.
@@ -913,6 +928,21 @@ impl Session<'_> {
             let max = [0, 1].map(|d| saturate((end[d] - 1) >> 4));
             features.slime_chunks = self.slime_chunks(min, max);
         }
+        if layers.generated {
+            if area.scale > MAX_SLIME_SCALE {
+                return Err(invalid(format!(
+                    "generated chunks are drawn at scales up to {MAX_SLIME_SCALE}, not {}",
+                    area.scale
+                )));
+            }
+            let save = self
+                .save()
+                .ok_or_else(|| invalid("generated chunks are a save's: open one".to_string()))?;
+            let end = area.end();
+            let min = area.min.map(|m| m >> 4);
+            let max = [0, 1].map(|d| saturate((end[d] - 1) >> 4));
+            features.generated = save.generated_in(min, max);
+        }
         if layers.spawn {
             let origin = self.spawn_origin();
             if area.reaches(origin.map_block()) {
@@ -989,13 +1019,32 @@ impl Image {
         Image::filled(size, underground::UNDERGROUND_BACKGROUND)
     }
 
-    /// Draws `features` over the image of `area`, which must be the image's size: slime chunks,
-    /// then structure markers, then feature markers, then loot rings, then the spawn, then pins. [`Session::render`] is
+    /// Draws `features` over the image of `area`, which must be the image's size: generated
+    /// chunks, then slime chunks, then structure markers, then feature markers, then loot rings, then the spawn, then pins. [`Session::render`] is
     /// [`BiomeMap::colorize`] (or [`background`](Self::background)), then this, with
     /// [`Session::map_features`]; front ends that cache biome maps can do the steps
     /// themselves, and leave out features they draw another way.
     pub fn draw_features(&mut self, area: &MapArea, features: &MapFeatures) {
         assert_eq!(self.size, area.size, "an image of the area");
+        for chunk in &features.generated {
+            let [x, z] = chunk.chunk;
+            let min = area.pixel([x.wrapping_shl(4), z.wrapping_shl(4)]);
+            let max = area.pixel([
+                x.wrapping_shl(4).wrapping_add(15),
+                z.wrapping_shl(4).wrapping_add(15),
+            ]);
+            let colour = match chunk {
+                c if !c.readable => GENERATED_UNREADABLE,
+                c if c.older => GENERATED_OLDER,
+                _ => GENERATED,
+            };
+            let alpha = if chunk.full || !chunk.readable {
+                GENERATED_ALPHA
+            } else {
+                GENERATED_PARTIAL_ALPHA
+            };
+            self.blend_rect(min, max, colour, alpha);
+        }
         for &[x, z] in &features.slime_chunks {
             let min = area.pixel([x.wrapping_shl(4), z.wrapping_shl(4)]);
             let max = area.pixel([

@@ -419,6 +419,10 @@ pub struct Render {
     /// Shade slime chunks (scales up to 16).
     #[arg(long)]
     pub slime: bool,
+    /// Shade the chunks `--world`'s save has generated: magenta, fainter where generated
+    /// partway, amber where an older version generated them (scales up to 16).
+    #[arg(long)]
+    pub generated: bool,
     /// Mark the world spawn's origin.
     #[arg(long)]
     pub spawn: bool,

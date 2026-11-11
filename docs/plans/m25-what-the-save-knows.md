@@ -55,7 +55,7 @@ Answers that come from a save rather than from prediction are a correctness poli
 - [x] `SaveChunks` (from `SaveReport::chunks`), `Session::with_save` and `SaveChunks::generated_in` (on the save, not the session: it needs no seed)
 - [x] Structure answers from the save, in `locate_structure` and `structures_in`, with their source (`StructureStart::from_save`), through `spyglass_structure::StoredStarts` in `Starts::select`
 - [x] Containers' save state in `containers_in`, `containers_holding` and `nearest_container`, chest minecarts included (`FoundContainer::saved`, `InSave`); `holds` and `contents_certain` follow the save
-- [ ] The map layer in `Session::render_with`, render.md, and `spyglass render --generated`
+- [x] The map layer in `Session::render_with`, render.md, and `spyglass render --generated` (`Layers::generated`, `MapFeatures::generated`, in JSON too). Magenta, not the blue first tried, which vanished over oceans
 - [ ] The viewer's Generated toggle, and the save's answers in its panels
 - [ ] CLI text and JSON for the answers' sources; cli-json.md. Structures done: `--world` sessions answer from the save, text says `saved`, JSON `source`; loot still to do
 - [ ] Inhabited-time shading, if it adds nothing measurable to the scan; otherwise dropped, with the reason in the notes

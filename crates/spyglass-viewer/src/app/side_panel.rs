@@ -205,6 +205,7 @@ impl App {
                     Vec::new()
                 },
                 slime_chunks: export.slime_chunks && export.area.scale <= spyglass::MAX_SLIME_SCALE,
+                generated: false,
                 spawn: export.spawn,
                 confirm: export.confirm,
                 relief: export.relief,

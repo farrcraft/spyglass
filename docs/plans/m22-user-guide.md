@@ -115,7 +115,7 @@ A new `.github/workflows/pages.yml`:
 
 ### Verification
 
-- [ ] Every command in the guide run against a `cargo xtask dist` build of the release candidate, with its output matching the page.
+- [x] Every command in the guide run against a `cargo xtask dist` build of the release candidate, with its output matching the page.
 - [ ] A clean-machine walkthrough: download, first run, a bundle, a seed search, following only the guide. Findings fixed.
 - [x] After the next release is published, the site is live from its tag, and the README's link resolves.
 
@@ -137,6 +137,7 @@ A new `.github/workflows/pages.yml`:
 
 ## Notes
 
+- **The command check** (2026-11-11) used the published 0.3.1 Windows archive itself, its attestation verified with `gh attestation verify`, rather than a `cargo xtask dist` build. Every command in the guide ran and exited 0, with 26.3 and seed 12345, and the seed-search page's example queries ran for 20 s each; the option tables match `--help`. Two kinds of fix: the viewer's labels had drifted from the pages (no **Show** button, the version in the toolbar and **Add a game version** in Settings, **At the surface**, **Relief shading**, and the **Export** menu's items), and the seed-search page didn't say that a stopped search finishes the seeds in progress and evaluates the best again, so the loot example with `--time 20s` printed after 16 minutes.
 - **Published:** the Pages workflow deployed the guide from v0.3.0 (2026-11-10) and v0.3.1 (2026-11-11), and the README's links resolve. The release notes and `GETTING-STARTED.txt` link to the site. Left: the command check against a release build, and the walkthrough by someone new.
 - **Screenshots** of loot, markers and the This seed search were taken with the `run-viewer` skill, seed 12345 in 26.3, with each one's view and settings in its caption. The draft's list of presets was wrong (it named "rare biomes" and "a base site"); it now lists the seven the viewer has. The four older screenshots don't record their settings.
 - **Links before the site exists.** The README, getting-started.md and docs/README.md link to the guide's source (`docs/guide/src/*.md`), which GitHub renders and `cargo xtask links` checks. The README's Install section switches to the site's URL once the first release with the guide is published.

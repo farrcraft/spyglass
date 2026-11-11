@@ -2,7 +2,7 @@
 
 - Status: Completed, with one exit criterion carried as a follow-up ([below](#follow-ups))
 - Depends on: [07](07-terrain-and-validity.md)
-- Plans: [m08-dimensions](../../plans/completed/m08-dimensions.md), [m08-versions](../../plans/completed/m08-versions.md), [m08-ci-plan](../../plans/m08-ci-plan.md)
+- Plans: [m08-dimensions](../../plans/completed/m08-dimensions.md), [m08-versions](../../plans/completed/m08-versions.md), [m08-ci-plan](../../plans/completed/m08-ci-plan.md)
 
 ## Goal
 

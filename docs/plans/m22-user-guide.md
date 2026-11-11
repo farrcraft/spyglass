@@ -117,7 +117,7 @@ A new `.github/workflows/pages.yml`:
 
 - [ ] Every command in the guide run against a `cargo xtask dist` build of the release candidate, with its output matching the page.
 - [ ] A clean-machine walkthrough: download, first run, a bundle, a seed search, following only the guide. Findings fixed.
-- [ ] After the next release is published, the site is live from its tag, and the README's link resolves.
+- [x] After the next release is published, the site is live from its tag, and the README's link resolves.
 
 ## Verification
 
@@ -129,14 +129,15 @@ A new `.github/workflows/pages.yml`:
 
 ## Durable outputs
 
-- [ ] [ADR 0066](../adr/0066-a-user-guide-on-github-pages.md): matches what was built. A new ADR supersedes it if the publishing model changes.
-- [ ] [releasing.md](../releasing.md): the Pages steps.
-- [ ] [development-process.md](../development-process.md) and CLAUDE.md: where the guide lives, and that it's durable.
-- [ ] [getting-started.md](../getting-started.md): contributor setup only.
-- [ ] The guide itself.
+- [x] [ADR 0066](../adr/0066-a-user-guide-on-github-pages.md): matches what was built. A new ADR supersedes it if the publishing model changes.
+- [x] [releasing.md](../releasing.md): the Pages steps.
+- [x] [development-process.md](../development-process.md) and CLAUDE.md: where the guide lives, and that it's durable.
+- [x] [getting-started.md](../getting-started.md): contributor setup only.
+- [x] The guide itself.
 
 ## Notes
 
+- **Published:** the Pages workflow deployed the guide from v0.3.0 (2026-11-10) and v0.3.1 (2026-11-11), and the README's links resolve. The release notes and `GETTING-STARTED.txt` link to the site. Left: the command check against a release build, and the walkthrough by someone new.
 - **Screenshots** of loot, markers and the This seed search were taken with the `run-viewer` skill, seed 12345 in 26.3, with each one's view and settings in its caption. The draft's list of presets was wrong (it named "rare biomes" and "a base site"); it now lists the seven the viewer has. The four older screenshots don't record their settings.
 - **Links before the site exists.** The README, getting-started.md and docs/README.md link to the guide's source (`docs/guide/src/*.md`), which GitHub renders and `cargo xtask links` checks. The README's Install section switches to the site's URL once the first release with the guide is published.
 - **The example commands** were run against a release build of `main` with 26.3 (2026-11-09). One query in the draft was invalid: a biome can't be measured from a structure, since structure anchors are only for structure and slime counts. `spyglass find --help` described the target as "a structure, a biome or a grid point", without features or loot; fixed.

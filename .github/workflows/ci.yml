@@ -117,7 +117,7 @@ jobs:
       - name: The JDK major the latest release needs
         id: jdk
         run: echo "major=$(cargo xtask jdk-status | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: temurin
           java-version: ${{ steps.jdk.outputs.major }}
@@ -161,7 +161,7 @@ jobs:
         id: jdk
         shell: bash
         run: echo "major=$(cargo xtask jdk-status | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: temurin
           java-version: ${{ steps.jdk.outputs.major }}
@@ -207,7 +207,7 @@ jobs:
         run: |
           echo "major=$(cargo xtask jdk-status --game-version '${{ matrix.version }}' | cut -d' ' -f1)" \
             >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: temurin
           java-version: ${{ steps.jdk.outputs.major }}

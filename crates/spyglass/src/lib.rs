@@ -54,7 +54,7 @@ pub use blocks::{BlockAt, BlockColumn, Carvers, ChunkBlocks};
 pub use features::{FeatureLocate, FeatureOptions, FeatureQuery, FoundFeature, Neighbours};
 pub use game::{Game, GameSession};
 pub use loot::{
-    ContainerLocate, ContainerSource, FoundContainer, Item, ItemQuery, MapDestination, Slot,
+    ContainerLocate, ContainerSource, FoundContainer, InSave, Item, ItemQuery, MapDestination, Slot,
 };
 pub use render::{
     BiomeMap, CarverKind, CarvingMap, DEFAULT_MAP_Y, HeightMap, Image, Layers, MARKER_REACH,

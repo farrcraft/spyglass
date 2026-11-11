@@ -624,8 +624,40 @@ pub struct Container<'a> {
     pub contents: Option<Vec<Stack<'a>>>,
     pub contents_certain: bool,
     pub contents_doubt: Option<&'a str>,
+    /// How a `--world` save holds it, where the save has placed its chunk's features.
+    pub saved: Option<SavedContainer<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blocks_away: Option<i32>,
+}
+
+/// A container as the save holds it (`spyglass::InSave`).
+#[derive(Serialize)]
+pub struct SavedContainer<'a> {
+    /// `unopened`, `filled` or `gone`.
+    pub state: &'static str,
+    /// For `unopened`: whether the saved table and seed are the predicted ones.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub as_predicted: Option<bool>,
+    /// For `filled`: what it holds now.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub items: Option<Vec<Stack<'a>>>,
+}
+
+impl<'a> SavedContainer<'a> {
+    fn new(saved: &'a spyglass::InSave) -> Self {
+        let (state, as_predicted, items) = match saved {
+            spyglass::InSave::Unopened { as_predicted } => ("unopened", Some(*as_predicted), None),
+            spyglass::InSave::Filled { items } => {
+                ("filled", None, Some(items.iter().map(Stack::new).collect()))
+            }
+            _ => ("gone", None, None),
+        };
+        SavedContainer {
+            state,
+            as_predicted,
+            items,
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -698,6 +730,7 @@ impl<'a> Container<'a> {
                 .map(|slots| slots.iter().map(Stack::new).collect()),
             contents_certain: c.contents_certain(),
             contents_doubt: c.contents_doubt.as_deref(),
+            saved: c.saved.as_ref().map(SavedContainer::new),
             blocks_away: from.map(|o| {
                 let (dx, dz) = (i64::from(x - o[0]), i64::from(z - o[2]));
                 ((dx * dx + dz * dz) as f64).sqrt() as i32

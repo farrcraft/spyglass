@@ -1,4 +1,4 @@
-//! One chunk's NBT, read whole: the structure starts it holds and its loot containers
+//! One chunk's NBT, read whole: the structure starts it holds and its block entities
 //! (`SerializableChunkData`), and the containers in an entity chunk (`entities/`). See
 //! `docs/specs/world-saves.md`, "Structure starts in saves" and "Containers in saves".
 
@@ -75,11 +75,26 @@ pub struct SavedStack {
 pub struct ChunkContents {
     /// `DataVersion`.
     pub data_version: Option<i32>,
+    /// `Status`, e.g. `minecraft:full`.
+    pub status: Option<String>,
     /// Its structure starts.
     pub starts: SavedStarts,
-    /// Its block entities with a loot table or items; `None` for a chunk saved before 1.18,
+    /// Its block entities, each as a container whether it has an inventory or not, so one
+    /// emptied or never filled is still found; `None` for a chunk saved before 1.18,
     /// whose block entities are in `Level.TileEntities`, in older formats.
     pub containers: Option<Vec<SavedContainer>>,
+}
+
+impl ChunkContents {
+    /// Whether its features have been placed, structures' pieces and their containers among
+    /// them: a status of `features` or later (`ChunkStatus`), namespaced or not.
+    pub fn has_features(&self) -> bool {
+        let status = self.status.as_deref().unwrap_or_default();
+        matches!(
+            status.strip_prefix("minecraft:").unwrap_or(status),
+            "features" | "initialize_light" | "light" | "spawn" | "full"
+        )
+    }
 }
 
 /// Reads a chunk's uncompressed NBT. Malformed fields are left out, not errors: the game would
@@ -105,12 +120,13 @@ pub fn read(raw: &[u8]) -> Result<ChunkContents, NbtError> {
             .iter()
             .filter_map(|e| {
                 let position = [int(e, "x")?, int(e, "y")?, int(e, "z")?];
-                container(e, position)
+                container(e, position, true)
             })
             .collect()
     });
     Ok(ChunkContents {
         data_version: int(&root, "DataVersion"),
+        status: root.get("Status").and_then(Tag::as_str).map(str::to_string),
         starts,
         containers,
     })
@@ -125,7 +141,7 @@ pub fn read_entities(raw: &[u8]) -> Result<Vec<SavedContainer>, NbtError> {
         .filter_map(|e| {
             let pos = list(e, "Pos");
             let coord = |i: usize| pos.get(i)?.as_double().map(|v| v.floor() as i32);
-            container(e, [coord(0)?, coord(1)?, coord(2)?])
+            container(e, [coord(0)?, coord(1)?, coord(2)?], false)
         })
         .collect())
 }
@@ -156,14 +172,23 @@ fn saved_start(structure: &str, start: &Tag) -> Option<SavedStart> {
     })
 }
 
-/// A container at `position`, if `entity` has a loot table or items.
-fn container(entity: &Tag, position: [i32; 3]) -> Option<SavedContainer> {
+/// `entity` at `position` as a container: any block entity (`any`), or an entity with a loot
+/// table or items. A decorated pot holds one stack, as `item`.
+fn container(entity: &Tag, position: [i32; 3], any: bool) -> Option<SavedContainer> {
     let loot_table = entity
         .get("LootTable")
         .and_then(Tag::as_str)
         .map(str::to_string);
     let items = entity.get("Items").and_then(Tag::as_list);
-    if loot_table.is_none() && items.is_none() {
+    let pot = entity.get("item").and_then(|item| {
+        Some(SavedStack {
+            slot: 0,
+            id: item.get("id")?.as_str()?.to_string(),
+            count: int(item, "count").unwrap_or(1),
+            components: item.get("components").cloned(),
+        })
+    });
+    if !any && loot_table.is_none() && items.is_none() {
         return None;
     }
     Some(SavedContainer {
@@ -174,7 +199,12 @@ fn container(entity: &Tag, position: [i32; 3]) -> Option<SavedContainer> {
             .get("LootTableSeed")
             .and_then(Tag::as_long)
             .filter(|&s| s != 0),
-        items: items.unwrap_or_default().iter().filter_map(stack).collect(),
+        items: items
+            .unwrap_or_default()
+            .iter()
+            .filter_map(stack)
+            .chain(pot)
+            .collect(),
     })
 }
 

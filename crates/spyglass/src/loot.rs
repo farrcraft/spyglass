@@ -393,6 +393,49 @@ impl Item {
     }
 }
 
+impl Item {
+    /// A stack as a save holds it: its id and count, with the damage, enchantments and potion
+    /// its components give (the 1.21.5 format, or 1.20.5's `levels` wrapper). Other components
+    /// aren't read.
+    pub(crate) fn saved(stack: &spyglass_world::chunk::SavedStack) -> Item {
+        use spyglass_data::nbt::Tag;
+        let component = |name: &str| {
+            stack
+                .components
+                .as_ref()
+                .and_then(|c| c.get(&format!("minecraft:{name}")))
+        };
+        let levels = |name: &str| -> Vec<(String, i32)> {
+            let Some(tag) = component(name) else {
+                return Vec::new();
+            };
+            let map = tag.get("levels").unwrap_or(tag);
+            map.as_compound()
+                .into_iter()
+                .flatten()
+                .filter_map(|(id, level)| Some((id.clone(), level.as_int()?)))
+                .collect()
+        };
+        let potion = component("potion_contents").and_then(|p| match p {
+            Tag::String(id) => Some(id.clone()),
+            _ => p.get("potion")?.as_str().map(str::to_string),
+        });
+        Item {
+            id: stack.id.clone(),
+            count: stack.count,
+            damage: component("damage").and_then(Tag::as_int),
+            enchantments: levels("enchantments"),
+            stored_enchantments: levels("stored_enchantments"),
+            potion,
+            stew_effects: Vec::new(),
+            instrument: None,
+            name: None,
+            ominous_bottle_amplifier: None,
+            map: None,
+        }
+    }
+}
+
 /// An exploration map's target and how it's drawn.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -445,20 +488,63 @@ pub struct FoundContainer {
     /// otherwise certain: a tied biome a condition reads, an exploration map's target that
     /// isn't certain, an unknown seed.
     pub contents_doubt: Option<String>,
+    /// How the session's save holds it, where the save has placed the chunk's features
+    /// (ADR 0071); `None` without a save, or where it hasn't.
+    pub saved: Option<InSave>,
+}
+
+/// A predicted container as a save holds it (`docs/specs/world-saves.md#containers-in-saves`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum InSave {
+    /// There, and not filled yet: its loot table is still set, so it fills when first opened.
+    Unopened {
+        /// Whether the saved table and seed are the predicted ones, so the predicted contents
+        /// are what it will hold.
+        as_predicted: bool,
+    },
+    /// Filled already, by a player opening it, a hopper or the like: what it holds now, by
+    /// item id, count and the components spyglass reads.
+    Filled {
+        /// Its filled slots, in order.
+        items: Vec<Slot>,
+    },
+    /// Its chunk's features are placed, but there's no container there: broken, or a minecart
+    /// moved.
+    Gone,
 }
 
 impl FoundContainer {
-    /// Whether its contents are certainly the game's.
+    /// Whether what it holds is certainly known: a save's items once it's filled or gone,
+    /// otherwise its predicted contents, if they're certainly the game's.
     pub fn contents_certain(&self) -> bool {
-        self.certain && self.contents.is_some() && self.contents_doubt.is_none()
+        match self.saved {
+            Some(InSave::Filled { .. } | InSave::Gone) => true,
+            Some(InSave::Unopened {
+                as_predicted: false,
+            }) => false,
+            _ => self.certain && self.contents.is_some() && self.contents_doubt.is_none(),
+        }
     }
 
-    /// Whether it holds an item `query` names.
+    /// Whether it holds an item `query` names: the save's items once it's filled, nothing once
+    /// it's gone, otherwise its predicted contents.
     pub fn holds(&self, query: &ItemQuery) -> bool {
-        self.contents
-            .iter()
-            .flatten()
-            .any(|s| query.matches(&s.item))
+        match &self.saved {
+            Some(InSave::Filled { items }) => items.iter().any(|s| query.matches(&s.item)),
+            Some(InSave::Gone) => false,
+            _ => self
+                .contents
+                .iter()
+                .flatten()
+                .any(|s| query.matches(&s.item)),
+        }
+    }
+
+    /// Whether what it holds is known at all, certainly or not: the save's state, or
+    /// predicted contents.
+    fn holdings_known(&self) -> bool {
+        matches!(self.saved, Some(InSave::Filled { .. } | InSave::Gone)) || self.contents.is_some()
     }
 }
 
@@ -725,7 +811,7 @@ impl<'w> Session<'w> {
                 continue;
             }
             let container = self.fill(loot, placed, &cache.starts)?;
-            if query.is_none_or(|q| container.contents.is_none() || container.holds(q)) {
+            if query.is_none_or(|q| !container.holdings_known() || container.holds(q)) {
                 out.push(container);
             }
         }
@@ -902,6 +988,9 @@ impl<'w> Session<'w> {
                 }
             }
         };
+        let saved = self
+            .save()
+            .and_then(|save| save.container(position, &holder, &table, seed));
         Ok(FoundContainer {
             position,
             chunk,
@@ -910,6 +999,7 @@ impl<'w> Session<'w> {
             table,
             seed,
             certain: reason.is_none(),
+            saved,
             reason,
             contents,
             contents_doubt,

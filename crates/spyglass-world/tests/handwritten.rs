@@ -617,7 +617,7 @@ fn chunks_give_their_starts_and_containers() {
                     ("LootTable", s("minecraft:chests/simple_dungeon")),
                     ("LootTableSeed", Tag::Long(0)),
                 ]),
-                // No inventory: not a container.
+                // No inventory, but still the block entity at its position.
                 c([
                     ("id", s("minecraft:sign")),
                     ("x", Tag::Int(53)),
@@ -629,6 +629,22 @@ fn chunks_give_their_starts_and_containers() {
     ]);
     let contents = chunk::read(&raw(&chunk)).unwrap();
     assert_eq!(contents.data_version, Some(4671));
+    assert_eq!(contents.status, None);
+    assert!(!contents.has_features());
+    for (status, placed) in [
+        ("minecraft:full", true),
+        ("features", true),
+        ("minecraft:light", true),
+        ("minecraft:carvers", false),
+        ("minecraft:structure_starts", false),
+    ] {
+        let tag = c([("Status", s(status))]);
+        assert_eq!(
+            chunk::read(&raw(&tag)).unwrap().has_features(),
+            placed,
+            "{status}"
+        );
+    }
     assert_eq!(
         contents.starts,
         SavedStarts::Starts(vec![SavedStart {
@@ -642,7 +658,10 @@ fn chunks_give_their_starts_and_containers() {
         }])
     );
     let containers = contents.containers.unwrap();
-    assert_eq!(containers.len(), 3);
+    // Every block entity, the sign included.
+    assert_eq!(containers.len(), 4);
+    assert_eq!(containers[3].id, "minecraft:sign");
+    assert!(containers[3].items.is_empty() && containers[3].loot_table.is_none());
     assert_eq!(containers[0].position, [50, 64, -30]);
     assert_eq!(containers[0].loot_table_seed, Some(-7));
     assert!(containers[0].items.is_empty());
@@ -689,6 +708,23 @@ fn entity_chunks_give_their_containers() {
             c([("id", s("minecraft:zombie")), ("Pos", pos)]),
         ]),
     )]);
+    // A decorated pot holds one stack, as `item`.
+    let pot = c([(
+        "block_entities",
+        Tag::List(vec![c([
+            ("id", s("minecraft:decorated_pot")),
+            ("x", Tag::Int(1)),
+            ("y", Tag::Int(2)),
+            ("z", Tag::Int(3)),
+            (
+                "item",
+                c([("id", s("minecraft:emerald")), ("count", Tag::Int(2))]),
+            ),
+        ])]),
+    )]);
+    let pots = chunk::read(&raw(&pot)).unwrap().containers.unwrap();
+    assert_eq!(pots[0].items[0].id, "minecraft:emerald");
+    assert_eq!(pots[0].items[0].count, 2);
     let found = chunk::read_entities(&raw(&entities)).unwrap();
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].id, "minecraft:chest_minecart");

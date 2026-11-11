@@ -6,11 +6,14 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use spyglass_structure::{StoredStarts, StructureSets};
-use spyglass_world::chunk::{self, ChunkContents, SavedStarts};
+use spyglass_world::chunk::{self, ChunkContents, SavedContainer, SavedStarts};
 use spyglass_world::region::{self, ChunkIndex, ChunkRecord};
 
-use crate::Dimension;
 use crate::save::SaveReport;
+use crate::{Dimension, InSave, Item, Slot};
+
+/// Chunks read so far, by position: `None` for one the save doesn't hold, or that can't be read.
+type ReadChunks<T> = Mutex<HashMap<[i32; 2], Option<Arc<T>>>>;
 
 /// One dimension of a save: which chunks it has generated, each read whole when a query first
 /// needs it. Made with
@@ -30,13 +33,11 @@ pub struct SaveChunks {
     /// time they're asked for, since structure answers don't need them.
     index: OnceLock<Arc<ChunkIndex>>,
     /// Its entity region files' folder.
-    #[expect(
-        dead_code,
-        reason = "read for chest minecarts, with containers' save state"
-    )]
     entities: PathBuf,
     /// Chunks read so far: `None` for one that isn't held or can't be read.
-    read: Mutex<HashMap<[i32; 2], Option<Arc<ChunkContents>>>>,
+    read: ReadChunks<ChunkContents>,
+    /// Entity chunks read so far, their containers: `None` likewise.
+    entities_read: ReadChunks<Vec<SavedContainer>>,
 }
 
 /// A chunk a save has generated, for [`SaveChunks::generated_in`].
@@ -74,6 +75,7 @@ impl SaveReport {
             index,
             entities: folders.entities.clone(),
             read: Mutex::new(HashMap::new()),
+            entities_read: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -164,6 +166,76 @@ impl SaveChunks {
 
     fn read_chunk(&self, chunk: [i32; 2]) -> Option<ChunkContents> {
         chunk::read(&region::read_chunk(&self.region, chunk)?).ok()
+    }
+
+    /// Entity chunk `chunk`'s containers, read once: `None` if the save has no entities saved
+    /// there, or they can't be read.
+    fn entity_containers(&self, chunk: [i32; 2]) -> Option<Arc<Vec<SavedContainer>>> {
+        let mut read = self
+            .entities_read
+            .lock()
+            .expect("no reader panics holding the lock");
+        if let Some(found) = read.get(&chunk) {
+            return found.clone();
+        }
+        let found = region::read_chunk(&self.entities, chunk)
+            .and_then(|raw| chunk::read_entities(&raw).ok())
+            .map(Arc::new);
+        read.insert(chunk, found.clone());
+        found
+    }
+
+    /// How the save holds a predicted container: `holder` at `position`, filled from `table`
+    /// with `seed`. `None` where the save hasn't placed the features of the chunk holding it,
+    /// or (for a minecart) saved no entities there.
+    pub(crate) fn container(
+        &self,
+        position: [i32; 3],
+        holder: &str,
+        table: &str,
+        seed: Option<i64>,
+    ) -> Option<InSave> {
+        let chunk = [position[0] >> 4, position[2] >> 4];
+        let entities;
+        let contents;
+        let found = if holder.ends_with("_minecart") {
+            entities = self.entity_containers(chunk)?;
+            entities
+                .iter()
+                .find(|c| c.position == position && c.id == holder)
+        } else {
+            contents = self.contents(chunk)?;
+            if !contents.has_features() {
+                return None;
+            }
+            contents
+                .containers
+                .as_ref()?
+                .iter()
+                .find(|c| c.position == position)
+        };
+        Some(match found {
+            None => InSave::Gone,
+            Some(saved) => match &saved.loot_table {
+                // A seed of 0 isn't saved: it's drawn when the container fills.
+                Some(saved_table) => InSave::Unopened {
+                    as_predicted: saved_table == table
+                        && saved.loot_table_seed == seed.filter(|&s| s != 0),
+                },
+                None => InSave::Filled {
+                    items: saved
+                        .items
+                        .iter()
+                        .filter_map(|stack| {
+                            Some(Slot {
+                                slot: usize::try_from(stack.slot).ok()?,
+                                item: Item::saved(stack),
+                            })
+                        })
+                        .collect(),
+                },
+            },
+        })
     }
 
     /// The structures starting in `chunk` by id, if the save holds it with starts the game

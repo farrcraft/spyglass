@@ -32,11 +32,12 @@ mod game;
 mod loot;
 mod render;
 mod save;
+mod saved;
 mod search;
 
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use spyglass_biome::{BiomeId, BiomeSource, Biomes, SearchVolume, SpawnSearch, SpawnTargets};
 use spyglass_blocks::{BlockSettings, ChunkGenerator};
@@ -65,6 +66,7 @@ pub use save::{
     LauncherSave, PackConcern, SaveInfo, SaveInspector, SaveLocation, SaveReport, SaveWarning,
     Scan, find_save, inspect_save, launcher_saves,
 };
+pub use saved::{GeneratedChunk, SaveChunks};
 pub use search::{
     ConstraintResult, Evaluation, Feature, FindMatch, FindOptions, FindOutcome, FindProgress,
     MAX_FIND_TARGETS, Outcome, RankedSeed, SearchHit, SearchOptions, SearchOutcome, SearchProgress,
@@ -629,6 +631,7 @@ impl World {
             terrain: OnceLock::new(),
             chunks: OnceLock::new(),
             parallel: true,
+            save: None,
         })
     }
 
@@ -887,6 +890,8 @@ pub struct Session<'w> {
     /// Whether queries run their independent parts in parallel, on the calling thread's rayon
     /// pool; not in a search's checks (ADR 0063).
     parallel: bool,
+    /// A save of this seed, whose chunks answer where the game reads them (ADR 0071).
+    save: Option<saved::SessionSave<'w>>,
 }
 
 /// The biome at a position.
@@ -916,6 +921,9 @@ pub struct StructureStart {
     /// start depends on terrain (unless confirmed), a tied biome cell, or a platform-dependent
     /// ring position.
     pub certain: bool,
+    /// Whether the answer came from the session's save, which holds the chunk with this start
+    /// (ADR 0071), rather than from the seed. Such a start is certain.
+    pub from_save: bool,
 }
 
 impl StructureStart {
@@ -1060,6 +1068,29 @@ impl<'w> Session<'w> {
         self.seed
     }
 
+    /// This session answering from `save`, a save of its seed in its world's dimension, wherever
+    /// the game reads the save rather than predicting (ADR 0071): structure starts in the
+    /// chunks it holds. An error for another dimension's chunks.
+    pub fn with_save(mut self, save: Arc<SaveChunks>) -> Result<Self> {
+        if save.dimension() != self.world.dimension {
+            return Err(Error::Unsupported(format!(
+                "the save's {} chunks given to a {} session",
+                save.dimension(),
+                self.world.dimension
+            )));
+        }
+        self.save = Some(saved::SessionSave {
+            chunks: save,
+            sets: &self.world.sets,
+        });
+        Ok(self)
+    }
+
+    /// The save it answers from, if any ([`with_save`](Self::with_save)).
+    pub fn save(&self) -> Option<&SaveChunks> {
+        self.save.as_ref().map(|s| &*s.chunks)
+    }
+
     fn biome_names(&self, lookup: &spyglass_biome::Lookup) -> BiomeAt {
         let name = |b: &BiomeId| self.world.source.name(*b).to_string();
         BiomeAt {
@@ -1139,6 +1170,10 @@ impl<'w> Session<'w> {
                 .map(|&s| sets.structures()[s].id.clone())
                 .collect(),
             certain,
+            from_save: self
+                .save
+                .as_ref()
+                .is_some_and(|save| save.chunks.saved_starts(chunk).is_some()),
         }
     }
 
@@ -1154,10 +1189,14 @@ impl<'w> Session<'w> {
     /// The structure starts for this seed: from the climate alone, or confirmed with its
     /// terrain.
     fn starts(&self, confirm: bool) -> Starts<'_> {
-        if confirm {
+        let starts = if confirm {
             Starts::with_terrain(&self.placements, &self.biomes, self.terrain())
         } else {
             Starts::new(&self.placements, &self.biomes)
+        };
+        match &self.save {
+            Some(save) => starts.with_stored(save),
+            None => starts,
         }
     }
 

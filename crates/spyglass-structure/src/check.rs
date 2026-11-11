@@ -54,8 +54,17 @@ impl Selection {
     }
 }
 
+/// Structure starts a world save already holds, which decide the chunks it has
+/// (`StructureCheck.tryLoadFromStorage`; `docs/specs/world-saves.md`).
+pub trait StoredStarts: Sync {
+    /// The structures (indices into the sets' structures) that start in `chunk`, if the save
+    /// holds the chunk with starts the game reads: then the game answers from them, and a
+    /// structure not among them doesn't start there. `None` where the game predicts the chunk.
+    fn starts_at(&self, chunk: [i32; 2]) -> Option<Vec<usize>>;
+}
+
 /// Structure starts for one seed: [`Placements`] plus the biome source for the same seed, and
-/// optionally its terrain.
+/// optionally its terrain and a save's stored starts.
 pub struct Starts<'a> {
     /// Where each set's starts may be, before any biome check.
     placements: &'a Placements<'a>,
@@ -65,6 +74,8 @@ pub struct Starts<'a> {
     terrain: Option<&'a Terrain>,
     /// The jigsaw pools, for [`assemble`](Self::assemble) only.
     pools: Option<&'a JigsawPools>,
+    /// A save's starts, which decide the chunks it holds.
+    stored: Option<&'a dyn StoredStarts>,
 }
 
 /// What a check found before its biome test: the conditions' verdict so far, and the test's
@@ -98,6 +109,7 @@ impl<'a> Starts<'a> {
             biomes,
             terrain: None,
             pools: None,
+            stored: None,
         }
     }
 
@@ -113,6 +125,7 @@ impl<'a> Starts<'a> {
             biomes,
             terrain: Some(terrain),
             pools: None,
+            stored: None,
         }
     }
 
@@ -121,6 +134,15 @@ impl<'a> Starts<'a> {
     pub fn with_pools(self, pools: &'a JigsawPools) -> Self {
         Starts {
             pools: Some(pools),
+            ..self
+        }
+    }
+
+    /// The same starts, with a save's: in the chunks `stored` holds, its starts are the answer,
+    /// certain, as the game reads them from storage before predicting.
+    pub fn with_stored(self, stored: &'a dyn StoredStarts) -> Self {
+        Starts {
+            stored: Some(stored),
             ..self
         }
     }
@@ -327,6 +349,16 @@ impl<'a> Starts<'a> {
     pub fn select(&self, set: usize, chunk: [i32; 2]) -> Selection {
         let sets = self.placements.sets();
         let entries = &sets.sets()[set].entries;
+        // StructureCheck.checkStart: a chunk on disk answers from its saved starts, before any
+        // prediction. A set starts at most one structure in a chunk.
+        if let Some(saved) = self.stored.and_then(|s| s.starts_at(chunk)) {
+            let tries = entries
+                .iter()
+                .find(|e| saved.contains(&e.structure))
+                .map(|e| vec![(e.structure, Check::Passes)])
+                .unwrap_or_default();
+            return Selection { tries };
+        }
         let mut tries = Vec::new();
         if let [only] = entries.as_slice() {
             let check = self.check(only.structure, chunk);

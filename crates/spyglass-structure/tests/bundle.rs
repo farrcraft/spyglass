@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use spyglass_biome::BiomeSource;
 use spyglass_data::bundle::Bundle;
-use spyglass_structure::{PlacementKind, Starts, StructureSets};
+use spyglass_structure::{PlacementKind, Starts, StoredStarts, StructureSets};
 
 /// The bundle for the version under test.
 fn bundle() -> Bundle {
@@ -107,6 +107,54 @@ fn rings_settle_the_same_on_any_number_of_threads() {
             });
         }
     }
+}
+
+/// A save holding two chunks: one with no starts, one with `structure`.
+struct Saved {
+    empty: [i32; 2],
+    holding: [i32; 2],
+    structure: usize,
+}
+
+impl StoredStarts for Saved {
+    fn starts_at(&self, chunk: [i32; 2]) -> Option<Vec<usize>> {
+        (chunk == self.empty)
+            .then(Vec::new)
+            .or_else(|| (chunk == self.holding).then(|| vec![self.structure]))
+    }
+}
+
+#[test]
+#[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
+fn stored_starts_decide_the_chunks_a_save_holds() {
+    let bundle = bundle();
+    let source = BiomeSource::overworld(&bundle).unwrap();
+    let sets = StructureSets::overworld(&bundle, &source).unwrap();
+    let biomes = source.with_seed(0).unwrap();
+    let placements = sets.with_seed(0, &biomes);
+    let villages = sets
+        .sets()
+        .iter()
+        .position(|s| s.id == "minecraft:villages")
+        .unwrap();
+    let predicted = Starts::new(&placements, &biomes).starts_in(villages, [-64, -64], [63, 63]);
+    assert!(predicted.len() >= 2);
+    // The save says the first predicted start isn't there, and the second is its last entry,
+    // whatever the prediction picked.
+    let last = sets.sets()[villages].entries.last().unwrap().structure;
+    let saved = Saved {
+        empty: predicted[0].0,
+        holding: predicted[1].0,
+        structure: last,
+    };
+    let stored = Starts::new(&placements, &biomes)
+        .with_stored(&saved)
+        .starts_in(villages, [-64, -64], [63, 63]);
+    assert_eq!(stored.len(), predicted.len() - 1);
+    assert_eq!(stored[0].0, predicted[1].0);
+    assert_eq!(stored[0].1.definite(), Some(last));
+    // Every other chunk is predicted as before.
+    assert_eq!(stored[1..], predicted[2..]);
 }
 
 #[test]

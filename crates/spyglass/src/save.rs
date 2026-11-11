@@ -244,6 +244,20 @@ pub struct SaveReport {
     pub bundle: Option<BundleInfo>,
     /// Everything that makes answers inexact or impossible, most serious first.
     pub warnings: Vec<SaveWarning>,
+    /// Each dimension's folders and, after [`Scan::Chunks`], its chunks, by
+    /// [`Dimension::index`].
+    pub(crate) dimensions: [SaveDimension; 3],
+}
+
+/// Where a save keeps one dimension's chunks, and what the scan found there.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct SaveDimension {
+    /// Its region files' folder.
+    pub(crate) region: PathBuf,
+    /// Its entity region files' folder (`entities/`, since 1.17).
+    pub(crate) entities: PathBuf,
+    /// Its chunks, from [`Scan::Chunks`]; `None` after [`Scan::Quick`].
+    pub(crate) index: Option<Arc<region::ChunkIndex>>,
 }
 
 impl SaveReport {
@@ -454,13 +468,28 @@ fn inspect(inspector: &SaveInspector, dir: &Path, scan: Scan) -> Result<SaveRepo
     if save.was_modded {
         warnings.push(SaveWarning::Modded);
     }
-    if scan == Scan::Chunks {
-        for dimension in Dimension::ALL {
-            let dir = save.region_dir(dimension.id())?;
-            let chunks = region::chunk_versions(&dir).map_err(|source| Error::Io {
-                path: dir.clone(),
+    let mut dimensions = Vec::with_capacity(3);
+    for dimension in Dimension::ALL {
+        let region = save.region_dir(dimension.id())?;
+        let entities = save.entities_dir(dimension.id())?;
+        let index = if scan == Scan::Chunks {
+            let index = region::index(&region).map_err(|source| Error::Io {
+                path: region.clone(),
                 source,
             })?;
+            Some(Arc::new(index))
+        } else {
+            None
+        };
+        dimensions.push(SaveDimension {
+            region,
+            entities,
+            index,
+        });
+    }
+    if scan == Scan::Chunks {
+        for (dimension, folders) in Dimension::ALL.into_iter().zip(&dimensions) {
+            let chunks = folders.index.as_ref().expect("scanned").versions();
             let older = chunks.older_than(save.data_version.unwrap_or(i32::MAX));
             if older > 0 {
                 warnings.push(SaveWarning::OlderChunks {
@@ -495,6 +524,7 @@ fn inspect(inspector: &SaveInspector, dir: &Path, scan: Scan) -> Result<SaveRepo
         },
         bundle,
         warnings,
+        dimensions: dimensions.try_into().expect("one per dimension"),
     })
 }
 

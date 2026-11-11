@@ -27,7 +27,7 @@ mod template_piece;
 
 pub use assembly::{Assembly, JigsawPools, LaidPiece, Layout};
 pub use biomes::BiomeSet;
-pub use check::{Check, Selection, Starts};
+pub use check::{Check, Selection, Starts, StoredStarts};
 pub use end_city::CityPiece;
 pub use fortress::{FortressKind, FortressPiece};
 pub use jigsaw::{

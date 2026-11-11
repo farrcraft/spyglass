@@ -51,9 +51,9 @@ Answers that come from a save rather than from prediction are a correctness poli
 - [x] The region scan records version, status and inhabited time per chunk, at today's cost: 6 to 8 s on the 4.6 GB save before and after, byte-identical `world info`
 - [x] `ChunkIndex` and the one-chunk reader in `spyglass-world` (`region::index`, `region::read_chunk`, `chunk::read`, `chunk::read_entities`), with unit tests on chunks built with `nbt::write`
 - [x] The region fuzz target reads every chunk's starts and containers too: 2 minutes, 4,068 runs, nothing found
-- [ ] ADR: answers from a save
-- [ ] `SaveChunks`, `Session::with_save` and `Session::generated_chunks`
-- [ ] Structure answers from the save, in `locate_structure` and `structures_in`, with their source
+- [x] ADR: answers from a save ([0071](../adr/0071-answers-from-a-save.md))
+- [x] `SaveChunks` (from `SaveReport::chunks`), `Session::with_save` and `SaveChunks::generated_in` (on the save, not the session: it needs no seed)
+- [x] Structure answers from the save, in `locate_structure` and `structures_in`, with their source (`StructureStart::from_save`), through `spyglass_structure::StoredStarts` in `Starts::select`
 - [ ] Containers' save state in `containers_in`, `containers_holding` and `nearest_container`, chest minecarts included
 - [ ] The map layer in `Session::render_with`, render.md, and `spyglass render --generated`
 - [ ] The viewer's Generated toggle, and the save's answers in its panels
@@ -81,6 +81,7 @@ Answers that come from a save rather than from prediction are a correctness poli
 
 ## Notes
 
+- 2026-11-11: the saves on this machine agree with the predictions: in the four answerable 26.3 saves with no older chunks, all 200 structure starts saved within 48 chunks of the spawn origin are certain predicted starts of the same structure, and no certain prediction in a chunk they hold is missing (`saved_structure_starts_are_the_predicted_ones`, ignored). They're Fabric profiles, so they carry the modded and data-pack warnings, which the test allows.
 - 2026-11-11: the bytecode (26.3) answered the open questions. `StructureCheck.tryLoadFromStorage` reads no status and has no data-version cut-off: any stored chunk is data-fixed and its `structures.starts` decides, an empty compound meaning none; only a chunk not on disk, or one with no `starts` compound, is predicted. `ChunkMap.save` never writes an `empty` chunk without a valid start. So the save's answer is the game's for every chunk on disk except pre-1.18 ones (`Level.Structures.Starts`), whose starts the game reads through data fixers that rename structures by biome (village to `village_plains` and so on); spyglass marks those `Legacy` and doesn't answer from them.
 - 2026-11-11: the scan with the index costs what it did: `world info` on the 4.6 GB save took 5.7 to 7.4 s before and 5.9 to 6.3 s after, alternating, with byte-identical JSON. Status strings are kept per chunk (a few MB on that save); intern them if memory matters in the viewer.
 - 2026-11-11: drafted. The milestone's idea came from MCToolKit's chunk map and pruner; that the game itself answers `/locate` from saved starts is what makes the save's answer the right one rather than an extra, and is the first thing to confirm.

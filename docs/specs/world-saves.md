@@ -105,6 +105,7 @@ Saves are untrusted input, so reads are capped well above anything the game writ
 - NBT files (`level.dat`, player and world-gen settings files): 64 MiB, both on disk and after decompression, and 64 MiB of memory for the tree they're read into. More is an error.
 - Region files: no limit, since each chunk is read on its own, at most its 255 sectors.
 - One chunk, or one `.mcc` file: 32 MiB, both stored and after decompression. Larger chunks are unreadable.
+- A chunk read whole, for its starts and block entities (`chunk::read`, `chunk::read_entities`): 256 MiB of memory for its tree. More is an error, and the chunk is answered as one the save doesn't hold.
 - Data pack folders are walked without following symbolic links. So `spyglass world info` scans by default, and `locate --world` doesn't.
 
 ## Finding saves

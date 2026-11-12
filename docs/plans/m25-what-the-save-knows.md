@@ -72,12 +72,12 @@ Answers that come from a save rather than from prediction are a correctness poli
 
 ## Durable outputs
 
-- [ ] world-saves.md: the chunk index, structure starts and containers in saves, the limits for whole-chunk reads
-- [ ] render.md: the Generated layer
-- [ ] locate.md and loot.md: answers from a save
-- [ ] cli-json.md: the source fields
-- [ ] An ADR: answers from a save
-- [ ] The user guide
+- [x] world-saves.md: the chunk index, structure starts and containers in saves, the limits for whole-chunk reads
+- [x] render.md: the Generated layer
+- [x] locate.md and loot.md: answers from a save
+- [x] cli-json.md: the source fields
+- [x] An ADR: answers from a save
+- [x] The user guide
 
 ## Notes
 

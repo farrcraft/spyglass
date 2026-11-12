@@ -251,6 +251,7 @@ pub(crate) fn feature_json(f: &Feature) -> json::FeatureAnswer<'_> {
             set: &s.set,
             structures: &s.structures,
             certain: s.certain,
+            source: if s.from_save { "save" } else { "seed" },
         }),
         Feature::Placed(f) => json::FeatureAnswer::Feature(json::FeatureHit::new(f, None)),
         Feature::Container(c) => json::FeatureAnswer::Container(json::Container::new(c, None)),

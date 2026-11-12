@@ -20,6 +20,7 @@ Drag to pan, and scroll to zoom around the pointer, or use the arrow keys and `+
 - **At the surface**, under Biomes, and **Relief shading**, under Overlays: each column's biome at its own height, and the map shaded by terrain height. Each pixel needs its column's height, so both fill in slowly, and more slowly the further out you zoom: a screen takes a few seconds at 4 blocks per pixel and up to a minute or so from 32 out. The quicker biomes at **Height** show while they're worked out.
 - **Structures** to mark. Hover a marker for what it is.
 - **Tied biome cells**, **slime chunks** and **the world spawn**.
+- **Generated chunks**, with one of your worlds open, at 16 blocks per pixel or closer: the chunks it has generated, magenta, fainter where generated partway, amber where an older version generated them. Structures and loot in those chunks come from your world ([your own worlds](your-worlds.md#what-the-world-already-holds)): a structure there is listed as **Saved**, and a container's window says whether it's been opened and what it holds now.
 - **Confirm with terrain** (on by default) decides structure markers and locates with the seed's terrain, as the game does, and up close draws the bounds of villages, other jigsaw structures and mineshafts.
 
 Some layers appear only when you zoom in, since they cost more to draw:

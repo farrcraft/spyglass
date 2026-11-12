@@ -21,9 +21,9 @@ use std::thread;
 
 use eframe::egui;
 use spyglass::{
-    BiomeMap, CarvingMap, DEFAULT_MAP_Y, FeatureQuery, FoundContainer, FoundFeature, HeightMap,
-    ItemQuery, Layers, MAX_SLIME_SCALE, MapFeatures, Session, StructureLayout, StructureQuery,
-    StructureStart, UndergroundMap,
+    BiomeMap, CarvingMap, DEFAULT_MAP_Y, FeatureQuery, FoundContainer, FoundFeature,
+    GeneratedChunk, HeightMap, ItemQuery, Layers, MAX_SLIME_SCALE, MapFeatures, Session,
+    StructureLayout, StructureQuery, StructureStart, UndergroundMap,
 };
 
 use crate::timing;
@@ -137,6 +137,8 @@ pub struct TileData {
     pub underground: Option<Box<UndergroundMap>>,
     /// Slime chunks, at scales where they're drawn.
     pub slime_chunks: Vec<[i32; 2]>,
+    /// The session's save's generated chunks, at the same scales; empty without a save.
+    pub generated: Vec<GeneratedChunk>,
 }
 
 /// What a job computes.
@@ -185,7 +187,7 @@ pub struct Job {
 /// What a job computed, by the kind of job.
 pub enum Output {
     /// A tile's biomes and the layers drawn with them.
-    Biomes(TileData),
+    Biomes(Box<TileData>),
     /// The structure starts whose marker centre is on the tile, in drawing order.
     Markers(Vec<StructureStart>),
     /// The features whose marker centre is on the tile, in drawing order.
@@ -380,12 +382,23 @@ fn compute(job: &Job, carvings: &Carvings) -> Result<Output, String> {
                 } else {
                     Vec::new()
                 };
-            Ok(Output::Biomes(TileData {
+            let generated = if area.scale <= MAX_SLIME_SCALE && job.session.save().is_some() {
+                features(Layers {
+                    biomes: false,
+                    generated: true,
+                    ..Layers::default()
+                })?
+                .generated
+            } else {
+                Vec::new()
+            };
+            Ok(Output::Biomes(Box::new(TileData {
                 biomes,
                 heights,
                 underground,
                 slime_chunks,
-            }))
+                generated,
+            })))
         }
         JobKey::Markers(key) => {
             let layers = Layers {
@@ -504,6 +517,8 @@ pub struct Style {
     pub slime_chunks: bool,
     /// Shade by the tile's heights, where it has them.
     pub relief: bool,
+    /// Draw a save's generated chunks, where the tile has them.
+    pub generated: bool,
 }
 
 /// A computed tile and its texture in some style.
@@ -582,9 +597,19 @@ impl<K: Copy + Eq + Hash, V> Cache<K, V> {
 }
 
 /// Slime chunks as the library's features, for `Image::draw_features`.
-pub fn slime_features(data: &TileData) -> MapFeatures {
+/// The chunk overlays `style` draws on a tile: its slime chunks and its save's generated chunks.
+pub fn chunk_features(data: &TileData, style: &Style) -> MapFeatures {
     MapFeatures {
-        slime_chunks: data.slime_chunks.clone(),
+        slime_chunks: if style.slime_chunks {
+            data.slime_chunks.clone()
+        } else {
+            Vec::new()
+        },
+        generated: if style.generated {
+            data.generated.clone()
+        } else {
+            Vec::new()
+        },
         ..MapFeatures::default()
     }
 }

@@ -54,6 +54,8 @@ pub struct Hit {
     /// Whether the game certainly finds it: otherwise it's a candidate that depends on terrain,
     /// a tied biome or the platform.
     pub certain: bool,
+    /// Whether it's the open world's own: a structure start read from a chunk the save holds.
+    pub saved: bool,
     /// The distance `/locate` prints.
     pub blocks_away: i32,
     /// Which answer a structure's certain hit is: "Nearest", "/locate's answer" or both.
@@ -90,6 +92,7 @@ fn structure_hits(found: &spyglass::StructureLocate, answer: &'static str) -> Ve
             z: h.start.position[2],
             what: h.start.structures.join(" or "),
             certain: h.start.certain,
+            saved: h.start.from_save,
             blocks_away: h.blocks_away,
             answer: (found.certain_answer == Some(i)).then_some(answer),
             place: Place {
@@ -187,6 +190,7 @@ pub fn run(
                         format!("{} (tied: {})", h.biome.biome, h.biome.tied.join(", "))
                     },
                     certain: h.certain,
+                    saved: false,
                     blocks_away: h.blocks_away,
                     answer: None,
                     place: Place {
@@ -235,6 +239,7 @@ pub fn run(
                         z: c.position[2],
                         what: format!("{} in {by}", spyglass::display_name(&c.holder)),
                         certain: c.contents_certain(),
+                        saved: false,
                         blocks_away: away(c),
                         answer: c.contents_certain().then_some("Nearest"),
                         place: Place {
@@ -295,6 +300,7 @@ pub fn run(
                     z: f.position[2],
                     what: icons::feature_name(&f.feature),
                     certain: f.certain,
+                    saved: false,
                     blocks_away: away(f),
                     answer: f.certain.then_some("Nearest"),
                     place: feature_place(f),

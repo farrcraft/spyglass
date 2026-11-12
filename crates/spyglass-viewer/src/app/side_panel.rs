@@ -127,6 +127,7 @@ impl App {
             highlight: self.settings.highlight.clone(),
             ties: self.settings.ties,
             slime_chunks: self.settings.slime_chunks && self.slime_allowed(),
+            generated: self.settings.generated && self.generated_allowed(),
             spawn: self.settings.spawn && self.spawn_allowed(),
             confirm: self.settings.confirm,
             relief: self.settings.relief && terrain,
@@ -205,7 +206,9 @@ impl App {
                     Vec::new()
                 },
                 slime_chunks: export.slime_chunks && export.area.scale <= spyglass::MAX_SLIME_SCALE,
-                generated: false,
+                generated: export.generated
+                    && export.area.scale <= spyglass::MAX_SLIME_SCALE
+                    && session.save().is_some(),
                 spawn: export.spawn,
                 confirm: export.confirm,
                 relief: export.relief,
@@ -485,6 +488,19 @@ impl App {
         } else if !slime_visible {
             style::hint(ui, "Zoom to 1:16 or closer to see them.");
         }
+        let generated_here = self.generated_allowed();
+        ui.add_enabled(
+            generated_here && slime_visible,
+            egui::Checkbox::new(&mut self.settings.generated, "Generated chunks"),
+        )
+        .on_hover_text(
+            "The chunks your world has generated: magenta, fainter where generated partway,              amber where an older version generated them.",
+        );
+        if !generated_here {
+            style::hint(ui, "Open a world to see its chunks.");
+        } else if !slime_visible {
+            style::hint(ui, "Zoom to 1:16 or closer to see them.");
+        }
         ui.checkbox(&mut self.settings.show_done, "Done things")
             .on_hover_text("Structures, pins and markers you've marked done, dimmed.");
         ui.add_enabled(
@@ -750,7 +766,10 @@ fn hit_table(ui: &mut egui::Ui, id: &str, hits: &[locate::Hit]) -> Option<[i32; 
                     go = Some([hit.x, hit.z]);
                 }
                 ui.label(style::mono(hit.blocks_away.to_string()));
-                if hit.certain {
+                if hit.saved {
+                    ui.colored_label(style::GOOD, "Saved")
+                        .on_hover_text("Your world has generated it: it's there.");
+                } else if hit.certain {
                     ui.colored_label(style::GOOD, "Certain");
                 } else {
                     ui.colored_label(style::MUTED, "Candidate");

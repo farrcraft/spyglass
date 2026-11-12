@@ -3,7 +3,7 @@
 
 use std::collections::HashSet;
 
-use spyglass::Outcome;
+use spyglass::{InSave, Outcome};
 
 use super::markers_panel::MenuTarget;
 use super::search_panel::Opened;
@@ -198,7 +198,7 @@ impl App {
             match (finished, result) {
                 (JobKey::Biomes(tile_key), result) if tile_key.source == source => {
                     let data = result.and_then(|out| match out {
-                        Output::Biomes(data) => Ok(data),
+                        Output::Biomes(data) => Ok(*data),
                         _ => Err("not a biome tile".to_string()),
                     });
                     self.cache.insert(tile_key, Entry::new(data));
@@ -1053,8 +1053,8 @@ impl App {
                         if let Some(underground) = &data.underground {
                             image.draw_underground(underground, &key.underground.layers());
                         }
-                        if style.slime_chunks {
-                            image.draw_features(data.biomes.area(), &slime_features(data));
+                        if style.slime_chunks || style.generated {
+                            image.draw_features(data.biomes.area(), &chunk_features(data, style));
                         }
                         let texture = ctx.load_texture(
                             format!("{key:?}"),
@@ -1330,13 +1330,42 @@ impl App {
                         });
                 }
             }
-            ui.label(
-                egui::RichText::new(
-                    "As the seed generates it: a chest already opened in a world may hold \
-                         something else.",
-                )
-                .color(style::MUTED),
-            );
+            ui.separator();
+            match &c.saved {
+                Some(InSave::Unopened { as_predicted: true }) => {
+                    ui.colored_label(style::GOOD, "In your world: not opened yet");
+                }
+                Some(InSave::Unopened { .. }) => {
+                    ui.label("In your world: not opened yet, but not with this table and seed.");
+                }
+                Some(InSave::Filled { items }) if items.is_empty() => {
+                    ui.label("In your world: opened, and now empty.");
+                }
+                Some(InSave::Filled { items }) => {
+                    ui.label("In your world: opened. It holds now:");
+                    egui::Grid::new("saved slots").striped(true).show(ui, |ui| {
+                        for s in items {
+                            ui.label(style::mono(format!("{:>2}", s.slot)).color(style::MUTED));
+                            for line in contents_lines(std::slice::from_ref(s)) {
+                                ui.label(line);
+                            }
+                            ui.end_row();
+                        }
+                    });
+                }
+                Some(_) => {
+                    ui.label("In your world: gone, broken or built over.");
+                }
+                None => {
+                    ui.label(
+                        egui::RichText::new(
+                            "As the seed generates it: a chest already opened in a world may \
+                             hold something else.",
+                        )
+                        .color(style::MUTED),
+                    );
+                }
+            }
         });
         if !open {
             self.open_container = None;
@@ -1383,7 +1412,9 @@ pub(super) fn describe(ui: &mut egui::Ui, picked: &Picked<'_>, done: bool) {
                 start.chunk[0], start.chunk[1]
             )));
             ui.label(egui::RichText::new(&start.set).color(style::MUTED));
-            if start.certain {
+            if start.from_save {
+                ui.colored_label(style::GOOD, "Saved: your world has generated it");
+            } else if start.certain {
                 ui.colored_label(style::GOOD, "Certain");
             } else {
                 ui.label(

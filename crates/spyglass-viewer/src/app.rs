@@ -27,7 +27,7 @@ use crate::search::{self, FindRun, Match, Running, SearchSettings, SeedRun};
 use crate::style;
 use crate::tiles::{
     Cache, Entry, FeatureKey, Job, JobKey, LayoutKey, LootMark, MarkerKey, Output, Pool, Style,
-    TileKey, Underground, slime_features,
+    TileKey, Underground, chunk_features,
 };
 use crate::userdata::{Marker, Store, WorldKey};
 use crate::view::{TILE, Tile, View};
@@ -86,6 +86,8 @@ struct Settings {
     ties: bool,
     /// Draw slime chunks, up close.
     slime_chunks: bool,
+    /// Shade the chunks an open save has generated, up close.
+    generated: bool,
     /// Mark the world spawn.
     spawn: bool,
     /// Decide structure starts and locates with the seed's terrain.
@@ -129,6 +131,7 @@ impl Default for Settings {
             views: BTreeMap::new(),
             ties: false,
             slime_chunks: false,
+            generated: false,
             spawn: true,
             confirm: true,
             relief: false,
@@ -705,8 +708,16 @@ impl App {
         let Some(world) = self.world else {
             return;
         };
-        let session =
-            spyglass::parse_seed(&self.settings.seed).and_then(|seed| world.session(seed));
+        // A save of the seed shown answers where the game reads it (ADR 0071).
+        let session = spyglass::parse_seed(&self.settings.seed).and_then(|seed| {
+            let session = world.session(seed)?;
+            match &self.save {
+                Some(report) if report.save.seed == seed => {
+                    session.with_save(Arc::new(report.chunks(world.dimension_kind())))
+                }
+                _ => Ok(session),
+            }
+        });
         match session {
             Ok(session) => {
                 self.seed_error = None;
@@ -848,7 +859,17 @@ impl App {
                 && self.slime_allowed()
                 && self.settings.view.scale <= spyglass::MAX_SLIME_SCALE,
             relief: self.settings.relief && self.terrain_allowed(),
+            generated: self.settings.generated
+                && self.generated_allowed()
+                && self.settings.view.scale <= spyglass::MAX_SLIME_SCALE,
         }
+    }
+
+    /// Whether the session shown has a save, whose generated chunks can be drawn.
+    fn generated_allowed(&self) -> bool {
+        self.shown
+            .as_ref()
+            .is_some_and(|shown| shown.session.save().is_some())
     }
 
     /// The bundles folder, made absolute so it's clear where it is.

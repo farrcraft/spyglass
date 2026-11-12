@@ -54,23 +54,28 @@ fn locate_agrees_with_the_game() {
         let json: Value =
             serde_json::from_str(&std::fs::read_to_string(file.path()).unwrap()).unwrap();
         let seed = spyglass::parse_seed(json["seed"].as_str().unwrap()).unwrap();
-        // A save's cases go through the save, as `--world` does.
+        // A save's cases go through the save, as `--world` does, with the save's chunks.
         let from_save = json["world_dir"].as_str().map(|dir| {
             let report =
                 spyglass::inspect_save(dir, root.join("../bundles"), spyglass::Scan::Quick)
                     .unwrap();
             assert_eq!(report.save.seed, seed, "{dir}");
-            report.open_world(Dimension::Overworld).unwrap()
+            let world = report.open_world(Dimension::Overworld).unwrap();
+            (world, report)
         });
         // The save's Overworld goes through the save; its other dimensions aren't opened
         // from saves yet, so their cases are skipped.
         let sessions = Dimension::ALL.map(|d| {
             let world = &worlds[d as usize];
-            let world = match (&from_save, d) {
-                (Some(save), Dimension::Overworld) => save,
-                _ => world,
-            };
-            world.session(seed).unwrap()
+            match (&from_save, d) {
+                // Its chunks answer as the server's own do (ADR 0071).
+                (Some((save, report)), Dimension::Overworld) => save
+                    .session(seed)
+                    .unwrap()
+                    .with_save(std::sync::Arc::new(report.chunks(d)))
+                    .unwrap(),
+                _ => world.session(seed).unwrap(),
+            }
         });
         let session_for = |case: &Value| {
             let d = dimension(case);

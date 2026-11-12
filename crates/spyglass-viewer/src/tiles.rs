@@ -519,6 +519,8 @@ pub struct Style {
     pub relief: bool,
     /// Draw a save's generated chunks, where the tile has them.
     pub generated: bool,
+    /// Shade them by inhabited time.
+    pub inhabited: bool,
 }
 
 /// A computed tile and its texture in some style.
@@ -610,6 +612,7 @@ pub fn chunk_features(data: &TileData, style: &Style) -> MapFeatures {
         } else {
             Vec::new()
         },
+        inhabited: style.inhabited,
         ..MapFeatures::default()
     }
 }

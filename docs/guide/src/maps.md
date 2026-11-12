@@ -27,6 +27,7 @@ spyglass render --seed 12345 --scale 2 --loot minecraft:diamond -o diamonds.png
 | `--highlight <ids>`               | none               | Biomes to keep bright; the rest are dimmed.                                                                                                                   |
 | `--slime`, `--spawn`, `--ties`    | off                | Slime chunks (scales up to 16), the spawn's origin, tied biome cells.                                                                                         |
 | `--generated`                     | off                | With `--world`: the chunks your world has generated, magenta, fainter where generated partway, amber where an older version generated them (scales up to 16). |
+| `--inhabited`                     | off                | With `--generated`: shade each chunk by the time players spent near it, faint where they passed through and strong where they lived.                          |
 | `--no-biomes`                     | off                | A plain background under the other layers, or grey by height with `--relief`.                                                                                 |
 | `--pin <x,z[,#rrggbb]>`           | none               | A pin at a block, in a colour (amber if none). Repeat it for more.                                                                                            |
 

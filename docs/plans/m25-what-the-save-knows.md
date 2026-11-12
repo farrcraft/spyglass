@@ -57,10 +57,10 @@ Answers that come from a save rather than from prediction are a correctness poli
 - [x] Containers' save state in `containers_in`, `containers_holding` and `nearest_container`, chest minecarts included (`FoundContainer::saved`, `InSave`); `holds` and `contents_certain` follow the save
 - [x] The map layer in `Session::render_with`, render.md, and `spyglass render --generated` (`Layers::generated`, `MapFeatures::generated`, in JSON too). Magenta, not the blue first tried, which vanished over oceans
 - [x] The viewer's Generated toggle, and the save's answers in its panels (locate list, structure hover, container window). Not yet seen running: the screen was in use
-- [ ] CLI text and JSON for the answers' sources; cli-json.md. Structures done: `--world` sessions answer from the save, text says `saved`, JSON `source`; loot still to do
-- [ ] Inhabited-time shading, if it adds nothing measurable to the scan; otherwise dropped, with the reason in the notes
-- [ ] User guide: your-worlds.md for all three, and the viewer and CLI pages for the new toggle and flag
-- [ ] CHANGELOG
+- [x] CLI text and JSON for the answers' sources; cli-json.md: `saved` and `source` for structures, `saved` for containers, `generated` on maps
+- [x] Inhabited-time shading: `Layers::inhabited`, `--inhabited`, the viewer's **By time played**; the scan already reads it
+- [x] User guide: your-worlds.md for all three, and the viewer and CLI pages for the new toggle and flag
+- [x] CHANGELOG
 
 ## Verification
 
@@ -81,6 +81,7 @@ Answers that come from a save rather than from prediction are a correctness poli
 
 ## Notes
 
+- 2026-11-11: the game's `/locate` on a copy of "Modrinth Latest upgraded" (26.3; 19,761 of 21,636 Overworld chunks from older versions): all 100 cases agree with spyglass answering from the save, and with it all 580 26.3 cases. Without the save's chunks, one of its cases fails: the game's answer isn't among spyglass's hits, which stop at the candidate cap. The comparison test now answers a save's cases from its chunks.
 - 2026-11-11: containers in the same saves, 25 × 25 chunks around the spawn origin and the player: 455 unopened, every one with the predicted table and seed; 3 filled; 13 gone. Two of the gone ones were certain: a trial chambers corridor pot at (-526, -23, -320) in "Spyglass test", beside a saved pot at (-525, -23, -320) that spyglass also predicts, and a chamber dispenser at (1133, -25, -1332) in "Test", below a saved one at (1133, -20, -1332). Nobody went there. The saved blocks answer it: the pot's block is smooth basalt among calcite and amethyst (an amethyst geode), and the dispenser's is cobblestone over mossy cobblestone (a dungeon's wall). A neighbouring chunk's feature, decorated later, overwrote each, which is the case a certain container's `certain` already excludes ("for its chunk decorated before its neighbours"), and exactly what the save can settle. Also learned: 26.3 writes a block palette as a heterogeneous list, so a block without properties is `{"": "minecraft:deepslate"}`, not `{Name: ...}`; a block reader needs both. Matching is by position alone: block entity ids aren't block ids (copper chests share one).
 - 2026-11-11: the saves on this machine agree with the predictions: in the four answerable 26.3 saves with no older chunks, all 200 structure starts saved within 48 chunks of the spawn origin are certain predicted starts of the same structure, and no certain prediction in a chunk they hold is missing (`saved_structure_starts_are_the_predicted_ones`, ignored). They're Fabric profiles, so they carry the modded and data-pack warnings, which the test allows.
 - 2026-11-11: the bytecode (26.3) answered the open questions. `StructureCheck.tryLoadFromStorage` reads no status and has no data-version cut-off: any stored chunk is data-fixed and its `structures.starts` decides, an empty compound meaning none; only a chunk not on disk, or one with no `starts` compound, is predicted. `ChunkMap.save` never writes an `empty` chunk without a valid start. So the save's answer is the game's for every chunk on disk except pre-1.18 ones (`Level.Structures.Starts`), whose starts the game reads through data fixers that rename structures by biome (village to `village_plains` and so on); spyglass marks those `Legacy` and doesn't answer from them.

@@ -363,6 +363,7 @@ pub struct RenderLayers<'a> {
     pub loot: Option<&'a str>,
     pub slime_chunks: bool,
     pub generated: bool,
+    pub inhabited: bool,
     pub spawn: bool,
     pub confirm: bool,
     pub relief: bool,

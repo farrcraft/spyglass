@@ -52,6 +52,14 @@ const GENERATED_UNREADABLE: [u8; 3] = [0xff, 0x20, 0x20];
 /// A finished chunk's alpha, and a chunk generated partway's.
 const GENERATED_ALPHA: u32 = 112;
 const GENERATED_PARTIAL_ALPHA: u32 = 48;
+
+/// A generated chunk's alpha by the time players spent near it (`InhabitedTime`, in ticks):
+/// 32, plus 16 for each doubling of the minutes, up to 224 (about 170 hours). Integers, so every
+/// platform draws the same.
+fn inhabited_alpha(ticks: i64) -> u32 {
+    let minutes = u64::try_from(ticks / 1200).unwrap_or(0);
+    (32 + 16 * (minutes + 1).ilog2()).min(224)
+}
 const BLACK: [u8; 3] = [0, 0, 0];
 const WHITE: [u8; 3] = [0xff, 0xff, 0xff];
 /// The ring around a loot container holding the item asked for: gold.
@@ -198,6 +206,9 @@ pub struct Layers {
     /// The chunks the session's save has generated ([`Session::with_save`]), at scales up to
     /// [`MAX_SLIME_SCALE`]: an error for a session without a save.
     pub generated: bool,
+    /// Shade [`generated`](Self::generated) chunks by the time players spent near them
+    /// (`InhabitedTime`), instead of by whether they're finished.
+    pub inhabited: bool,
     /// The world spawn's origin.
     pub spawn: bool,
     /// Decide structure starts with the seed's terrain, as confirmed locate does, so markers
@@ -245,6 +256,7 @@ impl Default for Layers {
             loot: None,
             slime_chunks: false,
             generated: false,
+            inhabited: false,
             spawn: false,
             confirm: false,
             relief: false,
@@ -305,6 +317,8 @@ pub struct MapFeatures {
     pub slime_chunks: Vec<[i32; 2]>,
     /// The save's generated chunks overlapping the area, by z, then x.
     pub generated: Vec<GeneratedChunk>,
+    /// Whether [`generated`](Self::generated) is shaded by inhabited time ([`Layers::inhabited`]).
+    pub inhabited: bool,
     /// The spawn's origin, if its marker reaches the area.
     pub spawn: Option<SpawnOrigin>,
     /// The pins whose marker reaches the area, in the order given.
@@ -942,6 +956,7 @@ impl Session<'_> {
             let min = area.min.map(|m| m >> 4);
             let max = [0, 1].map(|d| saturate((end[d] - 1) >> 4));
             features.generated = save.generated_in(min, max);
+            features.inhabited = layers.inhabited;
         }
         if layers.spawn {
             let origin = self.spawn_origin();
@@ -1038,10 +1053,10 @@ impl Image {
                 c if c.older => GENERATED_OLDER,
                 _ => GENERATED,
             };
-            let alpha = if chunk.full || !chunk.readable {
-                GENERATED_ALPHA
-            } else {
-                GENERATED_PARTIAL_ALPHA
+            let alpha = match chunk.inhabited_time {
+                Some(ticks) if features.inhabited && chunk.readable => inhabited_alpha(ticks),
+                _ if chunk.full || !chunk.readable => GENERATED_ALPHA,
+                _ => GENERATED_PARTIAL_ALPHA,
             };
             self.blend_rect(min, max, colour, alpha);
         }
@@ -1082,6 +1097,18 @@ impl Image {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inhabited_time_shades_by_doublings_of_minutes() {
+        let minutes = |m: i64| inhabited_alpha(m * 1200);
+        assert_eq!(inhabited_alpha(0), 32);
+        assert_eq!(inhabited_alpha(-5), 32);
+        assert_eq!(minutes(1), 48);
+        assert_eq!(minutes(60), 112);
+        assert_eq!(minutes(600), 176);
+        assert_eq!(minutes(10_000), 224);
+        assert_eq!(inhabited_alpha(i64::MAX), 224);
+    }
 
     #[test]
     fn areas_are_checked() {

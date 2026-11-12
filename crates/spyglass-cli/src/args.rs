@@ -423,6 +423,10 @@ pub struct Render {
     /// partway, amber where an older version generated them (scales up to 16).
     #[arg(long)]
     pub generated: bool,
+    /// With `--generated`: shade each chunk by the time players spent near it, from faint
+    /// (passed through) to strong (lived in), instead of by whether it's finished.
+    #[arg(long, requires = "generated")]
+    pub inhabited: bool,
     /// Mark the world spawn's origin.
     #[arg(long)]
     pub spawn: bool,

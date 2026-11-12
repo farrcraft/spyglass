@@ -88,6 +88,8 @@ struct Settings {
     slime_chunks: bool,
     /// Shade the chunks an open save has generated, up close.
     generated: bool,
+    /// Shade them by the time players spent near them.
+    inhabited: bool,
     /// Mark the world spawn.
     spawn: bool,
     /// Decide structure starts and locates with the seed's terrain.
@@ -132,6 +134,7 @@ impl Default for Settings {
             ties: false,
             slime_chunks: false,
             generated: false,
+            inhabited: false,
             spawn: true,
             confirm: true,
             relief: false,
@@ -862,6 +865,7 @@ impl App {
             generated: self.settings.generated
                 && self.generated_allowed()
                 && self.settings.view.scale <= spyglass::MAX_SLIME_SCALE,
+            inhabited: self.settings.inhabited,
         }
     }
 

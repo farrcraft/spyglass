@@ -128,6 +128,7 @@ impl App {
             ties: self.settings.ties,
             slime_chunks: self.settings.slime_chunks && self.slime_allowed(),
             generated: self.settings.generated && self.generated_allowed(),
+            inhabited: self.settings.inhabited,
             spawn: self.settings.spawn && self.spawn_allowed(),
             confirm: self.settings.confirm,
             relief: self.settings.relief && terrain,
@@ -209,6 +210,7 @@ impl App {
                 generated: export.generated
                     && export.area.scale <= spyglass::MAX_SLIME_SCALE
                     && session.save().is_some(),
+                inhabited: export.inhabited,
                 spawn: export.spawn,
                 confirm: export.confirm,
                 relief: export.relief,
@@ -496,6 +498,15 @@ impl App {
         .on_hover_text(
             "The chunks your world has generated: magenta, fainter where generated partway,              amber where an older version generated them.",
         );
+        ui.indent("inhabited", |ui| {
+            ui.add_enabled(
+                generated_here && slime_visible && self.settings.generated,
+                egui::Checkbox::new(&mut self.settings.inhabited, "By time played"),
+            )
+            .on_hover_text(
+                "Shade each chunk by the time players spent near it: faint where they passed                  through, strong where they lived.",
+            );
+        });
         if !generated_here {
             style::hint(ui, "Open a world to see its chunks.");
         } else if !slime_visible {

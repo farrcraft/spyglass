@@ -821,6 +821,7 @@ fn the_real_world_renders_the_same_in_tiles() {
             loot: None,
             slime_chunks: scale <= spyglass::MAX_SLIME_SCALE,
             generated: false,
+            inhabited: false,
             spawn: true,
             confirm: true,
             relief: true,

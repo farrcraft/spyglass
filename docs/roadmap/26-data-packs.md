@@ -2,7 +2,7 @@
 
 - Status: Planned
 - Depends on: [04](completed/04-world-saves.md), [08](completed/08-dimensions-and-versions.md)
-- Plans: none yet
+- Plans: [m26-data-packs](../plans/m26-data-packs.md)
 
 ## Goal
 

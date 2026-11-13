@@ -44,6 +44,11 @@ impl TestBundle {
             jar_sha1: String::new(),
             java_version: String::new(),
             extractor: String::new(),
+            // 26.3's, so packs made for it apply.
+            pack_format: Some(spyglass_data::pack::PackFormat {
+                major: 121,
+                minor: 0,
+            }),
             files: listed,
         };
         let text = serde_json::to_string_pretty(&manifest).expect("a manifest serializes");

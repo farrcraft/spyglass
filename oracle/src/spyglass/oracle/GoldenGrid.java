@@ -135,9 +135,12 @@ final class GoldenGrid {
         return ByteBuffer.allocate(size).order(ByteOrder.LITTLE_ENDIAN);
     }
 
-    /** Ids and dimension names are plain ASCII identifiers; anything else is rejected, not escaped. */
+    /**
+     * Ids, dimension names and version names (a variant's has a {@code +}, as {@code 26.3+overrides})
+     * are plain ASCII identifiers; anything else is rejected, not escaped.
+     */
     private static String jsonString(String s) {
-        if (!s.matches("[A-Za-z0-9_.:/\\-]*")) {
+        if (!s.matches("[A-Za-z0-9_.:/+\\-]*")) {
             throw new IllegalArgumentException("unexpected characters in " + s);
         }
         return '"' + s + '"';

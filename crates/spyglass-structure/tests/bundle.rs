@@ -14,8 +14,7 @@ use spyglass_structure::{PlacementKind, Starts, StoredStarts, StructureSets};
 /// The bundle for the version under test.
 fn bundle() -> Bundle {
     let version = spyglass_oracle::version();
-    Bundle::open(spyglass_oracle::bundle_dir())
-        .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {version}"))
+    spyglass_oracle::open_bundle().unwrap_or_else(|e| panic!("{e}; run spyglass-extract {version}"))
 }
 
 /// Expects 26.3's structure sets exactly, so it checks 26.3 whatever the version under test.

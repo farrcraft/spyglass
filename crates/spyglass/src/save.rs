@@ -10,7 +10,7 @@ use serde_json::Value;
 use spyglass_data::bundle::Bundle;
 use spyglass_world::{PackContents, region};
 
-use crate::{BundleInfo, Dimension, Error, Game, PRESET, Result, World, bundles_in};
+use crate::{BundleInfo, Dimension, Error, Game, PRESET, Pack, Result, World, bundles_in};
 
 /// A position in a dimension, from a save.
 #[derive(Debug, Clone, PartialEq)]
@@ -57,18 +57,54 @@ pub struct SaveInfo {
     pub player: Option<SaveLocation>,
 }
 
-/// Why a data pack may change worldgen.
+/// Why spyglass can't apply an enabled data pack as the game does, or applies it with a caveat.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PackConcern {
-    /// It has worldgen files.
-    Worldgen {
-        /// How many.
-        files: usize,
-    },
-    /// A built-in feature pack or a mod's pack, whose files aren't in the save.
-    Uninspectable,
-    /// Its zip or folder is missing.
+    /// Its zip or folder is missing from `datapacks/`. The game drops it too, but the world may
+    /// have been generated with it.
     Missing,
+    /// A mod's pack, or a built-in pack the bundle doesn't have: its files aren't in the save.
+    Mod,
+    /// spyglass couldn't read it: larger than it reads, not a zip, or an I/O error.
+    Unreadable {
+        /// Why.
+        reason: String,
+    },
+    /// The game doesn't load it either, so it changes nothing; said so it isn't a surprise.
+    Skipped {
+        /// Why the game skips it.
+        reason: String,
+    },
+    /// Applied, but its formats don't include the version's: the game loads it anyway, and
+    /// marks it incompatible.
+    OtherFormat {
+        /// The formats it says it supports, e.g. `48.0-57.0`, or why they're unknown.
+        formats: String,
+        /// The version's format.
+        version: String,
+    },
+}
+
+impl PackConcern {
+    /// A short machine-readable kind, e.g. `missing`.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            PackConcern::Missing => "missing",
+            PackConcern::Mod => "mod",
+            PackConcern::Unreadable { .. } => "unreadable",
+            PackConcern::Skipped { .. } => "skipped",
+            PackConcern::OtherFormat { .. } => "other_format",
+        }
+    }
+
+    /// Whether answers may differ from the game's because of it: not for a pack the game skips
+    /// too, or one applied whatever its format.
+    pub fn inexact(&self) -> bool {
+        matches!(
+            self,
+            PackConcern::Missing | PackConcern::Mod | PackConcern::Unreadable { .. }
+        )
+    }
 }
 
 /// Something that makes spyglass's answers for a save inexact, or impossible.
@@ -93,7 +129,7 @@ pub enum SaveWarning {
     },
     /// The save doesn't generate structures: structure answers don't exist in it.
     StructuresDisabled,
-    /// A data pack that may change worldgen.
+    /// An enabled data pack spyglass can't apply, or applies with a caveat.
     DataPack {
         /// The pack, e.g. `file/terralith.zip`.
         name: String,
@@ -122,6 +158,12 @@ pub enum SaveWarning {
 }
 
 impl SaveWarning {
+    /// Whether the warning says only what spyglass did, not that answers may be inexact: a data
+    /// pack the game skips too, or one applied whatever its format.
+    pub fn is_note(&self) -> bool {
+        matches!(self, SaveWarning::DataPack { concern, .. } if !concern.inexact())
+    }
+
     /// Whether spyglass refuses to answer: in [`dimension`](Self::dimension), or in the whole
     /// save if the warning has none.
     pub fn blocks_answers(&self) -> bool {
@@ -198,19 +240,28 @@ impl fmt::Display for SaveWarning {
             }
             SaveWarning::StructuresDisabled => write!(f, "structures are turned off in this world"),
             SaveWarning::DataPack { name, concern } => match concern {
-                PackConcern::Worldgen { files } => {
+                PackConcern::Missing => write!(
+                    f,
+                    "data pack {name} is enabled but missing from datapacks/, so spyglass can't apply it"
+                ),
+                PackConcern::Mod => write!(
+                    f,
+                    "data pack {name} is from a mod, so spyglass can't apply it; it may change generation"
+                ),
+                PackConcern::Unreadable { reason } => {
                     write!(
                         f,
-                        "data pack {name} has {files} worldgen files and may change generation"
+                        "data pack {name} couldn't be read, so it isn't applied: {reason}"
                     )
                 }
-                PackConcern::Uninspectable => write!(
+                PackConcern::Skipped { reason } => write!(
                     f,
-                    "data pack {name} is built in or from a mod, so spyglass can't check whether it changes generation"
+                    "data pack {name} isn't loaded by the game either, so it changes nothing: {reason}"
                 ),
-                PackConcern::Missing => {
-                    write!(f, "data pack {name} is enabled but missing from datapacks/")
-                }
+                PackConcern::OtherFormat { formats, version } => write!(
+                    f,
+                    "data pack {name} is for formats {formats}, not this version's {version}; the game loads it anyway, and so does spyglass"
+                ),
             },
             SaveWarning::Modded => write!(
                 f,
@@ -244,6 +295,10 @@ pub struct SaveReport {
     pub bundle: Option<BundleInfo>,
     /// Everything that makes answers inexact or impossible, most serious first.
     pub warnings: Vec<SaveWarning>,
+    /// The enabled data packs spyglass applies, in load order (`docs/specs/data-packs.md`):
+    /// `file/` packs from the save's `datapacks/`, and built-in feature packs from the bundle.
+    /// [`open_world`](Self::open_world) and [`open_game`](Self::open_game) apply them.
+    pub packs: Vec<Pack>,
     /// Each dimension's folders and, after [`Scan::Chunks`], its chunks, by
     /// [`Dimension::index`].
     pub(crate) dimensions: [SaveDimension; 3],
@@ -282,10 +337,35 @@ impl SaveReport {
         (!reasons.is_empty()).then(|| reasons.join("; "))
     }
 
-    /// The save's `dimension` as a [`World`], or an error listing what blocks it.
+    /// With packs applied, each dimension spyglass would answer in that can't be opened with
+    /// them, and why: a pack holds a type spyglass doesn't support, or a file it can't read
+    /// (`docs/specs/data-packs.md`). Opening a dimension loads all of its data, so this takes as
+    /// long as a first query in each. Empty without packs.
+    pub fn pack_errors(&self) -> Vec<(Dimension, Error)> {
+        if self.packs.is_empty() {
+            return Vec::new();
+        }
+        let Ok(game) = self.open_game() else {
+            return Vec::new();
+        };
+        Dimension::ALL
+            .into_iter()
+            .filter(|&d| self.answerable_in(d) && game.coordinate_scale(d).is_ok())
+            .filter_map(|d| game.world(d).err().map(|e| (d, e)))
+            .collect()
+    }
+
+    /// The save's bundle with its packs applied.
+    fn bundle_with_packs(&self, bundle: &BundleInfo) -> Result<Bundle> {
+        Ok(Bundle::open(&bundle.dir)?.with_packs(&self.packs)?)
+    }
+
+    /// The save's `dimension` as a [`World`], with the save's packs applied, or an error listing
+    /// what blocks it. A pack holding a type spyglass doesn't support is an error naming its
+    /// file.
     pub fn open_world(&self, dimension: Dimension) -> Result<World> {
         match (&self.bundle, self.blocking(dimension)) {
-            (Some(bundle), None) => World::open_dimension(&bundle.dir, dimension),
+            (Some(bundle), None) => World::from_bundle(self.bundle_with_packs(bundle)?, dimension),
             (_, reasons) => Err(Error::Unsupported(reasons.unwrap_or_default())),
         }
     }
@@ -294,9 +374,10 @@ impl SaveReport {
     /// that something blocks, listing what. An error if no bundle has the save's version.
     pub fn open_game(&self) -> Result<Game> {
         match &self.bundle {
-            Some(bundle) => {
-                Game::open_blocked(&bundle.dir, Dimension::ALL.map(|d| self.blocking(d)))
-            }
+            Some(bundle) => Game::open_blocked(
+                self.bundle_with_packs(bundle)?,
+                Dimension::ALL.map(|d| self.blocking(d)),
+            ),
             None => Err(Error::Unsupported(
                 self.blocking(Dimension::Overworld).unwrap_or_default(),
             )),
@@ -451,20 +532,9 @@ fn inspect(inspector: &SaveInspector, dir: &Path, scan: Scan) -> Result<SaveRepo
     if !save.generate_structures {
         warnings.push(SaveWarning::StructuresDisabled);
     }
-    for (name, contents) in save.packs() {
-        let concern = match contents {
-            PackContents::Vanilla
-            | PackContents::Files {
-                worldgen_files: 0, ..
-            } => continue,
-            PackContents::Files { worldgen_files, .. } => PackConcern::Worldgen {
-                files: worldgen_files,
-            },
-            PackContents::Uninspectable => PackConcern::Uninspectable,
-            PackContents::Missing { .. } => PackConcern::Missing,
-        };
-        warnings.push(SaveWarning::DataPack { name, concern });
-    }
+    let opened = bundle.as_ref().map(|b| Bundle::open(&b.dir)).transpose()?;
+    let (packs, pack_warnings) = save_packs(&save, opened.as_ref());
+    warnings.extend(pack_warnings);
     if save.was_modded {
         warnings.push(SaveWarning::Modded);
     }
@@ -524,8 +594,59 @@ fn inspect(inspector: &SaveInspector, dir: &Path, scan: Scan) -> Result<SaveRepo
         },
         bundle,
         warnings,
+        packs,
         dimensions: dimensions.try_into().expect("one per dimension"),
     })
+}
+
+/// The save's enabled packs that spyglass applies, in load order, and a warning for each it
+/// can't apply or applies with a caveat. Built-in feature packs come from `bundle`; without
+/// one, they're left out, since the missing bundle already blocks answers.
+fn save_packs(
+    save: &spyglass_world::Save,
+    bundle: Option<&Bundle>,
+) -> (Vec<Pack>, Vec<SaveWarning>) {
+    let mut packs = Vec::new();
+    let mut warnings = Vec::new();
+    for (name, contents) in save.packs() {
+        let concern = match contents {
+            PackContents::Vanilla => continue,
+            PackContents::Files { pack } => {
+                packs.push(*pack);
+                continue;
+            }
+            PackContents::Other => match bundle.map(|b| b.feature_pack(&name)) {
+                Some(Ok(pack)) => {
+                    packs.push(pack);
+                    continue;
+                }
+                None => continue,
+                Some(Err(_)) => PackConcern::Mod,
+            },
+            PackContents::Missing { .. } => PackConcern::Missing,
+            PackContents::Skipped { reason, .. } => PackConcern::Skipped { reason },
+            PackContents::Unreadable { reason, .. } => PackConcern::Unreadable { reason },
+        };
+        warnings.push(SaveWarning::DataPack { name, concern });
+    }
+    if let Some(format) = bundle.and_then(Bundle::pack_format) {
+        for pack in packs.iter().filter(|p| !p.supports(format)) {
+            let meta = pack.meta();
+            let formats = match (meta.formats, &meta.formats_error) {
+                (Some(range), _) => format!("{} to {}", range.min, range.max),
+                (None, Some(error)) => format!("unknown ({error})"),
+                (None, None) => "unknown".into(),
+            };
+            warnings.push(SaveWarning::DataPack {
+                name: pack.name().to_string(),
+                concern: PackConcern::OtherFormat {
+                    formats,
+                    version: format.to_string(),
+                },
+            });
+        }
+    }
+    (packs, warnings)
 }
 
 /// A JSON value with ids namespaced and booleans as 0 or 1, so a save's NBT and a bundle's JSON

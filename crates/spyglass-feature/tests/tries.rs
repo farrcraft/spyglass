@@ -10,7 +10,6 @@ use std::path::Path;
 use rayon::prelude::*;
 use spyglass_biome::BiomeSource;
 use spyglass_blocks::BlockSettings;
-use spyglass_data::bundle::Bundle;
 use spyglass_feature::{Decorator, Drawn, FeatureSettings, Try};
 use spyglass_oracle::features::FeatureFile;
 use spyglass_rng::{RandomSource, WorldgenRandom};
@@ -31,7 +30,7 @@ struct Report {
 
 fn check(path: &Path) -> Report {
     let file = FeatureFile::read(path).unwrap();
-    let bundle = Bundle::open(spyglass_oracle::bundle_dir())
+    let bundle = spyglass_oracle::open_bundle()
         .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {}", file.version));
     let v1_21 = bundle
         .resource("worldgen/configured_feature", "minecraft:monster_room")

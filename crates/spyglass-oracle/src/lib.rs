@@ -333,20 +333,62 @@ pub fn version() -> String {
         })
 }
 
-/// `bundles/<version>` at the repo root, for [`version`], or for a version with a test pack
-/// (`<version>+testpack`), the merged bundle `cargo xtask oracle test-pack` writes in
-/// `target/oracle/bundles/`.
+/// The file in a variant's outputs, `oracle-out/<version>+<label>/`, that lists the data packs
+/// its harness runs loaded over the vanilla one, lowest first: a JSON array of paths
+/// (docs/specs/oracle.md, "Packs").
+pub const PACKS_FILE: &str = "packs.json";
+
+/// The game version of a version name: `26.3` for `26.3` and for a variant such as
+/// `26.3+testpack`.
+pub fn base_version(version: &str) -> &str {
+    version.split_once('+').map_or(version, |(base, _)| base)
+}
+
+/// `bundles/<version>` at the repo root, for [`version`]'s game version: a variant's packs are
+/// applied over the plain bundle ([`packs`]), not merged into one.
 pub fn bundle_dir() -> PathBuf {
+    repo_root().join("bundles").join(base_version(&version()))
+}
+
+/// The paths of the data packs [`version`] loads: none for a plain version, and for a variant,
+/// those its [`PACKS_FILE`] lists, lowest first.
+///
+/// # Panics
+///
+/// If a variant has no readable packs file.
+pub fn pack_paths() -> Vec<PathBuf> {
     let version = version();
-    let extracted = repo_root().join("bundles").join(&version);
-    if extracted.is_dir() {
-        return extracted;
+    if base_version(&version) == version {
+        return Vec::new();
     }
-    repo_root()
-        .join("target")
-        .join("oracle")
-        .join("bundles")
-        .join(version)
+    let file = default_dir().join(&version).join(PACKS_FILE);
+    let text = fs::read(&file).unwrap_or_else(|e| {
+        panic!(
+            "{version} has no {}: {e}; make it with cargo xtask oracle",
+            file.display()
+        )
+    });
+    serde_json::from_slice(&text).unwrap_or_else(|e| panic!("{}: {e}", file.display()))
+}
+
+/// The data packs [`version`] loads, read ([`pack_paths`]).
+///
+/// # Panics
+///
+/// If a pack can't be read.
+pub fn packs() -> Vec<spyglass_data::pack::Pack> {
+    pack_paths()
+        .into_iter()
+        .map(|path| {
+            spyglass_world::open_pack(&path)
+                .unwrap_or_else(|e| panic!("reading the pack {}: {e}", path.display()))
+        })
+        .collect()
+}
+
+/// [`bundle_dir`]'s bundle with [`packs`] applied, as the comparisons read it.
+pub fn open_bundle() -> Result<spyglass_data::bundle::Bundle, spyglass_data::bundle::BundleError> {
+    spyglass_data::bundle::Bundle::open(bundle_dir())?.with_packs(&packs())
 }
 
 /// `oracle-out/<version>` at the repo root, for [`version`]: the oracle's outputs to compare with.

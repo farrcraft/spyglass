@@ -47,7 +47,7 @@ fn locate_agrees_with_the_game() {
     let files = std::fs::read_dir(&dir)
         .unwrap_or_else(|e| panic!("{}: {e}; run cargo xtask oracle locate", dir.display()));
     let worlds = Dimension::ALL.map(|d| {
-        World::open_dimension(spyglass_oracle::bundle_dir(), d)
+        World::open_with_packs(spyglass_oracle::bundle_dir(), d, &spyglass_oracle::packs())
             .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {version}"))
     });
     for file in files.flatten() {
@@ -237,7 +237,12 @@ fn locate_agrees_with_the_game() {
 #[test]
 #[ignore = "needs oracle-out/<version>/structures and bundles/<version>: cargo xtask oracle structures"]
 fn layouts_agree_with_the_game() {
-    let world = World::open(spyglass_oracle::bundle_dir()).unwrap();
+    let world = World::open_with_packs(
+        spyglass_oracle::bundle_dir(),
+        Dimension::Overworld,
+        &spyglass_oracle::packs(),
+    )
+    .unwrap();
     let dir = spyglass_oracle::out_dir().join("structures/overworld");
     // One file is enough here: the structure crate compares every start.
     let file = std::fs::read_dir(&dir)
@@ -303,7 +308,7 @@ fn nearest_is_never_farther_than_the_game() {
     let files = std::fs::read_dir(&dir)
         .unwrap_or_else(|e| panic!("{}: {e}; run cargo xtask oracle locate", dir.display()));
     let worlds = Dimension::ALL.map(|d| {
-        World::open_dimension(spyglass_oracle::bundle_dir(), d)
+        World::open_with_packs(spyglass_oracle::bundle_dir(), d, &spyglass_oracle::packs())
             .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {version}"))
     });
     let mut failures = Vec::new();

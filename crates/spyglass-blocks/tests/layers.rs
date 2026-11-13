@@ -8,7 +8,6 @@
 use rayon::prelude::*;
 use spyglass_blocks::BlockSettings;
 use spyglass_blocks::material::VeinPart;
-use spyglass_data::bundle::Bundle;
 use spyglass_terrain::Block;
 
 /// The chunks checked, far enough apart to see different terrain.
@@ -16,7 +15,7 @@ const CHUNKS: [[i32; 2]; 4] = [[0, 0], [7, -3], [-40, 25], [1250, -900]];
 const SEED: i64 = 1;
 
 fn settings(dimension: &str) -> BlockSettings {
-    let bundle = Bundle::open(spyglass_oracle::bundle_dir())
+    let bundle = spyglass_oracle::open_bundle()
         .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {}", spyglass_oracle::version()));
     BlockSettings::load(&bundle, "minecraft:normal", dimension).unwrap()
 }

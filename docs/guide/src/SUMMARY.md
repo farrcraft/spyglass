@@ -10,5 +10,6 @@
   - [Seed search](seed-search.md)
   - [Searching within a seed](search-in-seed.md)
   - [Your own worlds](your-worlds.md)
+  - [Data packs](data-packs.md)
 - [Reading the answers](answers.md)
 - [Troubleshooting](troubleshooting.md)

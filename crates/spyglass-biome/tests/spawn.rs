@@ -7,7 +7,6 @@
 
 use serde_json::Value;
 use spyglass_biome::{BiomeSource, SpawnPoint, SpawnTargets};
-use spyglass_data::bundle::Bundle;
 
 fn point(v: &Value) -> SpawnPoint {
     let p = &v["position"];
@@ -29,7 +28,7 @@ fn spawn_origin_matches_the_game() {
         let Ok(files) = std::fs::read_dir(&dir) else {
             continue;
         };
-        let bundle = Bundle::open(spyglass_oracle::bundle_dir())
+        let bundle = spyglass_oracle::open_bundle()
             .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {version}"));
         let source = BiomeSource::load(
             &bundle,

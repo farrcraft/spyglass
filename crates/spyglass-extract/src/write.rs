@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 use spyglass_data::bundle::{FORMAT, Kind, MANIFEST, Manifest, sha1_hex};
+use spyglass_data::pack::PackFormat;
 use zip::ZipArchive;
 use zip::result::ZipError;
 
@@ -25,6 +26,11 @@ pub const JAR_DIRS: &[&str] = &[
     "data/minecraft/tags/enchantment/",
     "data/minecraft/tags/instrument/",
 ];
+
+/// Where the jar keeps its built-in feature packs (`BuiltInPackSource`): one folder a pack, each
+/// laid out as a data pack. Each pack's `pack.mcmeta` and its files under [`JAR_DIRS`] are copied,
+/// at their jar paths, so a world that enables one can have it applied.
+pub const FEATURE_PACKS: &str = spyglass_data::bundle::FEATURE_PACKS;
 
 /// Data-generator reports copied into a bundle, relative to the generator's output directory and
 /// kept at the same path in the bundle.
@@ -102,6 +108,32 @@ pub struct GameVersion {
     pub id: String,
     /// The data version, e.g. 5023.
     pub world_version: u32,
+    /// The resource and data pack formats. Every version spyglass supports has them.
+    pub pack_version: Option<PackVersion>,
+}
+
+/// `version.json`'s `pack_version`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct PackVersion {
+    /// The data pack format's major part, e.g. 121.
+    pub data_major: u32,
+    /// Its minor part.
+    pub data_minor: u32,
+}
+
+/// Whether a jar entry is one a bundle keeps: under [`JAR_DIRS`], or a feature pack's
+/// `pack.mcmeta` or file under [`JAR_DIRS`] ([`FEATURE_PACKS`]).
+fn kept(name: &str) -> bool {
+    if JAR_DIRS.iter().any(|dir| name.starts_with(dir)) {
+        return true;
+    }
+    let Some((_pack, rest)) = name
+        .strip_prefix(FEATURE_PACKS)
+        .and_then(|rest| rest.split_once('/'))
+    else {
+        return false;
+    };
+    rest == "pack.mcmeta" || JAR_DIRS.iter().any(|dir| rest.starts_with(dir))
 }
 
 /// The game jar's `version.json`.
@@ -142,7 +174,8 @@ pub fn write(dest: &Path, sources: &Sources<'_>, replace: bool) -> Result<Manife
         .map_err(io_err(parent))?;
 
     let mut files = BTreeMap::new();
-    let data_version = copy_jar(sources, staging.path(), &mut files)?;
+    let version = copy_jar(sources, staging.path(), &mut files)?;
+    let data_version = version.world_version;
     for report in REPORTS {
         let from = sources.reports_dir.join(report);
         let bytes = fs::read(&from).map_err(|err| match err.kind() {
@@ -166,6 +199,10 @@ pub fn write(dest: &Path, sources: &Sources<'_>, replace: bool) -> Result<Manife
         jar_sha1: sources.jar_sha1.to_ascii_lowercase(),
         java_version: sources.java_version.to_string(),
         extractor: env!("CARGO_PKG_VERSION").to_string(),
+        pack_format: version.pack_version.map(|v| PackFormat {
+            major: v.data_major,
+            minor: v.data_minor,
+        }),
         files,
     };
     let mut json = serde_json::to_string_pretty(&manifest).expect("a manifest always serializes");
@@ -198,12 +235,12 @@ pub fn write(dest: &Path, sources: &Sources<'_>, replace: bool) -> Result<Manife
     Ok(manifest)
 }
 
-/// Copies every file under [`JAR_DIRS`] from the game jar and returns its data version.
+/// Copies every file a bundle keeps ([`kept`]) from the game jar and returns its `version.json`.
 fn copy_jar(
     sources: &Sources<'_>,
     root: &Path,
     files: &mut BTreeMap<String, String>,
-) -> Result<u32, WriteError> {
+) -> Result<GameVersion, WriteError> {
     let file = File::open(sources.game_jar).map_err(io_err(sources.game_jar))?;
     let mut jar = ZipArchive::new(file)?;
 
@@ -218,7 +255,7 @@ fn copy_jar(
     for i in 0..jar.len() {
         let mut entry = jar.by_index(i)?;
         let name = entry.name()?.into_owned();
-        if entry.is_dir() || !JAR_DIRS.iter().any(|dir| name.starts_with(dir)) {
+        if entry.is_dir() || !kept(&name) {
             continue;
         }
         if entry.enclosed_name().is_none() {
@@ -237,7 +274,7 @@ fn copy_jar(
             return Err(WriteError::Layout(format!("the game jar has no {dir}")));
         }
     }
-    Ok(version.world_version)
+    Ok(version)
 }
 
 /// Copies every file under the report directory `dir` (a bundle path ending in `/`) from the
@@ -312,7 +349,8 @@ mod tests {
     use std::io::{Cursor, Write};
     use zip::write::SimpleFileOptions;
 
-    const VERSION_JSON: &[u8] = br#"{"id": "26.3", "world_version": 5023, "stable": true}"#;
+    const VERSION_JSON: &[u8] = br#"{"id": "26.3", "world_version": 5023, "stable": true,
+        "pack_version": {"resource_major": 97, "resource_minor": 1, "data_major": 121, "data_minor": 0}}"#;
 
     fn jar(dir: &Path, files: &[(&str, &[u8])]) -> PathBuf {
         let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
@@ -355,6 +393,18 @@ mod tests {
                 ("data/minecraft/dimension_type/overworld.json", b"{}"),
                 ("data/minecraft/structure/igloo/top.nbt", b"\x1f\x8b"),
                 ("data/minecraft/recipe/bread.json", b"not copied"),
+                (
+                    "data/minecraft/datapacks/trade_rebalance/pack.mcmeta",
+                    b"{}",
+                ),
+                (
+                    "data/minecraft/datapacks/trade_rebalance/data/minecraft/loot_table/chests/a.json",
+                    b"{}",
+                ),
+                (
+                    "data/minecraft/datapacks/trade_rebalance/data/minecraft/villager_trade/x.json",
+                    b"not copied",
+                ),
                 ("net/minecraft/Main.class", b"not copied"),
             ],
         )
@@ -403,8 +453,17 @@ mod tests {
         assert_eq!(manifest.jar_sha1, "abcdef");
         assert_eq!(manifest.java_version, "25.0.3");
         assert_eq!(
+            manifest.pack_format,
+            Some(PackFormat {
+                major: 121,
+                minor: 0
+            })
+        );
+        assert_eq!(
             manifest.files.keys().collect::<Vec<_>>(),
             [
+                "data/minecraft/datapacks/trade_rebalance/data/minecraft/loot_table/chests/a.json",
+                "data/minecraft/datapacks/trade_rebalance/pack.mcmeta",
                 "data/minecraft/dimension_type/overworld.json",
                 "data/minecraft/enchantment/mending.json",
                 "data/minecraft/instrument/ponder_goat_horn.json",

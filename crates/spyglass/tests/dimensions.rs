@@ -21,7 +21,8 @@ fn dimensions_have_ids() {
 #[test]
 #[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
 fn each_dimension_opens() {
-    let nether = World::open_dimension(bundle(), Dimension::Nether).unwrap();
+    let nether =
+        World::open_with_packs(bundle(), Dimension::Nether, &spyglass_oracle::packs()).unwrap();
     assert_eq!(nether.dimension(), "minecraft:the_nether");
     assert_eq!(nether.coordinate_scale(), 8.0);
     assert_eq!(nether.biomes().len(), 5);
@@ -45,7 +46,7 @@ fn each_dimension_opens() {
     assert!(nether.structure_generates("minecraft:fortress"));
     assert!(!nether.structure_generates("minecraft:village_plains"));
     assert!(!nether.structure_generates("minecraft:no_such_thing"));
-    let end = World::open_dimension(bundle(), Dimension::End).unwrap();
+    let end = World::open_with_packs(bundle(), Dimension::End, &spyglass_oracle::packs()).unwrap();
     assert_eq!(end.dimension_kind(), Dimension::End);
     assert_eq!(end.coordinate_scale(), 1.0);
     assert_eq!(
@@ -74,7 +75,8 @@ fn each_dimension_opens() {
     };
     assert_eq!(height(&nether, [0, 0]), 128);
     assert_eq!(height(&end, [5000, 5000]), 0);
-    let overworld = World::open(bundle()).unwrap();
+    let overworld =
+        World::open_with_packs(bundle(), Dimension::Overworld, &spyglass_oracle::packs()).unwrap();
     assert_eq!(overworld.dimension_kind(), Dimension::Overworld);
     assert_eq!(overworld.coordinate_scale(), 1.0);
 }
@@ -82,8 +84,11 @@ fn each_dimension_opens() {
 #[test]
 #[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
 fn a_game_spans_the_dimensions() {
-    let game = spyglass::Game::open(bundle()).unwrap();
-    assert_eq!(game.version(), spyglass_oracle::version());
+    let game = spyglass::Game::open_with_packs(bundle(), &spyglass_oracle::packs()).unwrap();
+    assert_eq!(
+        game.version(),
+        spyglass_oracle::base_version(&spyglass_oracle::version())
+    );
     let (o, n) = (Dimension::Overworld, Dimension::Nether);
     assert_eq!(game.convert([-1001, 800], o, n).unwrap(), [-126, 100]);
     assert!(game.convert([0, 0], o, Dimension::End).is_err());

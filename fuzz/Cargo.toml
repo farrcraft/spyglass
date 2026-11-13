@@ -27,6 +27,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "pack"
+path = "fuzz_targets/pack.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "region"
 path = "fuzz_targets/region.rs"
 test = false

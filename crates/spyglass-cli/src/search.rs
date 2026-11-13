@@ -18,6 +18,7 @@ pub fn run(args: &Search) -> Result<()> {
         args.bundle.as_deref(),
         &args.bundles,
         args.game_version.as_deref(),
+        &args.packs,
     )?;
     crate::warn_unchecked(game.unchecked_version(), args.json);
     let text = match (&args.query, &args.query_file) {

@@ -77,12 +77,14 @@ pub use spyglass_data::bundle::{
     BUNDLES_ENV, Kind, app_bundles_dir, default_bundles_dir, user_bundles_dir,
 };
 pub use spyglass_data::dimension::Dimension;
+pub use spyglass_data::pack::{FormatRange, Pack, PackError, PackFormat, PackMeta};
 pub use spyglass_data::versions::{CHECKED, Checked};
 pub use spyglass_structure::LOCATE_RADIUS;
 pub use spyglass_terrain::Heightmap;
 /// Coarse timing of terrain, for finding where the time goes; not a stable interface.
 #[cfg(feature = "timing")]
 pub use spyglass_terrain::timing;
+pub use spyglass_world::open_pack;
 
 /// A search query's syntax tree, from [`SearchQuery::query`] (`docs/specs/search.md`).
 pub mod query {
@@ -478,7 +480,57 @@ impl World {
 
     /// `dimension` of the Default world preset, from the bundle in `dir`.
     pub fn open_dimension(dir: impl Into<PathBuf>, dimension: Dimension) -> Result<World> {
-        let bundle = Bundle::open(dir)?;
+        Self::from_bundle(Bundle::open(dir)?, dimension)
+    }
+
+    /// `dimension` of the Default world preset, from the bundle in `dir` with `packs` applied
+    /// over it, lowest first, as a world that enables them applies them
+    /// (`docs/specs/data-packs.md`). Every worldgen file the packs hold is loaded here, so a
+    /// type spyglass doesn't support is an error naming its file, not a failed query later.
+    pub fn open_with_packs(
+        dir: impl Into<PathBuf>,
+        dimension: Dimension,
+        packs: &[Pack],
+    ) -> Result<World> {
+        Self::from_bundle(Bundle::open(dir)?.with_packs(packs)?, dimension)
+    }
+
+    /// `dimension` of the Default world preset, from `bundle` and any packs applied to it. With
+    /// packs, everything loaded on first use otherwise (template pools, block settings,
+    /// features, loot) is loaded now, so what spyglass can't apply is found on opening.
+    pub(crate) fn from_bundle(bundle: Bundle, dimension: Dimension) -> Result<World> {
+        let world = Self::load(bundle, dimension)?;
+        if world.bundle.layers().is_empty() {
+            return Ok(world);
+        }
+        type Step = fn(&World) -> Result<()>;
+        let steps: [Step; 4] = [
+            |w| w.pools().map(drop),
+            |w| w.block_settings().map(drop),
+            |w| w.feature_world().map(drop),
+            |w| w.loot_world().map(drop),
+        ];
+        let mut plain = None;
+        for step in steps {
+            let Err(error) = step(&world) else {
+                continue;
+            };
+            // The packs' fault only if the bundle without them loads: a bundle missing a part
+            // (one extracted before it was added, or a test's) fails on first use, as it would
+            // without packs.
+            let plain = match &plain {
+                Some(plain) => plain,
+                None => plain.insert(Self::load(world.bundle.without_packs(), dimension)?),
+            };
+            if step(plain).is_ok() {
+                return Err(error);
+            }
+        }
+        Ok(world)
+    }
+
+    /// [`World::from_bundle`], loading only what every world loads on opening.
+    fn load(bundle: Bundle, dimension: Dimension) -> Result<World> {
         let id = dimension.id();
         // First, so that a preset without the dimension says so.
         let dimension_type = dimension_type(&bundle, id)?;
@@ -541,6 +593,14 @@ impl World {
     /// The game version, e.g. `26.3`.
     pub fn version(&self) -> &str {
         &self.bundle.manifest().version
+    }
+
+    /// The data packs applied over the bundle, lowest first: each one's name and content hash.
+    pub fn packs(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.bundle
+            .layers()
+            .iter()
+            .map(|layer| (layer.name.as_str(), layer.hash.as_str()))
     }
 
     /// Why this world's answers are unchecked, if they are (ADR 0039).

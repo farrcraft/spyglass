@@ -9,7 +9,7 @@ pub mod launchers;
 mod packs;
 pub mod region;
 
-pub use packs::PackContents;
+pub use packs::{PackContents, open_pack};
 
 use std::collections::BTreeMap;
 use std::io::{self, Read};

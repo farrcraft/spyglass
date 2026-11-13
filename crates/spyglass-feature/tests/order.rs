@@ -5,13 +5,12 @@
 //! `cargo test -p spyglass-feature --test order -- --ignored`.
 
 use spyglass_biome::BiomeSource;
-use spyglass_data::bundle::Bundle;
 use spyglass_feature::FeatureSettings;
 
 #[test]
 #[ignore = "needs a bundle: spyglass-extract"]
 fn every_dimension_sorts() {
-    let bundle = Bundle::open(spyglass_oracle::bundle_dir())
+    let bundle = spyglass_oracle::open_bundle()
         .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {}", spyglass_oracle::version()));
     let v1_21 = bundle
         .resource("worldgen/configured_feature", "minecraft:monster_room")

@@ -74,6 +74,8 @@ mimalloc = "0.1.52"
 png = "0.18.1"
 # Seed search runs on all cores (ADR 0021).
 rayon = "1.12.0"
+# Data packs' `filter` patterns, which are Java regexes (ADR 0072).
+regex-lite = "0.1.9"
 rfd = "0.17.2"
 # FxHash for the hot maps keyed by coordinates, where SipHash showed in profiles (ADR 0064).
 rustc-hash = "2.1.3"

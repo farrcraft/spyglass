@@ -14,8 +14,7 @@ use spyglass_terrain::{Aquifer, Block, BoundTerrain, Terrain, TerrainSettings};
 /// The bundle for the version under test (`spyglass_oracle::version`).
 fn bundle() -> Bundle {
     let version = spyglass_oracle::version();
-    Bundle::open(spyglass_oracle::bundle_dir())
-        .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {version}"))
+    spyglass_oracle::open_bundle().unwrap_or_else(|e| panic!("{e}; run spyglass-extract {version}"))
 }
 
 /// The harness's letters: `s` for the default block, else air, water or lava.

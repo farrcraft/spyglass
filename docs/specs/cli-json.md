@@ -34,7 +34,7 @@ Without `--world`, `warnings` is there only when the bundle's version is uncheck
 
 ## Warnings
 
-Each warning is `{kind, message}`: `message` is for people, `kind` one of `no_bundle`, `unsupported_generator`, `structures_disabled`, `data_pack`, `modded`, `older_chunks` or `unreadable_regions` ([world-saves.md](world-saves.md#warnings)), or `unchecked_version`: the bundle is for a game version this build wasn't checked against ([bundle-format.md](bundle-format.md#checked-versions)). In text mode, `unchecked_version` is a `warning:` line on stderr instead. A warning about one dimension (`unsupported_generator`, `older_chunks` and `unreadable_regions`) also has `dimension`, its id; one that blocks answers blocks them in that dimension only. New kinds may be added within format 1.
+Each warning is `{kind, message}`, and a `data_pack` warning also has `concern`: `missing`, `mod`, `unreadable`, `skipped` or `other_format` ([data-packs.md](data-packs.md#saves)). `message` is for people, `kind` one of `no_bundle`, `unsupported_generator`, `structures_disabled`, `data_pack`, `modded`, `older_chunks` or `unreadable_regions` ([world-saves.md](world-saves.md#warnings)), or `unchecked_version`: the bundle is for a game version this build wasn't checked against ([bundle-format.md](bundle-format.md#checked-versions)). In text mode, `unchecked_version` is a `warning:` line on stderr instead. A warning about one dimension (`unsupported_generator`, `older_chunks` and `unreadable_regions`) also has `dimension`, its id; one that blocks answers blocks them in that dimension only. New kinds may be added within format 1.
 
 ## `locate structure`
 
@@ -249,20 +249,22 @@ Each match has `position` (`{x, z}`), `distance` (from the place's centre, round
 
 `format`, `command` (`world info`), and the save:
 
-| Field                   | Type           | Meaning                                                                                                                                                      |
-| ----------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `name`                  | string         | The name in the world list.                                                                                                                                  |
-| `dir`                   | string         | The save's folder.                                                                                                                                           |
-| `data_version`          | int or null    | The data version it was last saved in; null before 1.9.                                                                                                      |
-| `version_name`          | string or null | e.g. `26.3`.                                                                                                                                                 |
-| `seed`                  | int            | The world seed.                                                                                                                                              |
-| `generate_structures`   | bool           | Whether structures generate.                                                                                                                                 |
-| `data_packs`            | array          | Enabled data packs, in load order.                                                                                                                           |
-| `spawn`, `player`       | object or null | `dimension` and `position` (`[x, y, z]`, numbers); `player` only in single-player saves.                                                                     |
-| `bundle`                | string or null | The bundle with the save's data version.                                                                                                                     |
-| `answerable`            | bool           | Whether spyglass answers for the save: no warning blocks answers.                                                                                            |
-| `answerable_dimensions` | array          | The ids of the dimensions spyglass answers for: those no warning blocks, if there's a bundle.                                                                |
-| `warnings`              | array          | [Warnings](#warnings), including the blocking kinds `no_bundle` and `unsupported_generator`. `older_chunks` and `unreadable_regions` only without `--quick`. |
+| Field                   | Type           | Meaning                                                                                                                                                        |
+| ----------------------- | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`                  | string         | The name in the world list.                                                                                                                                    |
+| `dir`                   | string         | The save's folder.                                                                                                                                             |
+| `data_version`          | int or null    | The data version it was last saved in; null before 1.9.                                                                                                        |
+| `version_name`          | string or null | e.g. `26.3`.                                                                                                                                                   |
+| `seed`                  | int            | The world seed.                                                                                                                                                |
+| `generate_structures`   | bool           | Whether structures generate.                                                                                                                                   |
+| `data_packs`            | array          | Enabled data packs, in load order.                                                                                                                             |
+| `applied_packs`         | array          | The packs spyglass applies, in load order, each `{name, hash, worldgen_files}` ([data-packs.md](data-packs.md#saves)).                                         |
+| `spawn`, `player`       | object or null | `dimension` and `position` (`[x, y, z]`, numbers); `player` only in single-player saves.                                                                       |
+| `bundle`                | string or null | The bundle with the save's data version.                                                                                                                       |
+| `answerable`            | bool           | Whether spyglass answers for the save: no warning blocks answers.                                                                                              |
+| `answerable_dimensions` | array          | The ids of the dimensions spyglass answers for: those no warning blocks, if there's a bundle.                                                                  |
+| `warnings`              | array          | [Warnings](#warnings), including the blocking kinds `no_bundle` and `unsupported_generator`. `older_chunks` and `unreadable_regions` only without `--quick`.   |
+| `pack_errors`           | array          | Only when there are some: `{dimension, message}` for each answerable dimension the applied packs can't be opened in, e.g. for a type spyglass doesn't support. |
 
 ## `world list`
 

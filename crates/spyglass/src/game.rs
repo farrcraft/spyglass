@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock, PoisonError};
 
 use spyglass_data::bundle::Bundle;
+use spyglass_data::pack::Pack;
 
 use crate::{Dimension, DimensionType, Error, Result, Session, World, dimension_type};
 
@@ -27,15 +28,19 @@ pub struct Game {
 impl Game {
     /// The bundle in `dir` (e.g. `bundles/26.3`).
     pub fn open(dir: impl Into<PathBuf>) -> Result<Game> {
-        Self::open_blocked(dir, [None, None, None])
+        Self::open_blocked(Bundle::open(dir)?, [None, None, None])
     }
 
-    /// The bundle in `dir`, refusing each dimension that has a reason in `blocked`.
-    pub(crate) fn open_blocked(
-        dir: impl Into<PathBuf>,
-        blocked: [Option<String>; 3],
-    ) -> Result<Game> {
-        let bundle = Bundle::open(dir)?;
+    /// The bundle in `dir` with `packs` applied over it, lowest first, as
+    /// [`World::open_with_packs`] applies them: each dimension's world loads everything the
+    /// packs could change the first time it's asked for.
+    pub fn open_with_packs(dir: impl Into<PathBuf>, packs: &[Pack]) -> Result<Game> {
+        Self::open_blocked(Bundle::open(dir)?.with_packs(packs)?, [None, None, None])
+    }
+
+    /// `bundle`'s game, with any packs applied to it, refusing each dimension that has a reason
+    /// in `blocked`.
+    pub(crate) fn open_blocked(bundle: Bundle, blocked: [Option<String>; 3]) -> Result<Game> {
         let mut scales = [None; 3];
         for dimension in Dimension::ALL {
             scales[dimension.index()] = match dimension_type(&bundle, dimension.id()) {
@@ -56,6 +61,14 @@ impl Game {
     /// The game version, e.g. `26.3`.
     pub fn version(&self) -> &str {
         &self.bundle.manifest().version
+    }
+
+    /// The data packs applied over the bundle, lowest first: each one's name and content hash.
+    pub fn packs(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.bundle
+            .layers()
+            .iter()
+            .map(|layer| (layer.name.as_str(), layer.hash.as_str()))
     }
 
     /// Why this game's answers are unchecked, if they are (ADR 0039).
@@ -82,7 +95,7 @@ impl Game {
         if let Some(world) = self.worlds[i].get() {
             return Ok(world);
         }
-        let world = World::open_dimension(self.bundle.dir(), dimension)?;
+        let world = World::from_bundle(self.bundle.clone(), dimension)?;
         Ok(self.worlds[i].get_or_init(|| world))
     }
 

@@ -340,6 +340,55 @@ impl<'a> Starts<'a> {
             .collect()
     }
 
+    /// [`starts_in`](Self::starts_in), with whether each chunk is certainly the set's, and for
+    /// a concentric-ring set also the chunks its tied or platform-dependent positions may be in
+    /// instead, as locate considers them: only ever uncertain. A start's own [`Selection`] says
+    /// what starts there if the chunk is the set's.
+    pub fn possible_starts_in(
+        &self,
+        set: usize,
+        min: [i32; 2],
+        max: [i32; 2],
+    ) -> Vec<([i32; 2], Selection, bool)> {
+        let Some(ring) = self.placements.ring_positions(set) else {
+            return self
+                .starts_in(set, min, max)
+                .into_iter()
+                .map(|(chunk, selection)| (chunk, selection, true))
+                .collect();
+        };
+        let inside =
+            |[x, z]: [i32; 2]| (min[0]..=max[0]).contains(&x) && (min[1]..=max[1]).contains(&z);
+        let mut chunks: Vec<([i32; 2], bool)> = Vec::new();
+        for position in ring {
+            let [x, z] = position.chunk;
+            if inside(position.chunk) && self.placements.is_structure_chunk(set, x, z) {
+                let exact = !position.tie_dependent && !position.platform_dependent;
+                chunks.push((position.chunk, exact));
+            }
+            chunks.extend(
+                position
+                    .alternatives
+                    .iter()
+                    .filter(|&&c| inside(c))
+                    .map(|&c| (c, false)),
+            );
+        }
+        // Ring positions can repeat; a chunk is certain if any position certainly puts it there.
+        let mut merged: Vec<([i32; 2], bool)> = Vec::new();
+        for (chunk, exact) in chunks {
+            match merged.iter_mut().find(|(c, _)| *c == chunk) {
+                Some((_, known)) => *known |= exact,
+                None => merged.push((chunk, exact)),
+            }
+        }
+        merged
+            .into_iter()
+            .map(|(chunk, exact)| (chunk, self.select(set, chunk), exact))
+            .filter(|(_, s, _)| !s.tries.is_empty())
+            .collect()
+    }
+
     /// The game's choice among set `set`'s structures in placement chunk `chunk`: a single entry
     /// directly; otherwise a weighted pick from `setLargeFeatureSeed(seed, x, z)`, removing each
     /// structure that fails and picking again from the same random.

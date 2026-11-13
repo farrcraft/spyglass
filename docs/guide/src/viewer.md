@@ -10,7 +10,7 @@ Drag to pan, and scroll to zoom around the pointer, or use the arrow keys and `+
 
 ## Seeds, saves and dimensions
 
-- **Seed or save:** type a seed and press Enter, or open a save from the launchers' list or any folder. A save opens on its player, in the player's dimension, with anything that makes its answers inexact listed (see [your own worlds](your-worlds.md)).
+- **Seed or save:** type a seed and press Enter, or open a save from the launchers' list or any folder. A save opens on its player, in the player's dimension, with its [data packs](data-packs.md) applied and named above the map, and anything that makes its answers inexact listed (see [your own worlds](your-worlds.md)).
 - **Dimension:** switch between the Overworld, the Nether and the End. Each keeps its own view. Slime chunks and the spawn are the Overworld's, and terrain layers aren't drawn in the Nether, whose surface is its ceiling.
 - **Game version:** **Version** in the toolbar picks one of the bundles you have, and **Add a game version** in **Settings** extracts another.
 

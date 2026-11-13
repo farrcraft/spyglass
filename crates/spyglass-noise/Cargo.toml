@@ -16,4 +16,5 @@ thiserror.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
+spyglass-data.workspace = true
 spyglass-oracle.workspace = true

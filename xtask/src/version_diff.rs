@@ -574,6 +574,7 @@ mod tests {
             jar_sha1: "0".repeat(40),
             java_version: "25".into(),
             extractor: "0.0.0".into(),
+            pack_format: None,
             files: hashes,
         };
         fs::write(

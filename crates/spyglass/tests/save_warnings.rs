@@ -89,41 +89,121 @@ fn a_default_world_has_no_warnings_and_opens() {
     assert_eq!(world.version(), "test");
 }
 
+const MCMETA: &str = r#"{"pack": {"description": "", "min_format": 121, "max_format": 121}}"#;
+
+/// Writes `text` to `path`, making its folders.
+fn put(path: &Path, text: &str) {
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, text).unwrap();
+}
+
 #[test]
 fn each_warning_is_raised() {
     let bundle = fixtures::overworld(&[], false);
     let inspector = SaveInspector::new(bundle.bundles()).unwrap();
     let dir = tempfile::tempdir().unwrap();
-    let pack = dir
-        .path()
-        .join("datapacks/terrain/data/x/worldgen/noise/a.json");
-    std::fs::create_dir_all(pack.parent().unwrap()).unwrap();
-    std::fs::write(&pack, "{}").unwrap();
+    let packs = dir.path().join("datapacks");
+    // A folder without pack.mcmeta isn't a pack to the game.
+    put(&packs.join("bare/data/x/worldgen/noise/a.json"), "{}");
+    put(
+        &packs.join("old/pack.mcmeta"),
+        r#"{"pack": {"description": "", "pack_format": 48}}"#,
+    );
+    put(&packs.join("bad.zip"), "not a zip");
     save(
         dir.path(),
         default_generator(),
         false,
-        &["vanilla", "file/terrain", "fabric"],
+        &[
+            "vanilla",
+            "file/bare",
+            "file/gone",
+            "file/bad.zip",
+            "fabric",
+            "file/old",
+        ],
         true,
     );
     let report = inspector.inspect(dir.path(), Scan::Quick).unwrap();
-    assert_eq!(
-        report.warnings,
-        [
-            SaveWarning::StructuresDisabled,
-            SaveWarning::DataPack {
-                name: "file/terrain".into(),
-                concern: PackConcern::Worldgen { files: 1 },
-            },
-            SaveWarning::DataPack {
-                name: "fabric".into(),
-                concern: PackConcern::Uninspectable,
-            },
-            SaveWarning::Modded,
-        ]
+    let concerns: Vec<(&str, &PackConcern)> = report
+        .warnings
+        .iter()
+        .filter_map(|w| match w {
+            SaveWarning::DataPack { name, concern } => Some((name.as_str(), concern)),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        matches!(
+            concerns.as_slice(),
+            [
+                ("file/bare", PackConcern::Skipped { .. }),
+                ("file/gone", PackConcern::Missing),
+                ("file/bad.zip", PackConcern::Unreadable { .. }),
+                ("fabric", PackConcern::Mod),
+                ("file/old", PackConcern::OtherFormat { .. }),
+            ]
+        ),
+        "{concerns:#?}"
     );
+    assert_eq!(report.warnings[0], SaveWarning::StructuresDisabled);
+    assert_eq!(report.warnings.last(), Some(&SaveWarning::Modded));
+    // The pack of another format is applied anyway, as the game applies it.
+    let applied: Vec<&str> = report.packs.iter().map(|p| p.name()).collect();
+    assert_eq!(applied, ["file/old"]);
     // These make answers inexact, not impossible.
     assert!(report.answerable());
+}
+
+#[test]
+fn a_saves_packs_are_applied() {
+    let bundle = fixtures::overworld(&[], false);
+    let inspector = SaveInspector::new(bundle.bundles()).unwrap();
+    // The fixture's noise settings with the temperature gradient turned round: desert west of
+    // x = 0, plains east of it.
+    let mut settings = bundle
+        .open()
+        .resource("worldgen/noise_settings", "overworld")
+        .unwrap();
+    let temperature = &mut settings["noise_router"]["temperature"];
+    let (from, to) = (
+        temperature["from_value"].clone(),
+        temperature["to_value"].clone(),
+    );
+    temperature["from_value"] = to;
+    temperature["to_value"] = from;
+    let dir = tempfile::tempdir().unwrap();
+    let pack = dir.path().join("datapacks/turned");
+    put(&pack.join("pack.mcmeta"), MCMETA);
+    put(
+        &pack.join("data/minecraft/worldgen/noise_settings/overworld.json"),
+        &settings.to_string(),
+    );
+    save(
+        dir.path(),
+        default_generator(),
+        true,
+        &["vanilla", "file/turned"],
+        false,
+    );
+    let report = inspector.inspect(dir.path(), Scan::Quick).unwrap();
+    assert_eq!(report.warnings, []);
+    assert_eq!(report.packs.len(), 1);
+    let biome = |world: &spyglass::World| world.session(1).unwrap().biome_at([500, 64, 0]).biome;
+    let world = report.open_world(spyglass::Dimension::Overworld).unwrap();
+    assert_eq!(biome(&world), "minecraft:plains");
+    assert_eq!(
+        world.packs().map(|(name, _)| name).collect::<Vec<_>>(),
+        ["file/turned"]
+    );
+    let game = report.open_game().unwrap();
+    assert_eq!(
+        biome(game.world(spyglass::Dimension::Overworld).unwrap()),
+        "minecraft:plains"
+    );
+    // Without the pack, the fixture's own.
+    let plain = spyglass::World::open(bundle.path()).unwrap();
+    assert_eq!(biome(&plain), "minecraft:desert");
 }
 
 #[test]
@@ -159,4 +239,30 @@ fn no_bundles_folder_means_no_bundle() {
         }]
     ));
     assert!(!report.answerable());
+}
+
+#[test]
+fn a_pack_spyglass_cant_apply_fails_on_opening() {
+    let bundle = fixtures::overworld(&[], false);
+    let dir = tempfile::tempdir().unwrap();
+    let pack = dir.path().join("datapacks/modded");
+    put(&pack.join("pack.mcmeta"), MCMETA);
+    put(
+        &pack.join("data/minecraft/worldgen/density_function/zero.json"),
+        r#"{"type": "mod:new"}"#,
+    );
+    save(
+        dir.path(),
+        default_generator(),
+        true,
+        &["vanilla", "file/modded"],
+        false,
+    );
+    let report = spyglass::inspect_save(dir.path(), bundle.bundles(), Scan::Quick).unwrap();
+    let error = report
+        .open_world(spyglass::Dimension::Overworld)
+        .err()
+        .expect("an unsupported type");
+    let text = error.to_string();
+    assert!(text.contains("zero") && text.contains("mod:new"), "{text}");
 }

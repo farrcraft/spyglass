@@ -73,7 +73,12 @@ fn bad_requests_fail_before_loading() {
 #[test]
 #[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
 fn loot_answers_are_the_library_s() {
-    let world = spyglass::World::open(spyglass_oracle::bundle_dir()).unwrap();
+    let world = spyglass::World::open_with_packs(
+        spyglass_oracle::bundle_dir(),
+        spyglass::Dimension::Overworld,
+        &spyglass_oracle::packs(),
+    )
+    .unwrap();
     let session = world.session(-1).unwrap();
     let [x, _, z] = MANSION;
     let (min, max) = ([x - 24, z - 24], [x + 24, z + 24]);

@@ -12,7 +12,6 @@ use std::path::Path;
 use rayon::prelude::*;
 use spyglass_biome::BiomeSource;
 use spyglass_blocks::BlockSettings;
-use spyglass_data::bundle::Bundle;
 use spyglass_feature::structures;
 use spyglass_feature::{
     Blocks, Decorator, Doubt, FeatureSettings, NeighbourBounds, Outcome, Placer, Reading, Region,
@@ -43,7 +42,7 @@ fn check(path: &Path) -> Report {
     if file.chunks.is_empty() {
         return report;
     }
-    let bundle = Bundle::open(spyglass_oracle::bundle_dir())
+    let bundle = spyglass_oracle::open_bundle()
         .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {}", file.version));
     let v1_21 = bundle
         .resource("worldgen/configured_feature", "minecraft:monster_room")

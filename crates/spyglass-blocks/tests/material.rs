@@ -10,7 +10,6 @@ use std::path::Path;
 
 use rayon::prelude::*;
 use spyglass_blocks::BlockSettings;
-use spyglass_data::bundle::Bundle;
 use spyglass_oracle::blocks::BlockFile;
 
 /// Blocks where the game's chunk with carvers disagrees with spyglass for a reason not yet
@@ -37,7 +36,7 @@ struct Report {
 /// Compares one file, with carvers if `carvers`.
 fn check(path: &Path, carvers: bool) -> Report {
     let file = BlockFile::read(path).unwrap();
-    let bundle = Bundle::open(spyglass_oracle::bundle_dir())
+    let bundle = spyglass_oracle::open_bundle()
         .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {}", file.version));
     let settings = BlockSettings::load(&bundle, "minecraft:normal", &file.dimension).unwrap();
     let generator = settings.generator(file.seed).unwrap();

@@ -75,7 +75,12 @@ fn containers(features: &[Feature]) -> Vec<&FoundContainer> {
 #[test]
 #[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
 fn loot_constraints_count_containers_holding() {
-    let world = World::open(spyglass_oracle::bundle_dir()).unwrap();
+    let world = World::open_with_packs(
+        spyglass_oracle::bundle_dir(),
+        spyglass::Dimension::Overworld,
+        &spyglass_oracle::packs(),
+    )
+    .unwrap();
     let start = Instant::now();
     for seed in SEEDS {
         let session = world.session(seed).unwrap();
@@ -125,7 +130,12 @@ fn loot_constraints_count_containers_holding() {
 #[test]
 #[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
 fn the_fast_path_agrees_with_evaluate_for_loot() {
-    let world = World::open(spyglass_oracle::bundle_dir()).unwrap();
+    let world = World::open_with_packs(
+        spyglass_oracle::bundle_dir(),
+        spyglass::Dimension::Overworld,
+        &spyglass_oracle::packs(),
+    )
+    .unwrap();
     // Each seed searched on its own, around its own container.
     for seed in SEEDS {
         let ([x, z], item) = probe(&world.session(seed).unwrap());
@@ -186,7 +196,12 @@ fn the_fast_path_agrees_with_evaluate_for_loot() {
 #[test]
 #[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
 fn find_loot_targets_skip_themselves() {
-    let world = World::open(spyglass_oracle::bundle_dir()).unwrap();
+    let world = World::open_with_packs(
+        spyglass_oracle::bundle_dir(),
+        spyglass::Dimension::Overworld,
+        &spyglass_oracle::packs(),
+    )
+    .unwrap();
     for seed in SEEDS {
         let session = world.session(seed).unwrap();
         let ([x, z], item) = probe(&session);
@@ -253,8 +268,12 @@ fn items(c: &GoldenContainer) -> Vec<String> {
 #[ignore = "needs the oracle's container golden files and a bundle: cargo xtask oracle containers"]
 fn loot_search_containers_are_the_game_s() {
     let version = spyglass_oracle::version();
-    let world = World::open(spyglass_oracle::bundle_dir())
-        .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {version}"));
+    let world = World::open_with_packs(
+        spyglass_oracle::bundle_dir(),
+        spyglass::Dimension::Overworld,
+        &spyglass_oracle::packs(),
+    )
+    .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {version}"));
     let files = spyglass_oracle::containers::files();
     let start = Instant::now();
     let (mut searched, mut confirmed) = (0, 0);

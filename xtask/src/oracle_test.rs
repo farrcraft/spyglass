@@ -57,11 +57,7 @@ impl Input {
                     .join("bundle.json")
                     .is_file();
             }
-            Input::Bundle => {
-                return BUNDLE_DIRS
-                    .iter()
-                    .any(|d| root.join(d).join(version).join("bundle.json").is_file());
-            }
+            Input::Bundle => return has_bundle(root, version),
             Input::Probe => "probe",
             Input::Biomes => "biomes",
             Input::Structures => "structures",
@@ -489,21 +485,49 @@ pub fn run(version: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-/// Where bundles are: extracted ones, and those `cargo xtask oracle test-pack` merges with the
-/// test pack (`spyglass_oracle::bundle_dir`).
-const BUNDLE_DIRS: [&str; 2] = ["bundles", "target/oracle/bundles"];
+/// Whether `version` has a bundle: its game version's in `bundles/`, and for a variant
+/// (`<version>+<label>`), the packs file its harness runs wrote (`spyglass_oracle::bundle_dir`,
+/// `spyglass_oracle::packs`).
+fn has_bundle(root: &Path, version: &str) -> bool {
+    let (base, variant) = match version.split_once('+') {
+        Some((base, _)) => (base, true),
+        None => (version, false),
+    };
+    root.join("bundles")
+        .join(base)
+        .join("bundle.json")
+        .is_file()
+        && (!variant
+            || root
+                .join("oracle-out")
+                .join(version)
+                .join("packs.json")
+                .is_file())
+}
 
-/// The game versions with a bundle, oldest data version first; a test pack's after its
-/// version's.
+/// The game versions with a bundle, oldest data version first, each followed by its variants
+/// with packs (`oracle-out/<version>+<label>/packs.json`), by name.
 fn bundled_versions(root: &Path) -> Vec<String> {
-    let mut found: Vec<(u32, String)> = BUNDLE_DIRS
-        .iter()
-        .filter_map(|d| std::fs::read_dir(root.join(d)).ok())
+    let mut found: Vec<(u32, String)> = std::fs::read_dir(root.join("bundles"))
+        .into_iter()
         .flatten()
         .flatten()
         .filter_map(|e| spyglass_data::bundle::read_manifest(&e.path()).ok())
         .map(|m| (m.data_version, m.version))
         .collect();
+    let variants: Vec<String> = std::fs::read_dir(root.join("oracle-out"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|name| name.contains('+') && has_bundle(root, name))
+        .collect();
+    for variant in variants {
+        let base = variant.split_once('+').map_or("", |(b, _)| b);
+        if let Some(&(data_version, _)) = found.iter().find(|(_, v)| v == base) {
+            found.push((data_version, variant));
+        }
+    }
     found.sort();
     found.into_iter().map(|(_, v)| v).collect()
 }

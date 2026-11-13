@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use spyglass::{
     BiomeQuery, BundleInfo, Dimension, Evaluation, FeatureQuery, FindOutcome, FoundContainer,
     FoundFeature, Game, Heightmap, Image, ItemQuery, LauncherSave, Layers, MAX_UNDERGROUND_SCALE,
-    SaveReport, Scan, SearchOutcome, SearchQuery, Session, SpawnOrigin, StructureLayout,
+    Pack, SaveReport, Scan, SearchOutcome, SearchQuery, Session, SpawnOrigin, StructureLayout,
     StructureQuery, StructureStart, World,
 };
 
@@ -196,31 +196,46 @@ impl<T: Send + 'static> Pending<T> {
     }
 }
 
-/// Games by bundle directory, kept for the whole run with every dimension they've loaded, so
+/// A game's key: its bundle directory, and the hashes of the data packs applied over it, lowest
+/// first (none for a seed, a save's for a save).
+type GameKey = (PathBuf, Vec<String>);
+
+/// Games by bundle and packs, kept for the whole run with every dimension they've loaded, so
 /// sessions and tile jobs can borrow their worlds from any thread. A run opens a handful at
 /// most.
-type Games = Arc<Mutex<HashMap<PathBuf, &'static Game>>>;
+type Games = Arc<Mutex<HashMap<GameKey, &'static Game>>>;
 
-/// `dimension` of the bundle in `dir`, loading it if no one has yet.
+/// The key of the bundle in `dir` with `packs` applied.
+fn game_key(dir: &Path, packs: &[Pack]) -> GameKey {
+    (
+        dir.to_path_buf(),
+        packs.iter().map(|p| p.hash().to_string()).collect(),
+    )
+}
+
+/// `dimension` of the bundle in `dir` with `packs` applied, loading it if no one has yet.
 fn open_world(
     games: &Games,
     dir: &Path,
+    packs: &[Pack],
     dimension: Dimension,
 ) -> Result<(&'static Game, &'static World), String> {
+    let key = game_key(dir, packs);
     let known = games
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
-        .get(dir)
+        .get(&key)
         .copied();
     let game = match known {
         Some(game) => game,
         None => {
-            let game: &'static Game =
-                Box::leak(Box::new(Game::open(dir).map_err(|e| e.to_string())?));
+            let game: &'static Game = Box::leak(Box::new(
+                Game::open_with_packs(dir, packs).map_err(|e| e.to_string())?,
+            ));
             *games
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
-                .entry(dir.to_path_buf())
+                .entry(key)
                 .or_insert(game)
         }
     };
@@ -228,9 +243,9 @@ fn open_world(
     Ok((game, world))
 }
 
-/// A world being loaded: its bundle and dimension.
+/// A world being loaded: its bundle and packs, and dimension.
 type Loading = (
-    (PathBuf, Dimension),
+    (GameKey, Dimension),
     Pending<Result<(&'static Game, &'static World), String>>,
 );
 
@@ -537,19 +552,27 @@ impl App {
         }
     }
 
-    /// Starts loading the dimension shown of a bundle in the background.
+    /// Starts loading the dimension shown of a bundle in the background, with the data packs
+    /// of the save shown if it's that bundle's.
     fn open(&mut self, ctx: &egui::Context, bundle: &BundleInfo) {
         self.settings.version = Some(bundle.version.clone());
-        let key = (bundle.dir.clone(), self.settings.dimension());
+        let packs: Vec<Pack> = self
+            .save
+            .as_ref()
+            .filter(|r| r.bundle.as_ref().is_some_and(|b| b.dir == bundle.dir))
+            .map(|r| r.packs.clone())
+            .unwrap_or_default();
+        let key = (game_key(&bundle.dir, &packs), self.settings.dimension());
         if self.loading.as_ref().is_some_and(|(k, _)| *k == key) {
             return;
         }
         let games = self.games.clone();
-        let (dir, dimension) = key.clone();
+        let dir = bundle.dir.clone();
+        let dimension = key.1;
         self.load_error = None;
         self.loading = Some((
             key,
-            Pending::spawn(ctx, move || open_world(&games, &dir, dimension)),
+            Pending::spawn(ctx, move || open_world(&games, &dir, &packs, dimension)),
         ));
     }
 
@@ -611,7 +634,7 @@ impl App {
 
     /// Picks up a finished world load.
     fn poll_loading(&mut self) {
-        let Some(((dir, _), pending)) = &self.loading else {
+        let Some((((dir, _), _), pending)) = &self.loading else {
             return;
         };
         let Some(result) = pending.poll() else {

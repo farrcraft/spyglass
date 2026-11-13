@@ -14,6 +14,7 @@ mod ci_scope;
 mod citations;
 mod code_diff;
 mod dist;
+mod fixture_pack;
 mod fuzz;
 mod guide;
 mod java_report;

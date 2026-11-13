@@ -662,8 +662,12 @@ mod tests {
     #[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
     fn features_are_the_same_on_any_number_of_threads() {
         let version = spyglass_oracle::version();
-        let world = World::open(spyglass_oracle::bundle_dir())
-            .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {version}"));
+        let world = World::open_with_packs(
+            spyglass_oracle::bundle_dir(),
+            crate::Dimension::Overworld,
+            &spyglass_oracle::packs(),
+        )
+        .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {version}"));
         let query = world.feature_query("minecraft:monster_room").unwrap();
         for seed in [0, 12_345] {
             for unlikely in [false, true] {

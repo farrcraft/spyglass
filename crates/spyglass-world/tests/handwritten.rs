@@ -269,6 +269,8 @@ fn touch(path: &Path) {
     std::fs::write(path, "{}").unwrap();
 }
 
+const MCMETA: &str = r#"{"pack": {"description": "", "min_format": 121, "max_format": 121}}"#;
+
 #[test]
 fn data_pack_contents() {
     let dir = tempfile::tempdir().unwrap();
@@ -276,7 +278,17 @@ fn data_pack_contents() {
     touch(&packs.join("terrain/data/x/worldgen/noise/a.json"));
     touch(&packs.join("terrain/overlay/data/x/tags/worldgen/biome/b.json"));
     touch(&packs.join("terrain/data/x/function/c.mcfunction"));
+    std::fs::write(
+        packs.join("terrain/pack.mcmeta"),
+        r#"{"pack": {"description": "", "min_format": 121, "max_format": 121},
+            "overlays": {"entries": [{"directory": "overlay", "min_format": 121, "max_format": 121}]}}"#,
+    )
+    .unwrap();
     touch(&packs.join("loot/data/x/loot_table/d.json"));
+    std::fs::write(packs.join("loot/pack.mcmeta"), MCMETA).unwrap();
+    touch(&packs.join("bare/data/x/worldgen/noise/a.json"));
+    touch(&packs.join("notzip.jar"));
+    touch(&packs.join("nometa/pack.mcmeta"));
     // A pack named outside datapacks/ isn't read, even when the path exists.
     touch(&dir.path().join("escape/data/x/worldgen/noise/e.json"));
     let save = save_with_packs(
@@ -288,30 +300,39 @@ fn data_pack_contents() {
             "file/gone.zip",
             "file/../escape",
             "bundle",
+            "file/bare",
+            "file/notzip.jar",
+            "file/nometa",
         ],
     );
     let contents: Vec<PackContents> = save.packs().into_iter().map(|(_, c)| c).collect();
+    let PackContents::Files { pack } = &contents[1] else {
+        panic!("{:?}", contents[1]);
+    };
+    assert_eq!((pack.name(), pack.worldgen_files()), ("file/terrain", 2));
+    let PackContents::Files { pack } = &contents[2] else {
+        panic!("{:?}", contents[2]);
+    };
+    assert_eq!((pack.name(), pack.worldgen_files()), ("file/loot", 0));
+    assert_eq!(contents[0], PackContents::Vanilla);
     assert_eq!(
-        contents,
+        contents[3..6],
         [
-            PackContents::Vanilla,
-            PackContents::Files {
-                path: packs.join("terrain"),
-                worldgen_files: 2
-            },
-            PackContents::Files {
-                path: packs.join("loot"),
-                worldgen_files: 0
-            },
             PackContents::Missing {
                 path: packs.join("gone.zip")
             },
             PackContents::Missing {
                 path: packs.join("../escape")
             },
-            PackContents::Uninspectable,
+            PackContents::Other,
         ]
     );
+    for skipped in &contents[6..] {
+        assert!(
+            matches!(skipped, PackContents::Skipped { .. }),
+            "{skipped:?}"
+        );
+    }
 }
 
 #[cfg(unix)]
@@ -320,15 +341,13 @@ fn data_pack_symlink_cycles_end() {
     let dir = tempfile::tempdir().unwrap();
     let pack = dir.path().join("datapacks/loop");
     touch(&pack.join("data/x/worldgen/noise/a.json"));
+    std::fs::write(pack.join("pack.mcmeta"), MCMETA).unwrap();
     std::os::unix::fs::symlink(&pack, pack.join("data/x/again")).unwrap();
     let save = save_with_packs(dir.path(), &["file/loop"]);
-    assert_eq!(
-        save.packs()[0].1,
-        PackContents::Files {
-            path: pack,
-            worldgen_files: 1
-        }
-    );
+    let PackContents::Files { pack } = &save.packs()[0].1 else {
+        panic!("not read");
+    };
+    assert_eq!(pack.worldgen_files(), 1);
 }
 
 #[test]

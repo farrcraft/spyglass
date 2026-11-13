@@ -7,7 +7,8 @@ use std::path::Path;
 use anyhow::Result;
 use serde::Serialize;
 use spyglass::{
-    Dimension, SaveLocation, SaveReport, SpawnOrigin, StructureLayout, UncheckedVersion,
+    Dimension, SaveLocation, SaveReport, SaveWarning, SpawnOrigin, StructureLayout,
+    UncheckedVersion,
 };
 
 /// The `--json` format version.
@@ -64,6 +65,9 @@ pub struct WorldRef {
 pub struct Warning {
     pub kind: &'static str,
     pub message: String,
+    /// For a `data_pack` warning, why (`PackConcern::kind`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub concern: Option<&'static str>,
     /// For a warning about one dimension.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dimension: Option<&'static str>,
@@ -76,6 +80,10 @@ pub fn warnings(report: &SaveReport) -> Vec<Warning> {
         .map(|w| Warning {
             kind: w.kind(),
             message: w.to_string(),
+            concern: match w {
+                SaveWarning::DataPack { concern, .. } => Some(concern.kind()),
+                _ => None,
+            },
             dimension: w.dimension().map(Dimension::id),
         })
         .collect()
@@ -92,6 +100,7 @@ pub fn all_warnings(
         all.get_or_insert_default().push(Warning {
             kind: unchecked.kind(),
             message: unchecked.to_string(),
+            concern: None,
             dimension: None,
         });
     }
@@ -417,12 +426,22 @@ pub struct Save<'a> {
     pub seed: i64,
     pub generate_structures: bool,
     pub data_packs: &'a [String],
+    pub applied_packs: Vec<AppliedPack<'a>>,
     pub spawn: Option<Location<'a>>,
     pub player: Option<Location<'a>>,
     pub bundle: Option<String>,
     pub answerable: bool,
     pub answerable_dimensions: Vec<&'static str>,
     pub warnings: Vec<Warning>,
+}
+
+/// A data pack spyglass applies to the save.
+#[derive(Serialize)]
+pub struct AppliedPack<'a> {
+    pub name: &'a str,
+    /// SHA-1 over the pack's files, to tell versions of a pack apart.
+    pub hash: &'a str,
+    pub worldgen_files: usize,
 }
 
 #[derive(Serialize)]
@@ -446,6 +465,15 @@ impl<'a> Save<'a> {
             seed: save.seed,
             generate_structures: save.generate_structures,
             data_packs: &save.enabled_packs,
+            applied_packs: report
+                .packs
+                .iter()
+                .map(|p| AppliedPack {
+                    name: p.name(),
+                    hash: p.hash(),
+                    worldgen_files: p.worldgen_files(),
+                })
+                .collect(),
             spawn: save.spawn.as_ref().map(location),
             player: save.player.as_ref().map(location),
             bundle: report.bundle.as_ref().map(|b| path(&b.dir)),
@@ -467,6 +495,16 @@ pub struct WorldInfo<'a> {
     pub command: &'static str,
     #[serde(flatten)]
     pub save: Save<'a>,
+    /// Dimensions the save's packs can't be applied in, and why.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub pack_errors: Vec<PackError>,
+}
+
+/// A dimension the save's data packs can't be applied in.
+#[derive(Serialize)]
+pub struct PackError {
+    pub dimension: &'static str,
+    pub message: String,
 }
 
 /// `world list`.
@@ -484,7 +522,7 @@ pub enum ListedSave<'a> {
     Read {
         launcher: &'a str,
         #[serde(flatten)]
-        save: Save<'a>,
+        save: Box<Save<'a>>,
     },
     Unreadable {
         launcher: &'a str,

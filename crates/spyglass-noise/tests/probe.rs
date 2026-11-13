@@ -7,8 +7,8 @@
 //! The bundle's noise files say which family the version has (ADR 0026): 26.3's `base_octave`
 //! form, sampled in `f32`, or 26.2's `firstOctave` form, the 1.21 family, sampled in `f64`.
 
+use spyglass_data::bundle::Bundle;
 use std::collections::HashMap;
-use std::path::Path;
 
 use serde_json::Value;
 use spyglass_noise::{
@@ -19,16 +19,12 @@ use spyglass_rng::{
     LegacyRandomSource, PositionalRandomFactory, RandomSource, XoroshiroRandomSource,
 };
 
-/// A noise's parameters from `bundles/<version>/data/<ns>/worldgen/noise/<path>.json`, in
-/// whichever form the file has. Only what the climate noises use; the real parser belongs to the
-/// density layer.
-fn parameters(bundle: &Path, id: &str) -> NormalNoiseParameters {
-    let (namespace, path) = id.split_once(':').expect("a namespaced id");
-    let file = bundle.join(format!("data/{namespace}/worldgen/noise/{path}.json"));
-    let json: Value = serde_json::from_slice(
-        &std::fs::read(&file).unwrap_or_else(|e| panic!("{}: {e}", file.display())),
-    )
-    .unwrap();
+/// A noise's parameters from the bundle, with the version's packs applied, in whichever form the
+/// file has. Only what the climate noises use; the real parser belongs to the density layer.
+fn parameters(bundle: &Bundle, id: &str) -> NormalNoiseParameters {
+    let json: Value = bundle
+        .resource("worldgen/noise", id)
+        .unwrap_or_else(|e| panic!("{id}: {e}"));
     let numbers = |v: &Value| -> Vec<f64> {
         v.as_array()
             .unwrap()
@@ -300,13 +296,8 @@ fn v1_21_case(
 fn every_noise_sample_matches_the_game() {
     let path = probe_file("noise.json");
     let file = ProbeFile::read(&path).unwrap();
-    let bundle = spyglass_oracle::bundle_dir();
-    assert!(
-        bundle.join("bundle.json").is_file(),
-        "no bundle at {}; run spyglass-extract {}",
-        bundle.display(),
-        file.version
-    );
+    let bundle = spyglass_oracle::open_bundle()
+        .unwrap_or_else(|e| panic!("no bundle for {}: {e}; run spyglass-extract", file.version));
 
     let mut perlins: HashMap<i64, PerlinNoise> = HashMap::new();
     let mut normals: HashMap<(String, i64, String), Normal> = HashMap::new();

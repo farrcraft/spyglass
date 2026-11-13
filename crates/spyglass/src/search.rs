@@ -1071,7 +1071,8 @@ mod tests {
     #[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
     fn the_fast_path_agrees_with_evaluate_on_the_real_world() {
         let dir = spyglass_oracle::bundle_dir();
-        let world = World::open(dir).unwrap();
+        let world =
+            World::open_with_packs(dir, Dimension::Overworld, &spyglass_oracle::packs()).unwrap();
         let queries = [
             "require 3 minecraft:swamp_hut within 1500 of 0,0\nprefer 2 #minecraft:village within 800 of 0,0",
             "require cluster 2 minecraft:swamp_hut within 300 of each other within 3000 of spawn",
@@ -1123,7 +1124,7 @@ mod tests {
     #[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
     fn the_fast_path_agrees_across_dimensions_on_the_real_game() {
         let dir = spyglass_oracle::bundle_dir();
-        let game = Game::open(dir).unwrap();
+        let game = Game::open_with_packs(dir, &spyglass_oracle::packs()).unwrap();
         let queries = [
             "require minecraft:fortress within 300 of spawn\nprefer minecraft:bastion_remnant within 200 of minecraft:fortress within 1000 of spawn",
             "require nether #minecraft:ruined_portal within 200 of spawn\nprefer #minecraft:village within 400 of spawn",

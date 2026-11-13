@@ -7,15 +7,21 @@ use std::ffi::OsString;
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
+
+use crate::pack::{Layer, Pack, PackFormat};
 
 /// The bundle format this build reads, and `spyglass-extract` writes.
 pub const FORMAT: u32 = 1;
 
 /// The manifest's file name, at the bundle root.
 pub const MANIFEST: &str = "bundle.json";
+
+/// Where a bundle keeps the jar's built-in feature packs, at their jar paths: one folder a pack.
+pub const FEATURE_PACKS: &str = "data/minecraft/datapacks/";
 
 /// The environment variable that names the bundles folder, ahead of every other default.
 pub const BUNDLES_ENV: &str = "SPYGLASS_BUNDLES";
@@ -99,6 +105,9 @@ pub enum BundleError {
     /// The bundle has no such resource or report.
     #[error("{0} isn't in the bundle")]
     NotFound(String),
+    /// A data pack couldn't be read.
+    #[error(transparent)]
+    Pack(#[from] crate::pack::PackError),
 }
 
 impl Manifest {
@@ -173,6 +182,10 @@ pub struct Manifest {
     pub java_version: String,
     /// The version of `spyglass-extract` that wrote the bundle.
     pub extractor: String,
+    /// The version's data pack format, from the jar's `version.json`, which picks a pack's
+    /// overlays. Bundles written before it was recorded have none, and can't have packs applied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pack_format: Option<PackFormat>,
     /// Every other file in the bundle: `/`-separated path → lower-case hex SHA-1, sorted by path.
     pub files: BTreeMap<String, String>,
 }
@@ -201,10 +214,13 @@ pub fn sha1_hex(mut reader: impl Read) -> io::Result<String> {
 pub struct Bundle {
     /// The bundle's root directory.
     dir: PathBuf,
-    /// Its `bundle.json`, which lists every file that may be read.
-    manifest: Manifest,
+    /// Its `bundle.json`, which lists every file that may be read. Shared by the bundle's
+    /// clones, e.g. one per dimension or set of packs.
+    manifest: Arc<Manifest>,
     /// Whether the manifest lists structure templates; older bundles have none.
     has_templates: bool,
+    /// Data packs applied over the bundle, lowest first ([`Bundle::with_packs`]).
+    layers: Arc<[Layer]>,
 }
 
 impl Bundle {
@@ -218,9 +234,96 @@ impl Bundle {
             .any(|p| p.starts_with("data/minecraft/structure/"));
         Ok(Bundle {
             dir,
-            manifest,
+            manifest: Arc::new(manifest),
             has_templates,
+            layers: Arc::from([]),
         })
+    }
+
+    /// This bundle with `packs` applied over it, lowest first, as the game applies a world's
+    /// enabled packs over its vanilla pack (`docs/specs/data-packs.md`): for a file, the highest
+    /// pack that has it wins, unless a pack above hides it with its `filter`; tags merge
+    /// instead. Each pack is applied for the bundle's data pack format, which picks its
+    /// overlays. Packs already applied stay below the new ones.
+    pub fn with_packs<'p>(
+        &self,
+        packs: impl IntoIterator<Item = &'p Pack>,
+    ) -> Result<Bundle, BundleError> {
+        let mut packs = packs.into_iter().peekable();
+        if packs.peek().is_none() {
+            return Ok(self.clone());
+        }
+        let format = self.pack_format().ok_or_else(|| {
+            BundleError::Layout(format!(
+                "{} doesn't record its data pack format, so packs can't be applied; extract it \
+                 again with this version of spyglass",
+                self.dir.display()
+            ))
+        })?;
+        let mut layers = self.layers.to_vec();
+        layers.extend(packs.map(|pack| pack.layer(format)));
+        Ok(Bundle {
+            layers: layers.into(),
+            ..self.clone()
+        })
+    }
+
+    /// The names of the built-in feature packs the bundle holds (`data/minecraft/datapacks/<name>/`,
+    /// as in the jar), sorted.
+    pub fn feature_packs(&self) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .manifest
+            .files
+            .keys()
+            .filter_map(|path| path.strip_prefix(FEATURE_PACKS)?.split_once('/'))
+            .map(|(name, _)| name.to_string())
+            .collect();
+        names.dedup();
+        names
+    }
+
+    /// The built-in feature pack `name` (e.g. `trade_rebalance`), as far as the bundle holds it:
+    /// its `pack.mcmeta`, and its files in the folders a bundle keeps.
+    pub fn feature_pack(&self, name: &str) -> Result<Pack, BundleError> {
+        let prefix = format!("{FEATURE_PACKS}{name}/");
+        let mut files = Vec::new();
+        for path in self.manifest.files.keys() {
+            if let Some(rest) = path.strip_prefix(prefix.as_str()) {
+                files.push((rest.to_string(), self.bytes(path)?));
+            }
+        }
+        if files.is_empty() {
+            return Err(BundleError::NotFound(prefix));
+        }
+        Ok(Pack::from_files(name, files)?)
+    }
+
+    /// This bundle without any packs applied.
+    pub fn without_packs(&self) -> Bundle {
+        Bundle {
+            layers: Arc::from([]),
+            ..self.clone()
+        }
+    }
+
+    /// The version's data pack format, if the bundle records it.
+    pub fn pack_format(&self) -> Option<PackFormat> {
+        self.manifest.pack_format
+    }
+
+    /// The packs applied over the bundle, lowest first.
+    pub fn layers(&self) -> &[Layer] {
+        &self.layers
+    }
+
+    /// Tells bundles apart for caches: the bundle's directory, then each applied pack's name and
+    /// hash. Equal for the same bundle with the same packs.
+    pub fn identity(&self) -> String {
+        let mut id = self.dir.display().to_string();
+        for layer in self.layers.iter() {
+            id.push_str(&format!("\n{} {}", layer.name, layer.hash));
+        }
+        id
     }
 
     /// The bundle directory.
@@ -258,21 +361,36 @@ impl Bundle {
         Ok(format!("data/{namespace}/{registry}/{path}.json"))
     }
 
-    /// The ids of every entry in a registry (such as `worldgen/structure`), from the manifest,
-    /// sorted.
+    /// The ids of every entry in a registry (such as `worldgen/structure`), sorted: the
+    /// manifest's and every applied pack's, less those a higher pack's filter hides.
     pub fn registry_ids(&self, registry: &str) -> Vec<String> {
+        let id_of = |path: &String| {
+            let rest = path.strip_prefix("data/")?;
+            let (namespace, rest) = rest.split_once('/')?;
+            let name = rest.strip_prefix(registry)?.strip_prefix('/')?;
+            Some(format!("{namespace}:{}", name.strip_suffix(".json")?))
+        };
+        let hidden_from = |level: usize, path: &String| {
+            self.layers[level..].iter().any(|layer| layer.hides(path))
+        };
         let mut ids: Vec<String> = self
             .manifest
             .files
             .keys()
-            .filter_map(|path| {
-                let rest = path.strip_prefix("data/")?;
-                let (namespace, rest) = rest.split_once('/')?;
-                let name = rest.strip_prefix(registry)?.strip_prefix('/')?;
-                Some(format!("{namespace}:{}", name.strip_suffix(".json")?))
-            })
+            .filter(|path| !hidden_from(0, path))
+            .filter_map(id_of)
             .collect();
+        for (level, layer) in self.layers.iter().enumerate() {
+            ids.extend(
+                layer
+                    .files
+                    .keys()
+                    .filter(|path| !hidden_from(level + 1, path))
+                    .filter_map(id_of),
+            );
+        }
         ids.sort();
+        ids.dedup();
         ids
     }
 
@@ -294,6 +412,11 @@ impl Bundle {
     pub fn structure_template(&self, id: &str) -> Result<Vec<u8>, BundleError> {
         let path = Self::resource_path("structure", id)?;
         let path = format!("{}.nbt", path.strip_suffix(".json").unwrap_or(&path));
+        match self.look_up(&path) {
+            Found::Layer(_, bytes) => return Ok(bytes.to_vec()),
+            Found::Hidden => return Err(BundleError::NotFound(path)),
+            Found::Base => {}
+        }
         if !self.has_templates {
             return Err(BundleError::Layout(format!(
                 "{} has no structure templates; extract it again with this version of spyglass",
@@ -301,6 +424,77 @@ impl Bundle {
             )));
         }
         self.bytes(&path)
+    }
+
+    /// Where `path` comes from, looking down through the packs (`FallbackResourceManager
+    /// .getResource`): the highest that has it, or hidden by a pack's filter, or the bundle's.
+    fn look_up(&self, path: &str) -> Found<'_> {
+        for layer in self.layers.iter().rev() {
+            if let Some(bytes) = layer.files.get(path) {
+                return Found::Layer(layer, bytes);
+            }
+            if layer.hides(path) {
+                return Found::Hidden;
+            }
+        }
+        Found::Base
+    }
+
+    /// A file's JSON as the game reads it through its packs: the highest pack's, or for a tag
+    /// (`data/<namespace>/tags/...`), every pack's merged.
+    fn json(&self, path: &str) -> Result<serde_json::Value, BundleError> {
+        if self.layers.is_empty() {
+            return self.base_json(path);
+        }
+        if is_tag(path) {
+            return self.merged_tag(path);
+        }
+        match self.look_up(path) {
+            Found::Layer(layer, bytes) => parse_layer_json(layer, path, bytes),
+            Found::Hidden => Err(BundleError::NotFound(path.to_string())),
+            Found::Base => self.base_json(path),
+        }
+    }
+
+    /// A tag's file from every pack that has one, merged as `TagLoader.load` merges them
+    /// (`FallbackResourceManager.getResourceStack`): lowest first, each adding its `values`, one
+    /// with `"replace": true` dropping what's below it, and a pack's filter dropping the files
+    /// below it. The result is one tag file, without `replace`.
+    fn merged_tag(&self, path: &str) -> Result<serde_json::Value, BundleError> {
+        let mut stack: Vec<serde_json::Value> = Vec::new();
+        if self.manifest.files.contains_key(path) {
+            stack.push(self.base_json(path)?);
+        }
+        for layer in self.layers.iter() {
+            if layer.hides(path) {
+                stack.clear();
+            }
+            // A pack's file the game can't read as a tag is skipped, and what's below it kept
+            // ("Couldn't read tag list").
+            let readable = layer
+                .files
+                .get(path)
+                .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(bytes).ok())
+                .filter(|json| json.get("values").is_some_and(serde_json::Value::is_array));
+            stack.extend(readable);
+        }
+        if stack.len() <= 1 {
+            return stack
+                .pop()
+                .ok_or_else(|| BundleError::NotFound(path.to_string()));
+        }
+        let mut values = Vec::new();
+        for file in stack {
+            if file.get("replace").and_then(serde_json::Value::as_bool) == Some(true) {
+                values.clear();
+            }
+            match file.get("values").and_then(serde_json::Value::as_array) {
+                Some(more) => values.extend(more.iter().cloned()),
+                // Malformed: left for the tag's loader to report, as it would a single file.
+                None => return Ok(file),
+            }
+        }
+        Ok(serde_json::json!({ "values": values }))
     }
 
     /// Any file the manifest lists, as bytes. Unlisted paths are refused.
@@ -314,7 +508,7 @@ impl Bundle {
 
     /// Any file the manifest lists, parsed as JSON. Unlisted paths are refused, so nothing
     /// outside the bundle can be read.
-    fn json(&self, path: &str) -> Result<serde_json::Value, BundleError> {
+    fn base_json(&self, path: &str) -> Result<serde_json::Value, BundleError> {
         if !self.manifest.files.contains_key(path) {
             return Err(BundleError::NotFound(path.to_string()));
         }
@@ -322,6 +516,34 @@ impl Bundle {
         let bytes = fs::read(&file).map_err(io_err(&file))?;
         serde_json::from_slice(&bytes).map_err(|source| BundleError::Json { path: file, source })
     }
+}
+
+/// Where a file comes from, when packs are applied.
+enum Found<'a> {
+    /// The highest pack that has it.
+    Layer(&'a Layer, &'a Arc<[u8]>),
+    /// A pack's filter hides it in every pack below, the bundle included.
+    Hidden,
+    /// No pack has it: the bundle's own, if the bundle has one.
+    Base,
+}
+
+/// Whether a resource path is a tag's: `data/<namespace>/tags/...`.
+fn is_tag(path: &str) -> bool {
+    let mut parts = path.split('/');
+    parts.next() == Some("data") && parts.nth(1) == Some("tags")
+}
+
+/// A pack's file, parsed as JSON; an error names the pack and the file.
+fn parse_layer_json(
+    layer: &Layer,
+    path: &str,
+    bytes: &[u8],
+) -> Result<serde_json::Value, BundleError> {
+    serde_json::from_slice(bytes).map_err(|source| BundleError::Json {
+        path: PathBuf::from(format!("{}/{path}", layer.name)),
+        source,
+    })
 }
 
 /// Reads and parses a bundle's `bundle.json`, without checking any files.
@@ -478,6 +700,7 @@ mod tests {
             jar_sha1: String::new(),
             java_version: String::new(),
             extractor: String::new(),
+            pack_format: None,
             files: listed,
         };
         fs::write(
@@ -598,5 +821,228 @@ mod tests {
             read_manifest(tmp.path()),
             Err(BundleError::Layout(_))
         ));
+    }
+
+    /// A pack named `name` for 26.3's format, with `files` and the `pack.mcmeta` extras given.
+    fn pack(name: &str, extra_meta: &str, files: &[(&str, &str)]) -> Pack {
+        let meta = format!(
+            r#"{{"pack": {{"description": "", "min_format": 121, "max_format": 121}}{extra_meta}}}"#
+        );
+        Pack::from_files(
+            name,
+            std::iter::once(("pack.mcmeta".to_string(), meta.into_bytes())).chain(
+                files
+                    .iter()
+                    .map(|(p, text)| (p.to_string(), text.as_bytes().to_vec())),
+            ),
+        )
+        .unwrap()
+    }
+
+    /// A bundle with a pack format, holding a noise, two biomes, a tag and a template.
+    fn layered_base(dir: &Path) -> Bundle {
+        let plain = bundle(
+            dir,
+            &[
+                (
+                    "data/minecraft/worldgen/noise/a.json",
+                    r#"{"v": "vanilla"}"#,
+                ),
+                ("data/minecraft/worldgen/biome/plains.json", "{}"),
+                ("data/minecraft/worldgen/biome/desert.json", "{}"),
+                (
+                    "data/minecraft/tags/worldgen/biome/is_hot.json",
+                    r#"{"values": ["minecraft:desert"]}"#,
+                ),
+                ("data/minecraft/structure/igloo/top.nbt", "vanilla"),
+            ],
+        );
+        let mut manifest = (*plain.manifest).clone();
+        manifest.pack_format = Some(PackFormat::from([121, 0]));
+        fs::write(
+            dir.join(MANIFEST),
+            serde_json::to_string_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+        Bundle::open(dir).unwrap()
+    }
+
+    #[test]
+    fn packs_replace_files_and_add_ids() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = layered_base(tmp.path());
+        let low = pack(
+            "low",
+            "",
+            &[
+                ("data/minecraft/worldgen/noise/a.json", r#"{"v": "low"}"#),
+                ("data/mod/worldgen/biome/new.json", "{}"),
+                ("data/minecraft/structure/igloo/top.nbt", "low"),
+            ],
+        );
+        let high = pack(
+            "high",
+            "",
+            &[("data/minecraft/worldgen/noise/a.json", r#"{"v": "high"}"#)],
+        );
+        let both = base.with_packs([&low, &high]).unwrap();
+        assert_eq!(
+            both.resource("worldgen/noise", "a").unwrap(),
+            serde_json::json!({"v": "high"})
+        );
+        assert_eq!(
+            base.with_packs([&high, &low])
+                .unwrap()
+                .resource("worldgen/noise", "a")
+                .unwrap(),
+            serde_json::json!({"v": "low"})
+        );
+        // Applying in two steps is applying in one.
+        assert_eq!(
+            base.with_packs([&low])
+                .unwrap()
+                .with_packs([&high])
+                .unwrap()
+                .identity(),
+            both.identity()
+        );
+        assert_ne!(both.identity(), base.identity());
+        assert_eq!(
+            both.registry_ids("worldgen/biome"),
+            ["minecraft:desert", "minecraft:plains", "mod:new"]
+        );
+        assert_eq!(both.structure_template("igloo/top").unwrap(), b"low");
+        // The base bundle is untouched.
+        assert_eq!(
+            base.resource("worldgen/noise", "a").unwrap(),
+            serde_json::json!({"v": "vanilla"})
+        );
+        assert_eq!(base.structure_template("igloo/top").unwrap(), b"vanilla");
+        let names: Vec<&str> = both.layers().iter().map(|l| l.name.as_str()).collect();
+        assert_eq!(names, ["low", "high"]);
+    }
+
+    #[test]
+    fn filters_hide_lower_packs_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = layered_base(tmp.path());
+        let low = pack(
+            "low",
+            "",
+            &[("data/minecraft/worldgen/biome/desert.json", r#"{"low": 1}"#)],
+        );
+        let filtering = pack(
+            "filter",
+            r#", "filter": {"block": [{"namespace": "minecraft", "path": "worldgen/biome/desert"}]}"#,
+            &[],
+        );
+        let high = pack(
+            "high",
+            "",
+            &[(
+                "data/minecraft/worldgen/biome/desert.json",
+                r#"{"high": 1}"#,
+            )],
+        );
+        let hidden = base.with_packs([&low, &filtering]).unwrap();
+        assert!(matches!(
+            hidden.resource("worldgen/biome", "desert"),
+            Err(BundleError::NotFound(_))
+        ));
+        assert_eq!(hidden.registry_ids("worldgen/biome"), ["minecraft:plains"]);
+        // A pack's filter hides only what's below it.
+        let above = base.with_packs([&low, &filtering, &high]).unwrap();
+        assert_eq!(
+            above.resource("worldgen/biome", "desert").unwrap(),
+            serde_json::json!({"high": 1})
+        );
+    }
+
+    #[test]
+    fn tags_merge_through_packs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = layered_base(tmp.path());
+        let tag = |values: &str| {
+            pack(
+                "p",
+                "",
+                &[("data/minecraft/tags/worldgen/biome/is_hot.json", values)],
+            )
+        };
+        let adds = tag(r##"{"values": ["minecraft:plains", "#mod:hot"]}"##);
+        let replaces = tag(r#"{"replace": true, "values": ["mod:only"]}"#);
+        let unreadable = tag(r#"{"values": "minecraft:plains"}"#);
+        let is_hot = |b: &Bundle| b.resource("tags/worldgen/biome", "is_hot").unwrap();
+        assert_eq!(
+            is_hot(&base.with_packs([&adds]).unwrap()),
+            serde_json::json!({"values": ["minecraft:desert", "minecraft:plains", "#mod:hot"]})
+        );
+        assert_eq!(
+            is_hot(&base.with_packs([&adds, &replaces]).unwrap()),
+            serde_json::json!({"values": ["mod:only"]})
+        );
+        assert_eq!(
+            is_hot(&base.with_packs([&replaces, &adds]).unwrap()),
+            serde_json::json!({"values": ["mod:only", "minecraft:plains", "#mod:hot"]})
+        );
+        // The game skips a tag file it can't read, keeping what's below.
+        assert_eq!(
+            is_hot(&base.with_packs([&unreadable]).unwrap()),
+            serde_json::json!({"values": ["minecraft:desert"]})
+        );
+        // A tag only a pack has.
+        let new = pack(
+            "p",
+            "",
+            &[(
+                "data/mod/tags/worldgen/biome/cold.json",
+                r#"{"values": []}"#,
+            )],
+        );
+        assert_eq!(
+            base.with_packs([&new])
+                .unwrap()
+                .resource("tags/worldgen/biome", "mod:cold")
+                .unwrap(),
+            serde_json::json!({"values": []})
+        );
+    }
+
+    #[test]
+    fn packs_need_a_bundle_that_records_its_format() {
+        let tmp = tempfile::tempdir().unwrap();
+        let old = bundle(tmp.path(), &[]);
+        let p = pack("p", "", &[]);
+        assert!(matches!(old.with_packs([&p]), Err(BundleError::Layout(_))));
+        // No packs is the bundle itself.
+        assert_eq!(old.with_packs([]).unwrap().identity(), old.identity());
+    }
+
+    #[test]
+    fn feature_packs_come_from_the_bundle() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bundle = bundle(
+            tmp.path(),
+            &[
+                (
+                    "data/minecraft/datapacks/trade_rebalance/pack.mcmeta",
+                    r#"{"pack": {"description": "", "min_format": 121, "max_format": 121}}"#,
+                ),
+                (
+                    "data/minecraft/datapacks/trade_rebalance/data/minecraft/loot_table/chests/a.json",
+                    "{}",
+                ),
+                ("data/minecraft/worldgen/noise/a.json", "{}"),
+            ],
+        );
+        assert_eq!(bundle.feature_packs(), ["trade_rebalance"]);
+        let pack = bundle.feature_pack("trade_rebalance").unwrap();
+        assert_eq!(
+            pack.files().collect::<Vec<_>>(),
+            ["data/minecraft/loot_table/chests/a.json"]
+        );
+        assert!(bundle.feature_pack("minecart_improvements").is_err());
+        // Feature packs' files aren't the bundle's own.
+        assert!(bundle.registry_ids("loot_table").is_empty());
     }
 }

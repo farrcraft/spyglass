@@ -145,10 +145,24 @@ pub enum OracleCmd {
         accept_eula: bool,
     },
     /// Load the test data pack in `oracle/testpack/` over the vanilla one and write probe and
-    /// structure files into `oracle-out/<version>+testpack/`, with the bundle merged with the
-    /// pack in `target/oracle/bundles/<version>+testpack/` for the comparisons. Checks the forms
-    /// the vanilla data doesn't use (docs/specs/oracle.md).
+    /// structure files into `oracle-out/<version>+testpack/`, with the pack recorded for the
+    /// comparisons to apply over the plain bundle. Checks the forms the vanilla data doesn't use
+    /// (docs/specs/oracle.md).
     TestPack(Common),
+    /// Write the fixture pack, which overrides a noise, a density function, the noise
+    /// settings, features, loot and a biome tag, from `bundles/<version>` into
+    /// `target/oracle/<version>/packs/overrides/`, then regenerate the golden set with it loaded
+    /// into `oracle-out/<version>+overrides/` (docs/specs/oracle.md, "The fixture pack").
+    FixturePack {
+        #[command(flatten)]
+        common: Common,
+        /// Parallel jobs. Defaults to the number of CPUs.
+        #[arg(long)]
+        threads: Option<usize>,
+        /// Only write the pack.
+        #[arg(long)]
+        only_pack: bool,
+    },
     /// Regenerate the whole golden set (docs/specs/oracle.md), probe files included, into
     /// `oracle-out/<version>/`.
     Golden {
@@ -171,6 +185,14 @@ pub struct Common {
     /// JDK home or executable to use first.
     #[arg(long)]
     java: Option<PathBuf>,
+    /// A data pack, a folder or zip, to load over the vanilla one, as a world that enables it
+    /// does. Repeatable, lowest first; needs `--name`.
+    #[arg(long = "pack", requires = "name")]
+    packs: Vec<PathBuf>,
+    /// The packs' label: the outputs go into `oracle-out/<version>+<name>/`, with a
+    /// `packs.json` naming the packs, which the comparisons apply over the plain bundle.
+    #[arg(long, requires = "packs", value_parser = variant_label)]
+    name: Option<String>,
 }
 
 impl Common {
@@ -180,8 +202,47 @@ impl Common {
             game_version: version.to_string(),
             cache_dir: None,
             java: None,
+            packs: Vec::new(),
+            name: None,
         }
     }
+}
+
+/// A `--name`: letters, digits, `-` and `_`, so `<version>+<name>` is a folder name anywhere.
+fn variant_label(text: &str) -> Result<String, String> {
+    let ok = !text.is_empty()
+        && text
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    if ok {
+        Ok(text.to_string())
+    } else {
+        Err("use letters, digits, - and _".into())
+    }
+}
+
+/// The file in a variant's outputs that names its packs (`spyglass_oracle::PACKS_FILE`).
+const PACKS_FILE: &str = "packs.json";
+
+/// Loads `packs` in `harness`'s runs under the version name `<version>+<label>`, and records
+/// them in `oracle-out/<version>+<label>/packs.json`, lowest first, as absolute paths, so the
+/// comparisons apply the same packs.
+fn use_packs(harness: &mut Harness, packs: &[PathBuf], label: &str) -> Result<()> {
+    let packs: Vec<PathBuf> = packs
+        .iter()
+        .map(|p| std::path::absolute(p).with_context(|| format!("no data pack at {}", p.display())))
+        .collect::<Result<_>>()?;
+    for pack in &packs {
+        if !pack.exists() {
+            bail!("no data pack at {}", pack.display());
+        }
+    }
+    harness.version = format!("{}+{label}", harness.version);
+    let out = repo_root().join("oracle-out").join(&harness.version);
+    fs::create_dir_all(&out)?;
+    fs::write(out.join(PACKS_FILE), serde_json::to_vec_pretty(&packs)?)?;
+    harness.packs = packs;
+    Ok(())
 }
 
 /// Where `cargo xtask oracle math` writes one platform's results: `oracle-out/math/<platform>/`.
@@ -367,11 +428,36 @@ pub fn run(cmd: OracleCmd) -> Result<()> {
         }
         OracleCmd::TestPack(common) => test_pack(&common),
         OracleCmd::Golden { common, threads } => golden(&common, threads),
+        OracleCmd::FixturePack {
+            common,
+            threads,
+            only_pack,
+        } => fixture_pack(common, threads, only_pack),
     }
 }
 
-/// The test pack's probes and structures, under the version name `<version>+testpack`, and the
-/// bundle merged with the pack that spyglass's comparisons read.
+/// The fixture pack's label, and the suffix of its outputs' version name.
+pub(crate) const FIXTURE_PACK: &str = "overrides";
+
+/// Writes the fixture pack for `common`'s version, then the golden set with it loaded.
+fn fixture_pack(mut common: Common, threads: Option<usize>, only_pack: bool) -> Result<()> {
+    if !common.packs.is_empty() {
+        bail!("fixture-pack takes no --pack or --name");
+    }
+    let version = extract::resolve(&common.game_version)?.version;
+    let pack = crate::fixture_pack::write(&version)?;
+    println!("fixture pack in {}", pack.display());
+    if only_pack {
+        return Ok(());
+    }
+    common.game_version = version;
+    common.packs = vec![pack];
+    common.name = Some(FIXTURE_PACK.to_string());
+    golden(&common, threads)
+}
+
+/// The test pack's probes and structures, under the version name `<version>+testpack`, with
+/// the pack recorded for the comparisons to apply over the plain bundle.
 fn test_pack(common: &Common) -> Result<()> {
     let mut harness = build(common)?;
     if !test_pack_covers(harness.data_version)? {
@@ -381,26 +467,30 @@ fn test_pack(common: &Common) -> Result<()> {
             harness.data_version
         );
     }
+    if harness.version.contains('+') {
+        bail!("test-pack takes no --pack or --name");
+    }
     let pack = repo_root().join("oracle").join(TEST_PACK);
-    let variant = format!("{}+{TEST_PACK}", harness.version);
-    let bundle = merge_bundle(&harness.version, &pack, &variant)?;
-    harness.version = variant;
-    harness.packs = vec![pack];
+    use_packs(&mut harness, &[pack], TEST_PACK)?;
     harness.probe()?;
     harness.structures()?;
     println!(
-        "test pack files in {}, bundle in {}",
+        "test pack files in {}",
         repo_root()
             .join("oracle-out")
             .join(&harness.version)
-            .display(),
-        bundle.display()
+            .display()
     );
     Ok(())
 }
 
 /// The test data pack's folder in `oracle/`, and the suffix of its version name.
 const TEST_PACK: &str = "testpack";
+
+/// The `pack.mcmeta` of a pack spyglass generates, for every format from the first with a minor
+/// part on, so the game loads it in every version spyglass supports.
+const PACK_MCMETA: &str =
+    r#"{"pack": {"description": "generated by spyglass", "min_format": 82, "max_format": 9999}}"#;
 
 /// The suffix of the version name of the block files made without carvers.
 const NO_CARVERS: &str = "no-carvers";
@@ -410,7 +500,13 @@ const NO_CARVERS: &str = "no-carvers";
 pub(crate) fn blocks(harness: &mut Harness, threads: Option<usize>, seeds: &[&str]) -> Result<()> {
     harness.blocks(threads, seeds)?;
     let version = harness.version.clone();
-    let packs = std::mem::replace(&mut harness.packs, vec![no_carvers_pack(&version)?]);
+    // Over any packs the run loads already, such as the fixture pack's.
+    let base = version
+        .split_once('+')
+        .map_or(version.as_str(), |(base, _)| base);
+    let mut without_carvers = harness.packs.clone();
+    without_carvers.push(no_carvers_pack(base)?);
+    let packs = std::mem::replace(&mut harness.packs, without_carvers);
     harness.version = format!("{version}+{NO_CARVERS}");
     let result = harness.blocks(threads, seeds);
     harness.version = version;
@@ -437,6 +533,7 @@ fn no_carvers_pack(version: &str) -> Result<PathBuf> {
     }
     let out = pack.join("data/minecraft/worldgen/biome");
     fs::create_dir_all(&out)?;
+    fs::write(pack.join("pack.mcmeta"), PACK_MCMETA)?;
     for entry in fs::read_dir(&biomes)
         .with_context(|| format!("no biomes in {}; extract {version} first", biomes.display()))?
     {
@@ -454,66 +551,6 @@ fn no_carvers_pack(version: &str) -> Result<PathBuf> {
         fs::write(out.join(name), serde_json::to_vec_pretty(&biome)?)?;
     }
     Ok(pack)
-}
-
-/// `bundles/<version>` with `pack`'s `data/` files added, as `target/oracle/bundles/<variant>/`,
-/// its manifest naming `variant` and listing the added files. Rebuilt every time.
-fn merge_bundle(version: &str, pack: &Path, variant: &str) -> Result<PathBuf> {
-    let source = repo_root().join("bundles").join(version);
-    let manifest_path = source.join("bundle.json");
-    let mut manifest: serde_json::Value = serde_json::from_slice(
-        &fs::read(&manifest_path)
-            .with_context(|| format!("no bundle for {version}; extract it first"))?,
-    )?;
-    let out = repo_root()
-        .join("target")
-        .join("oracle")
-        .join("bundles")
-        .join(variant);
-    if out.exists() {
-        fs::remove_dir_all(&out)?;
-    }
-    let files = manifest["files"]
-        .as_object_mut()
-        .context("bundle.json has no files")?;
-    for path in files.keys() {
-        let to = out.join(path);
-        fs::create_dir_all(to.parent().expect("a file in the bundle"))?;
-        fs::copy(source.join(path), &to)?;
-    }
-    let mut added = Vec::new();
-    collect_files(&pack.join("data"), &mut added)?;
-    for file in added {
-        let rel = file
-            .strip_prefix(pack)?
-            .to_str()
-            .context("a non-UTF-8 pack path")?
-            .replace('\\', "/");
-        let to = out.join(&rel);
-        fs::create_dir_all(to.parent().expect("a file in the pack"))?;
-        fs::copy(&file, &to)?;
-        let hash = spyglass_data::bundle::sha1_hex(fs::File::open(&file)?)?;
-        files.insert(rel, hash.into());
-    }
-    manifest["version"] = variant.into();
-    fs::write(
-        out.join("bundle.json"),
-        serde_json::to_vec_pretty(&manifest)?,
-    )?;
-    Ok(out)
-}
-
-/// Every file under `dir`, into `out`.
-fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
-    for entry in fs::read_dir(dir)? {
-        let path = entry?.path();
-        if path.is_dir() {
-            collect_files(&path, out)?;
-        } else {
-            out.push(path);
-        }
-    }
-    Ok(())
 }
 
 /// Every golden file: probes, structures, spawn, heights, blocks, features, containers, the
@@ -837,7 +874,7 @@ pub(crate) fn build(common: &Common) -> Result<Harness> {
     compile(&bin, major, &server.sha1, &jars, &adapter, &classes)?;
 
     let classpath = std::env::join_paths(std::iter::once(classes).chain(jars))?;
-    Ok(Harness {
+    let mut harness = Harness {
         version: resolved.version,
         data_version,
         java: jdk.executable,
@@ -845,7 +882,11 @@ pub(crate) fn build(common: &Common) -> Result<Harness> {
         classpath,
         work,
         packs: Vec::new(),
-    })
+    };
+    if let Some(label) = &common.name {
+        use_packs(&mut harness, &common.packs, label)?;
+    }
+    Ok(harness)
 }
 
 /// Unpacks the bundler into `dest` unless it already holds this jar's libraries.

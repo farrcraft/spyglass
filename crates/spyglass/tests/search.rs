@@ -422,7 +422,12 @@ fn queries_belong_to_their_world() {
 #[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
 fn the_real_world_resolves_and_counts_like_structures_in() {
     let dir = spyglass_oracle::bundle_dir();
-    let world = World::open(dir).unwrap();
+    let world = World::open_with_packs(
+        dir,
+        spyglass::Dimension::Overworld,
+        &spyglass_oracle::packs(),
+    )
+    .unwrap();
     let spec = include_str!("../../../docs/specs/search.md");
     let example = spec
         .split("### Example\n\n```text\n")

@@ -40,7 +40,8 @@ import net.minecraft.world.level.levelgen.WorldOptions;
  * </pre>
  *
  * Any command may be preceded by {@code --pack <dir>} (repeatable): a data pack folder loaded
- * over the vanilla one. The outputs then name the version {@code <version>+<folder name>}.
+ * over the vanilla one. The outputs then name the version {@code <version>+<folder name>}, or
+ * the {@code spyglass.oracle.version} system property, which the xtask sets to its label.
  */
 public final class Main {
     /** Bump when output for the same game version changes. Recorded in golden-file headers. */

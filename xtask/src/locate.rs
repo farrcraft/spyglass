@@ -145,7 +145,14 @@ fn eula_value_accepts(value: &str) -> bool {
 /// With no `worlds`, writes `oracle-out/<version>/locate/<seed>.json` for each seed, replacing
 /// the folder. With `worlds`, writes `world-<folder>.json` for each save, from a copy of it,
 /// with the player's position as an extra origin in the player's dimension.
+///
+/// With the harness's packs (`--pack`), each new world enables them over vanilla, in order, and
+/// the files go under `<version>+<label>`. The map cases' entries come from the plain bundle's
+/// chest tables. A save enables its own packs, so `worlds` can't be given with packs.
 pub fn run(harness: &Harness, worlds: &[PathBuf]) -> Result<()> {
+    if !harness.packs.is_empty() && !worlds.is_empty() {
+        bail!("--world opens a save's own packs; it can't be given with --pack");
+    }
     let out = repo_root()
         .join("oracle-out")
         .join(&harness.version)
@@ -155,7 +162,11 @@ pub fn run(harness: &Harness, worlds: &[PathBuf]) -> Result<()> {
     }
     fs::create_dir_all(&out)?;
     let mut jobs: Vec<Job<'_>> = Vec::new();
-    let entries = map_entries(&repo_root().join("bundles").join(&harness.version))?;
+    let base = harness
+        .version
+        .split_once('+')
+        .map_or(&*harness.version, |(base, _)| base);
+    let entries = map_entries(&repo_root().join("bundles").join(base))?;
     if worlds.is_empty() {
         for seed in SEEDS {
             jobs.push(Job {
@@ -556,7 +567,39 @@ struct Job<'a> {
     seed: Value,
 }
 
-/// Copies a save, skipping its `session.lock`, so the server never touches the original.
+/// Copies the harness's packs into the new world's `datapacks/`, and gives the
+/// `initial-enabled-packs` property that enables them over vanilla in the harness's order (packs
+/// found there but not listed would be enabled too, but in order of their ids). Empty without
+/// packs.
+fn enable_packs(harness: &Harness, dir: &Path) -> Result<String> {
+    if harness.packs.is_empty() {
+        return Ok(String::new());
+    }
+    let datapacks = dir.join("world/datapacks");
+    fs::create_dir_all(&datapacks)?;
+    let mut enabled = vec!["vanilla".to_string()];
+    for pack in &harness.packs {
+        let name = pack
+            .file_name()
+            .with_context(|| format!("no pack name in {}", pack.display()))?
+            .to_string_lossy()
+            .into_owned();
+        let target = datapacks.join(&name);
+        if target.exists() {
+            bail!("two packs named {name}");
+        }
+        if pack.is_dir() {
+            copy_save(pack, &target)?;
+        } else {
+            fs::copy(pack, &target)?;
+        }
+        enabled.push(format!("file/{name}"));
+    }
+    Ok(format!("initial-enabled-packs={}\n", enabled.join(",")))
+}
+
+/// Copies a save or a pack folder, skipping a save's `session.lock`, so the server never
+/// touches the original.
 fn copy_save(from: &Path, to: &Path) -> Result<()> {
     fs::create_dir_all(to)?;
     for entry in fs::read_dir(from)? {
@@ -720,7 +763,7 @@ fn server_dir(harness: &Harness, name: &str, source: &Source<'_>) -> Result<Path
     // tick, and on a slow machine an old version's can pass the watchdog's default 60 s, which
     // stops the server; -1 turns the watchdog off.
     let seed = match source {
-        Source::Seed(seed) => format!("level-seed={seed}\n"),
+        Source::Seed(seed) => format!("level-seed={seed}\n{}", enable_packs(harness, &dir)?),
         Source::Save(save) => {
             copy_save(save, &dir.join("world"))?;
             String::new()

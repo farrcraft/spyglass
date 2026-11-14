@@ -7,7 +7,7 @@ use serde_json::{Map, Value};
 use spyglass_blocks::behaviour::{Behaviour, BlockBehaviour, FluidKind};
 use spyglass_blocks::state::BlockDefaults;
 use spyglass_blocks::{Palette, State};
-use spyglass_data::codec::{At, LoadError, LoadErrorKind, field, full_id, object};
+use spyglass_data::codec::{At, LoadError, LoadErrorKind, block_state, field, full_id, object};
 use spyglass_density::Resources;
 
 /// Block tags.
@@ -179,27 +179,8 @@ impl Blocks {
     /// or a block id alone for its default state.
     pub fn parse_state(&mut self, json: &Value, at: &At<'_>) -> Result<State, LoadError> {
         let empty = Map::new();
-        let (id, properties) = match json {
-            Value::String(id) => (full_id(id), &empty),
-            Value::Object(o) => {
-                let (id_key, props_key) = if o.contains_key("Name") {
-                    ("Name", "Properties")
-                } else {
-                    ("id", "properties")
-                };
-                let id = field(o, id_key, at)?
-                    .as_str()
-                    .map(full_id)
-                    .ok_or_else(|| at.child(id_key).error(LoadErrorKind::Shape("a block id")))?;
-                let properties = match o.get(props_key) {
-                    None => &empty,
-                    Some(p) => object(p, &at.child(props_key))?,
-                };
-                (id, properties)
-            }
-            _ => return Err(at.error(LoadErrorKind::Shape("a block state"))),
-        };
-        let name = self.defaults.name(&id, properties, at)?;
+        let (id, properties) = block_state(json, at)?;
+        let name = self.defaults.name(&id, properties.unwrap_or(&empty), at)?;
         self.state(&name)
     }
 

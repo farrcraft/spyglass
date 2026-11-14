@@ -12,7 +12,7 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 use spyglass_noise::{
-    NoiseStack, NormalNoise, NormalNoiseParameters, Parameters, PerlinNoise, v1_21,
+    NoiseStack, NormalNoise, NormalNoiseParameters, Normalization, Parameters, PerlinNoise, v1_21,
 };
 use spyglass_oracle::probe::{Case, ProbeFile, probe_file};
 use spyglass_rng::{
@@ -46,10 +46,15 @@ fn parameters(bundle: &Bundle, id: &str) -> NormalNoiseParameters {
     if let Some(n) = json.get("octave_count") {
         p.octave_count = n.as_i64().unwrap() as i32;
     }
-    assert!(
-        json.get("normalize").is_none(),
-        "{id}: normalize isn't handled here"
-    );
+    if let Some(v) = json.get("normalize") {
+        // Codec.either(BOOL, "legacy"), as the density layer reads it.
+        p.normalize = match v {
+            Value::Bool(true) => Normalization::Enabled,
+            Value::Bool(false) => Normalization::Disabled,
+            Value::String(s) if s == "legacy" => Normalization::Legacy,
+            _ => panic!("{id}: normalize is {v}"),
+        };
+    }
     if let Some(m) = json.get("amplitude_modifiers") {
         p.amplitude_modifiers = numbers(m);
     }

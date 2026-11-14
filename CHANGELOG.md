@@ -23,6 +23,10 @@ Changes go under **Unreleased** as they're made. `cargo xtask release` turns tha
 ### Fixed
 
 - **A stronghold whose ring position is uncertain** (a tied biome cell, or a sine the game's platforms may round differently) had its chests answered as certain, in spyglass's chunk only. They're now candidates, in every chunk the game may put the stronghold in, as `locate` already gave it.
+- **A data pack's own biomes in a structure's biome tag** (Terralith's caves in `#minecraft:has_structure/ancient_city`) were refused as unsupported: the check looked in the bundle only, not the packs.
+- **Block states written as 26.3 writes them** (`{"id": …, "properties": …}`) in a pack's surface rules and noise settings were refused; only features read that form.
+- **Carvers whose shape draws a normal value** (a pack's `clamped_normal`, such as Terralith's canyons) carved from a fresh random's draws. The game keeps one random for a chunk's carvers, whose spare value carries from one carver to the next.
+- **A chest placed over another** (an overgrown pillager outpost watchtower keeping its copy of the tower's chest) was answered with the first chest's loot seed. The later chest replaces it, as in the game.
 
 ## [0.3.1] - 2026-11-11
 

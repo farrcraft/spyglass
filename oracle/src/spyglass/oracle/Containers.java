@@ -279,6 +279,13 @@ final class Containers {
                 RECORDING.set(recording);
                 try {
                     api.decorate(game, generator, height, random, seed, pos, false, world.managerFor(pos));
+                } catch (RuntimeException e) {
+                    if (!beyondRegion(e)) {
+                        throw e;
+                    }
+                    System.err.printf("containers: chunk %d, %d left out: a feature read beyond its region%n",
+                            pos.x(), pos.z());
+                    return null;
                 } finally {
                     RECORDING.remove();
                 }
@@ -318,7 +325,10 @@ final class Containers {
         var out = new JsonArray();
         for (Future<JsonObject> f : decorated) {
             try {
-                out.add(f.get());
+                JsonObject chunk = f.get();
+                if (chunk != null) {
+                    out.add(chunk);
+                }
             } catch (ExecutionException e) {
                 throw new RuntimeException(e.getCause());
             }
@@ -455,6 +465,22 @@ final class Containers {
             items.add(encoded);
         }
         return items;
+    }
+
+    /**
+     * Whether decorating failed on a read of a chunk outside the 3 × 3 the harness builds. The
+     * game's {@code FEATURES} step has its neighbours at {@code CARVERS} out to 1 and only at
+     * {@code STRUCTURE_STARTS} out to 8, so such a read gets a chunk in whatever state the game's
+     * generation order left it: no answer is the game's (a sculk patch spreading two chunks out).
+     */
+    private static boolean beyondRegion(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof IllegalArgumentException && t.getMessage() != null
+                    && t.getMessage().startsWith("Requested out of range value")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** A fill asked for the biome of a block the region can't give. */

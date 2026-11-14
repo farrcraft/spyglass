@@ -110,8 +110,7 @@ impl StructureSets {
 }
 
 fn exists(bundle: &Bundle, registry: &str, id: &str) -> bool {
-    Bundle::resource_path(registry, &full_id(id))
-        .is_ok_and(|path| bundle.manifest().files.contains_key(&path))
+    bundle.has_resource(registry, &full_id(id))
 }
 
 /// A placement chunk where [`Starts::locate`]'s answer may be.

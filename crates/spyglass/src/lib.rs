@@ -705,8 +705,7 @@ impl World {
     }
 
     fn exists(&self, registry: &str, id: &str) -> bool {
-        Bundle::resource_path(registry, &full_id(id))
-            .is_ok_and(|path| self.bundle.manifest().files.contains_key(&path))
+        self.bundle.has_resource(registry, &full_id(id))
     }
 
     /// Resolves a `/locate structure` argument, a structure id or a `#tag`, for this world's

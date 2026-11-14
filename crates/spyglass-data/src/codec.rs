@@ -166,6 +166,34 @@ pub fn object<'v>(json: &'v Value, at: &At<'_>) -> LoadResult<&'v Map<String, Va
         .ok_or_else(|| at.error(LoadErrorKind::Shape("an object")))
 }
 
+/// A block state's block id, with its namespace, and its properties, if given: a block id
+/// alone, 26.2's `{"Name", "Properties"}`, or 26.3's `{"id", "properties"}` (`StateHolder.codec`
+/// dispatching on `id`). Packs written for either version use their own form.
+pub fn block_state<'v>(
+    json: &'v Value,
+    at: &At<'_>,
+) -> LoadResult<(String, Option<&'v Map<String, Value>>)> {
+    match json {
+        Value::String(id) => Ok((full_id(id), None)),
+        Value::Object(o) => {
+            let (id_key, properties_key) = if o.contains_key("Name") {
+                ("Name", "Properties")
+            } else {
+                ("id", "properties")
+            };
+            let id = field(o, id_key, at)?
+                .as_str()
+                .ok_or_else(|| at.child(id_key).error(LoadErrorKind::Shape("a block id")))?;
+            let properties = match o.get(properties_key) {
+                None => None,
+                Some(p) => Some(object(p, &at.child(properties_key))?),
+            };
+            Ok((full_id(id), properties))
+        }
+        _ => Err(at.error(LoadErrorKind::Shape("a block state"))),
+    }
+}
+
 /// An id, as a string.
 pub fn id<'v>(json: &'v Value, at: &At<'_>) -> LoadResult<&'v str> {
     json.as_str()
@@ -361,5 +389,33 @@ mod tests {
         ] {
             assert_eq!(int_of(&num(text)), Some(expected), "{text}");
         }
+    }
+
+    #[test]
+    fn block_states_in_every_form() {
+        let at = At::root("test");
+        let read = |json: Value| {
+            block_state(&json, &at).map(|(id, p)| (id, p.map(|p| Value::Object(p.clone()))))
+        };
+        let snowy = Some(serde_json::json!({"snowy": "false"}));
+        assert_eq!(
+            read(serde_json::json!("stone")).unwrap(),
+            ("minecraft:stone".into(), None)
+        );
+        assert_eq!(
+            read(serde_json::json!({"Name": "podzol", "Properties": {"snowy": "false"}})).unwrap(),
+            ("minecraft:podzol".into(), snowy.clone())
+        );
+        assert_eq!(
+            read(serde_json::json!({"id": "minecraft:podzol", "properties": {"snowy": "false"}}))
+                .unwrap(),
+            ("minecraft:podzol".into(), snowy)
+        );
+        assert_eq!(
+            read(serde_json::json!({"id": "minecraft:stone"})).unwrap(),
+            ("minecraft:stone".into(), None)
+        );
+        assert!(read(serde_json::json!({"properties": {}})).is_err());
+        assert!(read(serde_json::json!(3)).is_err());
     }
 }

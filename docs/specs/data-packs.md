@@ -124,3 +124,19 @@ Packs found in `datapacks/` but in neither list aren't applied: the game adds th
 - **Saves** built in the test: each concern, a pack that turns the fixture's temperature round and changes its biomes, through `open_world` and `open_game`, and a pack with an unsupported density function type failing on opening.
 - **The oracle:** [the test pack](oracle.md#the-test-pack), loaded by the harness as the game loads a world's pack and applied by spyglass over the plain bundle; and [the fixture pack](oracle.md#the-fixture-pack), through every comparison.
 - **Fuzzing:** `cargo xtask fuzz pack` on `open_pack` with arbitrary zips, `pack.mcmeta` included.
+
+### A widely used pack
+
+Terralith 2.6.5 for 26.3, the data pack edition (`Terralith_v2.6.5+26.3.zip`, 2,619 entries), downloaded by hand into the gitignored `packs/`, loaded by the harness with `--pack packs/Terralith_v2.6.5+26.3.zip --name terralith` and compared as `26.3+terralith` (2026-11-13). It replaces the Overworld's noise settings, parameter list and surface rules, overrides 40 vanilla biomes and adds 97, and brings 50 structures and 300 templates.
+
+What agrees with the game, every value of the golden set: the noise probe, density functions, biomes (every golden cell), the aquifer, the noise fill, spawn, heights, and every block of the golden chunks without carvers and with them.
+
+What spyglass doesn't support, so a world with Terralith isn't answered ([above](#worlds)), each the first such file of its kind:
+
+- **Old templates.** 290 of its 300 structure templates were saved by older versions (data versions 2730 to 4325, 1.17 to 1.21.x), which the game brings up to date with its data fixers when it loads them. spyglass reads only the version's own (`terralith:mage/tower`, 3839).
+- **Feature forms:** a `minecraft:weighted` block state provider as a `filling_provider` (`terralith:taiga/mega/boulders`), and doubtless more behind it.
+- **Loot:** a `minecraft:tag` entry (`terralith:spire/rare`).
+
+A world with packs loads every template pool, feature and loot table when it opens, not only its dimension's, so every dimension fails on opening, the Nether and the End too though Terralith doesn't change them: structures, features, containers, loot, locate, search and rendering. In the full comparison run (`cargo xtask oracle-test` with the variant present), every test that opens a world or loads the pack's structures, features or loot fails on one of these three errors, 31 of 57; the other 26 pass.
+
+It found faults that the vanilla data, the test pack and the fixture pack don't reach: whether a biome, tag or structure exists was looked up in the bundle and not the packs (`Bundle::has_resource`); surface rules and noise settings read only 26.2's block state form, not 26.3's `{"id", "properties"}`; carvers didn't keep [the game's spare gaussian](carvers.md) from one carver to the next. In the harness, the run without carvers replaced the pack's biomes with vanilla's, and its files were named after the pack's file rather than `--name`.

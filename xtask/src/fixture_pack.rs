@@ -110,7 +110,11 @@ pub(crate) fn write(version: &str) -> Result<PathBuf> {
     let rolls = value
         .pointer_mut("/pools/0/rolls/max")
         .context("simple_dungeon's first pool has no uniform rolls")?;
-    *rolls = json!(rolls.as_i64().context("rolls aren't an integer")? + 2);
+    // 26.2 writes the bound as `3.0`, 26.3 as `3`; either way, two more.
+    *rolls = match rolls.as_i64() {
+        Some(max) => json!(max + 2),
+        None => json!(rolls.as_f64().context("rolls aren't a number")? + 2.0),
+    };
     put("", chest, &value)?;
 
     // Plains villages in forests instead: the filter hides vanilla's members, so the pack's own

@@ -18,8 +18,7 @@ use spyglass_data::anchor::AnchorHeights;
 use spyglass_data::bundle::Bundle;
 use spyglass_data::codec::LoadError;
 use spyglass_data::versions::Behavior;
-use spyglass_rng::LegacyRandomSource;
-use spyglass_rng::worldgen::large_feature;
+use spyglass_rng::LegacyWorldgenRandom;
 use spyglass_terrain::{Block, Probe, Substances, Terrain, TerrainSettings, VeinBlock};
 
 use carver::{Carver, CarverSettings, CarvingMask, Carvings, Legacy, Sink};
@@ -442,12 +441,15 @@ impl ChunkGenerator<'_> {
         &self,
         [cx, cz]: [i32; 2],
         doubt: &mut CarvingMask,
-        mut carve: impl FnMut(&Carver, Option<&Legacy>, &mut LegacyRandomSource, [i32; 2]),
+        mut carve: impl FnMut(&Carver, Option<&Legacy>, &mut LegacyWorldgenRandom, [i32; 2]),
     ) {
         let carving = &self.settings.carvers;
         let anchors = self.settings.terrain.anchors();
-        let random = |i: usize, start: [i32; 2]| {
-            large_feature(self.seed.wrapping_add(i as i64), start[0], start[1])
+        // One random for the whole chunk, as `generateCarvers` keeps one, reseeded for each
+        // carver: its Gaussian state carries from carver to carver (`LegacyWorldgenRandom`).
+        let mut random = LegacyWorldgenRandom::new();
+        let seed = |random: &mut LegacyWorldgenRandom, i: usize, start: [i32; 2]| {
+            random.set_large_feature_seed(self.seed.wrapping_add(i as i64), start[0], start[1]);
         };
         for dx in -8..=8 {
             for dz in -8..=8 {
@@ -457,8 +459,10 @@ impl ChunkGenerator<'_> {
                     self.biomes
                         .biome_at(start[0].wrapping_mul(4), 0, start[1].wrapping_mul(4));
                 let first = lookup.biome();
+                // A tied biome's candidates would have drawn from the random as it is now.
+                let before = random.clone();
                 for (i, (carver, legacy)) in carving.carvers.of(first).enumerate() {
-                    let mut random = random(i, start);
+                    seed(&mut random, i, start);
                     if carver.is_start_chunk(&mut random) {
                         carve(carver, legacy, &mut random, start);
                     }
@@ -469,8 +473,9 @@ impl ChunkGenerator<'_> {
                     .any(|&b| !carving.carvers.same(b, first))
                 {
                     for &b in lookup.candidates() {
+                        let mut random = before.clone();
                         for (i, (carver, _)) in carving.carvers.of(b).enumerate() {
-                            let mut random = random(i, start);
+                            seed(&mut random, i, start);
                             if carver.is_start_chunk(&mut random) {
                                 carver.carve(anchors, &mut random, [cx, cz], start, doubt);
                             }

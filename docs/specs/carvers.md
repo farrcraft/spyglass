@@ -32,7 +32,7 @@ The Nether's carver is a `cave` in 26.3.
 For chunk `C`, `generateCarvers` visits every chunk `S` within 8 chunks of it, x outer and z inner, from −8 to 8:
 
 1. **Carver biome:** the biome source's biome at quart `(S.minX >> 2, 0, S.minZ >> 2)`, at y 0 and uncached (`getBiomeGenerationSettingsForCarver`). It isn't the biome the chunk stores there.
-2. **Each carver `i` of that biome, in order:** a `WorldgenRandom` over a legacy random gets `setLargeFeatureSeed(seed + i, S.x, S.z)`. If `isStartChunk` (`nextFloat() ≤ probability`), the carver carves from `S` into `C`'s mask with the same random.
+2. **Each carver `i` of that biome, in order:** a `WorldgenRandom` over a legacy random gets `setLargeFeatureSeed(seed + i, S.x, S.z)`. If `isStartChunk` (`nextFloat() ≤ probability`), the carver carves from `S` into `C`'s mask with the same random. It's one random for all of `C`'s source chunks and carvers, made once per chunk: reseeding reaches its inner legacy random, but its `nextGaussian` is its own (inherited from `LegacyRandomSource`), and its cached second value is never reset. So a carver's first gaussian can be one an earlier carver of the same chunk left over. No vanilla carver draws one; a pack's `clamped_normal` float provider does (Terralith's `canyon` `y_scale`). Where a source chunk's biome is tied, each candidate's carvers draw from the random as it was before that chunk.
 
 **The mask** (`CarvingMask`) covers `minY + 1` to `minY + genDepth − 1 − 7` of the generation context ([providers.md](providers.md#height-providers)), the chunk's 16 × 16 columns. A carver's ellipsoids never reach the mask's bottom y.
 

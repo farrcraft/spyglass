@@ -400,6 +400,16 @@ impl Bundle {
         self.json(&Self::resource_path(registry, id)?)
     }
 
+    /// Whether a registry entry exists, in the bundle or an applied pack, without reading it.
+    /// For a tag, whether any pack (or the bundle) still in view has its file.
+    pub fn has_resource(&self, registry: &str, id: &str) -> bool {
+        Self::resource_path(registry, id).is_ok_and(|path| match self.look_up(&path) {
+            Found::Layer(..) => true,
+            Found::Hidden => false,
+            Found::Base => self.manifest.files.contains_key(&path),
+        })
+    }
+
     /// A data-generator report's JSON, by its path in the bundle, e.g.
     /// `reports/biome_parameters/minecraft/overworld.json`.
     pub fn report(&self, path: &str) -> Result<serde_json::Value, BundleError> {
@@ -912,6 +922,10 @@ mod tests {
             ["minecraft:desert", "minecraft:plains", "mod:new"]
         );
         assert_eq!(both.structure_template("igloo/top").unwrap(), b"low");
+        assert!(both.has_resource("worldgen/biome", "mod:new"));
+        assert!(both.has_resource("worldgen/biome", "plains"));
+        assert!(!both.has_resource("worldgen/biome", "mod:other"));
+        assert!(!base.has_resource("worldgen/biome", "mod:new"));
         // The base bundle is untouched.
         assert_eq!(
             base.resource("worldgen/noise", "a").unwrap(),
@@ -950,6 +964,7 @@ mod tests {
             Err(BundleError::NotFound(_))
         ));
         assert_eq!(hidden.registry_ids("worldgen/biome"), ["minecraft:plains"]);
+        assert!(!hidden.has_resource("worldgen/biome", "desert"));
         // A pack's filter hides only what's below it.
         let above = base.with_packs([&low, &filtering, &high]).unwrap();
         assert_eq!(

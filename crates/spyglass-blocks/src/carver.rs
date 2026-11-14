@@ -10,7 +10,7 @@ use spyglass_data::anchor::{AnchorHeights, VerticalAnchor};
 use spyglass_data::codec::{At, LoadError, LoadErrorKind, field, float, full_id, int, object};
 use spyglass_data::providers::{FloatProvider, HeightProvider, IntProvider};
 use spyglass_density::Resources;
-use spyglass_rng::{LegacyRandomSource, RandomSource};
+use spyglass_rng::{LegacyRandomSource, LegacyWorldgenRandom, RandomSource};
 
 /// The carvers registry, and 26.2's.
 const CARVERS: [&str; 2] = ["worldgen/carver", "worldgen/configured_carver"];
@@ -442,7 +442,7 @@ impl Carver {
     }
 
     /// `isStartChunk`: `nextFloat() ≤ probability`.
-    pub fn is_start_chunk(&self, random: &mut LegacyRandomSource) -> bool {
+    pub fn is_start_chunk(&self, random: &mut LegacyWorldgenRandom) -> bool {
         let chance = match self {
             Carver::Cave(c) => c.probability,
             Carver::Canyon(c) => c.probability,
@@ -456,7 +456,7 @@ impl Carver {
     pub fn carve(
         &self,
         anchors: AnchorHeights,
-        random: &mut LegacyRandomSource,
+        random: &mut LegacyWorldgenRandom,
         chunk: [i32; 2],
         start: [i32; 2],
         mask: &mut impl Sink,
@@ -736,7 +736,7 @@ fn floor(v: f64) -> i32 {
 }
 
 /// `Mth.randomBetween(random, min, max)`.
-fn random_between(random: &mut LegacyRandomSource, min: f32, max: f32) -> f32 {
+fn random_between(random: &mut impl RandomSource, min: f32, max: f32) -> f32 {
     random.next_float() * (max - min) + min
 }
 
@@ -833,7 +833,7 @@ impl Cave {
     fn carve(
         &self,
         anchors: AnchorHeights,
-        random: &mut LegacyRandomSource,
+        random: &mut LegacyWorldgenRandom,
         chunk: [i32; 2],
         start: [i32; 2],
         mask: &mut impl Sink,
@@ -898,7 +898,7 @@ impl Cave {
     }
 
     /// `getThickness`: the thickness, sometimes much thicker with `weird_thickness_bias`.
-    fn thickness(&self, random: &mut LegacyRandomSource) -> f32 {
+    fn thickness(&self, random: &mut LegacyWorldgenRandom) -> f32 {
         let mut thickness = self.thickness.sample(random);
         if self.weird_thickness_bias && random.next_int_bounded(10) == 0 {
             let first = random.next_float();
@@ -1021,7 +1021,7 @@ impl Canyon {
     fn carve(
         &self,
         anchors: AnchorHeights,
-        random: &mut LegacyRandomSource,
+        random: &mut LegacyWorldgenRandom,
         chunk: [i32; 2],
         start: [i32; 2],
         mask: &mut impl Sink,

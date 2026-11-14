@@ -194,7 +194,6 @@ impl<'a> Tags<'a> {
     }
 
     fn exists(&self, registry: &str, id: &str) -> bool {
-        Bundle::resource_path(registry, id)
-            .is_ok_and(|path| self.bundle.manifest().files.contains_key(&path))
+        self.bundle.has_resource(registry, id)
     }
 }

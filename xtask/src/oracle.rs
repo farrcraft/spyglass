@@ -277,6 +277,11 @@ pub(crate) fn feature_seeds() -> Vec<&'static str> {
     seeds
 }
 
+/// The seeds besides [`DUNGEON_SEED`] the two-dungeon search finds under the fixture pack,
+/// whose dungeons are tried 40 times a chunk, in 26.2 and 26.3: their feature files are written
+/// with the pack's golden set, so the test that checks them has its inputs.
+const FIXTURE_DUNGEON_SEEDS: &[&str] = &["2", "22", "38", "69"];
+
 /// Golden regions per seed: name, minimum block x and z, and size in blocks.
 const GOLDEN_REGIONS: &[(&str, i32, i32, i32)] = &[
     ("origin", -512, -512, 1024),
@@ -427,7 +432,7 @@ pub fn run(cmd: OracleCmd) -> Result<()> {
             ])
         }
         OracleCmd::TestPack(common) => test_pack(&common),
-        OracleCmd::Golden { common, threads } => golden(&common, threads),
+        OracleCmd::Golden { common, threads } => golden(&common, threads, &feature_seeds()),
         OracleCmd::FixturePack {
             common,
             threads,
@@ -453,7 +458,9 @@ fn fixture_pack(mut common: Common, threads: Option<usize>, only_pack: bool) -> 
     common.game_version = version;
     common.packs = vec![pack];
     common.name = Some(FIXTURE_PACK.to_string());
-    golden(&common, threads)
+    let mut seeds = feature_seeds();
+    seeds.extend(FIXTURE_DUNGEON_SEEDS);
+    golden(&common, threads, &seeds)
 }
 
 /// The test pack's probes and structures, under the version name `<version>+testpack`, with
@@ -495,6 +502,9 @@ const PACK_MCMETA: &str =
 /// The suffix of the version name of the block files made without carvers.
 const NO_CARVERS: &str = "no-carvers";
 
+/// The biome registry, as `Bundle::resource` names it.
+const BIOME_REGISTRY: &str = "worldgen/biome";
+
 /// The block golden files, then the same with no carvers, under the version name
 /// `<version>+no-carvers` (`docs/specs/oracle.md#block-golden-files`).
 pub(crate) fn blocks(harness: &mut Harness, threads: Option<usize>, seeds: &[&str]) -> Result<()> {
@@ -505,7 +515,7 @@ pub(crate) fn blocks(harness: &mut Harness, threads: Option<usize>, seeds: &[&st
         .split_once('+')
         .map_or(version.as_str(), |(base, _)| base);
     let mut without_carvers = harness.packs.clone();
-    without_carvers.push(no_carvers_pack(base)?);
+    without_carvers.push(no_carvers_pack(base, &harness.packs)?);
     let packs = std::mem::replace(&mut harness.packs, without_carvers);
     harness.version = format!("{version}+{NO_CARVERS}");
     let result = harness.blocks(threads, seeds);
@@ -514,15 +524,23 @@ pub(crate) fn blocks(harness: &mut Harness, threads: Option<usize>, seeds: &[&st
     result
 }
 
-/// A data pack that empties every biome's carver list, built from `bundles/<version>` into
-/// `target/oracle/<version>/no-carvers/`. Generated, not committed, since it's vanilla data.
+/// A data pack that empties every biome's carver list, built from `bundles/<version>` with
+/// `packs` applied into `target/oracle/<version>/no-carvers/`, to go over them. Every biome the
+/// packs give is in it as they give it, a pack's own biomes and its overrides of vanilla's
+/// alike, so it changes only the carvers. Generated, not committed, since it's vanilla data.
 /// Emptying the lists turns carvers off exactly: a carver with probability 0 still starts when
 /// its random float is 0.
-fn no_carvers_pack(version: &str) -> Result<PathBuf> {
-    let biomes = repo_root()
-        .join("bundles")
-        .join(version)
-        .join("data/minecraft/worldgen/biome");
+fn no_carvers_pack(version: &str, packs: &[PathBuf]) -> Result<PathBuf> {
+    let packs: Vec<_> = packs
+        .iter()
+        .map(|p| {
+            spyglass_world::open_pack(p)
+                .with_context(|| format!("reading the pack {}", p.display()))
+        })
+        .collect::<Result<_>>()?;
+    let bundle = spyglass_data::bundle::Bundle::open(repo_root().join("bundles").join(version))
+        .with_context(|| format!("no bundle for {version}; extract it first"))?
+        .with_packs(&packs)?;
     let pack = repo_root()
         .join("target")
         .join("oracle")
@@ -531,38 +549,36 @@ fn no_carvers_pack(version: &str) -> Result<PathBuf> {
     if pack.exists() {
         fs::remove_dir_all(&pack)?;
     }
-    let out = pack.join("data/minecraft/worldgen/biome");
-    fs::create_dir_all(&out)?;
+    fs::create_dir_all(&pack)?;
     fs::write(pack.join("pack.mcmeta"), PACK_MCMETA)?;
-    for entry in fs::read_dir(&biomes)
-        .with_context(|| format!("no biomes in {}; extract {version} first", biomes.display()))?
-    {
-        let path = entry?.path();
-        if path.extension().is_none_or(|e| e != "json") {
-            continue;
-        }
-        let mut biome: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)
-            .with_context(|| format!("reading {}", path.display()))?;
+    for id in bundle.registry_ids(BIOME_REGISTRY) {
+        let mut biome = bundle
+            .resource(BIOME_REGISTRY, &id)
+            .with_context(|| format!("reading the biome {id}"))?;
         let Some(fields) = biome.as_object_mut() else {
-            bail!("{} isn't a JSON object", path.display());
+            bail!("the biome {id} isn't a JSON object");
         };
         fields.insert("carvers".to_string(), serde_json::Value::Array(Vec::new()));
-        let name = path.file_name().expect("a file");
-        fs::write(out.join(name), serde_json::to_vec_pretty(&biome)?)?;
+        let path = pack.join(spyglass_data::bundle::Bundle::resource_path(
+            BIOME_REGISTRY,
+            &id,
+        )?);
+        fs::create_dir_all(path.parent().expect("a resource path has folders"))?;
+        fs::write(path, serde_json::to_vec_pretty(&biome)?)?;
     }
     Ok(pack)
 }
 
 /// Every golden file: probes, structures, spawn, heights, blocks, features, containers, the
-/// biome grids and loot.
-fn golden(common: &Common, threads: Option<usize>) -> Result<()> {
+/// biome grids and loot, with feature files for `feature_seeds`.
+fn golden(common: &Common, threads: Option<usize>, feature_seeds: &[&str]) -> Result<()> {
     let mut harness = build(common)?;
     harness.probe()?;
     harness.structures()?;
     harness.spawn()?;
     harness.heights(threads, GOLDEN_SEEDS)?;
     blocks(&mut harness, threads, GOLDEN_SEEDS)?;
-    harness.features(threads, &feature_seeds())?;
+    harness.features(threads, feature_seeds)?;
     harness.containers(threads, GOLDEN_SEEDS)?;
     harness.golden_biomes(threads)?;
     harness.loot()?;
@@ -649,6 +665,9 @@ impl Harness {
                 "-Dlog4j.configurationFile={}",
                 repo_root().join("oracle").join("log4j2.xml").display()
             ))
+            // The outputs' version name, `<version>+<label>` with packs, whatever the packs'
+            // file names.
+            .arg(format!("-Dspyglass.oracle.version={}", self.version))
             .arg("-cp")
             .arg(&self.classpath)
             .arg("spyglass.oracle.Main")

@@ -20,7 +20,7 @@ CI runs the Rust crates against these for a fixed set of seeds per supported ver
 
 ## Running it
 
-`cargo xtask oracle` builds and runs the harness. Every subcommand takes `--game-version` (default `latest`), `--cache-dir` and `--java`.
+`cargo xtask oracle` builds and runs the harness. Every subcommand takes `--game-version` (default `latest`), `--cache-dir` and `--java`, and `--pack <folder|zip>` (repeatable, lowest first) with `--name <label>`, which load data packs over the vanilla one ([below](#packs)).
 
 | Command                                                         | Does                                                                                                                                               |
 | --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -37,6 +37,7 @@ CI runs the Rust crates against these for a fixed set of seeds per supported ver
 | `column <seed> <x> <z> [--dimension]`                           | Print a generated chunk's column beside `getBaseColumn`'s, marking where they differ. For debugging.                                               |
 | `locate`                                                        | Ask a real dedicated server `/locate` questions ([below](#locate-answers)). Not part of `golden`.                                                  |
 | `test-pack`                                                     | Write probe and structure files with the [test pack](#the-test-pack) loaded, into `oracle-out/<version>+testpack/`.                                |
+| `fixture-pack [--only-pack]`                                    | Write [the fixture pack](#the-fixture-pack), then the golden set with it loaded, into `oracle-out/<version>+overrides/`.                           |
 | `golden`                                                        | Regenerate the whole golden set below, probe, structure, spawn, height, block, feature and container files included, into `oracle-out/<version>/`. |
 
 `build` runs automatically before the others, and does nothing when nothing changed:
@@ -72,7 +73,7 @@ Unlike a plain `oracle-test`, a comparison that can't run because an input the j
 
 As the 26.3 adapter (`oracle/adapters/26.3/`) does it; other versions' adapters follow their own game's code paths to the same outputs, and their differences are noted here as they're added.
 
-- **Game state.** `SharedConstants.tryDetectVersion`, `Bootstrap.bootStrap`, then the `WorldLoader` sequence with the vanilla pack (and any `--pack` folders after it, as [the test pack](#the-test-pack) uses): static registries, tags, then the worldgen registries into the `WORLD` layer. The static registries' tags (blocks, items) are then bound, as `ReloadableServerResources.updateStaticRegistryTags` does, because structure pieces read them. Dimensions come from `WorldPresets.createNormalWorldDimensions`, which is what a new Default world gets. A seed becomes a `RandomState` as `ChunkMap` makes it: `RandomState.create`, or from 26.4-snapshot-6 `createForGenerator` with the dimension type's height, whose [anchors](density-functions.md#gradient-anchors) depend on it (the 26.3 adapter's `RandomStates.java`, which the snapshot-6 adapter replaces). The probe's single functions use `createForTesting`, from the noise settings alone. Text seeds are converted by `WorldOptions.parseSeed`, as the world-creation screen does.
+- **Game state.** `SharedConstants.tryDetectVersion`, `Bootstrap.bootStrap`, then the `WorldLoader` sequence with the vanilla pack and any `--pack` packs after it ([below](#packs)): static registries, tags, then the worldgen registries into the `WORLD` layer. The static registries' tags (blocks, items) are then bound, as `ReloadableServerResources.updateStaticRegistryTags` does, because structure pieces read them. Dimensions come from `WorldPresets.createNormalWorldDimensions`, which is what a new Default world gets. A seed becomes a `RandomState` as `ChunkMap` makes it: `RandomState.create`, or from 26.4-snapshot-6 `createForGenerator` with the dimension type's height, whose [anchors](density-functions.md#gradient-anchors) depend on it (the 26.3 adapter's `RandomStates.java`, which the snapshot-6 adapter replaces). The probe's single functions use `createForTesting`, from the noise settings alone. Text seeds are converted by `WorldOptions.parseSeed`, as the world-creation screen does.
 - **Biomes.** Per chunk, as `ChunkGenerator.doCreateBiomes` does: a cached `SamplerContext` on a pooled buffer arena, `createClimateSampler`, then `BiomeSource.createResolverForChunk` over the full height of the dimension type.
 - **Structures.** For each seed:
   - `ChunkGenerator.createState` builds the placements, and `ensureStructuresGenerated` computes the rings.
@@ -338,7 +339,7 @@ The blocks of whole chunks as generation leaves them before features, with no st
   - 26.4: noise biomes, upscaled biomes, then `buildTerrain`.
 - **The glue:** each adapter's `Chunks.java` repeats what the server's status tasks do around each step: the biome steps of the chunk and its neighbours, the set of possible biomes, and the biome manager's seed.
 - **The stand-ins:** the region and the structure manager are stand-ins that hand out the neighbouring chunks and no structures. There's no blending.
-- **Without carvers:** the second run loads a data pack, generated from the bundle into `target/oracle/<version>/no-carvers/`, that empties every biome's `carvers` list.
+- **Without carvers:** the second run loads a data pack, generated from the bundle into `target/oracle/<version>/no-carvers/` (for a variant, `target/oracle/<version>/<label>/no-carvers/`, so two variants' runs don't replace each other's), that empties every biome's `carvers` list. With `--pack`, it's generated from the bundle with the packs applied and goes over them, so it has every biome as the packs give it, their own and their overrides of vanilla's, and changes only the carvers.
 
 **Checks:**
 
@@ -461,7 +462,7 @@ The nearest start of each structure to the origin, and every chunk it reaches de
 ```
 
 - **`starts`:** for each structure with a start whose start chunk is within 64 chunks of the origin on each axis, and whose box stays within that square, the nearest (by squared chunk distance, the first of equals in z then x order): its start chunk, its box (`StructureStart.getBoundingBox`, least corner then greatest) and its pieces' boxes, before any is placed. Then, for each concentric-ring set, the starts at its ring position nearest the origin (by squared chunk distance, the first in ring order), wherever it is, for structures without one yet: there's never a stronghold within 64 chunks. And for any other set without a start there, its first start in placement chunks in squares outward beyond that, up to 1,024 chunks. Sorted by structure id. Format 2 files had neither.
-- **`chunks`:** every chunk a start's box meets, in z then x order, each decorated on its own in full (every step), with every container made: a block entity that's a `RandomizableContainer` with a loot table, in the chunk or its 8 neighbours, new or with a new table or seed since the last label; or an entity in the chunk with `LootTable` in its NBT (a chest minecart). `by` is what the region was generating when it appeared (`setCurrentlyGenerating`): a structure's id or a placed feature's. Block containers under one label are by position (y, then z, then x); `pos` of an entity is the block it's in. From format 2, `slots` is the container's `getContainerSize()`, and `items` what the game's own `LootTable.fill` puts in it from its table and seed, each non-empty slot's stack as `ItemStack.CODEC` encodes it with its `slot`, as in [loot golden files](#loot-golden-files). `items` is left out where the fill asks for a biome outside the decorated region.
+- **`chunks`:** every chunk a start's box meets, in z then x order, each decorated on its own in full (every step), with every container made: a block entity that's a `RandomizableContainer` with a loot table, in the chunk or its 8 neighbours, new or with a new table or seed since the last label; or an entity in the chunk with `LootTable` in its NBT (a chest minecart). `by` is what the region was generating when it appeared (`setCurrentlyGenerating`): a structure's id or a placed feature's. Block containers under one label are by position (y, then z, then x); `pos` of an entity is the block it's in. From format 2, `slots` is the container's `getContainerSize()`, and `items` what the game's own `LootTable.fill` puts in it from its table and seed, each non-empty slot's stack as `ItemStack.CODEC` encodes it with its `slot`, as in [loot golden files](#loot-golden-files). `items` is left out where the fill asks for a biome outside the decorated region. A chunk whose decoration reads a chunk outside its 3 × 3 is left out, with a note on stderr: the game's `FEATURES` step has its neighbours at `CARVERS` only out to 1, and at `STRUCTURE_STARTS` out to 8, so what such a read gets depends on the order the game generated chunks in (a sculk patch spreading two chunks out, under the fixture pack for 26.2).
 
 **How the harness makes them** ([ADR 0062](../adr/0062-the-oracle-places-structures-for-containers.md)):
 
@@ -534,6 +535,8 @@ The cases, per dimension, from 3 positions in it:
 - **Map cases**, on a seed's server after its locate cases: each of the version's exploration maps, every chest table entry with an `exploration_map` function ([loot.md](loot.md#maps)), filled from the Overworld's 3 positions, then from up to 2 of the seed's [golden containers](#container-golden-files) of each table that gives one, where the seed's container file exists. The server's world has a data pack, `spyglass_maps`, with a table per entry, `spyglass:map/<i>`, giving that entry alone, copied from the bundle's table without its conditions and weight, in the version's own form; its `pack.mcmeta` takes the jar's `version.json` `data_major`. A chest at (0, 100, 0) in a force-loaded chunk takes each map: `item replace` empties its first slot, `execute positioned <from> run loot replace block` fills it from the case's position, the fill's origin, and `data get block … Items[0].components."minecraft:map_decorations"` reads the target, whose `x` and `z` are the answer. The cases run in order on one world, so a map that skips known structures claims what it finds for the cases after it.
 
 It takes under a minute per seed, and isn't part of `golden`.
+
+**With packs**, `cargo xtask oracle locate --pack <folder|zip> --name <label>` copies the packs into each new world's `datapacks/` and enables them with `initial-enabled-packs=vanilla,file/<name>,…`, in the order given, since a pack found there but not listed is enabled in order of its id. The answers go to `oracle-out/<version>+<label>/locate/`, and the map cases' containers come from that variant's container files. The map entries come from the plain bundle's chest tables. A save enables its own packs, so `--world` can't be given with `--pack`.
 
 **On a world save**, `cargo xtask oracle locate --world <save>` (repeatable) does the same on a **copy** of the save, made in the throwaway directory without its `session.lock`; the server never opens the save itself. `server.properties` leaves out `level-seed`, and the cases add the single player's position as a fourth origin in the player's dimension. The answers go to `oracle-out/<version>/locate/world-<folder>.json`, which also records `world_dir`, and the comparison opens the save through `inspect_save` ([world-saves.md](world-saves.md#testing)).
 
@@ -656,18 +659,49 @@ Then the same for the Nether and the End, each case with a `dimension` (cases wi
 
 **`terrain.json`** (26.2) has `noise_chunk_aquifer_column`: the overworld's aquifer as `iterateNoiseColumn` asks it, on a fresh walk like `noise_chunk_density_column`'s for each case. It's `computeSubstance(noiseChunk, density)` at every block from the top down, with the positioned `NoiseChunk` itself as the context, as the generator's material rule calls it. `method` `final_density` passes `getInterpolatedDensity`; `fixed` passes one `density` (−1, −0.02 or 0). The `text` value is one letter per block, bottom up, as for `aquifer_column`.
 
+## Packs
+
+`--pack <folder|zip>` (repeatable, lowest first) and `--name <label>` load data packs over the vanilla one in any harness command, and write its files under the version name `<version>+<label>`, into `oracle-out/<version>+<label>/`. The xtask passes that name to the harness as the `spyglass.oracle.version` system property, which the files' `version` records; the harness alone names a run `<version>+<file name>` for each pack. The harness loads each pack as the game loads a world's ([data-packs.md](data-packs.md#the-games-rules)): a folder or a zip, through `Pack.readMetaAndCreate` (a pack the game wouldn't load is an error) and `Pack.open`, so its overlays and filter apply, then `MultiPackResourceManager` over all of them. The xtask records the packs, as absolute paths, in `oracle-out/<version>+<label>/packs.json`.
+
+`oracle-test` treats `<version>+<label>` as a version wherever `bundles/<version>` and that `packs.json` exist, after `<version>` itself. Its comparisons open the plain bundle with the same packs applied (`spyglass_oracle::open_bundle`, `packs`), so what's checked is spyglass's reading of the packs, overlays, filters and merged tags included. The CLI's comparisons don't pass packs, and are skipped for a variant without its own inputs.
+
 ## The test pack
 
 Some forms the game accepts aren't in its vanilla data: 26.4-snapshot-6's [`domain_warp`](density-functions.md#domain_warp), [gradient anchors](density-functions.md#gradient-anchors) and [corner constraints](structure-placement.md#corner-constraints); and older ones, 26.3's [`dimension_origin`](structure-placement.md#dimension-origin) placement and pool elements' `override_liquid_settings`. spyglass supports them because data packs written for a supported version must load ([ADR 0026](../adr/0026-how-game-versions-coexist.md)), and the oracle checks them with a data pack of its own ([ADR 0030](../adr/0030-a-test-pack-for-forms-vanilla-doesnt-use.md)): `oracle/testpack/`, committed, since it's spyglass's JSON. It names only vanilla noises, density functions and templates by id, so no game data is in it ([ADR 0008](../adr/0008-game-derived-test-values-stay-local.md)). Its namespace is `spyglass_test`.
 
 `cargo xtask oracle test-pack --game-version <id>` runs for the versions the pack loads in, which `oracle/testpack/data-versions` lists as data-version ranges in the adapters' format ([ADR 0027](../adr/0027-oracle-harness-across-versions.md)): 26.4-snapshot-6 on. For any other version it stops with an error, since the game would reject the pack. It:
 
-1. builds `target/oracle/bundles/<id>+testpack/`: `bundles/<id>/` with the pack's `data/` files added, its `bundle.json` naming the version `<id>+testpack` and listing them;
-2. runs the harness's `probe` and `structures` with `--pack oracle/testpack`, which load the pack over the vanilla one and name the version `<id>+testpack` in their files, into `oracle-out/<id>+testpack/`.
+runs the harness's `probe` and `structures` with the pack loaded ([above](#packs)), into `oracle-out/<id>+testpack/`, and records it there in `packs.json`. Its `pack.mcmeta` covers every format from 82 on, so the game loads it in every version spyglass supports.
 
 The probe samples every named function, the pack's included, as it does the vanilla ones, and the pack's also over whole chunks (`density_chunk`), since a warp's volume path depends on the volume's shape. The structure files cover the pack's structure sets as any other: a village whose start elements have corner constraints, one of them with `override_liquid_settings`, and igloos placed at the dimension origin, which the golden regions hold for every golden seed. The [checkerboard biome source](biome-lookup.md#checkerboard-source) isn't in the pack: it would have to replace a Default-preset dimension, and with it every other comparison the pack makes.
 
-`oracle-test` then treats `<id>+testpack` as a version: it finds bundles in `target/oracle/bundles/` as well as `bundles/`, and `spyglass_oracle::bundle_dir` falls back to it. The comparisons whose inputs exist run unchanged; the CLI's, which look a version up in `bundles/`, need an extracted bundle and are skipped. For 26.4-snapshot-6 that's 22 tests, all passing.
+`oracle-test` then treats `<id>+testpack` as a version, applying the pack over `bundles/<id>/` ([above](#packs)). Until 2026-11-11, the comparisons read a bundle merged with the pack instead; with the pack applied, the same tests pass.
+
+## The fixture pack
+
+The test pack adds forms vanilla doesn't use; the fixture pack overrides what vanilla has, so every comparison runs with a pack that changes its answers. Overriding a vanilla file means starting from it, and vanilla's files can't be committed ([ADR 0008](../adr/0008-game-derived-test-values-stay-local.md)), so the pack is generated from the user's own bundle: `cargo xtask oracle fixture-pack --game-version <id>` writes it into `target/oracle/<id>/packs/overrides/`, then runs `golden` with it loaded (`--name overrides`), into `oracle-out/<id>+overrides/` ([ADR 0072](../adr/0072-data-packs-as-layers.md)). `--only-pack` writes the pack alone. Its feature files also cover the seeds the two-dungeon search finds under the pack (2, 22, 38 and 69, besides 56), so that test has its inputs. The program is `xtask/src/fixture_pack.rs`. The pack changes:
+
+| What                                                         | Seen by                                  |
+| ------------------------------------------------------------ | ---------------------------------------- |
+| `minecraft:temperature`'s second amplitude, 0 to 0.75        | probe, biomes, structures, spawn, locate |
+| `overworld/continents`' `xz_scale`, 0.25 to 0.3              | probe, heights, blocks, biomes           |
+| the Overworld's `sea_level`, 63 to 72                        | heights, blocks                          |
+| `ore_iron`'s size, 9 to 14                                   | features                                 |
+| `monster_room`'s placed count, 10 to 40                      | features, containers                     |
+| `chests/simple_dungeon`'s first pool, two more rolls at most | loot, containers                         |
+| `has_structure/village_plains`, only `minecraft:forest`      | structures                               |
+
+and reads them through each part of a pack the game has:
+
+- **an overlay that applies**, `spyglass_applies` (the version's format), holding the temperature noise, over a decoy at the root with the amplitude 0.25;
+- **an overlay that never applies**, `spyglass_never` (formats 82 to 83), holding Overworld noise settings that wouldn't load;
+- **a filter** hiding vanilla's `has_structure/village_plains`, so the pack's own is the whole tag, where merging would have kept vanilla's members too.
+
+So a reader that ignored the overlays, applied the wrong one, or merged instead of filtering would differ from the game. And a pack spyglass silently didn't apply would fail, since each comparison's answers differ from vanilla's under the pack.
+
+For 26.3 (2026-11-11), 56 of the 69 comparisons have inputs without the server's; `/locate`'s need `cargo xtask oracle locate --pack target/oracle/26.3/packs/overrides --name overrides` ([above](#locate-answers)), and the CLI's don't pass packs. With the pack applied, all 56 pass (2026-11-12), and with the locate files all 59 (2026-11-13), where about half of each seed's 120 answers and most map targets differ from vanilla's. For 26.2 and 26.4-snapshots 5 to 8, all 56 or 57 pass with the pack (2026-11-13). The pack moved seed −1's pillager outpost so that its overgrown watchtower kept its copy of the chest, which replaces the watchtower's and draws the second loot seed; spyglass answered the first chest until a container placed over another replaced it. With the same files and `packs.json` emptied, so spyglass answers for vanilla, every comparison with the game fails: probe, noise, density, biomes, structures with and without terrain, spawn, heights, aquifer, blocks with and without carvers, features, tries, placing, layouts, containers and loot. Only the self-consistency tests pass.
+
+The run found one fault the vanilla golden seeds never reached. Under the pack, seed −1's first stronghold ring position is tie-dependent. Locate gave both chunks the game may use, but containers were answered in spyglass's chunk only, and as certain. Container and structure-piece answers now take a ring's alternatives too, as candidates (`Starts::possible_starts_in`).
 
 ## Independent check: real world saves
 

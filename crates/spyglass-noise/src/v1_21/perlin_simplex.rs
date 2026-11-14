@@ -6,6 +6,7 @@ use std::collections::BTreeSet;
 use spyglass_rng::{LegacyRandomSource, RandomSource};
 
 use super::SimplexNoise;
+use crate::mth::pow2;
 
 /// `PerlinSimplexNoise`: one [`SimplexNoise`] per octave, highest frequency first.
 #[derive(Debug, Clone)]
@@ -65,8 +66,8 @@ impl PerlinSimplexNoise {
         }
         PerlinSimplexNoise {
             levels,
-            input_factor: 2.0_f64.powf(f64::from(last)),
-            value_factor: 1.0 / (2.0_f64.powf(f64::from(count)) - 1.0),
+            input_factor: pow2(last),
+            value_factor: 1.0 / (pow2(count) - 1.0),
         }
     }
 

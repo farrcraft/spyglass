@@ -115,7 +115,7 @@ fn dimension(
 #[ignore = "needs oracle-out/<version>/structures and bundles/<version>"]
 fn structures_match_the_oracle() {
     let version = &spyglass_oracle::version();
-    let bundle = Bundle::open(spyglass_oracle::bundle_dir())
+    let bundle = spyglass_oracle::open_bundle()
         .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {version}"));
     for folder in DIMENSIONS {
         println!("{folder}:");
@@ -531,7 +531,7 @@ fn with_terrain(
 #[ignore = "needs oracle-out/<version>/structures and bundles/<version>"]
 fn structures_with_terrain_match_the_oracle() {
     let version = &spyglass_oracle::version();
-    let bundle = Bundle::open(spyglass_oracle::bundle_dir())
+    let bundle = spyglass_oracle::open_bundle()
         .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {version}"));
     for folder in DIMENSIONS {
         println!("{folder}:");

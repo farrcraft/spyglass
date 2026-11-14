@@ -49,6 +49,10 @@ pub struct Export {
     pub ties: bool,
     /// Slime chunks.
     pub slime_chunks: bool,
+    /// A save's generated chunks, for a save.
+    pub generated: bool,
+    /// Generated chunks shaded by inhabited time.
+    pub inhabited: bool,
     /// The world spawn.
     pub spawn: bool,
     /// Structure starts decided with the seed's terrain.
@@ -126,6 +130,15 @@ impl Export {
         }
         if self.slime_chunks && self.area.scale <= MAX_SLIME_SCALE {
             args.push("--slime".to_string());
+        }
+        if self.generated
+            && self.area.scale <= MAX_SLIME_SCALE
+            && matches!(self.source, Source::Save(_))
+        {
+            args.push("--generated".to_string());
+            if self.inhabited {
+                args.push("--inhabited".to_string());
+            }
         }
         if self.spawn {
             args.push("--spawn".to_string());
@@ -208,6 +221,8 @@ mod tests {
             highlight: vec!["minecraft:river".into()],
             ties: true,
             slime_chunks: true,
+            generated: false,
+            inhabited: false,
             spawn: true,
             confirm: true,
             relief: true,
@@ -253,6 +268,8 @@ mod tests {
             highlight: Vec::new(),
             ties: false,
             slime_chunks: true,
+            generated: false,
+            inhabited: false,
             spawn: false,
             confirm: false,
             relief: false,

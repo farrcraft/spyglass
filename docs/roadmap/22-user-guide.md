@@ -36,8 +36,8 @@ Not in scope:
 
 ## Exit criteria
 
-- [ ] The guide is published on GitHub Pages from the latest release's tag, and the README, the releases page and the archive link to it.
-- [ ] Every user-facing section of getting-started.md now lives in the guide, and getting-started.md covers only contributor setup.
-- [ ] Every example command in the guide was run against the released build and gave the output shown.
+- [x] The guide is published on GitHub Pages from the latest release's tag, and the README, the releases page and the archive link to it.
+- [x] Every user-facing section of getting-started.md now lives in the guide, and getting-started.md covers only contributor setup.
+- [x] Every example command in the guide was run against the released build and gave the output shown.
 - [ ] Someone new to spyglass follows the guide on a clean machine, from download to a seed search, with no other docs.
-- [ ] `cargo xtask check` builds the guide and passes, and CI builds it on pull requests.
+- [x] `cargo xtask check` builds the guide and passes, and CI builds it on pull requests.

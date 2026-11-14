@@ -5,7 +5,7 @@
 use serde_json::Value;
 use spyglass_data::anchor::VerticalAnchor;
 use spyglass_data::codec::{
-    At, LoadError, LoadErrorKind, double, field, float, full_id, int, int_in, object,
+    At, LoadError, LoadErrorKind, block_state, double, field, float, full_id, int, int_in, object,
 };
 use spyglass_density::{Df, Loader, Resources};
 
@@ -343,42 +343,30 @@ impl<'r, 'p, R: Resources + ?Sized> RuleLoader<'r, 'p, R> {
         result
     }
 
-    /// A block state: an id (the block's default state), or `{"Name": id, "Properties": {...}}`.
+    /// A block state, in any of [`block_state`]'s forms.
     pub(crate) fn state(&mut self, json: &Value, at: &At<'_>) -> Result<State, LoadError> {
         let name = state_name(self.resources, &mut self.defaults, json, at)?;
         Ok(self.palette.state(&name))
     }
 }
 
-/// The name of a block state as `BlockState`'s codec reads it: an id (the block's default
-/// state), or `{"Name": id, "Properties": {...}}`. `defaults` are read from `resources` the
-/// first time a state has properties.
+/// The name of a block state as `BlockState`'s codec reads it ([`block_state`]'s forms).
+/// `defaults` are read from `resources` the first time a state has properties.
 pub(crate) fn state_name<R: Resources + ?Sized>(
     resources: &R,
     defaults: &mut Option<BlockDefaults>,
     json: &Value,
     at: &At<'_>,
 ) -> Result<String, LoadError> {
-    match json {
-        Value::String(id) => Ok(full_id(id)),
-        Value::Object(o) => {
-            let id = o
-                .get("Name")
-                .and_then(Value::as_str)
-                .ok_or_else(|| at.error(LoadErrorKind::Missing("Name")))?;
-            match o.get("Properties") {
-                None => Ok(full_id(id)),
-                Some(properties) => {
-                    let properties = object(properties, &at.child("Properties"))?;
-                    let defaults = match defaults {
-                        Some(d) => d,
-                        None => defaults.insert(BlockDefaults::load(resources)?),
-                    };
-                    defaults.name(id, properties, at)
-                }
-            }
+    match block_state(json, at)? {
+        (id, None) => Ok(id),
+        (id, Some(properties)) => {
+            let defaults = match defaults {
+                Some(d) => d,
+                None => defaults.insert(BlockDefaults::load(resources)?),
+            };
+            defaults.name(&id, properties, at)
         }
-        _ => Err(at.error(LoadErrorKind::Shape("a block state"))),
     }
 }
 

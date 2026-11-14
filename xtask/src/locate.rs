@@ -18,6 +18,10 @@ use spyglass_world::Save;
 use crate::oracle::Harness;
 use crate::repo_root;
 
+mod maps;
+
+use maps::{MapAnswer, MapCase, MapEntry, map_cases, map_entries, run_map_cases, write_map_pack};
+
 /// Seeds for the `/locate` cases: trivial, text and the two real worlds.
 const SEEDS: &[&str] = &[
     "0",
@@ -137,6 +141,14 @@ pub fn require_eula(flag: bool) -> Result<()> {
     )
 }
 
+/// Refuses `packs` with `worlds`: a save enables its own packs.
+pub fn check_packs(packs: &[PathBuf], worlds: &[PathBuf]) -> Result<()> {
+    if !packs.is_empty() && !worlds.is_empty() {
+        bail!("--world opens a save's own packs; it can't be given with --pack");
+    }
+    Ok(())
+}
+
 /// Whether the variable's value accepts the EULA.
 fn eula_value_accepts(value: &str) -> bool {
     matches!(value.trim(), "1" | "true")
@@ -145,7 +157,12 @@ fn eula_value_accepts(value: &str) -> bool {
 /// With no `worlds`, writes `oracle-out/<version>/locate/<seed>.json` for each seed, replacing
 /// the folder. With `worlds`, writes `world-<folder>.json` for each save, from a copy of it,
 /// with the player's position as an extra origin in the player's dimension.
+///
+/// With the harness's packs (`--pack`), each new world enables them over vanilla, in order, and
+/// the files go under `<version>+<label>`. The map cases' entries come from the plain bundle's
+/// chest tables. A save enables its own packs, so `worlds` can't be given with packs.
 pub fn run(harness: &Harness, worlds: &[PathBuf]) -> Result<()> {
+    check_packs(&harness.packs, worlds)?;
     let out = repo_root()
         .join("oracle-out")
         .join(&harness.version)
@@ -155,7 +172,8 @@ pub fn run(harness: &Harness, worlds: &[PathBuf]) -> Result<()> {
     }
     fs::create_dir_all(&out)?;
     let mut jobs: Vec<Job<'_>> = Vec::new();
-    let entries = map_entries(&repo_root().join("bundles").join(&harness.version))?;
+    let base = crate::oracle::base_version(&harness.version);
+    let entries = map_entries(&repo_root().join("bundles").join(base))?;
     if worlds.is_empty() {
         for seed in SEEDS {
             jobs.push(Job {
@@ -168,76 +186,20 @@ pub fn run(harness: &Harness, worlds: &[PathBuf]) -> Result<()> {
         }
     }
     for world in worlds {
-        let save = Save::read(world).with_context(|| format!("reading {}", world.display()))?;
-        let player = save
-            .player
-            .as_ref()
-            .map(|p| (p.dimension.as_str(), p.pos.map(|v| v.floor() as i32)));
-        let folder = world
-            .file_name()
-            .context("a save folder")?
-            .to_string_lossy()
-            .into_owned();
-        jobs.push(Job {
-            name: format!("world-{folder}.json"),
-            source: Source::Save(world),
-            cases: cases(player),
-            // A save's structures may already be referenced by its own maps.
-            maps: Vec::new(),
-            seed: json!(save.seed.to_string()),
-        });
+        jobs.push(save_job(world)?);
     }
-    for Job {
-        name,
-        source,
-        cases,
-        maps,
-        seed,
-    } in jobs
-    {
+    for job in jobs {
         let started = Instant::now();
-        let file = out.join(&name);
-        let (answers, map_answers) = server(harness, &name, &source, &cases, &maps, &entries)?;
-        let rows: Vec<Value> = cases
-            .iter()
-            .zip(answers)
-            .map(|(case, answer)| {
-                json!({
-                    "dimension": case.dimension,
-                    "kind": case.kind,
-                    "target": case.target,
-                    "from": case.from,
-                    "answer": answer.position,
-                    "found": answer.found,
-                    "message": answer.message,
-                })
-            })
-            .collect();
-        let map_rows: Vec<Value> = maps
-            .iter()
-            .zip(map_answers)
-            .map(|(case, answer)| {
-                let entry = &entries[case.entry];
-                json!({
-                    "table": entry.table,
-                    "function": entry.function,
-                    "from": case.from,
-                    "target": answer.target,
-                    "message": answer.message,
-                })
-            })
-            .collect();
-        let mut root = json!({
-            "format": 3,
-            "version": harness.version,
-            "seed": seed,
-            "cases": rows,
-            "maps": map_rows,
-        });
-        if let Source::Save(dir) = source {
-            root["world_dir"] = json!(dir);
-        }
-        fs::write(&file, serde_json::to_string_pretty(&root)? + "\n")?;
+        let file = out.join(&job.name);
+        let answers = server(
+            harness,
+            &job.name,
+            &job.source,
+            &job.cases,
+            &job.maps,
+            &entries,
+        )?;
+        write_answers(&file, harness, &job, answers, &entries)?;
         println!(
             "{}: {:.0} s",
             file.display(),
@@ -247,304 +209,66 @@ pub fn run(harness: &Harness, worlds: &[PathBuf]) -> Result<()> {
     Ok(())
 }
 
-/// Where the map cases' chest stands: a loaded block the console's commands can reach.
-const MAP_CHEST: [i32; 3] = [0, 100, 0];
-
-/// How many of a seed's golden containers holding one table's maps get cases of their own.
-const MAP_CONTAINERS_PER_TABLE: usize = 2;
-
-/// An exploration map the version's chest tables can give: its loot table entry, kept whole
-/// so the data pack's table gives it in the version's own form.
-struct MapEntry {
-    /// The table, e.g. `minecraft:chests/shipwreck_map`.
-    table: String,
-    /// The entry, without its conditions and weight.
-    entry: Value,
-    /// Its `exploration_map` function, as the table writes it.
-    function: Value,
+/// The job for a copy of the save at `world`: the cases, with the player's position as an
+/// extra origin in their dimension, and no map cases, since the save's structures may already
+/// be referenced by its own maps.
+fn save_job(world: &Path) -> Result<Job<'_>> {
+    let save = Save::read(world).with_context(|| format!("reading {}", world.display()))?;
+    let player = save
+        .player
+        .as_ref()
+        .map(|p| (p.dimension.as_str(), p.pos.map(|v| v.floor() as i32)));
+    let folder = world
+        .file_name()
+        .context("a save folder")?
+        .to_string_lossy()
+        .into_owned();
+    Ok(Job {
+        name: format!("world-{folder}.json"),
+        source: Source::Save(world),
+        cases: cases(player),
+        maps: Vec::new(),
+        seed: json!(save.seed.to_string()),
+    })
 }
 
-/// Every chest table's exploration map entries, in table order, from the bundle.
-fn map_entries(bundle: &Path) -> Result<Vec<MapEntry>> {
-    let dir = bundle.join("data/minecraft/loot_table/chests");
-    let mut files: Vec<PathBuf> = walk_json(&dir)?;
-    files.sort();
-    let mut out = Vec::new();
-    for file in files {
-        let rel = file.strip_prefix(&dir)?.with_extension("");
-        let table = format!(
-            "minecraft:chests/{}",
-            rel.to_string_lossy().replace('\\', "/")
-        );
-        let json: Value = serde_json::from_str(&fs::read_to_string(&file)?)?;
-        find_map_entries(&json, &table, &mut out);
-    }
-    Ok(out)
-}
-
-fn walk_json(dir: &Path) -> Result<Vec<PathBuf>> {
-    let mut out = Vec::new();
-    for entry in fs::read_dir(dir)? {
-        let path = entry?.path();
-        if path.is_dir() {
-            out.extend(walk_json(&path)?);
-        } else if path.extension().is_some_and(|e| e == "json") {
-            out.push(path);
-        }
-    }
-    Ok(out)
-}
-
-/// The item entries under `json` with an `exploration_map` function: 26.2 lists them as
-/// `functions` with a `function` key, 26.3 on as `modifier` with a `type` key.
-fn find_map_entries(json: &Value, table: &str, out: &mut Vec<MapEntry>) {
-    match json {
-        Value::Object(o) => {
-            let functions = o.get("functions").or_else(|| o.get("modifier"));
-            let map = functions.and_then(Value::as_array).and_then(|list| {
-                list.iter().find(|f| {
-                    f.get("function")
-                        .or_else(|| f.get("type"))
-                        .and_then(Value::as_str)
-                        .is_some_and(|k| k.ends_with("exploration_map"))
-                })
-            });
-            if let Some(function) = map {
-                let mut entry = o.clone();
-                for key in ["conditions", "weight", "quality"] {
-                    entry.remove(key);
-                }
-                out.push(MapEntry {
-                    table: table.to_string(),
-                    entry: Value::Object(entry),
-                    function: function.clone(),
-                });
-                return;
-            }
-            for v in o.values() {
-                find_map_entries(v, table, out);
-            }
-        }
-        Value::Array(list) => {
-            for v in list {
-                find_map_entries(v, table, out);
-            }
-        }
-        _ => {}
-    }
-}
-
-/// One map case: an entry's map, filled from `from` in the Overworld.
-struct MapCase {
-    /// Index into the entries.
-    entry: usize,
-    from: [i32; 3],
-}
-
-/// The map cases for a seed: every entry from the Overworld's origins, then from up to
-/// [`MAP_CONTAINERS_PER_TABLE`] of the seed's golden containers with each table, where its
-/// container file exists, so the container's own structure is the one it stands in.
-fn map_cases(harness: &Harness, seed: &str, entries: &[MapEntry]) -> Result<Vec<MapCase>> {
-    let mut cases = Vec::new();
-    for &from in DIMENSIONS[0].from {
-        for entry in 0..entries.len() {
-            cases.push(MapCase { entry, from });
-        }
-    }
-    let file = repo_root()
-        .join("oracle-out")
-        .join(&harness.version)
-        .join("containers/overworld")
-        .join(format!("{seed}.json"));
-    if let Ok(text) = fs::read_to_string(&file) {
-        let json: Value = serde_json::from_str(&text)?;
-        let mut taken: std::collections::HashMap<String, usize> = Default::default();
-        for chunk in json["chunks"].as_array().into_iter().flatten() {
-            for c in chunk["containers"].as_array().into_iter().flatten() {
-                let table = c["table"].as_str().unwrap_or_default();
-                let count = taken.entry(table.to_string()).or_default();
-                if *count >= MAP_CONTAINERS_PER_TABLE {
-                    continue;
-                }
-                let pos: Vec<i32> = c["pos"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|v| v.as_i64().map(|v| v as i32))
-                    .collect();
-                let [x, y, z] = pos[..] else { continue };
-                let mut any = false;
-                for (entry, e) in entries.iter().enumerate() {
-                    if e.table == table {
-                        cases.push(MapCase {
-                            entry,
-                            from: [x, y, z],
-                        });
-                        any = true;
-                    }
-                }
-                if any {
-                    *count += 1;
-                }
-            }
-        }
-    }
-    Ok(cases)
-}
-
-/// The version's data pack format, from the server jar's `version.json`.
-fn data_pack_format(harness: &Harness) -> Result<(u64, u64)> {
-    let version = harness
-        .version
-        .split('+')
-        .next()
-        .unwrap_or(&harness.version);
-    let jar = harness
-        .work
-        .join("classpath/versions")
-        .join(version)
-        .join(format!("server-{version}.jar"));
-    let mut zip =
-        zip::ZipArchive::new(fs::File::open(&jar).with_context(|| jar.display().to_string())?)?;
-    let mut text = String::new();
-    std::io::Read::read_to_string(&mut zip.by_name("version.json")?, &mut text)?;
-    let json: Value = serde_json::from_str(&text)?;
-    let pack = &json["pack_version"];
-    let major = pack["data_major"]
-        .as_u64()
-        .or_else(|| pack["data"].as_u64())
-        .context("no data pack version in version.json")?;
-    Ok((major, pack["data_minor"].as_u64().unwrap_or(0)))
-}
-
-/// Writes the data pack the map cases fill from: a table per entry, `spyglass:map/<i>`, giving
-/// just that entry.
-fn write_map_pack(harness: &Harness, world: &Path, entries: &[MapEntry]) -> Result<()> {
-    let pack = world.join("datapacks/spyglass_maps");
-    let (major, minor) = data_pack_format(harness)?;
-    fs::create_dir_all(&pack)?;
-    fs::write(
-        pack.join("pack.mcmeta"),
-        serde_json::to_string_pretty(&json!({
-            "pack": {
-                "description": "spyglass's map cases",
-                "pack_format": major,
-                "min_format": [major, minor],
-                "max_format": [major, minor],
-            }
-        }))?,
-    )?;
-    let tables = pack.join("data/spyglass/loot_table/map");
-    fs::create_dir_all(&tables)?;
-    for (i, e) in entries.iter().enumerate() {
-        let table = json!({"pools": [{"rolls": 1, "entries": [e.entry]}]});
-        fs::write(
-            tables.join(format!("{i}.json")),
-            serde_json::to_string(&table)?,
-        )?;
-    }
-    Ok(())
-}
-
-/// The game's answer to one map case: the target's block x and z, or `None` if the map
-/// marks nothing.
-struct MapAnswer {
-    target: Option<[i32; 2]>,
-    message: String,
-}
-
-/// Runs the map cases on a running server, after the locate cases: each fills the chest's
-/// first slot from its case's origin and reads the map's target decoration back.
-fn run_map_cases(
-    server: &Server,
-    stdin: &mut impl Write,
-    cases: &[MapCase],
-) -> Result<Vec<MapAnswer>> {
-    let [cx, cy, cz] = MAP_CHEST;
-    // The chest's chunk, loaded for good; the chest goes in once it's there.
-    writeln!(
-        stdin,
-        "execute in minecraft:overworld run forceload add {cx} {cz}"
-    )?;
-    loop {
-        writeln!(
-            stdin,
-            "execute in minecraft:overworld run setblock {cx} {cy} {cz} minecraft:chest"
-        )?;
-        stdin.flush()?;
-        let line = loop {
-            let line = server.next("the map chest")?;
-            if line.contains("Changed the block")
-                || line.contains("Could not set the block")
-                || line.contains("not loaded")
-            {
-                break line;
-            }
-        };
-        if !line.contains("not loaded") {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(500));
-    }
-    for (i, case) in cases.iter().enumerate() {
-        let [x, y, z] = case.from;
-        writeln!(stdin, "say spyglass-map-{i}")?;
-        writeln!(
-            stdin,
-            "item replace block {cx} {cy} {cz} container.0 with minecraft:air"
-        )?;
-        writeln!(
-            stdin,
-            "execute in minecraft:overworld positioned {x} {y} {z} run loot replace block {cx} {cy} {cz} container.0 loot spyglass:map/{}",
-            case.entry
-        )?;
-        writeln!(
-            stdin,
-            "data get block {cx} {cy} {cz} Items[0].components.\"minecraft:map_decorations\""
-        )?;
-    }
-    writeln!(stdin, "say spyglass-map-end")?;
-    stdin.flush()?;
-    let mut messages: Vec<Vec<String>> = vec![Vec::new(); cases.len()];
-    let mut current = None;
-    loop {
-        let line = server.next("map answers")?;
-        if let Some(rest) = line.split("[Server] spyglass-map-").nth(1) {
-            if rest.trim() == "end" {
-                break;
-            }
-            current = Some(rest.trim().parse::<usize>()?);
-            continue;
-        }
-        if let (Some(i), Some((_, message))) = (current, line.split_once("]: "))
-            && line.contains("[Server thread/")
-        {
-            messages[i].push(message.to_string());
-        }
-    }
-    Ok(messages
-        .into_iter()
-        .map(|lines| {
-            // "Chest at 0, 100, 0 has the following block data: {"+": {..., x: 12.0d, z: 34.0d}}",
-            // or "Found no elements matching …" when the map marks nothing.
-            let data = lines
-                .iter()
-                .find(|l| l.contains("has the following block data"));
-            let coord = |data: &str, key: &str| {
-                let at = data.find(&format!(" {key}: "))? + key.len() + 3;
-                let number: String = data[at..]
-                    .chars()
-                    .take_while(|c| c.is_ascii_digit() || *c == '-' || *c == '.')
-                    .collect();
-                number.parse::<f64>().ok().map(|v| v.floor() as i32)
-            };
-            let target = data.and_then(|d| Some([coord(d, "x")?, coord(d, "z")?]));
-            MapAnswer {
-                target,
-                message: lines.join("\n"),
-            }
+/// Writes `job`'s answers from the server into `file`: each case beside its answer, and each
+/// map case beside the target its map points at.
+fn write_answers(
+    file: &Path,
+    harness: &Harness,
+    job: &Job<'_>,
+    (answers, map_answers): (Vec<Answer>, Vec<MapAnswer>),
+    entries: &[MapEntry],
+) -> Result<()> {
+    let rows: Vec<Value> = job
+        .cases
+        .iter()
+        .zip(answers)
+        .map(|(case, answer)| {
+            json!({
+                "dimension": case.dimension,
+                "kind": case.kind,
+                "target": case.target,
+                "from": case.from,
+                "answer": answer.position,
+                "found": answer.found,
+                "message": answer.message,
+            })
         })
-        .collect())
+        .collect();
+    let mut root = json!({
+        "format": 3,
+        "version": harness.version,
+        "seed": job.seed,
+        "cases": rows,
+        "maps": maps::rows(&job.maps, map_answers, entries),
+    });
+    if let Source::Save(dir) = job.source {
+        root["world_dir"] = json!(dir);
+    }
+    fs::write(file, serde_json::to_string_pretty(&root)? + "\n")?;
+    Ok(())
 }
 
 /// One server run: its file's name, its world, its cases, and its seed as the file gives it.
@@ -556,7 +280,39 @@ struct Job<'a> {
     seed: Value,
 }
 
-/// Copies a save, skipping its `session.lock`, so the server never touches the original.
+/// Copies the harness's packs into the new world's `datapacks/`, and gives the
+/// `initial-enabled-packs` property that enables them over vanilla in the harness's order (packs
+/// found there but not listed would be enabled too, but in order of their ids). Empty without
+/// packs.
+fn enable_packs(harness: &Harness, dir: &Path) -> Result<String> {
+    if harness.packs.is_empty() {
+        return Ok(String::new());
+    }
+    let datapacks = dir.join("world/datapacks");
+    fs::create_dir_all(&datapacks)?;
+    let mut enabled = vec!["vanilla".to_string()];
+    for pack in &harness.packs {
+        let name = pack
+            .file_name()
+            .with_context(|| format!("no pack name in {}", pack.display()))?
+            .to_string_lossy()
+            .into_owned();
+        let target = datapacks.join(&name);
+        if target.exists() {
+            bail!("two packs named {name}");
+        }
+        if pack.is_dir() {
+            copy_save(pack, &target)?;
+        } else {
+            fs::copy(pack, &target)?;
+        }
+        enabled.push(format!("file/{name}"));
+    }
+    Ok(format!("initial-enabled-packs={}\n", enabled.join(",")))
+}
+
+/// Copies a save or a pack folder, skipping a save's `session.lock`, so the server never
+/// touches the original.
 fn copy_save(from: &Path, to: &Path) -> Result<()> {
     fs::create_dir_all(to)?;
     for entry in fs::read_dir(from)? {
@@ -720,7 +476,7 @@ fn server_dir(harness: &Harness, name: &str, source: &Source<'_>) -> Result<Path
     // tick, and on a slow machine an old version's can pass the watchdog's default 60 s, which
     // stops the server; -1 turns the watchdog off.
     let seed = match source {
-        Source::Seed(seed) => format!("level-seed={seed}\n"),
+        Source::Seed(seed) => format!("level-seed={seed}\n{}", enable_packs(harness, &dir)?),
         Source::Save(save) => {
             copy_save(save, &dir.join("world"))?;
             String::new()

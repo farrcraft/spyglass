@@ -1,7 +1,7 @@
 //! `spyglass loot`: loot containers and what they hold (`docs/specs/locate.md#loot`).
 
 use anyhow::{Result, bail};
-use spyglass::{FoundContainer, Item, ItemQuery, World};
+use spyglass::{FoundContainer, InSave, Item, ItemQuery, World};
 
 use crate::args::{Enchantment, Loot, Origin};
 use crate::{Out, SHOWN, json};
@@ -17,7 +17,7 @@ pub fn run(what: &Loot) -> Result<()> {
         chunks_of(*min, *max)?;
     }
     let (world, seed, report) = crate::load(common, player)?;
-    let session = world.session(seed)?;
+    let session = crate::session(&world, seed, report.as_ref())?;
     let out = Out {
         session: &session,
         json: common.json,
@@ -226,6 +226,21 @@ fn container_line(c: &FoundContainer, from: Option<[i32; 3]>) {
     );
     if let Some(doubt) = &c.contents_doubt {
         out!("      contents: {doubt}");
+    }
+    match &c.saved {
+        Some(InSave::Unopened { as_predicted: true }) => out!("      in the save: unopened"),
+        Some(InSave::Unopened { .. }) => {
+            out!("      in the save: unopened, but not with the predicted table and seed");
+        }
+        Some(InSave::Filled { items }) if items.is_empty() => {
+            out!("      in the save: opened, now empty");
+        }
+        Some(InSave::Filled { items }) => {
+            let text: Vec<String> = items.iter().map(|s| describe(&s.item)).collect();
+            out!("      in the save: opened, now {}", text.join(", "));
+        }
+        Some(_) => out!("      in the save: gone"),
+        None => {}
     }
 }
 

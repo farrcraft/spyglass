@@ -14,7 +14,7 @@ mod xoroshiro;
 pub use legacy::{LegacyPositionalRandomFactory, LegacyRandomSource};
 pub use source::{PositionalRandomFactory, RandomSource};
 pub use support::Seed128;
-pub use worldgen::WorldgenRandom;
+pub use worldgen::{LegacyWorldgenRandom, WorldgenRandom};
 pub use xoroshiro::{
     Xoroshiro128PlusPlus, XoroshiroPositionalRandomFactory, XoroshiroRandomSource,
 };

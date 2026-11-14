@@ -326,7 +326,11 @@ mod tests {
     #[test]
     #[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
     fn every_bundled_structure_has_a_family() {
-        let game = spyglass::Game::open(spyglass_oracle::bundle_dir()).expect("a bundle");
+        let game = spyglass::Game::open_with_packs(
+            spyglass_oracle::bundle_dir(),
+            &spyglass_oracle::packs(),
+        )
+        .expect("a bundle");
         for dimension in spyglass::Dimension::ALL {
             let world = game.world(dimension).expect("a world");
             for id in world.structures().filter(|id| id.starts_with("minecraft:")) {

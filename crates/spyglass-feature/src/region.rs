@@ -90,7 +90,7 @@ impl<'b> Region<'b> {
                     Heightmap::OceanFloorWg,
                 ]
                 .map(|h| 1u8 << h as u8);
-                #[allow(
+                #[expect(
                     clippy::needless_range_loop,
                     reason = "the column index addresses ten maps"
                 )]

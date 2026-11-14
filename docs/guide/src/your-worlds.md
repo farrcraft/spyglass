@@ -9,8 +9,17 @@ spyglass locate structure '#minecraft:village' --world "My World" --from player
 ```
 
 - `world list` lists the saves in the official Minecraft Launcher and the Modrinth App.
-- `world info` shows a world's seed, version, spawn and player, and anything that makes spyglass's answers inexact.
+- `world info` shows a world's seed, version, spawn and player, the [data packs](data-packs.md) it applies, and anything that makes spyglass's answers inexact.
 - `--world` takes a save's folder, or its folder name in a launcher's saves. `--from player` searches from where your player is, in the player's dimension.
+
+## What the world already holds
+
+Where your world has already generated a chunk, the game answers from what it saved there, not from the seed, and so does spyglass. A structure in a chunk the world has saved is marked **saved**: it's there, even if an older version, a data pack or a mod placed it. A chunk the world saved with no structure has none, whatever the seed would put there. Everywhere else, spyglass predicts from the seed as usual. Chunks saved before 1.18.2 are predicted too, since the game renames their structures by biome as it loads them.
+
+```text
+#village from 0 64 0 (My World, seed -4893098694207956070, Minecraft 26.3)
+        272 ~ 384           470 blocks  saved      minecraft:village_plains
+```
 
 ## When answers may differ
 
@@ -18,9 +27,9 @@ spyglass locate structure '#minecraft:village' --world "My World" --from player
 
 - **No bundle for the world's version.** [Extract one](game-data.md).
 - **A world preset other than Default,** such as Large Biomes or Amplified.
-- **Data packs or mods** that may change generation.
+- **Data packs spyglass can't apply,** and mods. spyglass applies your world's data packs as the game does; see [data packs](data-packs.md) for what it can't.
 - **Chunks an older version generated.** Those were made by that version's rules, and stay as they were when the world was upgraded.
 
 It reads every region file to count those chunks, which takes a few seconds for a large world. `--quick` skips that.
 
-Loot in a world can differ too: a chest you've already opened holds whatever you left in it.
+Loot in a world can differ too: a chest you've already opened holds whatever you left in it. With `--world`, each container in a chunk your world has generated says how the world holds it: `in the save: unopened` (it'll hold what spyglass shows), `opened, now …` with what's in it now, or `gone` (broken, or something else in its place). `loot find` goes by what's in it now.

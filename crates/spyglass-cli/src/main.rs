@@ -105,6 +105,18 @@ fn load(common: &Common, player: bool) -> Result<(World, i64, Option<SaveReport>
     Ok(loaded)
 }
 
+/// `world`'s session for `seed`, answering from the save where there is one: structure starts
+/// in the chunks it holds (ADR 0071).
+fn session<'w>(world: &'w World, seed: i64, report: Option<&SaveReport>) -> Result<Session<'w>> {
+    let session = world.session(seed)?;
+    Ok(match report {
+        Some(report) => {
+            session.with_save(std::sync::Arc::new(report.chunks(world.dimension_kind())))?
+        }
+        None => session,
+    })
+}
+
 /// Says on stderr, before a text answer, that its bundle's version wasn't checked (ADR 0039).
 /// JSON has it in `warnings` instead.
 fn warn_unchecked(unchecked: Option<UncheckedVersion>, json: bool) {
@@ -125,7 +137,7 @@ fn run_locate(what: &Locate) -> Result<()> {
         Locate::Spawn { .. } => false,
     };
     let (world, seed, report) = load(common, player)?;
-    let session = world.session(seed)?;
+    let session = session(&world, seed, report.as_ref())?;
     let out = Out {
         session: &session,
         json: common.json,
@@ -185,8 +197,20 @@ fn open(common: &Common) -> Result<World> {
         common.game_version.as_deref(),
     )?;
     let dimension = common.dimension.unwrap_or(Dimension::Overworld);
-    World::open_dimension(&dir, dimension)
+    let packs = read_packs(&common.packs)?;
+    World::open_with_packs(&dir, dimension, &packs)
         .with_context(|| format!("loading {dimension} from the bundle in {}", dir.display()))
+}
+
+/// The packs `--pack` names, read, lowest first.
+fn read_packs(paths: &[std::path::PathBuf]) -> Result<Vec<spyglass::Pack>> {
+    paths
+        .iter()
+        .map(|path| {
+            spyglass::open_pack(path)
+                .with_context(|| format!("reading the data pack {}", path.display()))
+        })
+        .collect()
 }
 
 /// The bundle `--bundle` names, or the one for `--game-version` (or the newest release) in
@@ -202,10 +226,18 @@ fn bundle_dir(
     })
 }
 
-/// [`bundle_dir`]'s bundle as a [`Game`], every dimension of it opened as it's needed.
-fn open_game(bundle: Option<&Path>, bundles: &Path, version: Option<&str>) -> Result<Game> {
+/// [`bundle_dir`]'s bundle as a [`Game`] with `packs` applied, every dimension of it opened
+/// as it's needed.
+fn open_game(
+    bundle: Option<&Path>,
+    bundles: &Path,
+    version: Option<&str>,
+    packs: &[std::path::PathBuf],
+) -> Result<Game> {
     let dir = bundle_dir(bundle, bundles, version)?;
-    Game::open(&dir).with_context(|| format!("loading the bundle in {}", dir.display()))
+    let packs = read_packs(packs)?;
+    Game::open_with_packs(&dir, &packs)
+        .with_context(|| format!("loading the bundle in {}", dir.display()))
 }
 
 /// What every answer is printed with.

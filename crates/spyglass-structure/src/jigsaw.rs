@@ -1300,8 +1300,8 @@ impl<'a> JigsawLoader<'a> {
         let error = |kind: LoadErrorKind| LoadError::new(id, "", kind);
         let template = match self.bundle.structure_template(id) {
             Ok(bytes) => {
-                let (_, root) = nbt::read_compressed(&bytes)
-                    .map_err(|e| error(LoadErrorKind::Invalid(nbt_error(&e))))?;
+                let (_, root) = nbt::read_template(&bytes)
+                    .map_err(|e| error(LoadErrorKind::Invalid(e.reason())))?;
                 let data_version = self.bundle.manifest().data_version;
                 Template::from_nbt(&root, id, data_version)?
             }
@@ -1317,13 +1317,6 @@ impl<'a> JigsawLoader<'a> {
         let template = Arc::new(template);
         self.templates.insert(id.to_string(), template.clone());
         Ok(template)
-    }
-}
-
-fn nbt_error(e: &nbt::NbtError) -> &'static str {
-    match e {
-        nbt::NbtError::Gzip(_) => "not gzip-compressed NBT",
-        _ => "malformed NBT",
     }
 }
 
@@ -1510,7 +1503,7 @@ mod tests {
     #[test]
     fn weighted_alias_lists_load_as_the_codec_reads_them() {
         let at = At::root("minecraft:s");
-        let random = |targets: serde_json::Value| {
+        let random = |targets: Value| {
             alias_binding(
                 &serde_json::json!({"type": "random", "alias": "a", "targets": targets}),
                 &at,
@@ -1540,7 +1533,7 @@ mod tests {
     #[test]
     fn liquid_settings_are_the_games_two_or_absent() {
         let at = At::root("minecraft:pool");
-        let check = |v: serde_json::Value| check_liquid_settings(&v, &at).is_ok();
+        let check = |v: Value| check_liquid_settings(&v, &at).is_ok();
         assert!(check(serde_json::json!({})));
         assert!(check(
             serde_json::json!({"override_liquid_settings": "apply_waterlogging"})

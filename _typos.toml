@@ -5,3 +5,5 @@ flate = "flate"
 # Positions counted along y and z, beside ix.
 iy = "iy"
 iz = "iz"
+# The game's OverlayedPackResources, named in the data packs spec.
+overlayed = "overlayed"

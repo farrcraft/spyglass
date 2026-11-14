@@ -226,7 +226,7 @@ impl StructureContainers {
     /// why the random's draws aren't known, if they aren't; a feature element sets it.
     /// `reads` says why a block a processor reads (`protected_blocks`) might not be the
     /// region's, if it might not.
-    #[allow(
+    #[expect(
         clippy::too_many_arguments,
         reason = "the decoration's state, passed through"
     )]
@@ -342,8 +342,12 @@ impl Place<'_, '_, '_> {
             let (block_id, doubt) = match processed {
                 Processed::Placed(id) => (id, None),
                 Processed::Dropped => continue,
-                // A block that might not be placed, or not as a container, might not draw.
+                // A block that might not be placed, or not as a container, might not draw, and
+                // might replace an earlier container here.
                 Processed::Unknown(why) => {
+                    for earlier in self.out.iter_mut().filter(|c| c.pos == world) {
+                        earlier.doubt.get_or_insert(why.clone());
+                    }
                     if self.blocks.loot_container(&block.block) == Some(true) {
                         self.unknown.get_or_insert(why.clone());
                         if let Some(table) = &block.loot_table {
@@ -360,6 +364,9 @@ impl Place<'_, '_, '_> {
                     continue;
                 }
             };
+            // A block placed where an earlier piece put a container replaces it: an overlay's
+            // copy of a chest its rot processor kept (`watchtower_overgrown` over `watchtower`).
+            self.out.retain(|c| c.pos != world);
             if self.blocks.loot_container(&block_id) != Some(true) {
                 continue;
             }

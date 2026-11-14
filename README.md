@@ -4,7 +4,7 @@
 
 A local-only seed explorer for Minecraft: Java Edition. Describe what you want in a world, and spyglass searches for the seeds that fit best, shows them on a map, and finds where things are in worlds you already play. Output aims to match the game exactly on current versions.
 
-> Status: early. For game versions 26.2, 26.3 and the 26.4 snapshots so far (26.4-snapshot-5 to 26.4-snapshot-7), each checked against the real game, the `spyglass` command answers `/locate`-style questions (structures, biomes, slime chunks, spawn) for any seed or a world save, in the Overworld, the Nether and the End, with `--json` for scripts, draws maps of them, and searches for the seeds that best fit a query of required and preferred constraints, which can span dimensions ("a fortress near the spawn's portal"). The viewer shows the same maps, pannable and zoomable, with layers you choose and a dimension switch, and runs the same searches. Terrain heights decide which structures really generate, so locate answers match the game's `/locate`, with exact bounds for villages, bastions and other jigsaw structures; maps can show terrain relief up close. New versions are added as they come out, snapshots included, and stay supported ([adding a version](docs/adding-a-version.md)).
+> Status: early. For game versions 26.2, 26.3 and the 26.4 snapshots so far (26.4-snapshot-5 to 26.4-snapshot-8), each checked against the real game, the `spyglass` command answers `/locate`-style questions (structures, biomes, features such as dungeons and geodes, loot containers holding an item, slime chunks, spawn) for any seed or a world save, in the Overworld, the Nether and the End, with `--json` for scripts, gives the blocks the game generates before features, draws maps of them, and searches for the seeds that best fit a query of required and preferred constraints, which can span dimensions ("a fortress near the spawn's portal"), or for the places in one seed that do. The viewer shows the same maps, pannable and zoomable, with layers you choose, a dimension switch and markers of your own, and runs the same searches. Terrain heights decide which structures really generate, so locate answers match the game's `/locate`, with exact bounds for villages, bastions, strongholds and other structures laid out piece by piece; maps can show terrain relief and the biomes at the surface at any scale. New versions are added as they come out, snapshots included, and stay supported ([adding a version](docs/adding-a-version.md)).
 
 ![The spyglass viewer showing the best seed from a search for two swamp huts near spawn, with the huts and a cherry grove ringed on a biome map](docs/guide/src/images/viewer-search.png)
 
@@ -56,6 +56,8 @@ cargo run -p spyglass-extract -- 26.3
 cargo run --release -p spyglass-cli -- locate structure '#minecraft:village' --seed 12345
 cargo run --release -p spyglass-cli -- locate structure '#minecraft:village' --world "My World" --from player
 cargo run --release -p spyglass-cli -- locate structure minecraft:fortress --seed 12345 --dimension nether
+cargo run --release -p spyglass-cli -- locate feature minecraft:monster_room --seed 12345
+cargo run --release -p spyglass-cli -- loot find minecraft:enchanted_golden_apple --seed 12345 --radius 16
 cargo run --release -p spyglass-cli -- render --seed 12345 --structures '#minecraft:village' --spawn -o map.png
 cargo run --release -p spyglass-cli -- search -q 'require 2 minecraft:swamp_hut within 600 of spawn' --time 60s
 cargo run --release -p spyglass-cli -- search -q 'require minecraft:fortress within 150 of spawn' --time 60s
@@ -66,22 +68,25 @@ See [docs/getting-started.md](docs/getting-started.md) for the full walkthrough,
 
 ## Crates
 
-| Crate                | Role                                                |
-| -------------------- | --------------------------------------------------- |
-| `spyglass-rng`       | Bit-exact ports of the game's RNGs.                 |
-| `spyglass-noise`     | Bit-exact ports of the game's noise.                |
-| `spyglass-data`      | Reads version bundles; shared JSON and NBT readers. |
-| `spyglass-extract`   | Builds version bundles from your own server jar.    |
-| `spyglass-oracle`    | Test support: reads the oracle's golden files.      |
-| `spyglass-density`   | Loads and evaluates density-function graphs.        |
-| `spyglass-biome`     | Climate sampling and biome lookup.                  |
-| `spyglass-terrain`   | Terrain heights and block columns, with aquifers.   |
-| `spyglass-structure` | Placement, validity checks and jigsaw assembly.     |
-| `spyglass-search`    | The search query language and parallel runner.      |
-| `spyglass-world`     | Reads your world saves.                             |
-| `spyglass`           | The public API that every front end uses.           |
-| `spyglass-cli`       | The `spyglass` command, with `--json` for scripts.  |
-| `spyglass-viewer`    | Native map app: layers, locate, saves, export.      |
+| Crate                | Role                                                                       |
+| -------------------- | -------------------------------------------------------------------------- |
+| `spyglass-rng`       | Bit-exact ports of the game's RNGs.                                        |
+| `spyglass-noise`     | Bit-exact ports of the game's noise.                                       |
+| `spyglass-data`      | Reads version bundles; shared JSON and NBT readers.                        |
+| `spyglass-extract`   | Builds version bundles from your own server jar.                           |
+| `spyglass-oracle`    | Test support: reads the oracle's golden files.                             |
+| `spyglass-density`   | Loads and evaluates density-function graphs.                               |
+| `spyglass-biome`     | Climate sampling and biome lookup.                                         |
+| `spyglass-terrain`   | Terrain heights and block columns, with aquifers.                          |
+| `spyglass-blocks`    | A chunk's blocks before features: surface, ore veins and carvers.          |
+| `spyglass-structure` | Placement, validity checks and jigsaw assembly.                            |
+| `spyglass-feature`   | Decoration: features such as dungeons and geodes, as the game places them. |
+| `spyglass-loot`      | A container's contents from its loot table and seed.                       |
+| `spyglass-search`    | The search query language and parallel runner.                             |
+| `spyglass-world`     | Reads your world saves.                                                    |
+| `spyglass`           | The public API that every front end uses.                                  |
+| `spyglass-cli`       | The `spyglass` command, with `--json` for scripts.                         |
+| `spyglass-viewer`    | Native map app: layers, locate, search, markers, saves, export.            |
 
 See [docs/architecture.md](docs/architecture.md) for how they fit together.
 

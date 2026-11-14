@@ -88,8 +88,12 @@ fn containers_in_are_the_game_s() {
             _ => Dimension::Overworld,
         };
         let world = worlds.entry(file.dimension.clone()).or_insert_with(|| {
-            World::open_dimension(spyglass_oracle::bundle_dir(), dimension)
-                .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {version}"))
+            World::open_with_packs(
+                spyglass_oracle::bundle_dir(),
+                dimension,
+                &spyglass_oracle::packs(),
+            )
+            .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {version}"))
         });
         *taken += 1;
         println!("seed {} {}", file.seed, file.dimension);
@@ -265,7 +269,12 @@ fn containers_in_are_the_game_s() {
 #[test]
 #[ignore = "needs a bundle: spyglass-extract"]
 fn item_queries_resolve_ids_tags_and_enchantments() {
-    let world = World::open(spyglass_oracle::bundle_dir()).unwrap();
+    let world = World::open_with_packs(
+        spyglass_oracle::bundle_dir(),
+        Dimension::Overworld,
+        &spyglass_oracle::packs(),
+    )
+    .unwrap();
     assert!(world.item_query("minecraft:golden_apple", None).is_ok());
     assert!(world.item_query("golden_apple", None).is_ok());
     assert!(world.item_query("#minecraft:logs", None).is_ok());

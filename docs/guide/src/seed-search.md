@@ -82,7 +82,7 @@ require nether #minecraft:ruined_portal within 300 of spawn
 
 The bundle options are as for [`locate`](command.md#locate). `--json` prints every hit, with what each constraint matched. The same query, range, start and count always give the same list, on any machine.
 
-A second Ctrl-C skips evaluating the seeds still in progress.
+A search stops at `--count`, `--time` or Ctrl-C once the seeds being checked are done, and then evaluates the best seeds again for what each constraint matched. For structures and biomes that's instant; for features and loot each seed takes as long again as it did to check, so `--time` is a lower bound: the loot query above with `--time 20s` printed after 16 minutes on 16 threads. A second Ctrl-C skips evaluating the best seeds.
 
 ## What a search costs
 

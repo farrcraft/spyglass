@@ -4,11 +4,12 @@
 //! ([`launchers`]). It does no worldgen and needs
 //! no game data. See `docs/specs/world-saves.md`.
 
+pub mod chunk;
 pub mod launchers;
 mod packs;
 pub mod region;
 
-pub use packs::PackContents;
+pub use packs::{PackContents, open_pack};
 
 use std::collections::BTreeMap;
 use std::io::{self, Read};
@@ -26,7 +27,7 @@ pub enum WorldError {
         /// The file.
         path: PathBuf,
         /// The underlying error.
-        source: std::io::Error,
+        source: io::Error,
     },
     /// A file isn't valid NBT.
     #[error("{path}: {source}")]
@@ -449,6 +450,13 @@ impl Save {
             (_, "minecraft:the_end") => self.dir.join("DIM1").join("region"),
             (_, _) => custom(),
         })
+    }
+
+    /// Where a dimension's entity region files are (`entities/`, beside `region/`, since 1.17),
+    /// under [`region_dir`](Self::region_dir)'s rules.
+    pub fn entities_dir(&self, dimension: &str) -> Result<PathBuf, WorldError> {
+        let region = self.region_dir(dimension)?;
+        Ok(region.with_file_name("entities"))
     }
 }
 

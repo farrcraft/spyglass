@@ -47,30 +47,35 @@ fn locate_agrees_with_the_game() {
     let files = std::fs::read_dir(&dir)
         .unwrap_or_else(|e| panic!("{}: {e}; run cargo xtask oracle locate", dir.display()));
     let worlds = Dimension::ALL.map(|d| {
-        World::open_dimension(spyglass_oracle::bundle_dir(), d)
+        World::open_with_packs(spyglass_oracle::bundle_dir(), d, &spyglass_oracle::packs())
             .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {version}"))
     });
     for file in files.flatten() {
         let json: Value =
             serde_json::from_str(&std::fs::read_to_string(file.path()).unwrap()).unwrap();
         let seed = spyglass::parse_seed(json["seed"].as_str().unwrap()).unwrap();
-        // A save's cases go through the save, as `--world` does.
+        // A save's cases go through the save, as `--world` does, with the save's chunks.
         let from_save = json["world_dir"].as_str().map(|dir| {
             let report =
                 spyglass::inspect_save(dir, root.join("../bundles"), spyglass::Scan::Quick)
                     .unwrap();
             assert_eq!(report.save.seed, seed, "{dir}");
-            report.open_world(spyglass::Dimension::Overworld).unwrap()
+            let world = report.open_world(Dimension::Overworld).unwrap();
+            (world, report)
         });
         // The save's Overworld goes through the save; its other dimensions aren't opened
         // from saves yet, so their cases are skipped.
         let sessions = Dimension::ALL.map(|d| {
             let world = &worlds[d as usize];
-            let world = match (&from_save, d) {
-                (Some(save), Dimension::Overworld) => save,
-                _ => world,
-            };
-            world.session(seed).unwrap()
+            match (&from_save, d) {
+                // Its chunks answer as the server's own do (ADR 0071).
+                (Some((save, report)), Dimension::Overworld) => save
+                    .session(seed)
+                    .unwrap()
+                    .with_save(std::sync::Arc::new(report.chunks(d)))
+                    .unwrap(),
+                _ => world.session(seed).unwrap(),
+            }
         });
         let session_for = |case: &Value| {
             let d = dimension(case);
@@ -232,7 +237,12 @@ fn locate_agrees_with_the_game() {
 #[test]
 #[ignore = "needs oracle-out/<version>/structures and bundles/<version>: cargo xtask oracle structures"]
 fn layouts_agree_with_the_game() {
-    let world = World::open(spyglass_oracle::bundle_dir()).unwrap();
+    let world = World::open_with_packs(
+        spyglass_oracle::bundle_dir(),
+        Dimension::Overworld,
+        &spyglass_oracle::packs(),
+    )
+    .unwrap();
     let dir = spyglass_oracle::out_dir().join("structures/overworld");
     // One file is enough here: the structure crate compares every start.
     let file = std::fs::read_dir(&dir)
@@ -298,7 +308,7 @@ fn nearest_is_never_farther_than_the_game() {
     let files = std::fs::read_dir(&dir)
         .unwrap_or_else(|e| panic!("{}: {e}; run cargo xtask oracle locate", dir.display()));
     let worlds = Dimension::ALL.map(|d| {
-        World::open_dimension(spyglass_oracle::bundle_dir(), d)
+        World::open_with_packs(spyglass_oracle::bundle_dir(), d, &spyglass_oracle::packs())
             .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {version}"))
     });
     let mut failures = Vec::new();

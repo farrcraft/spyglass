@@ -7,28 +7,24 @@
 //! The bundle's noise files say which family the version has (ADR 0026): 26.3's `base_octave`
 //! form, sampled in `f32`, or 26.2's `firstOctave` form, the 1.21 family, sampled in `f64`.
 
+use spyglass_data::bundle::Bundle;
 use std::collections::HashMap;
-use std::path::Path;
 
 use serde_json::Value;
 use spyglass_noise::{
-    NoiseStack, NormalNoise, NormalNoiseParameters, Parameters, PerlinNoise, v1_21,
+    NoiseStack, NormalNoise, NormalNoiseParameters, Normalization, Parameters, PerlinNoise, v1_21,
 };
 use spyglass_oracle::probe::{Case, ProbeFile, probe_file};
 use spyglass_rng::{
     LegacyRandomSource, PositionalRandomFactory, RandomSource, XoroshiroRandomSource,
 };
 
-/// A noise's parameters from `bundles/<version>/data/<ns>/worldgen/noise/<path>.json`, in
-/// whichever form the file has. Only what the climate noises use; the real parser belongs to the
-/// density layer.
-fn parameters(bundle: &Path, id: &str) -> NormalNoiseParameters {
-    let (namespace, path) = id.split_once(':').expect("a namespaced id");
-    let file = bundle.join(format!("data/{namespace}/worldgen/noise/{path}.json"));
-    let json: Value = serde_json::from_slice(
-        &std::fs::read(&file).unwrap_or_else(|e| panic!("{}: {e}", file.display())),
-    )
-    .unwrap();
+/// A noise's parameters from the bundle, with the version's packs applied, in whichever form the
+/// file has. Only what the climate noises use; the real parser belongs to the density layer.
+fn parameters(bundle: &Bundle, id: &str) -> NormalNoiseParameters {
+    let json: Value = bundle
+        .resource("worldgen/noise", id)
+        .unwrap_or_else(|e| panic!("{id}: {e}"));
     let numbers = |v: &Value| -> Vec<f64> {
         v.as_array()
             .unwrap()
@@ -50,10 +46,15 @@ fn parameters(bundle: &Path, id: &str) -> NormalNoiseParameters {
     if let Some(n) = json.get("octave_count") {
         p.octave_count = n.as_i64().unwrap() as i32;
     }
-    assert!(
-        json.get("normalize").is_none(),
-        "{id}: normalize isn't handled here"
-    );
+    if let Some(v) = json.get("normalize") {
+        // Codec.either(BOOL, "legacy"), as the density layer reads it.
+        p.normalize = match v {
+            Value::Bool(true) => Normalization::Enabled,
+            Value::Bool(false) => Normalization::Disabled,
+            Value::String(s) if s == "legacy" => Normalization::Legacy,
+            _ => panic!("{id}: normalize is {v}"),
+        };
+    }
     if let Some(m) = json.get("amplitude_modifiers") {
         p.amplitude_modifiers = numbers(m);
     }
@@ -300,13 +301,8 @@ fn v1_21_case(
 fn every_noise_sample_matches_the_game() {
     let path = probe_file("noise.json");
     let file = ProbeFile::read(&path).unwrap();
-    let bundle = spyglass_oracle::bundle_dir();
-    assert!(
-        bundle.join("bundle.json").is_file(),
-        "no bundle at {}; run spyglass-extract {}",
-        bundle.display(),
-        file.version
-    );
+    let bundle = spyglass_oracle::open_bundle()
+        .unwrap_or_else(|e| panic!("no bundle for {}: {e}; run spyglass-extract", file.version));
 
     let mut perlins: HashMap<i64, PerlinNoise> = HashMap::new();
     let mut normals: HashMap<(String, i64, String), Normal> = HashMap::new();

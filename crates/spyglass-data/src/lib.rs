@@ -7,5 +7,6 @@ pub mod bundle;
 pub mod codec;
 pub mod dimension;
 pub mod nbt;
+pub mod pack;
 pub mod providers;
 pub mod versions;

@@ -48,6 +48,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           # The base branch, to diff against.
           fetch-depth: 0
       - id: scope
@@ -86,6 +87,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # The guide hook builds the user guide with mdBook. Cached, since it takes minutes to compile.
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         id: mdbook
@@ -109,6 +112,8 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: The viewer's system libraries
         run: |
           sudo apt-get update -qq
@@ -146,6 +151,8 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -188,6 +195,8 @@ jobs:
       CARGO_INCREMENTAL: "0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # spyglass's own build, shared by every oracle job: never target/oracle/, which holds the
       # game's unpacked jars (ADR 0008). Saved only from main, so pull requests don't fill the
       # repository's cache with copies.
@@ -204,8 +213,10 @@ jobs:
           restore-keys: oracle-build-${{ runner.os }}-
       - name: The JDK major ${{ matrix.version }} needs
         id: jdk
+        env:
+          GAME_VERSION: ${{ matrix.version }}
         run: |
-          echo "major=$(cargo xtask jdk-status --game-version '${{ matrix.version }}' | cut -d' ' -f1)" \
+          echo "major=$(cargo xtask jdk-status --game-version "$GAME_VERSION" | cut -d' ' -f1)" \
             >> "$GITHUB_OUTPUT"
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:

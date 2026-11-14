@@ -7,8 +7,7 @@ use spyglass_density::v1_21::{self, NoiseChunk, RandomState, RouterEntry};
 /// The bundle for the version under test (`spyglass_oracle::version`).
 fn bundle() -> Bundle {
     let version = spyglass_oracle::version();
-    Bundle::open(spyglass_oracle::bundle_dir())
-        .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {version}"))
+    spyglass_oracle::open_bundle().unwrap_or_else(|e| panic!("{e}; run spyglass-extract {version}"))
 }
 
 /// Each dimension's noise settings and level: minimum y and height.

@@ -18,7 +18,7 @@ The bundle is for a game version this build of spyglass wasn't checked against. 
 
 ## Answers that don't match my world
 
-See [when answers may differ](your-worlds.md#when-answers-may-differ): a preset other than Default, data packs or mods, and chunks an older version generated all change what's in a world. `spyglass world info` lists what it found.
+See [when answers may differ](your-worlds.md#when-answers-may-differ): a preset other than Default, data packs spyglass can't apply, mods, and chunks an older version generated all change what's in a world. `spyglass world info` lists what it found.
 
 ## A structure is shown, but isn't there
 

@@ -127,6 +127,8 @@ impl App {
             highlight: self.settings.highlight.clone(),
             ties: self.settings.ties,
             slime_chunks: self.settings.slime_chunks && self.slime_allowed(),
+            generated: self.settings.generated && self.generated_allowed(),
+            inhabited: self.settings.inhabited,
             spawn: self.settings.spawn && self.spawn_allowed(),
             confirm: self.settings.confirm,
             relief: self.settings.relief && terrain,
@@ -171,7 +173,7 @@ impl App {
         let session = shown.session.clone();
         self.export_note = None;
         self.exporting = Some(Pending::spawn(ctx, move || {
-            let layers = spyglass::Layers {
+            let layers = Layers {
                 loot: if export.loot.is_empty() || export.area.scale > spyglass::MAX_FEATURE_SCALE {
                     None
                 } else {
@@ -205,6 +207,10 @@ impl App {
                     Vec::new()
                 },
                 slime_chunks: export.slime_chunks && export.area.scale <= spyglass::MAX_SLIME_SCALE,
+                generated: export.generated
+                    && export.area.scale <= spyglass::MAX_SLIME_SCALE
+                    && session.save().is_some(),
+                inhabited: export.inhabited,
                 spawn: export.spawn,
                 confirm: export.confirm,
                 relief: export.relief,
@@ -423,9 +429,39 @@ impl App {
     /// What's drawn on the map: biomes, overlays, structures, and whether to confirm with
     /// terrain.
     pub(super) fn layers_tab(&mut self, ui: &mut egui::Ui) {
+        self.biomes_section(ui);
+
+        ui.add_space(6.0);
+        self.overlays_section(ui);
+
+        ui.add_space(6.0);
+        self.underground_section(ui);
+
+        ui.add_space(6.0);
+        self.features_section(ui);
+
+        ui.add_space(6.0);
+        self.loot_section(ui);
+
+        ui.add_space(6.0);
+        self.structure_list(ui);
+
+        ui.add_space(6.0);
+        ui.separator();
+        ui.checkbox(&mut self.settings.confirm, "Confirm with terrain");
+        style::hint(
+            ui,
+            "Decides structure starts and locates with the seed's terrain, as the game does. Off, \
+             most surface structures are candidates. Jigsaw and mineshaft bounds are drawn when \
+             confirmed, at 1:4 or closer.",
+        );
+    }
+
+    /// The Biomes section: the height, biomes at the surface, the End's void, tied cells and
+    /// the highlighted biomes.
+    fn biomes_section(&mut self, ui: &mut egui::Ui) {
         let terrain = self.terrain_allowed();
         let ceiling = "Not under a ceiling: the surface there is the ceiling.";
-
         style::heading(ui, "Biomes");
         // The height is the underground layers' too, so it stays usable for them.
         let deep = self.underground().any();
@@ -460,8 +496,13 @@ impl App {
             "Where the game's biome depends on lookup history, show a checker of the biomes it may give.",
         );
         self.highlight_chips(ui);
+    }
 
-        ui.add_space(6.0);
+    /// The Overlays section: the spawn, slime chunks, a save's generated chunks, done things
+    /// and relief shading.
+    fn overlays_section(&mut self, ui: &mut egui::Ui) {
+        let terrain = self.terrain_allowed();
+        let ceiling = "Not under a ceiling: the surface there is the ceiling.";
         style::heading(ui, "Overlays");
         let overworld_only = "Only in the Overworld.";
         let spawn_here = self.spawn_allowed();
@@ -484,6 +525,30 @@ impl App {
         } else if !slime_visible {
             style::hint(ui, "Zoom to 1:16 or closer to see them.");
         }
+        let generated_here = self.generated_allowed();
+        ui.add_enabled(
+            generated_here && slime_visible,
+            egui::Checkbox::new(&mut self.settings.generated, "Generated chunks"),
+        )
+        .on_hover_text(
+            "The chunks your world has generated: magenta, fainter where generated partway, \
+             amber where an older version generated them.",
+        );
+        ui.indent("inhabited", |ui| {
+            ui.add_enabled(
+                generated_here && slime_visible && self.settings.generated,
+                egui::Checkbox::new(&mut self.settings.inhabited, "By time played"),
+            )
+            .on_hover_text(
+                "Shade each chunk by the time players spent near it: faint where they passed \
+                 through, strong where they lived.",
+            );
+        });
+        if !generated_here {
+            style::hint(ui, "Open a world to see its chunks.");
+        } else if !slime_visible {
+            style::hint(ui, "Zoom to 1:16 or closer to see them.");
+        }
         ui.checkbox(&mut self.settings.show_done, "Done things")
             .on_hover_text("Structures, pins and markers you've marked done, dimmed.");
         ui.add_enabled(
@@ -496,28 +561,6 @@ impl App {
         } else {
             style::hint(ui, ceiling);
         }
-
-        ui.add_space(6.0);
-        self.underground_section(ui);
-
-        ui.add_space(6.0);
-        self.features_section(ui);
-
-        ui.add_space(6.0);
-        self.loot_section(ui);
-
-        ui.add_space(6.0);
-        self.structure_list(ui);
-
-        ui.add_space(6.0);
-        ui.separator();
-        ui.checkbox(&mut self.settings.confirm, "Confirm with terrain");
-        style::hint(
-            ui,
-            "Decides structure starts and locates with the seed's terrain, as the game does. Off, \
-             most surface structures are candidates. Jigsaw and mineshaft bounds are drawn when \
-             confirmed, at 1:4 or closer.",
-        );
     }
 
     /// The highlighted biomes as removable chips, and a menu to add one.
@@ -541,9 +584,9 @@ impl App {
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing.x = 4.0;
                         let (swatch, _) =
-                            ui.allocate_exact_size(egui::vec2(9.0, 9.0), egui::Sense::hover());
+                            ui.allocate_exact_size(egui::vec2(9.0, 9.0), Sense::hover());
                         ui.painter()
-                            .rect_filled(swatch, 2.0, egui::Color32::from_rgb(r, g, b));
+                            .rect_filled(swatch, 2.0, Color32::from_rgb(r, g, b));
                         ui.label(spyglass::display_name(id));
                         if ui
                             .add(egui::Button::new("×").frame(false))
@@ -624,107 +667,155 @@ impl App {
         }
         let needle = self.structure_filter.to_lowercase();
         let mut changed = false;
-        for (name, mut ids) in groups {
-            let matches = |id: &str| {
-                spyglass::display_name(id).to_lowercase().contains(&needle) || id.contains(&needle)
-            };
-            if !name.to_lowercase().contains(&needle) && !ids.iter().any(|id| matches(id)) {
-                continue;
-            }
-            ids.sort_unstable_by_key(|id| spyglass::display_name(id));
-            let on = ids
-                .iter()
-                .filter(|id| self.settings.structures.iter().any(|s| s == **id))
-                .count();
-            let mut all = on == ids.len();
-            let open = self.expanded.contains(&name);
-            let mut toggle_open = false;
-            let mut flip = false;
-            ui.horizontal(|ui| {
-                flip = ui
-                    .add(egui::Checkbox::new(&mut all, "").indeterminate(on > 0 && on < ids.len()))
-                    .changed();
-                let (rect, _) =
-                    ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
-                if let Some(badge) = world.structure_set(ids[0]).map(icons::badge) {
-                    let dim = if on > 0 { 1.0 } else { 0.45 };
-                    ui.painter().rect(
-                        rect,
-                        egui::CornerRadius::same(5),
-                        badge.fill.gamma_multiply(dim),
-                        egui::Stroke::new(1.0, style::GROUND),
-                        egui::StrokeKind::Inside,
-                    );
-                    icons::glyph(ids[0])
-                        .tint(badge.ink.gamma_multiply(dim))
-                        .paint_at(ui, rect.shrink(3.0));
-                }
-                ui.label(&name);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ids.len() > 1 {
-                        let text = if open {
-                            "Hide".to_string()
-                        } else {
-                            format!("{} kinds", ids.len())
-                        };
-                        toggle_open = ui
-                            .add(
-                                egui::Button::new(
-                                    egui::RichText::new(text).size(11.5).color(style::ACCENT),
-                                )
-                                .frame(false),
-                            )
-                            .on_hover_text("Choose among its variants")
-                            .clicked();
-                    }
-                    let seen: usize = ids.iter().filter_map(|id| self.in_view.get(*id)).sum();
-                    if seen > 0 {
-                        ui.label(style::mono(seen.to_string()).color(style::MUTED))
-                            .on_hover_text("Starts in view");
-                    }
-                });
-            });
-            if flip {
-                self.settings
-                    .structures
-                    .retain(|s| !ids.contains(&s.as_str()));
-                if all {
-                    self.settings
-                        .structures
-                        .extend(ids.iter().map(|id| id.to_string()));
-                }
-                self.settings.structures.sort();
-                changed = true;
-            }
-            if toggle_open {
-                if open {
-                    self.expanded.remove(&name);
-                } else {
-                    self.expanded.insert(name.clone());
-                }
-            }
-            if open || (!needle.is_empty() && !name.to_lowercase().contains(&needle)) {
-                ui.indent(&name, |ui| {
-                    for id in ids.iter().filter(|id| open || matches(id)) {
-                        let mut variant = self.settings.structures.iter().any(|s| s == id);
-                        let label = spyglass::display_name(id);
-                        if ui.checkbox(&mut variant, label).changed() {
-                            if variant {
-                                self.settings.structures.push(id.to_string());
-                                self.settings.structures.sort();
-                            } else {
-                                self.settings.structures.retain(|s| s != id);
-                            }
-                            changed = true;
-                        }
-                    }
-                });
-            }
+        for (name, ids) in groups {
+            changed |= self.structure_family(ui, world, &name, ids, &needle);
         }
         if changed {
             self.select();
         }
     }
+
+    /// One structure family's row in the list, `ids` its structures, and its variants under it
+    /// when opened or when `needle` (the filter, lower-case) matches only them. Hidden if
+    /// nothing in it matches. Whether the structures chosen changed.
+    fn structure_family(
+        &mut self,
+        ui: &mut egui::Ui,
+        world: &World,
+        name: &str,
+        mut ids: Vec<&str>,
+        needle: &str,
+    ) -> bool {
+        let mut changed = false;
+        let matches = |id: &str| {
+            spyglass::display_name(id).to_lowercase().contains(needle) || id.contains(needle)
+        };
+        if !name.to_lowercase().contains(needle) && !ids.iter().any(|id| matches(id)) {
+            return false;
+        }
+        ids.sort_unstable_by_key(|id| spyglass::display_name(id));
+        let on = ids
+            .iter()
+            .filter(|id| self.settings.structures.iter().any(|s| s == **id))
+            .count();
+        let open = self.expanded.contains(name);
+        let row = self.family_row(ui, world, name, &ids, on, open);
+        if let Some(all) = row.set_all {
+            self.settings
+                .structures
+                .retain(|s| !ids.contains(&s.as_str()));
+            if all {
+                self.settings
+                    .structures
+                    .extend(ids.iter().map(|id| id.to_string()));
+            }
+            self.settings.structures.sort();
+            changed = true;
+        }
+        if row.toggle_open {
+            if open {
+                self.expanded.remove(name);
+            } else {
+                self.expanded.insert(name.to_string());
+            }
+        }
+        if open || (!needle.is_empty() && !name.to_lowercase().contains(needle)) {
+            ui.indent(name, |ui| {
+                for id in ids.iter().filter(|id| open || matches(id)) {
+                    changed |= self.variant_checkbox(ui, id);
+                }
+            });
+        }
+        changed
+    }
+
+    /// A structure family's own row: its checkbox (mixed when `on` of `ids` are chosen), badge
+    /// and name, and on the right the button that opens its variants and how many start in
+    /// view.
+    fn family_row(
+        &self,
+        ui: &mut egui::Ui,
+        world: &World,
+        name: &str,
+        ids: &[&str],
+        on: usize,
+        open: bool,
+    ) -> FamilyRow {
+        let mut all = on == ids.len();
+        let mut flip = false;
+        let mut toggle_open = false;
+        ui.horizontal(|ui| {
+            flip = ui
+                .add(egui::Checkbox::new(&mut all, "").indeterminate(on > 0 && on < ids.len()))
+                .changed();
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), Sense::hover());
+            if let Some(badge) = world.structure_set(ids[0]).map(icons::badge) {
+                let dim = if on > 0 { 1.0 } else { 0.45 };
+                ui.painter().rect(
+                    rect,
+                    egui::CornerRadius::same(5),
+                    badge.fill.gamma_multiply(dim),
+                    egui::Stroke::new(1.0, style::GROUND),
+                    egui::StrokeKind::Inside,
+                );
+                icons::glyph(ids[0])
+                    .tint(badge.ink.gamma_multiply(dim))
+                    .paint_at(ui, rect.shrink(3.0));
+            }
+            ui.label(name);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ids.len() > 1 {
+                    let text = if open {
+                        "Hide".to_string()
+                    } else {
+                        format!("{} kinds", ids.len())
+                    };
+                    toggle_open = ui
+                        .add(
+                            egui::Button::new(
+                                egui::RichText::new(text).size(11.5).color(style::ACCENT),
+                            )
+                            .frame(false),
+                        )
+                        .on_hover_text("Choose among its variants")
+                        .clicked();
+                }
+                let seen: usize = ids.iter().filter_map(|id| self.in_view.get(*id)).sum();
+                if seen > 0 {
+                    ui.label(style::mono(seen.to_string()).color(style::MUTED))
+                        .on_hover_text("Starts in view");
+                }
+            });
+        });
+        FamilyRow {
+            set_all: flip.then_some(all),
+            toggle_open,
+        }
+    }
+
+    /// One variant's checkbox under its open family. Whether the structures chosen changed.
+    fn variant_checkbox(&mut self, ui: &mut egui::Ui, id: &str) -> bool {
+        let mut variant = self.settings.structures.iter().any(|s| s == id);
+        let label = spyglass::display_name(id);
+        if !ui.checkbox(&mut variant, label).changed() {
+            return false;
+        }
+        if variant {
+            self.settings.structures.push(id.to_string());
+            self.settings.structures.sort();
+        } else {
+            self.settings.structures.retain(|s| s != id);
+        }
+        true
+    }
+}
+
+/// What a click on a structure family's row asked for.
+struct FamilyRow {
+    /// Choose every structure in the family (`true`) or none, when its checkbox was clicked.
+    set_all: Option<bool>,
+    /// Open or close its list of variants.
+    toggle_open: bool,
 }
 
 /// A locate answer's hits as a table: where, how far, and whether certain. Returns the block
@@ -750,7 +841,10 @@ fn hit_table(ui: &mut egui::Ui, id: &str, hits: &[locate::Hit]) -> Option<[i32; 
                     go = Some([hit.x, hit.z]);
                 }
                 ui.label(style::mono(hit.blocks_away.to_string()));
-                if hit.certain {
+                if hit.saved {
+                    ui.colored_label(style::GOOD, "Saved")
+                        .on_hover_text("Your world has generated it: it's there.");
+                } else if hit.certain {
                     ui.colored_label(style::GOOD, "Certain");
                 } else {
                     ui.colored_label(style::MUTED, "Candidate");

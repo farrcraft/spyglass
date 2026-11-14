@@ -17,8 +17,11 @@ pub fn run(args: &Render) -> Result<()> {
         Some(Centre::At(_)) => false,
         None => args.min.is_none() && args.common.world.is_some(),
     };
+    if args.generated && args.common.world.is_none() {
+        anyhow::bail!("--generated shows a save's chunks: give --world");
+    }
     let (world, seed, report) = crate::load(&args.common, player)?;
-    let session = world.session(seed)?;
+    let session = crate::session(&world, seed, report.as_ref())?;
     let out = Out {
         session: &session,
         json: args.common.json,
@@ -61,6 +64,8 @@ pub fn run(args: &Render) -> Result<()> {
             .map(|item| world.item_query(item, None))
             .transpose()?,
         slime_chunks: args.slime,
+        generated: args.generated,
+        inhabited: args.inhabited,
         spawn: args.spawn,
         confirm: args.confirm,
         relief: args.relief,
@@ -91,6 +96,7 @@ pub fn run(args: &Render) -> Result<()> {
                 set: &s.set,
                 structures: &s.structures,
                 certain: s.certain,
+                source: if s.from_save { "save" } else { "seed" },
             })
             .collect();
         return out.print(
@@ -111,6 +117,8 @@ pub fn run(args: &Render) -> Result<()> {
                     features: &args.features,
                     loot: args.loot.as_deref(),
                     slime_chunks: layers.slime_chunks,
+                    generated: layers.generated,
+                    inhabited: layers.inhabited,
                     spawn: layers.spawn,
                     confirm: layers.confirm,
                     relief: layers.relief,
@@ -131,6 +139,11 @@ pub fn run(args: &Render) -> Result<()> {
                     .map(|c| json::Container::new(c, None))
                     .collect(),
                 slime_chunks: features.slime_chunks.clone(),
+                generated: features
+                    .generated
+                    .iter()
+                    .map(json::GeneratedChunk::new)
+                    .collect(),
                 spawn: features.spawn.map(|s| json::SpawnAnswer::new(&s)),
                 pins: features.pins.iter().map(json::PinMark::new).collect(),
             },
@@ -174,6 +187,19 @@ pub fn run(args: &Render) -> Result<()> {
             } else {
                 "not in view"
             },
+        );
+    }
+    if layers.generated {
+        let count = |keep: fn(&spyglass::GeneratedChunk) -> bool| {
+            features.generated.iter().filter(|c| keep(c)).count()
+        };
+        out!(
+            "  {} generated chunks ({} finished, {} partway, {} by an older version, {} unreadable)",
+            features.generated.len(),
+            count(|c| c.readable && c.full),
+            count(|c| c.readable && !c.full),
+            count(|c| c.older),
+            count(|c| !c.readable),
         );
     }
     if !layers.features.is_empty() {

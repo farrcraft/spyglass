@@ -21,7 +21,6 @@ use rayon::prelude::*;
 use spyglass_biome::{BiomeSource, Biomes, Lookup};
 use spyglass_blocks::BlockSettings;
 use spyglass_blocks::zoom::BiomeZoom;
-use spyglass_data::bundle::Bundle;
 use spyglass_feature::containers::{ContainerDoubt, StructureContainers, container_slots};
 use spyglass_feature::{
     Blocks, Decorator, Doubt, FeatureSettings, NeighbourBounds, Placer, Reading, Region, structures,
@@ -64,7 +63,7 @@ fn check(path: &Path) -> Report {
     if file.chunks.is_empty() {
         return report;
     }
-    let bundle = Bundle::open(spyglass_oracle::bundle_dir())
+    let bundle = spyglass_oracle::open_bundle()
         .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {}", file.version));
     let v1_21 = bundle
         .resource("worldgen/configured_feature", "minecraft:monster_room")
@@ -377,7 +376,7 @@ fn container_contents_match_the_game() {
         "no container files for {}; run cargo xtask oracle containers",
         spyglass_oracle::version()
     );
-    let bundle = Bundle::open(spyglass_oracle::bundle_dir()).unwrap();
+    let bundle = spyglass_oracle::open_bundle().unwrap();
     let mut loot = Loot::new();
     let mut dimensions = HashMap::new();
     let (mut filled, mut stacks_seen, mut unfilled, mut tied) = (0, 0, 0, 0);

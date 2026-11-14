@@ -7,6 +7,8 @@ use std::path::Path;
 use flate2::Compression;
 use flate2::write::{GzEncoder, ZlibEncoder};
 use spyglass_data::nbt::{self, Compound, Tag};
+use spyglass_world::chunk::{self, SavedPiece, SavedStack, SavedStart, SavedStarts};
+use spyglass_world::region::{ChunkFields, ChunkRecord};
 use spyglass_world::{Layout, PackContents, Save, WorldError, region};
 
 fn raw(root: &Tag) -> Vec<u8> {
@@ -117,7 +119,7 @@ fn current_layout() {
             ("Dimension", s("minecraft:overworld")),
         ]),
     );
-    let save = Save::read(dir.path()).unwrap();
+    let mut save = Save::read(dir.path()).unwrap();
     assert_eq!(save.layout, Layout::Current);
     assert_eq!(save.name, "Seed Check");
     assert_eq!(save.data_version, Some(5023));
@@ -143,6 +145,11 @@ fn current_layout() {
             path: dir.path().join("datapacks/mine.zip")
         }
     );
+    // A hand-edited `level.dat` listing a pack twice: it counts once, where it first appears.
+    save.enabled_packs
+        .extend(["file/mine.zip", "vanilla"].map(String::from));
+    let names: Vec<String> = save.packs().into_iter().map(|(name, _)| name).collect();
+    assert_eq!(names, ["vanilla", "file/mine.zip"]);
 }
 
 #[test]
@@ -267,6 +274,8 @@ fn touch(path: &Path) {
     std::fs::write(path, "{}").unwrap();
 }
 
+const MCMETA: &str = r#"{"pack": {"description": "", "min_format": 121, "max_format": 121}}"#;
+
 #[test]
 fn data_pack_contents() {
     let dir = tempfile::tempdir().unwrap();
@@ -274,7 +283,17 @@ fn data_pack_contents() {
     touch(&packs.join("terrain/data/x/worldgen/noise/a.json"));
     touch(&packs.join("terrain/overlay/data/x/tags/worldgen/biome/b.json"));
     touch(&packs.join("terrain/data/x/function/c.mcfunction"));
+    std::fs::write(
+        packs.join("terrain/pack.mcmeta"),
+        r#"{"pack": {"description": "", "min_format": 121, "max_format": 121},
+            "overlays": {"entries": [{"directory": "overlay", "min_format": 121, "max_format": 121}]}}"#,
+    )
+    .unwrap();
     touch(&packs.join("loot/data/x/loot_table/d.json"));
+    std::fs::write(packs.join("loot/pack.mcmeta"), MCMETA).unwrap();
+    touch(&packs.join("bare/data/x/worldgen/noise/a.json"));
+    touch(&packs.join("notzip.jar"));
+    touch(&packs.join("nometa/pack.mcmeta"));
     // A pack named outside datapacks/ isn't read, even when the path exists.
     touch(&dir.path().join("escape/data/x/worldgen/noise/e.json"));
     let save = save_with_packs(
@@ -286,30 +305,39 @@ fn data_pack_contents() {
             "file/gone.zip",
             "file/../escape",
             "bundle",
+            "file/bare",
+            "file/notzip.jar",
+            "file/nometa",
         ],
     );
     let contents: Vec<PackContents> = save.packs().into_iter().map(|(_, c)| c).collect();
+    let PackContents::Files { pack } = &contents[1] else {
+        panic!("{:?}", contents[1]);
+    };
+    assert_eq!((pack.name(), pack.worldgen_files()), ("file/terrain", 2));
+    let PackContents::Files { pack } = &contents[2] else {
+        panic!("{:?}", contents[2]);
+    };
+    assert_eq!((pack.name(), pack.worldgen_files()), ("file/loot", 0));
+    assert_eq!(contents[0], PackContents::Vanilla);
     assert_eq!(
-        contents,
+        contents[3..6],
         [
-            PackContents::Vanilla,
-            PackContents::Files {
-                path: packs.join("terrain"),
-                worldgen_files: 2
-            },
-            PackContents::Files {
-                path: packs.join("loot"),
-                worldgen_files: 0
-            },
             PackContents::Missing {
                 path: packs.join("gone.zip")
             },
             PackContents::Missing {
                 path: packs.join("../escape")
             },
-            PackContents::Uninspectable,
+            PackContents::Other,
         ]
     );
+    for skipped in &contents[6..] {
+        assert!(
+            matches!(skipped, PackContents::Skipped { .. }),
+            "{skipped:?}"
+        );
+    }
 }
 
 #[cfg(unix)]
@@ -318,15 +346,13 @@ fn data_pack_symlink_cycles_end() {
     let dir = tempfile::tempdir().unwrap();
     let pack = dir.path().join("datapacks/loop");
     touch(&pack.join("data/x/worldgen/noise/a.json"));
+    std::fs::write(pack.join("pack.mcmeta"), MCMETA).unwrap();
     std::os::unix::fs::symlink(&pack, pack.join("data/x/again")).unwrap();
     let save = save_with_packs(dir.path(), &["file/loop"]);
-    assert_eq!(
-        save.packs()[0].1,
-        PackContents::Files {
-            path: pack,
-            worldgen_files: 1
-        }
-    );
+    let PackContents::Files { pack } = &save.packs()[0].1 else {
+        panic!("not read");
+    };
+    assert_eq!(pack.worldgen_files(), 1);
 }
 
 #[test]
@@ -396,6 +422,40 @@ fn region_chunk_versions() {
     assert_eq!(counts.unreadable, 2);
     assert_eq!(counts.total(), 6);
     assert_eq!(counts.older_than(5023), 2);
+
+    // The index keeps each chunk, by position: region (-1, 2) starts at chunk (-32, 64).
+    let index = region::index(dir.path()).unwrap();
+    assert_eq!(index.versions(), counts);
+    let full = |version| {
+        ChunkRecord::Read(ChunkFields {
+            data_version: Some(version),
+            status: Some("full".to_string()),
+            inhabited_time: None,
+        })
+    };
+    assert_eq!(index.chunk([-32, 64]), Some(&full(5023)));
+    assert_eq!(index.chunk([-31, 64]), Some(&full(4671)));
+    assert_eq!(
+        index.chunk([-31, 65]),
+        Some(&ChunkRecord::Read(ChunkFields::default()))
+    );
+    assert_eq!(index.chunk([-24, 65]), Some(&ChunkRecord::Unreadable));
+    assert_eq!(index.chunk([-1, 95]), Some(&full(5023)));
+    assert_eq!(index.chunk([-30, 64]), None);
+    assert_eq!(index.chunk([0, 0]), None);
+    assert_eq!(index.chunks().count(), 6);
+    assert!(matches!(index.chunk([-32, 64]), Some(ChunkRecord::Read(f)) if f.is_full()));
+    // A chunk can be read again, whole.
+    assert!(index.region_of([-32, 64]).is_some());
+    let raw = region::read_chunk(dir.path(), [-32, 64]).unwrap();
+    assert_eq!(
+        nbt::read(&raw).unwrap().1.get("DataVersion"),
+        Some(&Tag::Int(5023))
+    );
+    assert_eq!(region::read_chunk(dir.path(), [-30, 64]), None);
+    assert_eq!(region::read_chunk(dir.path(), [-24, 65]), None);
+    assert_eq!(region::read_chunk(dir.path(), [0, 0]), None);
+
     assert_eq!(region::region_files(dir.path()), [path]);
     assert_eq!(
         region::chunk_versions(&dir.path().join("none"))
@@ -510,4 +570,291 @@ fn region_files_that_cant_be_read_are_counted_not_errors() {
     let counts = region::chunk_versions(dir.path()).unwrap();
     assert_eq!(counts.unreadable_files, 1);
     assert_eq!(counts.total(), 0);
+}
+
+#[test]
+fn chunks_give_their_starts_and_containers() {
+    let piece = |id: &str, bb: [i32; 6]| c([("id", s(id)), ("BB", Tag::IntArray(bb.to_vec()))]);
+    let start = |id: &str, x: i32, z: i32, references: i32| {
+        c([
+            ("id", s(id)),
+            ("ChunkX", Tag::Int(x)),
+            ("ChunkZ", Tag::Int(z)),
+            ("references", Tag::Int(references)),
+            (
+                "Children",
+                Tag::List(vec![piece("minecraft:jigsaw", [0, 60, 0, 15, 70, 15])]),
+            ),
+        ])
+    };
+    let item = |slot: i8, id: &str, count: i32| {
+        c([
+            ("Slot", Tag::Byte(slot)),
+            ("id", s(id)),
+            ("count", Tag::Int(count)),
+        ])
+    };
+    let chunk = c([
+        ("DataVersion", Tag::Int(4671)),
+        (
+            "structures",
+            c([(
+                "starts",
+                c([
+                    (
+                        "minecraft:village_plains",
+                        start("minecraft:village_plains", 3, -2, 1),
+                    ),
+                    ("minecraft:mineshaft", c([("id", s("INVALID"))])),
+                ]),
+            )]),
+        ),
+        (
+            "block_entities",
+            Tag::List(vec![
+                // Unopened: its table, and a seed.
+                c([
+                    ("id", s("minecraft:chest")),
+                    ("x", Tag::Int(50)),
+                    ("y", Tag::Int(64)),
+                    ("z", Tag::Int(-30)),
+                    (
+                        "LootTable",
+                        s("minecraft:chests/village/village_plains_house"),
+                    ),
+                    ("LootTableSeed", Tag::Long(-7)),
+                ]),
+                // Opened: its items, no table.
+                c([
+                    ("id", s("minecraft:barrel")),
+                    ("x", Tag::Int(51)),
+                    ("y", Tag::Int(64)),
+                    ("z", Tag::Int(-30)),
+                    ("Items", Tag::List(vec![item(4, "minecraft:bread", 3)])),
+                ]),
+                // A seed of 0 is drawn when filled, so it isn't one.
+                c([
+                    ("id", s("minecraft:chest")),
+                    ("x", Tag::Int(52)),
+                    ("y", Tag::Int(64)),
+                    ("z", Tag::Int(-30)),
+                    ("LootTable", s("minecraft:chests/simple_dungeon")),
+                    ("LootTableSeed", Tag::Long(0)),
+                ]),
+                // No inventory, but still the block entity at its position.
+                c([
+                    ("id", s("minecraft:sign")),
+                    ("x", Tag::Int(53)),
+                    ("y", Tag::Int(64)),
+                    ("z", Tag::Int(-30)),
+                ]),
+            ]),
+        ),
+    ]);
+    let contents = chunk::read(&raw(&chunk)).unwrap();
+    assert_eq!(contents.data_version, Some(4671));
+    assert_eq!(contents.status, None);
+    assert!(!contents.has_features());
+    for (status, placed) in [
+        ("minecraft:full", true),
+        ("features", true),
+        ("minecraft:light", true),
+        ("minecraft:initialize_light", true),
+        ("minecraft:spawn", true),
+        // 1.18 to 1.19's status after `spawn`.
+        ("minecraft:heightmaps", true),
+        ("minecraft:carvers", false),
+        ("minecraft:liquid_carvers", false),
+        ("minecraft:structure_starts", false),
+    ] {
+        let tag = c([("Status", s(status))]);
+        assert_eq!(
+            chunk::read(&raw(&tag)).unwrap().has_features(),
+            placed,
+            "{status}"
+        );
+    }
+    assert_eq!(
+        contents.starts,
+        SavedStarts::Starts(vec![SavedStart {
+            structure: "minecraft:village_plains".to_string(),
+            id: "minecraft:village_plains".to_string(),
+            chunk: [3, -2],
+            references: 1,
+            pieces: vec![SavedPiece {
+                id: "minecraft:jigsaw".to_string(),
+                bounds: [0, 60, 0, 15, 70, 15],
+            }],
+        }])
+    );
+    let containers = contents.containers.unwrap();
+    // Every block entity, the sign included.
+    assert_eq!(containers.len(), 4);
+    assert_eq!(containers[3].id, "minecraft:sign");
+    assert!(containers[3].items.is_empty() && containers[3].loot_table.is_none());
+    assert_eq!(containers[0].position, [50, 64, -30]);
+    assert_eq!(containers[0].loot_table_seed, Some(-7));
+    assert!(containers[0].items.is_empty());
+    assert_eq!(containers[1].loot_table, None);
+    assert_eq!(
+        containers[1].items,
+        [SavedStack {
+            slot: 4,
+            id: "minecraft:bread".to_string(),
+            count: 3,
+            components: None,
+        }]
+    );
+    assert_eq!(containers[2].loot_table_seed, None);
+
+    // No starts compound: predicted. An empty one: none here.
+    let bare = chunk::read(&raw(&c([("DataVersion", Tag::Int(4671))]))).unwrap();
+    assert_eq!(bare.starts, SavedStarts::Missing);
+    assert_eq!(bare.containers, Some(Vec::new()));
+    let starts_at = |version: Option<i32>, starts: Tag| {
+        let mut root = c([("structures", c([("starts", starts)]))]);
+        if let (Some(v), Tag::Compound(root)) = (version, &mut root) {
+            root.insert("DataVersion".to_string(), Tag::Int(v));
+        }
+        chunk::read(&raw(&root)).unwrap().starts
+    };
+    assert_eq!(
+        starts_at(Some(4671), c([])),
+        SavedStarts::Starts(Vec::new())
+    );
+    // 1.18.2 (2975) keys starts by structure. 1.18.1 (2865) by structure feature, which the
+    // game renames by biome (`StructuresBecomeConfiguredFix`, 2970): predicted, as is a chunk
+    // with no data version, which every fix applies to.
+    let village = || c([("minecraft:village", start("minecraft:village", 3, -2, 0))]);
+    assert_eq!(starts_at(Some(2865), village()), SavedStarts::Legacy);
+    assert_eq!(starts_at(Some(2969), c([])), SavedStarts::Legacy);
+    assert_eq!(starts_at(None, c([])), SavedStarts::Legacy);
+    assert_eq!(
+        starts_at(Some(2970), c([])),
+        SavedStarts::Starts(Vec::new())
+    );
+    assert!(matches!(starts_at(Some(2975), village()), SavedStarts::Starts(s) if s.len() == 1));
+    // A start with no position is at chunk 0, 0, as `getIntOr` reads it; one with no `id`
+    // names no structure, so the game skips it.
+    let unplaced = c([("id", s("minecraft:igloo"))]);
+    let SavedStarts::Starts(found) = starts_at(Some(4671), c([("minecraft:igloo", unplaced)]))
+    else {
+        panic!("current-format starts");
+    };
+    assert_eq!((found[0].chunk, found[0].references), ([0, 0], 0));
+    let nameless = c([("ChunkX", Tag::Int(1))]);
+    assert_eq!(
+        starts_at(Some(4671), c([("minecraft:igloo", nameless)])),
+        SavedStarts::Starts(Vec::new())
+    );
+    // Before 1.18, everything is under Level.
+    let legacy = chunk::read(&raw(&c([("Level", c([]))]))).unwrap();
+    assert_eq!(legacy.starts, SavedStarts::Legacy);
+    assert_eq!(legacy.containers, None);
+    assert!(chunk::read(b"not nbt").is_err());
+}
+
+#[test]
+fn entity_chunks_give_their_containers() {
+    let pos = Tag::List(vec![Tag::Double(-0.5), Tag::Double(40.0), Tag::Double(7.9)]);
+    let entities = c([(
+        "Entities",
+        Tag::List(vec![
+            c([
+                ("id", s("minecraft:chest_minecart")),
+                ("Pos", pos.clone()),
+                ("LootTable", s("minecraft:chests/abandoned_mineshaft")),
+                ("LootTableSeed", Tag::Long(12)),
+            ]),
+            c([("id", s("minecraft:zombie")), ("Pos", pos)]),
+        ]),
+    )]);
+    // A decorated pot holds one stack, as `item`.
+    let pot = c([(
+        "block_entities",
+        Tag::List(vec![c([
+            ("id", s("minecraft:decorated_pot")),
+            ("x", Tag::Int(1)),
+            ("y", Tag::Int(2)),
+            ("z", Tag::Int(3)),
+            (
+                "item",
+                c([("id", s("minecraft:emerald")), ("count", Tag::Int(2))]),
+            ),
+        ])]),
+    )]);
+    let pots = chunk::read(&raw(&pot)).unwrap().containers.unwrap();
+    assert_eq!(pots[0].items[0].id, "minecraft:emerald");
+    assert_eq!(pots[0].items[0].count, 2);
+    let found = chunk::read_entities(&raw(&entities)).unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].id, "minecraft:chest_minecart");
+    assert_eq!(found[0].position, [-1, 40, 7]);
+    assert_eq!(found[0].loot_table_seed, Some(12));
+}
+
+#[test]
+fn suspicious_sand_is_renamed_where_the_game_renames_it() {
+    let id_at = |version: Option<i32>| {
+        let mut root = c([(
+            "block_entities",
+            Tag::List(vec![c([
+                ("id", s("minecraft:suspicious_sand")),
+                ("x", Tag::Int(0)),
+                ("y", Tag::Int(0)),
+                ("z", Tag::Int(0)),
+            ])]),
+        )]);
+        if let (Tag::Compound(root), Some(v)) = (&mut root, version) {
+            root.insert("DataVersion".to_string(), Tag::Int(v));
+        }
+        chunk::read(&raw(&root)).unwrap().containers.unwrap()[0]
+            .id
+            .clone()
+    };
+    // 1.19.4's 1.20 features (3337) and a chunk with no version are renamed; 1.20 on keep
+    // what they saved.
+    assert_eq!(id_at(Some(3337)), "minecraft:brushable_block");
+    assert_eq!(id_at(None), "minecraft:brushable_block");
+    assert_eq!(id_at(Some(3438)), "minecraft:suspicious_sand");
+}
+
+#[test]
+fn entities_are_beside_regions() {
+    let dir = tempfile::tempdir().unwrap();
+    let save = save_with_packs(dir.path(), &[]);
+    for dimension in ["minecraft:overworld", "minecraft:the_nether"] {
+        let region = save.region_dir(dimension).unwrap();
+        assert_eq!(
+            save.entities_dir(dimension).unwrap(),
+            region.with_file_name("entities")
+        );
+    }
+}
+
+#[test]
+fn proto_chunks_hold_their_own_entities() {
+    let minecart = c([
+        ("id", s("minecraft:chest_minecart")),
+        (
+            "Pos",
+            Tag::List(vec![Tag::Double(3.5), Tag::Double(20.0), Tag::Double(-4.5)]),
+        ),
+        ("LootTable", s("minecraft:chests/abandoned_mineshaft")),
+    ]);
+    // Generated partway: its entities are in the chunk, under `entities`.
+    let proto = c([
+        ("DataVersion", Tag::Int(4671)),
+        ("Status", s("minecraft:features")),
+        ("entities", Tag::List(vec![minecart.clone()])),
+    ]);
+    let contents = chunk::read(&raw(&proto)).unwrap();
+    assert!(contents.has_features() && !contents.is_full());
+    assert_eq!(contents.entities.len(), 1);
+    assert_eq!(contents.entities[0].position, [3, 20, -5]);
+    assert_eq!(contents.entities[0].id, "minecraft:chest_minecart");
+    // A full chunk's are in `entities/`.
+    let full = c([("DataVersion", Tag::Int(4671)), ("Status", s("full"))]);
+    let contents = chunk::read(&raw(&full)).unwrap();
+    assert!(contents.is_full() && contents.entities.is_empty());
 }

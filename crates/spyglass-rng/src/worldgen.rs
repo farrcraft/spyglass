@@ -123,6 +123,100 @@ impl RandomSource for WorldgenRandom {
     }
 }
 
+/// `new WorldgenRandom(new LegacyRandomSource(…))`, kept and reseeded: the random
+/// `generateCarvers` makes once per chunk and reseeds for every carver of every source chunk.
+/// Its bits are the inner legacy source's, which seeding reaches, but `nextGaussian` is the
+/// `WorldgenRandom`'s own, inherited from `LegacyRandomSource`, whose cached second value
+/// seeding never resets: a carver's first gaussian can be one an earlier carver left over.
+#[derive(Debug, Clone)]
+pub struct LegacyWorldgenRandom {
+    /// The source every bit comes from, and what seeding reaches.
+    inner: LegacyRandomSource,
+    /// The `WorldgenRandom`'s own Gaussian state, which outlives every reseed.
+    gaussian: Gaussian,
+}
+
+impl Default for LegacyWorldgenRandom {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LegacyWorldgenRandom {
+    /// A random to be seeded before use (the game's inner seed is `generateUniqueSeed()`,
+    /// which nothing reads before seeding).
+    pub fn new() -> Self {
+        LegacyWorldgenRandom {
+            inner: LegacyRandomSource::new(0),
+            gaussian: Gaussian::default(),
+        }
+    }
+
+    /// `setLargeFeatureSeed(seed, chunkX, chunkZ)`, as [`large_feature`] seeds a new source,
+    /// keeping the Gaussian state.
+    pub fn set_large_feature_seed(&mut self, seed: i64, chunk_x: i32, chunk_z: i32) {
+        self.inner = large_feature(seed, chunk_x, chunk_z);
+    }
+}
+
+impl Bits for LegacyWorldgenRandom {
+    fn next(&mut self, bits: u32) -> i32 {
+        self.inner.next(bits)
+    }
+}
+
+impl RandomSource for LegacyWorldgenRandom {
+    type Positional = <LegacyRandomSource as RandomSource>::Positional;
+    type Fork = <LegacyRandomSource as RandomSource>::Fork;
+
+    /// The inner source's fork, not a `WorldgenRandom`.
+    fn fork(&mut self) -> Self::Fork {
+        self.inner.fork()
+    }
+
+    fn fork_positional(&mut self) -> Self::Positional {
+        self.inner.fork_positional()
+    }
+
+    fn next_int(&mut self) -> i32 {
+        self.next(32)
+    }
+
+    fn next_int_bounded(&mut self, bound: i32) -> i32 {
+        bits::next_int_bounded(self, bound)
+    }
+
+    fn next_long(&mut self) -> i64 {
+        bits::next_long(self)
+    }
+
+    fn next_boolean(&mut self) -> bool {
+        bits::next_boolean(self)
+    }
+
+    fn next_float(&mut self) -> f32 {
+        bits::next_float(self)
+    }
+
+    fn next_double(&mut self) -> f64 {
+        bits::next_double(self)
+    }
+
+    fn next_gaussian(&mut self) -> f64 {
+        let mut gaussian = self.gaussian;
+        let value = gaussian.next(|| self.next_double());
+        self.gaussian = gaussian;
+        value
+    }
+
+    /// `RandomSource.consumeCount`: one `nextInt()` per count.
+    fn consume_count(&mut self, count: i32) {
+        for _ in 0..count {
+            self.next_int();
+        }
+    }
+}
+
 /// `WorldgenRandom.setLargeFeatureSeed(seed, chunkX, chunkZ)`: a chunk's own seed, for the
 /// structures that start in it.
 ///
@@ -167,6 +261,23 @@ pub fn slime_chunk(chunk_x: i32, chunk_z: i32, seed: i64, salt: i64) -> LegacyRa
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_kept_legacy_random_keeps_its_gaussian_through_reseeding() {
+        let mut kept = LegacyWorldgenRandom::new();
+        kept.set_large_feature_seed(7, 3, -4);
+        let mut fresh = large_feature(7, 3, -4);
+        assert_eq!(kept.next_float(), fresh.next_float());
+        assert_eq!(kept.next_gaussian(), fresh.next_gaussian());
+        let left_over = fresh.next_gaussian();
+        // Reseeded, its first gaussian is the second one of the last round, drawing no bits.
+        kept.set_large_feature_seed(8, 3, -4);
+        assert_eq!(kept.next_gaussian(), left_over);
+        let mut reseeded = large_feature(8, 3, -4);
+        assert_eq!(kept.next_int(), reseeded.next_int());
+        // A new legacy source, as `large_feature` makes, starts a new round.
+        assert_ne!(large_feature(8, 3, -4).next_gaussian(), left_over);
+    }
 
     #[test]
     fn worldgen_random_takes_the_top_bits_of_xoroshiro() {

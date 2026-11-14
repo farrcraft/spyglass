@@ -258,6 +258,10 @@ pub struct Search {
     /// Where bundles are, one directory per version. `SPYGLASS_BUNDLES` sets the default.
     #[arg(long, default_value_os_t = spyglass::default_bundles_dir())]
     pub bundles: PathBuf,
+    /// A data pack, a folder or zip, to apply over the bundle as a world that enables it does.
+    /// Repeatable, lowest first.
+    #[arg(long = "pack", value_name = "PACK")]
+    pub packs: Vec<PathBuf>,
     /// Print JSON (docs/specs/cli-json.md) instead of text.
     #[arg(long)]
     pub json: bool,
@@ -313,6 +317,10 @@ pub struct Find {
     /// Where bundles are, one directory per version. `SPYGLASS_BUNDLES` sets the default.
     #[arg(long, default_value_os_t = spyglass::default_bundles_dir())]
     pub bundles: PathBuf,
+    /// A data pack, a folder or zip, to apply over the bundle as a world that enables it does.
+    /// Repeatable, lowest first.
+    #[arg(long = "pack", value_name = "PACK", conflicts_with = "world")]
+    pub packs: Vec<PathBuf>,
     /// Print JSON (docs/specs/cli-json.md) instead of text.
     #[arg(long)]
     pub json: bool,
@@ -419,6 +427,14 @@ pub struct Render {
     /// Shade slime chunks (scales up to 16).
     #[arg(long)]
     pub slime: bool,
+    /// Shade the chunks `--world`'s save has generated: magenta, fainter where generated
+    /// partway, amber where an older version generated them (scales up to 16).
+    #[arg(long)]
+    pub generated: bool,
+    /// With `--generated`: shade each chunk by the time players spent near it, from faint
+    /// (passed through) to strong (lived in), instead of by whether it's finished.
+    #[arg(long, requires = "generated")]
+    pub inhabited: bool,
     /// Mark the world spawn's origin.
     #[arg(long)]
     pub spawn: bool,
@@ -680,6 +696,10 @@ pub struct Common {
     /// Where bundles are, one directory per version. `SPYGLASS_BUNDLES` sets the default.
     #[arg(long, default_value_os_t = spyglass::default_bundles_dir())]
     pub bundles: PathBuf,
+    /// A data pack, a folder or zip, to apply over the bundle as a world that enables it does.
+    /// Repeatable, lowest first.
+    #[arg(long = "pack", value_name = "PACK", conflicts_with = "world")]
+    pub packs: Vec<PathBuf>,
     /// Print JSON (docs/specs/cli-json.md) instead of text.
     #[arg(long)]
     pub json: bool,

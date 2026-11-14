@@ -442,9 +442,9 @@ fn speleothem_height(from_center: f64, radius: f64, scale: f64, bluntness: f64) 
         from_center
     };
     let x = from_center / radius * 0.384;
-    let a = 0.75 * x.powf(1.333_333_333_333_333_3);
-    let b = x.powf(0.666_666_666_666_666_6);
-    let c = 0.333_333_333_333_333_3 * x.ln();
+    let a = 0.75 * spyglass_math::pow(x, 1.333_333_333_333_333_3);
+    let b = spyglass_math::pow(x, 0.666_666_666_666_666_6);
+    let c = 0.333_333_333_333_333_3 * spyglass_math::log(x);
     let h = scale * (a - b - c);
     // Math.max: NaN stays NaN.
     let h = if h.is_nan() { h } else { h.max(0.0) };

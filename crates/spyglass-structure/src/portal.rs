@@ -235,7 +235,7 @@ fn within(random: &mut LegacyRandomSource, min: i32, max: i32) -> i32 {
 /// `findSuitableY`: a start height by placement, then down from it to just above
 /// `minY + 15`, the first y where three of the box's four corner columns hold a block the
 /// placement's heightmap counts.
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     reason = "mirrors the game's findSuitableY"
 )]

@@ -1,7 +1,6 @@
 //! Every container loot table of a real bundle loads and fills, with only items it could hold. Ignored: needs a bundle
 //! (`cargo run -p spyglass-extract`); `cargo xtask oracle-test` runs it for every version.
 
-use spyglass_data::bundle::Bundle;
 use spyglass_loot::{Loot, MapRequest, World};
 
 /// The loot table directories whose tables fill containers.
@@ -23,7 +22,7 @@ impl World for Plains {
 #[test]
 #[ignore = "needs a bundle: spyglass-extract"]
 fn every_container_table_loads_and_fills() {
-    let bundle = Bundle::open(spyglass_oracle::bundle_dir()).unwrap();
+    let bundle = spyglass_oracle::open_bundle().unwrap();
     let prefix = "data/minecraft/loot_table/";
     let tables: Vec<String> = bundle
         .manifest()

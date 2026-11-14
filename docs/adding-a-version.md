@@ -34,6 +34,17 @@ Steps 3 to 6 repeat until the comparisons pass. When one fails, the oracle's fil
 
 **The code** (`--code`). The game classes spyglass ports, under the prefixes in `xtask/src/code_diff.rs`, disassembled and normalized so only real changes differ, listed as changed, added or removed with line counts. Read each changed class's normalized text side by side: `target/version-diff/<prev>/` against `target/version-diff/<id>/`. This is where algorithm changes the data doesn't show are found. 26.4-snapshot-5's data looked small, but its bytecode changed four results.
 
+Each changed class lists its **changed methods**, by name and parameter types, with their line counts. A method removed and one added with the same name and parameter count are taken for one whose signature changed (`was (...)` gives the old types), which is more often a refactor than a change of results.
+
+Then **where the changes reach spyglass's code**: for each changed method, the files whose comments cite it (`` `Class.method` ``, or the class alone), and the oracle comparisons in those files' crates, in four ranks. Read them in order:
+
+1. Cited, but no oracle comparison covers the citing crates: nothing would catch a difference.
+2. Cited by name: the ports to read against the new bytecode, and the comparisons to run.
+3. In a cited class under no name a comment gives: the method may be ported under another name, or be one spyglass doesn't need.
+4. Changed classes nothing cites: probably not ported, listed as leads.
+
+Within a rank, changed bodies come before changed signatures, and larger changes first. 26.4-snapshot-8's one change to results, the carving mask's bounds (`NoiseBasedChunkGenerator.generateCarvingMask`), heads rank 2. The citations are leads, not verdicts: a comment can be stale, and a port without one is invisible here, which is why ported functions cite the game ([ADR 0069](adr/0069-a-checked-crate-order-and-cited-game-methods.md)).
+
 The code part ends with the **codec forms** the new version declares that its own data doesn't use: type ids its codecs register and fields they read, compared with every type id and key in the new bundle's JSON. Those new since `<prev>` are printed; all of them are in `target/version-diff/<id>-unused.txt`. A version can ship a form before any vanilla file uses it, and spyglass supports what a version accepts, not only what its data shows. The list is a lead, found by the string constant before each `register` and `fieldOf` call, so read the class before acting on it. A form that reuses existing field names, as 26.4-snapshot-6's anchor gradient coordinates reuse `VerticalAnchor`'s, shows only as an added class.
 
 ## Where each change is fixed

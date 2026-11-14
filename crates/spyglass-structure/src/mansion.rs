@@ -860,7 +860,6 @@ impl Placer<'_> {
     }
 
     /// `addRoom1x2`: by its door and which way its other cell is.
-    #[allow(clippy::too_many_arguments, reason = "the game's parameters")]
     fn room_1x2(
         &mut self,
         p: [i32; 3],

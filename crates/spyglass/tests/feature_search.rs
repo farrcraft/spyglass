@@ -59,7 +59,12 @@ fn placed(features: &[Feature]) -> Vec<&FoundFeature> {
 #[test]
 #[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
 fn feature_constraints_count_features_in() {
-    let world = World::open(spyglass_oracle::bundle_dir()).unwrap();
+    let world = World::open_with_packs(
+        spyglass_oracle::bundle_dir(),
+        spyglass::Dimension::Overworld,
+        &spyglass_oracle::packs(),
+    )
+    .unwrap();
     let query = world
         .search_query(
             "require feature minecraft:monster_room within 60 of 8,8\n\
@@ -121,7 +126,12 @@ fn feature_constraints_count_features_in() {
 #[test]
 #[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
 fn the_fast_path_agrees_with_evaluate_for_features() {
-    let world = World::open(spyglass_oracle::bundle_dir()).unwrap();
+    let world = World::open_with_packs(
+        spyglass_oracle::bundle_dir(),
+        spyglass::Dimension::Overworld,
+        &spyglass_oracle::packs(),
+    )
+    .unwrap();
     let queries = [
         "require 2 feature minecraft:monster_room within 50 of 0,0",
         "require cluster 2 feature minecraft:monster_room within 20 of each other within 70 of 0,0",
@@ -174,7 +184,12 @@ fn the_fast_path_agrees_with_evaluate_for_features() {
 #[test]
 #[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
 fn find_feature_targets_skip_themselves() {
-    let world = World::open(spyglass_oracle::bundle_dir()).unwrap();
+    let world = World::open_with_packs(
+        spyglass_oracle::bundle_dir(),
+        spyglass::Dimension::Overworld,
+        &spyglass_oracle::packs(),
+    )
+    .unwrap();
     let query = world
         .search_query(
             "find feature minecraft:monster_room in -64,-64 to 63,63\n\

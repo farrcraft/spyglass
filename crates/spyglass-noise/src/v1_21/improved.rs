@@ -93,7 +93,7 @@ impl ImprovedNoise {
     /// [`PerlinNoise`](crate::PerlinNoise), in `f64`: the eight corners' gradient dots, hashed
     /// through the permutation (`h<x><y>` for the corners' x and y offsets), blended by the
     /// fade curve.
-    #[allow(
+    #[expect(
         clippy::too_many_arguments,
         reason = "mirrors the game's sampleAndLerp"
     )]

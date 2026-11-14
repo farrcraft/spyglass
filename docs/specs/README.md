@@ -18,6 +18,7 @@ A spec is **Stable** when the behavior it describes is implemented and checked: 
 | [spawn.md](spawn.md)                             | The world spawn's origin.                                                 | Stable |
 | [locate.md](locate.md)                           | `/locate structure` and `/locate biome`.                                  | Stable |
 | [cli-json.md](cli-json.md)                       | The `spyglass` command's JSON output.                                     | Stable |
+| [data-packs.md](data-packs.md)                   | Data packs over the bundle: the game's rules, and what spyglass applies.  | Draft  |
 | [world-saves.md](world-saves.md)                 | Reading world saves and judging whether spyglass can answer.              | Stable |
 | [render.md](render.md)                           | Map images: sampling, colours, layers.                                    | Stable |
 | [search.md](search.md)                           | Seed search: the query language, dimensions, scoring, seed order.         | Stable |

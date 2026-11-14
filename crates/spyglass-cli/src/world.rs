@@ -38,7 +38,7 @@ fn list(bundles: &Path, as_json: bool) -> Result<()> {
             .map(|(found, report)| match report {
                 Ok(r) => json::ListedSave::Read {
                     launcher: &found.launcher,
-                    save: json::Save::new(r),
+                    save: Box::new(json::Save::new(r)),
                 },
                 Err(e) => json::ListedSave::Unreadable {
                     launcher: &found.launcher,
@@ -85,11 +85,19 @@ fn list(bundles: &Path, as_json: bool) -> Result<()> {
 }
 
 fn info(report: &SaveReport, as_json: bool) -> Result<()> {
+    let pack_errors = report.pack_errors();
     if as_json {
         return json::print(&json::WorldInfo {
             format: json::FORMAT,
             command: "world info",
             save: json::Save::new(report),
+            pack_errors: pack_errors
+                .iter()
+                .map(|(d, e)| json::PackError {
+                    dimension: d.id(),
+                    message: format!("{e:#}"),
+                })
+                .collect(),
         });
     }
     let save = &report.save;
@@ -112,6 +120,14 @@ fn info(report: &SaveReport, as_json: bool) -> Result<()> {
         out!("  player   {}", place(player));
     }
     out!("  packs    {}", save.enabled_packs.join(", "));
+    if !report.packs.is_empty() {
+        let applied: Vec<String> = report
+            .packs
+            .iter()
+            .map(|p| format!("{} ({} worldgen files)", p.name(), p.worldgen_files()))
+            .collect();
+        out!("  applied  {}", applied.join(", "));
+    }
     match &report.bundle {
         Some(b) => out!("  bundle   {}", b.dir.display()),
         None => out!("  bundle   none"),
@@ -129,12 +145,20 @@ fn info(report: &SaveReport, as_json: bool) -> Result<()> {
         };
         out!("  answers  {answers}");
     }
-    if report.warnings.is_empty() {
+    for (dimension, error) in &pack_errors {
+        out!(
+            "error: the data packs can't be applied in {}: {error:#}",
+            dimension.name()
+        );
+    }
+    if report.warnings.is_empty() && pack_errors.is_empty() {
         out!("spyglass's answers for this world are exact where they say so.");
     }
     for warning in &report.warnings {
         let level = if warning.blocks_answers() {
             "error"
+        } else if warning.is_note() {
+            "note"
         } else {
             "warning"
         };

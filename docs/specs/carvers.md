@@ -32,13 +32,13 @@ The Nether's carver is a `cave` in 26.3.
 For chunk `C`, `generateCarvers` visits every chunk `S` within 8 chunks of it, x outer and z inner, from −8 to 8:
 
 1. **Carver biome:** the biome source's biome at quart `(S.minX >> 2, 0, S.minZ >> 2)`, at y 0 and uncached (`getBiomeGenerationSettingsForCarver`). It isn't the biome the chunk stores there.
-2. **Each carver `i` of that biome, in order:** a `WorldgenRandom` over a legacy random gets `setLargeFeatureSeed(seed + i, S.x, S.z)`. If `isStartChunk` (`nextFloat() ≤ probability`), the carver carves from `S` into `C`'s mask with the same random.
+2. **Each carver `i` of that biome, in order:** a `WorldgenRandom` over a legacy random gets `setLargeFeatureSeed(seed + i, S.x, S.z)`. If `isStartChunk` (`nextFloat() ≤ probability`), the carver carves from `S` into `C`'s mask with the same random. It's one random for all of `C`'s source chunks and carvers, made once per chunk: reseeding reaches its inner legacy random, but its `nextGaussian` is its own (inherited from `LegacyRandomSource`), and its cached second value is never reset. So a carver's first gaussian can be one an earlier carver of the same chunk left over. No vanilla carver draws one; a pack's `clamped_normal` float provider does (Terralith's `canyon` `y_scale`). Where a source chunk's biome is tied, each candidate's carvers draw from the random as it was before that chunk.
 
 **The mask** (`CarvingMask`) covers `minY + 1` to `minY + genDepth − 1 − 7` of the generation context ([providers.md](providers.md#height-providers)), the chunk's 16 × 16 columns. A carver's ellipsoids never reach the mask's bottom y.
 
 ## Shapes
 
-`Mth.sin` and `Mth.cos` read a table of 65,536 `(float) Math.sin(i / 10430.378350470453)`. In 26.3, `sin(x)` is the entry at `(int) ((long) (x · 10430.378350470453) & 65535)`, and `cos(x)` the same with 16,384 added before the cast. From 26.4 (switch `rounded_trig`), the index is rounded (`+ 0.5` before the cast), a negative `x` is taken as `−x` (with `sin` negated), and the table's entries 0, 16,384, 32,768 and 49,152 are exactly 0, 1, 0 and −1. Angles are `f32`, widened to `f64` for the table.
+`Mth.sin` and `Mth.cos` read a table of 65,536 `(float) Math.sin(i / 10430.378350470453)`. In 26.3, `sin(x)` is the entry at `(int) ((long) (x · 10430.378350470453) & 65535)`, and `cos(x)` the same with 16,384 added before the cast. From 26.4 (switch `rounded_trig`), the index is rounded (`+ 0.5` before the cast), a negative `x` is taken as `−x` (with `sin` negated), and the table's entries 0, 16,384, 32,768 and 49,152 are exactly 0, 1, 0 and −1. Angles are `f32`, widened to `f64` for the table. spyglass computes the entries with `spyglass_math::sin`; narrowed to `f32`, every entry is the same under every `Math.sin` measured, x86-64's and `StrictMath`'s among them ([java-math.md](java-math.md)).
 
 **`carveEllipsoid(C, x, y, z, h, v, skip)`:**
 

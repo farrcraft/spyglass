@@ -9,11 +9,17 @@ use std::process::Command;
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Subcommand};
-use spyglass_extract::bundler::Bundler;
-use spyglass_extract::cache::{self, JarCache};
-use spyglass_extract::{extract, java};
+use spyglass_extract::extract;
 
 use crate::repo_root;
+
+mod build;
+mod packs;
+
+pub(crate) use build::{adapter_dirs, build, test_pack_covers};
+
+pub(crate) use packs::blocks;
+use packs::{fixture_pack, test_pack, variant_label};
 
 #[derive(Subcommand)]
 pub enum OracleCmd {
@@ -57,6 +63,11 @@ pub enum OracleCmd {
     /// Write spawn golden files (the spawn origin and the climate search behind it) for the
     /// golden seeds and dimensions into `oracle-out/<version>/spawn/`.
     Spawn(Common),
+    /// Write the JDK's `Math`, `StrictMath` and correctly rounded results for the functions
+    /// worldgen calls, for the arguments spyglass's call sites take (docs/specs/java-math.md),
+    /// into `oracle-out/math/<os>-<arch>/`. The JDK's values, not the game's: any version's
+    /// harness gives the same ones.
+    Math(Common),
     /// Write loot golden files (every container loot table filled by the game for a fixed list
     /// of seeds) into `oracle-out/<version>/loot/`.
     Loot(Common),
@@ -140,10 +151,24 @@ pub enum OracleCmd {
         accept_eula: bool,
     },
     /// Load the test data pack in `oracle/testpack/` over the vanilla one and write probe and
-    /// structure files into `oracle-out/<version>+testpack/`, with the bundle merged with the
-    /// pack in `target/oracle/bundles/<version>+testpack/` for the comparisons. Checks the forms
-    /// the vanilla data doesn't use (docs/specs/oracle.md).
+    /// structure files into `oracle-out/<version>+testpack/`, with the pack recorded for the
+    /// comparisons to apply over the plain bundle. Checks the forms the vanilla data doesn't use
+    /// (docs/specs/oracle.md).
     TestPack(Common),
+    /// Write the fixture pack, which overrides a noise, a density function, the noise
+    /// settings, features, loot and a biome tag, from `bundles/<version>` into
+    /// `target/oracle/<version>/packs/overrides/`, then regenerate the golden set with it loaded
+    /// into `oracle-out/<version>+overrides/` (docs/specs/oracle.md, "The fixture pack").
+    FixturePack {
+        #[command(flatten)]
+        common: Common,
+        /// Parallel jobs. Defaults to the number of CPUs.
+        #[arg(long)]
+        threads: Option<usize>,
+        /// Only write the pack.
+        #[arg(long)]
+        only_pack: bool,
+    },
     /// Regenerate the whole golden set (docs/specs/oracle.md), probe files included, into
     /// `oracle-out/<version>/`.
     Golden {
@@ -166,6 +191,14 @@ pub struct Common {
     /// JDK home or executable to use first.
     #[arg(long)]
     java: Option<PathBuf>,
+    /// A data pack, a folder or zip, to load over the vanilla one, as a world that enables it
+    /// does. Repeatable, lowest first; needs `--name`.
+    #[arg(long = "pack", requires = "name")]
+    packs: Vec<PathBuf>,
+    /// The packs' label: the outputs go into `oracle-out/<version>+<name>/`, with a
+    /// `packs.json` naming the packs, which the comparisons apply over the plain bundle.
+    #[arg(long, requires = "packs", value_parser = variant_label)]
+    name: Option<String>,
 }
 
 impl Common {
@@ -175,8 +208,24 @@ impl Common {
             game_version: version.to_string(),
             cache_dir: None,
             java: None,
+            packs: Vec::new(),
+            name: None,
         }
     }
+}
+
+/// The file in a variant's outputs that names its packs (`spyglass_oracle::PACKS_FILE`).
+pub(crate) const PACKS_FILE: &str = "packs.json";
+
+/// The game version of a version name: `26.3` for `26.3+overrides`
+/// (`spyglass_oracle::base_version`).
+pub(crate) fn base_version(version: &str) -> &str {
+    version.split_once('+').map_or(version, |(base, _)| base)
+}
+
+/// Where `cargo xtask oracle math` writes one platform's results: `oracle-out/math/<platform>/`.
+pub(crate) fn math_dir(platform: &str) -> PathBuf {
+    repo_root().join("oracle-out").join("math").join(platform)
 }
 
 /// The golden seed set. Text seeds are hashed by the game, as typed into the world-creation screen.
@@ -205,6 +254,11 @@ pub(crate) fn feature_seeds() -> Vec<&'static str> {
     seeds.push(DUNGEON_SEED);
     seeds
 }
+
+/// The seeds besides [`DUNGEON_SEED`] the two-dungeon search finds under the fixture pack,
+/// whose dungeons are tried 40 times a chunk, in 26.2 and 26.3: their feature files are written
+/// with the pack's golden set, so the test that checks them has its inputs.
+const FIXTURE_DUNGEON_SEEDS: &[&str] = &["2", "22", "38", "69"];
 
 /// Golden regions per seed: name, minimum block x and z, and size in blocks.
 const GOLDEN_REGIONS: &[(&str, i32, i32, i32)] = &[
@@ -270,6 +324,10 @@ pub fn run(cmd: OracleCmd) -> Result<()> {
             let harness = build(&common)?;
             harness.probe()
         }
+        OracleCmd::Math(common) => {
+            let harness = build(&common)?;
+            harness.math()
+        }
         OracleCmd::Structures(common) => {
             let harness = build(&common)?;
             harness.structures()
@@ -280,6 +338,8 @@ pub fn run(cmd: OracleCmd) -> Result<()> {
             accept_eula,
         } => {
             crate::locate::require_eula(accept_eula)?;
+            // Before the build, which records the packs as a variant to compare.
+            crate::locate::check_packs(&common.packs, &world)?;
             let harness = build(&common)?;
             crate::locate::run(&harness, &world)
         }
@@ -301,12 +361,11 @@ pub fn run(cmd: OracleCmd) -> Result<()> {
             seeds,
         } => {
             let mut harness = build(&common)?;
-            let seeds: Vec<&str> = if seeds.is_empty() {
-                GOLDEN_SEEDS.to_vec()
-            } else {
-                seeds.iter().map(String::as_str).collect()
-            };
-            blocks(&mut harness, threads, &seeds)
+            blocks(
+                &mut harness,
+                threads,
+                &seeds_or(&seeds, GOLDEN_SEEDS.to_vec()),
+            )
         }
         OracleCmd::Features {
             common,
@@ -314,12 +373,7 @@ pub fn run(cmd: OracleCmd) -> Result<()> {
             seeds,
         } => {
             let harness = build(&common)?;
-            let seeds: Vec<&str> = if seeds.is_empty() {
-                feature_seeds()
-            } else {
-                seeds.iter().map(String::as_str).collect()
-            };
-            harness.features(threads, &seeds)
+            harness.features(threads, &seeds_or(&seeds, feature_seeds()))
         }
         OracleCmd::Containers {
             common,
@@ -327,12 +381,7 @@ pub fn run(cmd: OracleCmd) -> Result<()> {
             seeds,
         } => {
             let harness = build(&common)?;
-            let seeds: Vec<&str> = if seeds.is_empty() {
-                GOLDEN_SEEDS.to_vec()
-            } else {
-                seeds.iter().map(String::as_str).collect()
-            };
-            harness.containers(threads, &seeds)
+            harness.containers(threads, &seeds_or(&seeds, GOLDEN_SEEDS.to_vec()))
         }
         OracleCmd::Column {
             common,
@@ -352,166 +401,34 @@ pub fn run(cmd: OracleCmd) -> Result<()> {
             ])
         }
         OracleCmd::TestPack(common) => test_pack(&common),
-        OracleCmd::Golden { common, threads } => golden(&common, threads),
+        OracleCmd::Golden { common, threads } => golden(&common, threads, &feature_seeds()),
+        OracleCmd::FixturePack {
+            common,
+            threads,
+            only_pack,
+        } => fixture_pack(common, threads, only_pack),
     }
 }
 
-/// The test pack's probes and structures, under the version name `<version>+testpack`, and the
-/// bundle merged with the pack that spyglass's comparisons read.
-fn test_pack(common: &Common) -> Result<()> {
-    let mut harness = build(common)?;
-    if !test_pack_covers(harness.data_version)? {
-        bail!(
-            "the test pack doesn't load in {} (data version {}); see oracle/{TEST_PACK}/data-versions",
-            harness.version,
-            harness.data_version
-        );
+/// The seeds given on the command line, or `default` if none were.
+fn seeds_or<'s>(seeds: &'s [String], default: Vec<&'s str>) -> Vec<&'s str> {
+    if seeds.is_empty() {
+        default
+    } else {
+        seeds.iter().map(String::as_str).collect()
     }
-    let pack = repo_root().join("oracle").join(TEST_PACK);
-    let variant = format!("{}+{TEST_PACK}", harness.version);
-    let bundle = merge_bundle(&harness.version, &pack, &variant)?;
-    harness.version = variant;
-    harness.packs = vec![pack];
-    harness.probe()?;
-    harness.structures()?;
-    println!(
-        "test pack files in {}, bundle in {}",
-        repo_root()
-            .join("oracle-out")
-            .join(&harness.version)
-            .display(),
-        bundle.display()
-    );
-    Ok(())
-}
-
-/// The test data pack's folder in `oracle/`, and the suffix of its version name.
-const TEST_PACK: &str = "testpack";
-
-/// The suffix of the version name of the block files made without carvers.
-const NO_CARVERS: &str = "no-carvers";
-
-/// The block golden files, then the same with no carvers, under the version name
-/// `<version>+no-carvers` (`docs/specs/oracle.md#block-golden-files`).
-pub(crate) fn blocks(harness: &mut Harness, threads: Option<usize>, seeds: &[&str]) -> Result<()> {
-    harness.blocks(threads, seeds)?;
-    let version = harness.version.clone();
-    let packs = std::mem::replace(&mut harness.packs, vec![no_carvers_pack(&version)?]);
-    harness.version = format!("{version}+{NO_CARVERS}");
-    let result = harness.blocks(threads, seeds);
-    harness.version = version;
-    harness.packs = packs;
-    result
-}
-
-/// A data pack that empties every biome's carver list, built from `bundles/<version>` into
-/// `target/oracle/<version>/no-carvers/`. Generated, not committed, since it's vanilla data.
-/// Emptying the lists turns carvers off exactly: a carver with probability 0 still starts when
-/// its random float is 0.
-fn no_carvers_pack(version: &str) -> Result<PathBuf> {
-    let biomes = repo_root()
-        .join("bundles")
-        .join(version)
-        .join("data/minecraft/worldgen/biome");
-    let pack = repo_root()
-        .join("target")
-        .join("oracle")
-        .join(version)
-        .join(NO_CARVERS);
-    if pack.exists() {
-        fs::remove_dir_all(&pack)?;
-    }
-    let out = pack.join("data/minecraft/worldgen/biome");
-    fs::create_dir_all(&out)?;
-    for entry in fs::read_dir(&biomes)
-        .with_context(|| format!("no biomes in {}; extract {version} first", biomes.display()))?
-    {
-        let path = entry?.path();
-        if path.extension().is_none_or(|e| e != "json") {
-            continue;
-        }
-        let mut biome: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)
-            .with_context(|| format!("reading {}", path.display()))?;
-        let Some(fields) = biome.as_object_mut() else {
-            bail!("{} isn't a JSON object", path.display());
-        };
-        fields.insert("carvers".to_string(), serde_json::Value::Array(Vec::new()));
-        let name = path.file_name().expect("a file");
-        fs::write(out.join(name), serde_json::to_vec_pretty(&biome)?)?;
-    }
-    Ok(pack)
-}
-
-/// `bundles/<version>` with `pack`'s `data/` files added, as `target/oracle/bundles/<variant>/`,
-/// its manifest naming `variant` and listing the added files. Rebuilt every time.
-fn merge_bundle(version: &str, pack: &Path, variant: &str) -> Result<PathBuf> {
-    let source = repo_root().join("bundles").join(version);
-    let manifest_path = source.join("bundle.json");
-    let mut manifest: serde_json::Value = serde_json::from_slice(
-        &fs::read(&manifest_path)
-            .with_context(|| format!("no bundle for {version}; extract it first"))?,
-    )?;
-    let out = repo_root()
-        .join("target")
-        .join("oracle")
-        .join("bundles")
-        .join(variant);
-    if out.exists() {
-        fs::remove_dir_all(&out)?;
-    }
-    let files = manifest["files"]
-        .as_object_mut()
-        .context("bundle.json has no files")?;
-    for path in files.keys() {
-        let to = out.join(path);
-        fs::create_dir_all(to.parent().expect("a file in the bundle"))?;
-        fs::copy(source.join(path), &to)?;
-    }
-    let mut added = Vec::new();
-    collect_files(&pack.join("data"), &mut added)?;
-    for file in added {
-        let rel = file
-            .strip_prefix(pack)?
-            .to_str()
-            .context("a non-UTF-8 pack path")?
-            .replace('\\', "/");
-        let to = out.join(&rel);
-        fs::create_dir_all(to.parent().expect("a file in the pack"))?;
-        fs::copy(&file, &to)?;
-        let hash = spyglass_data::bundle::sha1_hex(fs::File::open(&file)?)?;
-        files.insert(rel, hash.into());
-    }
-    manifest["version"] = variant.into();
-    fs::write(
-        out.join("bundle.json"),
-        serde_json::to_vec_pretty(&manifest)?,
-    )?;
-    Ok(out)
-}
-
-/// Every file under `dir`, into `out`.
-fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
-    for entry in fs::read_dir(dir)? {
-        let path = entry?.path();
-        if path.is_dir() {
-            collect_files(&path, out)?;
-        } else {
-            out.push(path);
-        }
-    }
-    Ok(())
 }
 
 /// Every golden file: probes, structures, spawn, heights, blocks, features, containers, the
-/// biome grids and loot.
-fn golden(common: &Common, threads: Option<usize>) -> Result<()> {
+/// biome grids and loot, with feature files for `feature_seeds`.
+fn golden(common: &Common, threads: Option<usize>, feature_seeds: &[&str]) -> Result<()> {
     let mut harness = build(common)?;
     harness.probe()?;
     harness.structures()?;
     harness.spawn()?;
     harness.heights(threads, GOLDEN_SEEDS)?;
     blocks(&mut harness, threads, GOLDEN_SEEDS)?;
-    harness.features(threads, &feature_seeds())?;
+    harness.features(threads, feature_seeds)?;
     harness.containers(threads, GOLDEN_SEEDS)?;
     harness.golden_biomes(threads)?;
     harness.loot()?;
@@ -598,6 +515,9 @@ impl Harness {
                 "-Dlog4j.configurationFile={}",
                 repo_root().join("oracle").join("log4j2.xml").display()
             ))
+            // The outputs' version name, `<version>+<label>` with packs, whatever the packs'
+            // file names.
+            .arg(format!("-Dspyglass.oracle.version={}", self.version))
             .arg("-cp")
             .arg(&self.classpath)
             .arg("spyglass.oracle.Main")
@@ -615,6 +535,19 @@ impl Harness {
             bail!("the oracle harness failed ({status})");
         }
         Ok(())
+    }
+
+    /// Writes `oracle-out/math/<os>-<arch>/`, replacing what was there.
+    pub(crate) fn math(&self) -> Result<()> {
+        let dir = math_dir(&format!(
+            "{}-{}",
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        ));
+        if dir.exists() {
+            fs::remove_dir_all(&dir)?;
+        }
+        self.run(&["math".into(), dir.into()])
     }
 
     /// Writes `oracle-out/<version>/probe/`, replacing what was there.
@@ -770,263 +703,30 @@ impl Harness {
     }
 }
 
-/// Builds the harness for `common`'s version: resolves the version, fetches and unpacks its
-/// server jar (both kept between runs), finds a JDK of the major version the game needs, picks
-/// the adapter by the game's data version, and compiles `oracle/src` with it against the game's
-/// jars, unless nothing changed since the last build.
-pub(crate) fn build(common: &Common) -> Result<Harness> {
-    let resolved = extract::resolve(&common.game_version)?;
-    let (server, major) = (&resolved.download, resolved.java_major);
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    let cache = match &common.cache_dir {
-        Some(dir) => JarCache::new(dir),
-        None => JarCache::open_default()?,
-    };
-    println!("server jar for {}: {}", resolved.version, server.url);
-    let jar = cache.get(server)?;
-
-    let work = repo_root()
-        .join("target")
-        .join("oracle")
-        .join(&resolved.version);
-    let jars = unpack(&jar, &server.sha1, &work.join("classpath"))?;
-
-    let jdk = java::discover(common.java.as_deref())
-        .into_iter()
-        .find(|j| j.major == major && j.is_jdk)
-        .with_context(|| {
-            format!(
-                "no JDK {major} found; scripts/setup.ps1 -Oracle (Windows) or scripts/setup.sh --oracle installs one"
-            )
-        })?;
-    let bin = jdk.home.join("bin");
-    let classes = work.join("classes");
-    let game_jar = jars
-        .iter()
-        .find(|p| p.components().any(|c| c.as_os_str() == "versions"))
-        .context("the bundler has no game jar under versions/")?;
-    let data_version = spyglass_extract::write::game_version(game_jar)?.world_version;
-    let adapter = adapter(data_version)?;
-    compile(&bin, major, &server.sha1, &jars, &adapter, &classes)?;
-
-    let classpath = std::env::join_paths(std::iter::once(classes).chain(jars))?;
-    Ok(Harness {
-        version: resolved.version,
-        data_version,
-        java: jdk.executable,
-        major,
-        classpath,
-        work,
-        packs: Vec::new(),
-    })
-}
-
-/// Unpacks the bundler into `dest` unless it already holds this jar's libraries.
-fn unpack(jar: &Path, sha1: &str, dest: &Path) -> Result<Vec<PathBuf>> {
-    let stamp = dest.join("jar.sha1");
-    let list = dest.join("classpath.txt");
-    if fs::read_to_string(&stamp).is_ok_and(|s| s.trim() == sha1)
-        && let Ok(text) = fs::read_to_string(&list)
-    {
-        return Ok(text.lines().map(PathBuf::from).collect());
-    }
-    if dest.exists() {
-        fs::remove_dir_all(dest)?;
-    }
-    println!("unpacking {} into {}", jar.display(), dest.display());
-    let classpath = Bundler::open(jar)?.unpack(dest)?;
-    let jars: Vec<PathBuf> = classpath.jars().map(Path::to_path_buf).collect();
-    let text: String = jars.iter().map(|p| format!("{}\n", p.display())).collect();
-    fs::write(&list, text)?;
-    fs::write(&stamp, sha1)?;
-    Ok(jars)
-}
-
-/// Whether a `data-versions` file holds `data_version`: one `from..` or `from..until` per line
-/// (`until` exclusive), with `#` comments.
-fn covers(ranges: &Path, data_version: u32) -> Result<bool> {
-    let text =
-        fs::read_to_string(ranges).with_context(|| format!("reading {}", ranges.display()))?;
-    for line in text
-        .lines()
-        .map(|l| l.split('#').next().unwrap_or("").trim())
-    {
-        if line.is_empty() {
-            continue;
-        }
-        let (from, until) = line
-            .split_once("..")
-            .with_context(|| format!("{}: {line:?} isn't from..[until]", ranges.display()))?;
-        let from: u32 = from.trim().parse()?;
-        let until: Option<u32> = match until.trim() {
-            "" => None,
-            n => Some(n.parse()?),
-        };
-        if data_version >= from && until.is_none_or(|u| data_version < u) {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-/// Whether the test pack loads in `data_version`: its `data-versions` file holds it. The pack
-/// uses forms older versions reject.
-pub(crate) fn test_pack_covers(data_version: u32) -> Result<bool> {
-    covers(
-        &repo_root()
-            .join("oracle")
-            .join(TEST_PACK)
-            .join("data-versions"),
-        data_version,
-    )
-}
-
-/// The adapter in `oracle/adapters/` whose data-version ranges hold `data_version` (ADR 0027).
-/// Each adapter lists its ranges in a `data-versions` file, one `from..` or `from..until` per
-/// line (`until` exclusive), with `#` comments.
-fn adapter(data_version: u32) -> Result<PathBuf> {
-    let dir = repo_root().join("oracle").join("adapters");
-    let mut found = Vec::new();
-    for entry in fs::read_dir(&dir).with_context(|| format!("reading {}", dir.display()))? {
-        let path = entry?.path();
-        let ranges = path.join("data-versions");
-        if ranges.is_file() && covers(&ranges, data_version)? {
-            found.push(path);
-        }
-    }
-    match found.as_slice() {
-        [one] => Ok(one.clone()),
-        [] => bail!(
-            "no oracle adapter covers data version {data_version}; add one to {} (ADR 0027)",
-            dir.display()
-        ),
-        many => bail!(
-            "several oracle adapters cover data version {data_version}: {}",
-            many.iter()
-                .map(|p| p.display().to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-    }
-}
-
-/// An adapter and its bases, nearest first (ADR 0029): an `extends` file names the base
-/// adapter's directory.
-fn adapter_chain(adapter: &Path) -> Result<Vec<PathBuf>> {
-    let mut chain = vec![adapter.to_path_buf()];
-    loop {
-        let extends = chain.last().expect("never empty").join("extends");
-        if !extends.is_file() {
-            break;
-        }
-        let base = adapter
-            .parent()
-            .expect("adapters live in oracle/adapters")
-            .join(fs::read_to_string(&extends)?.trim());
-        if chain.contains(&base) || !base.is_dir() {
-            bail!("{} names no adapter, or a cycle", extends.display());
-        }
-        chain.push(base);
-    }
-    Ok(chain)
-}
-
-/// The adapter directories `data_version`'s harness is built from, its own and its bases', as
-/// paths from the repo root (`oracle/adapters/26.3`).
-pub(crate) fn adapter_dirs(data_version: u32) -> Result<Vec<String>> {
-    let root = repo_root();
-    adapter_chain(&adapter(data_version)?)?
-        .iter()
-        .map(|dir| Ok(dir.strip_prefix(root)?.to_string_lossy().replace('\\', "/")))
-        .collect()
-}
-
-/// An adapter's Java files with its bases' (ADR 0029): a file in the adapter replaces the base's
-/// file of the same relative path.
-fn adapter_sources(adapter: &Path) -> Result<Vec<PathBuf>> {
-    let chain = adapter_chain(adapter)?;
-    let mut by_name = std::collections::BTreeMap::new();
-    for dir in chain.iter().rev() {
-        let mut files = Vec::new();
-        collect_java(dir, &mut files)?;
-        for file in files {
-            by_name.insert(file.strip_prefix(dir)?.to_path_buf(), file);
-        }
-    }
-    Ok(by_name.into_values().collect())
-}
-
-/// Compiles `oracle/src` with `adapter` into `classes` unless the sources, adapter, jar and JDK
-/// are unchanged since the last build.
-fn compile(
-    jdk_bin: &Path,
-    major: u32,
-    jar_sha1: &str,
-    jars: &[PathBuf],
-    adapter: &Path,
-    classes: &Path,
-) -> Result<()> {
-    let oracle = repo_root().join("oracle");
-    let mut sources = Vec::new();
-    collect_java(&oracle.join("src"), &mut sources)?;
-    sources.extend(adapter_sources(adapter)?);
-    sources.sort();
-    if sources.is_empty() {
-        bail!("no Java sources under {}", oracle.display());
+    #[test]
+    fn pack_flags_a_command_refuses_are_refused_before_anything_is_written() {
+        let mut common = Common::for_version("26.3");
+        common.packs = vec![PathBuf::from("a-pack")];
+        common.name = Some("refused-before-build".to_string());
+        let out = repo_root()
+            .join("oracle-out")
+            .join("26.3+refused-before-build");
+        assert!(test_pack(&common).is_err());
+        assert!(!out.exists());
+        let worlds = [PathBuf::from("a-world")];
+        assert!(crate::locate::check_packs(&common.packs, &worlds).is_err());
+        assert!(crate::locate::check_packs(&common.packs, &[]).is_ok());
+        assert!(crate::locate::check_packs(&[], &worlds).is_ok());
     }
 
-    let mut fingerprint = format!("jar {jar_sha1}\njdk {}\n", jdk_bin.display());
-    for source in &sources {
-        writeln!(
-            fingerprint,
-            "{} {}",
-            source.strip_prefix(&oracle)?.display(),
-            cache::sha1_hex(source)?
-        )?;
+    #[test]
+    fn base_versions_drop_the_label() {
+        assert_eq!(base_version("26.3"), "26.3");
+        assert_eq!(base_version("26.3+overrides"), "26.3");
+        assert_eq!(base_version("26.3+overrides+no-carvers"), "26.3");
     }
-    let stamp = classes.join("build.stamp");
-    if fs::read_to_string(&stamp).is_ok_and(|s| s == fingerprint) {
-        return Ok(());
-    }
-
-    if classes.exists() {
-        fs::remove_dir_all(classes)?;
-    }
-    fs::create_dir_all(classes)?;
-    println!("compiling the oracle harness");
-    let javac = jdk_bin.join(java::JAVAC_EXE);
-    let status = Command::new(&javac)
-        // `classfile` warns about annotations the game's classes refer to but don't ship (JetBrains'
-        // `Contract`, from 26.4), which say nothing about the harness.
-        .args([
-            "--release",
-            &major.to_string(),
-            "-Xlint:all,-classfile",
-            "-Werror",
-        ])
-        .arg("-d")
-        .arg(classes)
-        .arg("-cp")
-        .arg(std::env::join_paths(jars)?)
-        .args(&sources)
-        .status()
-        .with_context(|| format!("failed to run {}", javac.display()))?;
-    if !status.success() {
-        bail!("javac failed");
-    }
-    fs::write(&stamp, fingerprint)?;
-    Ok(())
-}
-
-/// Every `.java` file under `dir`, into `out`.
-fn collect_java(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
-    for entry in fs::read_dir(dir).with_context(|| format!("reading {}", dir.display()))? {
-        let path = entry?.path();
-        if path.is_dir() {
-            collect_java(&path, out)?;
-        } else if path.extension().is_some_and(|e| e == "java") {
-            out.push(path);
-        }
-    }
-    Ok(())
 }

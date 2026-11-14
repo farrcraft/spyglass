@@ -13,7 +13,8 @@ use crate::{command, repo_root};
 
 #[derive(clap::Args)]
 pub struct Fuzz {
-    /// The target: `nbt` (the NBT reader) or `region` (a region file's chunk scan).
+    /// The target: `nbt` (the NBT reader), `region` (a region file's chunk scan) or `pack` (a
+    /// data pack zip).
     target: String,
     /// How long to fuzz, in seconds.
     #[arg(long, default_value_t = 60)]
@@ -24,7 +25,8 @@ pub fn run(args: &Fuzz) -> Result<()> {
     let seeds: fn() -> Vec<(&'static str, Vec<u8>)> = match args.target.as_str() {
         "nbt" => nbt_seeds,
         "region" => region_seeds,
-        other => bail!("no fuzz target {other:?}: use nbt or region"),
+        "pack" => pack_seeds,
+        other => bail!("no fuzz target {other:?}: use nbt, region or pack"),
     };
     let dir = repo_root().join("fuzz");
     let corpus = dir.join("corpus").join(&args.target);
@@ -131,6 +133,46 @@ fn region_seeds() -> Vec<(&'static str, Vec<u8>)> {
         sector += sectors;
     }
     vec![("seed.mca", file)]
+}
+
+/// Pack zips: one with overlays, a filter and worldgen files, and one of the older format.
+fn pack_seeds() -> Vec<(&'static str, Vec<u8>)> {
+    use std::io::Write as _;
+    let zip = |files: &[(&str, &str)]| {
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        for (name, text) in files {
+            zip.start_file(*name, zip::write::SimpleFileOptions::default())
+                .expect("a zip in memory");
+            zip.write_all(text.as_bytes()).expect("a zip in memory");
+        }
+        zip.finish().expect("a zip in memory").into_inner()
+    };
+    vec![
+        (
+            "seed-overlays.zip",
+            zip(&[
+                (
+                    "pack.mcmeta",
+                    r#"{"pack": {"description": "", "min_format": 121, "max_format": [127, 0]},
+                        "overlays": {"entries": [{"directory": "o", "min_format": 125, "max_format": 127}]},
+                        "filter": {"block": [{"namespace": "minecraft", "path": "worldgen/biome/.*"}]}}"#,
+                ),
+                ("data/x/worldgen/noise/a.json", "{}"),
+                ("o/data/x/worldgen/noise/a.json", "{}"),
+                ("data/x/tags/worldgen/biome/b.json", r#"{"values": []}"#),
+            ]),
+        ),
+        (
+            "seed-old.zip",
+            zip(&[
+                (
+                    "pack.mcmeta",
+                    r#"{"pack": {"description": "", "pack_format": 48, "supported_formats": [48, 57]}}"#,
+                ),
+                ("data/x/worldgen/biome/c.json", "{}"),
+            ]),
+        ),
+    ]
 }
 
 /// A compound with the shapes saves use: a data version, a string, a list and arrays.

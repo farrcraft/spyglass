@@ -6,7 +6,9 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 use spyglass_data::anchor::AnchorHeights;
-use spyglass_data::codec::{At, LoadError, LoadErrorKind, field, full_id, int, object};
+use spyglass_data::codec::{
+    At, LoadError, LoadErrorKind, block_state, field, full_id, int, object,
+};
 use spyglass_density::{Binder, Df, Loader, NOISE_SETTINGS, Resources, Sampler, v1_21};
 use spyglass_noise::NormalNoiseParameters;
 use spyglass_rng::{
@@ -391,16 +393,8 @@ fn noise_range(json: &Value, at: &At<'_>) -> Result<(i32, i32), LoadError> {
     Ok((min_y, height))
 }
 
-/// A block state's block id, with its namespace: a plain id, or `{"Name": id, ...}`, with
-/// properties ignored.
+/// A block state's block id, with its namespace, with properties ignored
+/// ([`block_state`]'s forms).
 fn block_id(json: &Value, at: &At<'_>) -> Result<String, LoadError> {
-    let id = match json {
-        Value::String(s) => s.as_str(),
-        Value::Object(o) => o
-            .get("Name")
-            .and_then(Value::as_str)
-            .ok_or_else(|| at.error(LoadErrorKind::Missing("Name")))?,
-        _ => return Err(at.error(LoadErrorKind::Shape("a block state"))),
-    };
-    Ok(full_id(id))
+    block_state(json, at).map(|(id, _)| id)
 }

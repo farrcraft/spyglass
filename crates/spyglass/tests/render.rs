@@ -802,7 +802,12 @@ fn rendering_is_deterministic_and_writes_png() {
 #[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
 fn the_real_world_renders_the_same_in_tiles() {
     let dir = spyglass_oracle::bundle_dir();
-    let world = World::open(dir).unwrap();
+    let world = World::open_with_packs(
+        dir,
+        spyglass::Dimension::Overworld,
+        &spyglass_oracle::packs(),
+    )
+    .unwrap();
     let session = world.session(-4_893_098_694_207_956_070).unwrap();
     for scale in [1, 4, 16, 64] {
         let layers = Layers {
@@ -820,6 +825,8 @@ fn the_real_world_renders_the_same_in_tiles() {
             },
             loot: None,
             slime_chunks: scale <= spyglass::MAX_SLIME_SCALE,
+            generated: false,
+            inhabited: false,
             spawn: true,
             confirm: true,
             relief: true,

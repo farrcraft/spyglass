@@ -353,7 +353,8 @@ fn worlds_spyglass_cant_predict() {
     let info = json(&["world", "info", old.path().to_str().unwrap(), "--quick"]);
     assert_eq!(kinds(&info), ["no_bundle"]);
 
-    // Packs: one with worldgen files, one without, one missing, one from a mod.
+    // Packs: one applied, one the game doesn't load (no pack.mcmeta), one missing, one from a
+    // mod.
     let packs = tempfile::tempdir().unwrap();
     save(
         packs.path(),
@@ -369,27 +370,43 @@ fn worlds_spyglass_cant_predict() {
         [0.0; 3],
     );
     let datapacks = packs.path().join("datapacks");
-    for file in [
-        "terrain/data/mine/worldgen/biome/a.json",
-        "terrain/data/mine/tags/worldgen/biome/b.json",
-        "functions/data/mine/function/tick.mcfunction",
+    for (file, text) in [
+        (
+            "terrain/pack.mcmeta",
+            r#"{"pack": {"description": "", "min_format": 121, "max_format": 121}}"#,
+        ),
+        ("terrain/data/mine/worldgen/biome/a.json", "{}"),
+        (
+            "terrain/data/mine/tags/worldgen/biome/b.json",
+            r#"{"values": []}"#,
+        ),
+        ("functions/data/mine/function/tick.mcfunction", ""),
     ] {
         let path = datapacks.join(file);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(path, "{}").unwrap();
+        std::fs::write(path, text).unwrap();
     }
     let info = json(&["world", "info", packs.path().to_str().unwrap(), "--quick"]);
     assert_eq!(info["answerable"], true);
-    let messages: Vec<&str> = info["warnings"]
+    let concerns: Vec<(&str, &str)> = info["warnings"]
         .as_array()
         .unwrap()
         .iter()
-        .map(|w| w["message"].as_str().unwrap())
+        .map(|w| {
+            (
+                w["concern"].as_str().unwrap(),
+                w["message"].as_str().unwrap(),
+            )
+        })
         .collect();
-    assert_eq!(messages.len(), 3, "{messages:?}");
-    assert!(messages[0].contains("file/terrain has 2 worldgen files"));
-    assert!(messages[1].contains("file/gone.zip is enabled but missing"));
-    assert!(messages[2].contains("some_mod is built in or from a mod"));
+    assert_eq!(concerns.len(), 3, "{concerns:?}");
+    assert_eq!(concerns[0].0, "skipped");
+    assert!(concerns[0].1.contains("file/functions"));
+    assert_eq!(concerns[1].0, "missing");
+    assert_eq!(concerns[2].0, "mod");
+    assert_eq!(info["applied_packs"][0]["name"], "file/terrain");
+    assert_eq!(info["applied_packs"][0]["worldgen_files"], 2);
+    assert!(info.get("pack_errors").is_none(), "{info:#}");
 }
 
 /// JSON as the game would store it in NBT: integers as ints, other numbers as doubles,

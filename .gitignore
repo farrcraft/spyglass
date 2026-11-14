@@ -2,3 +2,5 @@
 /bundles
 /oracle-out
 *.jar
+# Third-party data packs, downloaded by hand to check locally (docs/specs/data-packs.md)
+/packs

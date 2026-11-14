@@ -7,7 +7,8 @@ use std::path::Path;
 use anyhow::Result;
 use serde::Serialize;
 use spyglass::{
-    Dimension, SaveLocation, SaveReport, SpawnOrigin, StructureLayout, UncheckedVersion,
+    Dimension, SaveLocation, SaveReport, SaveWarning, SpawnOrigin, StructureLayout,
+    UncheckedVersion,
 };
 
 /// The `--json` format version.
@@ -64,6 +65,9 @@ pub struct WorldRef {
 pub struct Warning {
     pub kind: &'static str,
     pub message: String,
+    /// For a `data_pack` warning, why (`PackConcern::kind`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub concern: Option<&'static str>,
     /// For a warning about one dimension.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dimension: Option<&'static str>,
@@ -76,6 +80,10 @@ pub fn warnings(report: &SaveReport) -> Vec<Warning> {
         .map(|w| Warning {
             kind: w.kind(),
             message: w.to_string(),
+            concern: match w {
+                SaveWarning::DataPack { concern, .. } => Some(concern.kind()),
+                _ => None,
+            },
             dimension: w.dimension().map(Dimension::id),
         })
         .collect()
@@ -92,6 +100,7 @@ pub fn all_warnings(
         all.get_or_insert_default().push(Warning {
             kind: unchecked.kind(),
             message: unchecked.to_string(),
+            concern: None,
             dimension: None,
         });
     }
@@ -131,6 +140,8 @@ pub struct StructureHit<'a> {
     pub set: &'a str,
     pub structures: &'a [String],
     pub certain: bool,
+    /// `save` where the start is the save's own (ADR 0071), else `seed`.
+    pub source: &'static str,
     pub blocks_away: i32,
     /// With `--bounds`, where the structure that starts is known and is a jigsaw or a
     /// mineshaft.
@@ -317,6 +328,7 @@ pub struct RenderAnswer<'a> {
     pub features: Vec<FeatureHit<'a>>,
     pub containers: Vec<Container<'a>>,
     pub slime_chunks: Vec<[i32; 2]>,
+    pub generated: Vec<GeneratedChunk>,
     pub spawn: Option<SpawnAnswer>,
     pub pins: Vec<PinMark>,
 }
@@ -359,6 +371,8 @@ pub struct RenderLayers<'a> {
     pub features: &'a [String],
     pub loot: Option<&'a str>,
     pub slime_chunks: bool,
+    pub generated: bool,
+    pub inhabited: bool,
     pub spawn: bool,
     pub confirm: bool,
     pub relief: bool,
@@ -376,6 +390,30 @@ pub struct StructureMark<'a> {
     pub set: &'a str,
     pub structures: &'a [String],
     pub certain: bool,
+    /// `save` or `seed`, as a locate hit's.
+    pub source: &'static str,
+}
+
+/// A chunk a `--world` save has generated, on a map.
+#[derive(Serialize)]
+pub struct GeneratedChunk {
+    pub chunk: [i32; 2],
+    pub full: bool,
+    pub older: bool,
+    pub readable: bool,
+    pub inhabited_time: Option<i64>,
+}
+
+impl GeneratedChunk {
+    pub fn new(c: &spyglass::GeneratedChunk) -> Self {
+        GeneratedChunk {
+            chunk: c.chunk,
+            full: c.full,
+            older: c.older,
+            readable: c.readable,
+            inhabited_time: c.inhabited_time,
+        }
+    }
 }
 
 /// A save's summary: what it says, and what spyglass makes of it.
@@ -388,12 +426,22 @@ pub struct Save<'a> {
     pub seed: i64,
     pub generate_structures: bool,
     pub data_packs: &'a [String],
+    pub applied_packs: Vec<AppliedPack<'a>>,
     pub spawn: Option<Location<'a>>,
     pub player: Option<Location<'a>>,
     pub bundle: Option<String>,
     pub answerable: bool,
     pub answerable_dimensions: Vec<&'static str>,
     pub warnings: Vec<Warning>,
+}
+
+/// A data pack spyglass applies to the save.
+#[derive(Serialize)]
+pub struct AppliedPack<'a> {
+    pub name: &'a str,
+    /// SHA-1 over the pack's files, to tell versions of a pack apart.
+    pub hash: &'a str,
+    pub worldgen_files: usize,
 }
 
 #[derive(Serialize)]
@@ -417,6 +465,15 @@ impl<'a> Save<'a> {
             seed: save.seed,
             generate_structures: save.generate_structures,
             data_packs: &save.enabled_packs,
+            applied_packs: report
+                .packs
+                .iter()
+                .map(|p| AppliedPack {
+                    name: p.name(),
+                    hash: p.hash(),
+                    worldgen_files: p.worldgen_files(),
+                })
+                .collect(),
             spawn: save.spawn.as_ref().map(location),
             player: save.player.as_ref().map(location),
             bundle: report.bundle.as_ref().map(|b| path(&b.dir)),
@@ -438,6 +495,16 @@ pub struct WorldInfo<'a> {
     pub command: &'static str,
     #[serde(flatten)]
     pub save: Save<'a>,
+    /// Dimensions the save's packs can't be applied in, and why.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub pack_errors: Vec<PackError>,
+}
+
+/// A dimension the save's data packs can't be applied in.
+#[derive(Serialize)]
+pub struct PackError {
+    pub dimension: &'static str,
+    pub message: String,
 }
 
 /// `world list`.
@@ -455,7 +522,7 @@ pub enum ListedSave<'a> {
     Read {
         launcher: &'a str,
         #[serde(flatten)]
-        save: Save<'a>,
+        save: Box<Save<'a>>,
     },
     Unreadable {
         launcher: &'a str,
@@ -622,8 +689,40 @@ pub struct Container<'a> {
     pub contents: Option<Vec<Stack<'a>>>,
     pub contents_certain: bool,
     pub contents_doubt: Option<&'a str>,
+    /// How a `--world` save holds it, where the save has placed its chunk's features.
+    pub saved: Option<SavedContainer<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blocks_away: Option<i32>,
+}
+
+/// A container as the save holds it (`spyglass::InSave`).
+#[derive(Serialize)]
+pub struct SavedContainer<'a> {
+    /// `unopened`, `filled` or `gone`.
+    pub state: &'static str,
+    /// For `unopened`: whether the saved table and seed are the predicted ones.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub as_predicted: Option<bool>,
+    /// For `filled`: what it holds now.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub items: Option<Vec<Stack<'a>>>,
+}
+
+impl<'a> SavedContainer<'a> {
+    fn new(saved: &'a spyglass::InSave) -> Self {
+        let (state, as_predicted, items) = match saved {
+            spyglass::InSave::Unopened { as_predicted } => ("unopened", Some(*as_predicted), None),
+            spyglass::InSave::Filled { items } => {
+                ("filled", None, Some(items.iter().map(Stack::new).collect()))
+            }
+            _ => ("gone", None, None),
+        };
+        SavedContainer {
+            state,
+            as_predicted,
+            items,
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -696,6 +795,7 @@ impl<'a> Container<'a> {
                 .map(|slots| slots.iter().map(Stack::new).collect()),
             contents_certain: c.contents_certain(),
             contents_doubt: c.contents_doubt.as_deref(),
+            saved: c.saved.as_ref().map(SavedContainer::new),
             blocks_away: from.map(|o| {
                 let (dx, dz) = (i64::from(x - o[0]), i64::from(z - o[2]));
                 ((dx * dx + dz * dz) as f64).sqrt() as i32

@@ -274,7 +274,7 @@ impl Terrain {
 
     /// The scan's second half, given densities from `min_y` up and an aquifer for a region
     /// holding them; `blocks`, if given, has a block for each density.
-    #[allow(
+    #[expect(
         clippy::too_many_arguments,
         reason = "the column, its range and densities, the aquifer and what to record"
     )]

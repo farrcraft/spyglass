@@ -110,8 +110,7 @@ impl StructureSets {
 }
 
 fn exists(bundle: &Bundle, registry: &str, id: &str) -> bool {
-    Bundle::resource_path(registry, &full_id(id))
-        .is_ok_and(|path| bundle.manifest().files.contains_key(&path))
+    bundle.has_resource(registry, &full_id(id))
 }
 
 /// A placement chunk where [`Starts::locate`]'s answer may be.
@@ -128,7 +127,7 @@ pub struct StructureHit {
     pub structures: Vec<usize>,
     /// Whether the game certainly starts one of them here. Otherwise a start depends on
     /// terrain, or a tied biome cell, or (for ring placements) the ring position itself is
-    /// tie- or platform-dependent.
+    /// tie- or platform-dependent. A start a save holds is certain.
     pub certain: bool,
     /// `BlockPos.distSqr` from the search's origin to [`position`](Self::position).
     pub distance_sqr: f64,
@@ -419,7 +418,7 @@ impl Starts<'_> {
                 let Some((structures, certain)) = self.targets_at(set, chunk, targets) else {
                     continue;
                 };
-                let certain = certain && exact;
+                let certain = certain && (exact || self.stored_decides(chunk));
                 let index = push(&mut search, set, chunk, structures, certain);
                 if certain {
                     let distance = search.hits[index].distance_sqr;
@@ -639,7 +638,7 @@ impl Starts<'_> {
             else {
                 continue;
             };
-            let certain = certain && candidate.exact;
+            let certain = certain && (candidate.exact || self.stored_decides(candidate.chunk));
             let position = self.locate_pos(candidate.set, candidate.chunk);
             nearest.hits.push((
                 candidate.key,

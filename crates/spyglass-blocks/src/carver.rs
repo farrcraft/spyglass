@@ -2,7 +2,6 @@
 //! as a carving mask from 26.3, and straight into the chunk in 26.2 (`docs/specs/carvers.md`).
 
 use std::collections::{HashMap, HashSet};
-use std::sync::OnceLock;
 
 use serde_json::Value;
 use spyglass_biome::{BiomeId, BiomeNames};
@@ -10,7 +9,8 @@ use spyglass_data::anchor::{AnchorHeights, VerticalAnchor};
 use spyglass_data::codec::{At, LoadError, LoadErrorKind, field, float, full_id, int, object};
 use spyglass_data::providers::{FloatProvider, HeightProvider, IntProvider};
 use spyglass_density::Resources;
-use spyglass_rng::{LegacyRandomSource, RandomSource};
+use spyglass_noise::mth::{SIN_ENTRIES_PER_RADIAN, sin_table};
+use spyglass_rng::{LegacyRandomSource, LegacyWorldgenRandom, RandomSource};
 
 /// The carvers registry, and 26.2's.
 const CARVERS: [&str; 2] = ["worldgen/carver", "worldgen/configured_carver"];
@@ -442,7 +442,7 @@ impl Carver {
     }
 
     /// `isStartChunk`: `nextFloat() ≤ probability`.
-    pub fn is_start_chunk(&self, random: &mut LegacyRandomSource) -> bool {
+    pub fn is_start_chunk(&self, random: &mut LegacyWorldgenRandom) -> bool {
         let chance = match self {
             Carver::Cave(c) => c.probability,
             Carver::Canyon(c) => c.probability,
@@ -456,7 +456,7 @@ impl Carver {
     pub fn carve(
         &self,
         anchors: AnchorHeights,
-        random: &mut LegacyRandomSource,
+        random: &mut LegacyWorldgenRandom,
         chunk: [i32; 2],
         start: [i32; 2],
         mask: &mut impl Sink,
@@ -682,27 +682,6 @@ pub enum Trig {
     Rounded,
 }
 
-/// The game's sine table: `(float) Math.sin(i / 10430.378350470453)`, with the quarter turns
-/// exact if `exact`.
-fn sin_table(exact: bool) -> &'static [f32] {
-    static TABLES: [OnceLock<Vec<f32>>; 2] = [OnceLock::new(), OnceLock::new()];
-    TABLES[usize::from(exact)].get_or_init(|| {
-        let mut table: Vec<f32> = (0..65_536)
-            .map(|i| (f64::from(i) / ENTRIES_PER_RADIAN).sin() as f32)
-            .collect();
-        if exact {
-            for (i, v) in [(0, 0.0), (16_384, 1.0), (32_768, 0.0), (49_152, -1.0)] {
-                table[i] = v;
-            }
-        }
-        table
-    })
-}
-
-/// The sine table's entries per radian: 65,536 / 2π. A quarter turn, 16,384 entries, makes a
-/// sine a cosine.
-const ENTRIES_PER_RADIAN: f64 = 10_430.378_350_470_453;
-
 impl Trig {
     /// The table entry at `(long) index & 65535`.
     fn entry(self, index: f64) -> f32 {
@@ -712,19 +691,19 @@ impl Trig {
     /// `Mth.sin(double)`.
     pub fn sin(self, x: f64) -> f32 {
         match self {
-            Trig::Truncated => self.entry(x * ENTRIES_PER_RADIAN),
+            Trig::Truncated => self.entry(x * SIN_ENTRIES_PER_RADIAN),
             // dcmpl/iflt: NaN takes the negative branch.
-            Trig::Rounded if x >= 0.0 => self.entry(x * ENTRIES_PER_RADIAN + 0.5),
-            Trig::Rounded => -self.entry(-x * ENTRIES_PER_RADIAN + 0.5),
+            Trig::Rounded if x >= 0.0 => self.entry(x * SIN_ENTRIES_PER_RADIAN + 0.5),
+            Trig::Rounded => -self.entry(-x * SIN_ENTRIES_PER_RADIAN + 0.5),
         }
     }
 
     /// `Mth.cos(double)`.
     pub fn cos(self, x: f64) -> f32 {
         match self {
-            Trig::Truncated => self.entry(x * ENTRIES_PER_RADIAN + 16_384.0),
-            Trig::Rounded if x >= 0.0 => self.entry(x * ENTRIES_PER_RADIAN + 16_384.0 + 0.5),
-            Trig::Rounded => self.entry(-x * ENTRIES_PER_RADIAN + 16_384.0 + 0.5),
+            Trig::Truncated => self.entry(x * SIN_ENTRIES_PER_RADIAN + 16_384.0),
+            Trig::Rounded if x >= 0.0 => self.entry(x * SIN_ENTRIES_PER_RADIAN + 16_384.0 + 0.5),
+            Trig::Rounded => self.entry(-x * SIN_ENTRIES_PER_RADIAN + 16_384.0 + 0.5),
         }
     }
 }
@@ -736,7 +715,7 @@ fn floor(v: f64) -> i32 {
 }
 
 /// `Mth.randomBetween(random, min, max)`.
-fn random_between(random: &mut LegacyRandomSource, min: f32, max: f32) -> f32 {
+fn random_between(random: &mut impl RandomSource, min: f32, max: f32) -> f32 {
     random.next_float() * (max - min) + min
 }
 
@@ -765,7 +744,10 @@ fn can_reach(chunk: [i32; 2], x: f64, z: f64, step: i32, count: i32, thickness: 
 /// ellipsoid is where their squares sum below 1) and its y; it's what gives caves their flat
 /// floors and canyons their uneven walls. Columns outside the ellipse are left out before it's
 /// asked.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the chunk, the ellipsoid's centre and radii, and where it carves"
+)]
 fn carve_ellipsoid(
     chunk: [i32; 2],
     x: f64,
@@ -830,7 +812,7 @@ impl Cave {
     fn carve(
         &self,
         anchors: AnchorHeights,
-        random: &mut LegacyRandomSource,
+        random: &mut LegacyWorldgenRandom,
         chunk: [i32; 2],
         start: [i32; 2],
         mask: &mut impl Sink,
@@ -895,7 +877,7 @@ impl Cave {
     }
 
     /// `getThickness`: the thickness, sometimes much thicker with `weird_thickness_bias`.
-    fn thickness(&self, random: &mut LegacyRandomSource) -> f32 {
+    fn thickness(&self, random: &mut LegacyWorldgenRandom) -> f32 {
         let mut thickness = self.thickness.sample(random);
         if self.weird_thickness_bias && random.next_int_bounded(10) == 0 {
             let first = random.next_float();
@@ -928,7 +910,10 @@ impl Tunnel {
     /// count)`, thin at the ends and widest midway. A thick tunnel splits once, at a random
     /// step in its middle half, into two thinner ones turned a quarter left and right, and
     /// ends there.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the tunnel's seed, start, shape and steps, and where it carves"
+    )]
     fn create(
         &self,
         seed: i64,
@@ -1015,7 +1000,7 @@ impl Canyon {
     fn carve(
         &self,
         anchors: AnchorHeights,
-        random: &mut LegacyRandomSource,
+        random: &mut LegacyWorldgenRandom,
         chunk: [i32; 2],
         start: [i32; 2],
         mask: &mut impl Sink,
@@ -1048,7 +1033,7 @@ impl Canyon {
     }
 
     /// `doCarve`.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments, reason = "mirrors the game's doCarve")]
     fn carve_from(
         &self,
         anchors: AnchorHeights,

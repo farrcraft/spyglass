@@ -294,8 +294,8 @@ impl SpawnSearch {
         let mut angle = 0.0_f32;
         let mut radius = step;
         while radius <= max_radius {
-            let (dx, other_x) = trig_offset(angle, f64::sin, radius);
-            let (dz, other_z) = trig_offset(angle, f64::cos, radius);
+            let (dx, other_x) = trig_offset(angle, spyglass_math::sin, radius);
+            let (dz, other_z) = trig_offset(angle, spyglass_math::cos, radius);
             let sample = self.fitness_at(centre_x.wrapping_add(dx), centre_z.wrapping_add(dz));
             let replaces = sample.fitness < best.fitness;
             if other_x.is_some() || other_z.is_some() {
@@ -598,8 +598,8 @@ mod tests {
     #[test]
     fn trig_offsets_flag_boundaries() {
         // Exact at angle 0, where cos(0) * r is an integer.
-        assert_eq!(trig_offset(0.0, f64::cos, 512.0), (512, None));
-        assert_eq!(trig_offset(0.0, f64::sin, 512.0), (0, None));
+        assert_eq!(trig_offset(0.0, spyglass_math::cos, 512.0), (512, None));
+        assert_eq!(trig_offset(0.0, spyglass_math::sin, 512.0), (0, None));
         // 0.5 * 6 is exactly 3, so a slightly smaller sine truncates to 2.
         let sin = |_: f64| 0.5;
         assert_eq!(trig_offset(1.0, sin, 6.0), (3, Some(2)));

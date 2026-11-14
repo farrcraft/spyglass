@@ -27,6 +27,7 @@ pub fn run(args: &Find) -> Result<()> {
                 args.bundle.as_deref(),
                 &args.bundles,
                 args.game_version.as_deref(),
+                &args.packs,
             )?,
             spyglass::parse_seed(seed)?,
             None,

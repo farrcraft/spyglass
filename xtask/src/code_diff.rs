@@ -21,7 +21,12 @@ use std::process::Command;
 use anyhow::{Context, Result, bail};
 use spyglass_extract::java;
 
-use crate::repo_root;
+use crate::citations::{self, Cite};
+use crate::{oracle_test, repo_root};
+
+mod methods;
+
+use methods::{Change, Method, line_changes, method_changes};
 
 /// Class-name prefixes (with `/`) of the game code spyglass ports or calls into while porting:
 /// worldgen, biomes, the chunk generator and dimension types, and `Mth`.
@@ -86,10 +91,16 @@ pub fn report(old: &str, new: &str, used: &DataNames) -> Result<String> {
         added.len(),
         removed.len()
     );
+    let mut method_changes_by_class = BTreeMap::new();
     if !changed.is_empty() {
         let _ = writeln!(out, "\nchanged (lines removed/added, normalized):");
         for (name, minus, plus) in &changed {
             let _ = writeln!(out, "  {name}  -{minus} +{plus}");
+            let methods = method_changes(&before[*name], &after[*name]);
+            for (method, change) in &methods {
+                let _ = writeln!(out, "      {}  {change}", method.key());
+            }
+            method_changes_by_class.insert(*name, methods);
         }
     }
     for (label, list) in [("added", &added), ("removed", &removed)] {
@@ -100,9 +111,170 @@ pub fn report(old: &str, new: &str, used: &DataNames) -> Result<String> {
             }
         }
     }
+    let names: Vec<&str> = before
+        .keys()
+        .chain(after.keys())
+        .map(String::as_str)
+        .collect();
+    out.push_str(&code_map(
+        &names,
+        &method_changes_by_class,
+        &citations::scan()?,
+    ));
     out.push_str(&unused_report(old, new, &before, &after, used)?);
     let _ = writeln!(out, "\nnormalized disassembly: {}", dump_dir("").display());
     Ok(out)
+}
+
+/// How many citing files, and comparisons, an entry of the code map lists before "and N more".
+const SHOWN: usize = 4;
+
+/// Where the changed methods reach spyglass's code, ranked: what's cited but no oracle comparison
+/// covers, what's cited, what's in a cited class under no name a comment gives, and the changed
+/// classes nothing cites. `names` are every ported class of both versions, for telling a nested
+/// class's own name apart; `changes` the changed methods of each changed class.
+fn code_map(
+    names: &[&str],
+    changes: &BTreeMap<&str, Vec<(Method, Change)>>,
+    cites: &BTreeMap<String, Vec<Cite>>,
+) -> String {
+    let mut innermost: BTreeMap<&str, usize> = BTreeMap::new();
+    for name in names {
+        *innermost.entry(inner(short(name))).or_default() += 1;
+    }
+    let compared: BTreeMap<&str, Vec<&str>> =
+        oracle_test::TESTS
+            .iter()
+            .fold(BTreeMap::new(), |mut by_crate, (krate, test, _)| {
+                by_crate.entry(*krate).or_insert_with(Vec::new).push(*test);
+                by_crate
+            });
+    // Each entry with how it sorts: changed bodies before changed signatures, which are more
+    // often refactors, then the most lines first.
+    let mut ranks: [Vec<(bool, usize, String)>; 4] = Default::default();
+    for (class, methods) in changes {
+        let simple = named_class(short(class));
+        let mut class_cites: Vec<&Cite> = cites.get(simple).into_iter().flatten().collect();
+        let own = inner(simple);
+        if own != simple && innermost.get(own) == Some(&1) {
+            class_cites.extend(cites.get(own).into_iter().flatten());
+        }
+        if class_cites.is_empty() {
+            let lines = methods.iter().map(|(_, change)| change.lines()).sum();
+            ranks[3].push((false, lines, simple.to_string()));
+            continue;
+        }
+        let display = simple.replace('$', ".");
+        for (method, change) in methods {
+            let (rank, entry) = cited_entry(&display, method, change, &class_cites, &compared);
+            let signature = matches!(change, Change::Signature { .. });
+            ranks[rank].push((signature, change.lines(), entry));
+        }
+    }
+    ranked_report(&mut ranks)
+}
+
+/// A changed method of a cited class as the code map lists it, `display` naming the class,
+/// with its rank: 0 if no oracle comparison covers the crates citing it, 1 if a comment names
+/// the method, 2 if comments name only the class. `compared` lists each crate's comparisons.
+fn cited_entry(
+    display: &str,
+    method: &Method,
+    change: &Change,
+    class_cites: &[&Cite],
+    compared: &BTreeMap<&str, Vec<&str>>,
+) -> (usize, String) {
+    let named: Vec<&Cite> = class_cites
+        .iter()
+        .copied()
+        .filter(|c| c.method.as_deref() == Some(method.name.as_str()))
+        .collect();
+    let reach = if named.is_empty() {
+        class_cites
+    } else {
+        &named
+    };
+    let tests: Vec<&str> = reach
+        .iter()
+        .flat_map(|c| compared.get(c.crate_name()).into_iter().flatten())
+        .copied()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let rank = match (tests.is_empty(), named.is_empty()) {
+        (true, _) => 0,
+        (false, false) => 1,
+        (false, true) => 2,
+    };
+    let mut entry = format!("  {display}.{}  {change}\n", method.key());
+    let files: Vec<String> = reach
+        .iter()
+        .map(|c| format!("{}:{}", c.file, c.line))
+        .collect();
+    let _ = writeln!(entry, "      {}", shown(&files));
+    if !tests.is_empty() {
+        let _ = writeln!(entry, "      compare: {}", shown(&tests));
+    }
+    (rank, entry)
+}
+
+/// The code map's text from its four ranks of `(signature only, lines, entry)`, each sorted
+/// with changed bodies first, then the most lines.
+fn ranked_report(ranks: &mut [Vec<(bool, usize, String)>; 4]) -> String {
+    let mut out = String::from(
+        "\nwhere the changes reach spyglass's code (citations in comments: leads, not verdicts):\n",
+    );
+    let headings = [
+        "cited, but no oracle comparison covers the citing crates",
+        "cited by name, with the comparisons that cover them",
+        "in a cited class, under no name a comment gives",
+        "changed classes nothing cites",
+    ];
+    for (i, (heading, entries)) in headings.iter().zip(ranks.iter_mut()).enumerate() {
+        if entries.is_empty() {
+            continue;
+        }
+        entries.sort_by(|a, b| (a.0, b.1, &a.2).cmp(&(b.0, a.1, &b.2)));
+        let entries: Vec<&str> = entries.iter().map(|(_, _, entry)| entry.as_str()).collect();
+        let _ = writeln!(out, "\n{}. {heading}:", i + 1);
+        if i == 3 {
+            let _ = writeln!(out, "  {}", entries.join(", "));
+        } else {
+            for entry in entries {
+                out.push_str(entry);
+            }
+        }
+    }
+    out
+}
+
+/// The first [`SHOWN`] of `items`, and how many more.
+fn shown(items: &[impl AsRef<str>]) -> String {
+    let mut out: Vec<&str> = items.iter().take(SHOWN).map(AsRef::as_ref).collect();
+    let more = items.len().saturating_sub(SHOWN);
+    let more = format!("and {more} more");
+    if items.len() > SHOWN {
+        out.push(&more);
+    }
+    out.join(", ")
+}
+
+/// A nested class's innermost name: `Biome$ClimateSettings` → `ClimateSettings`.
+fn inner(class: &str) -> &str {
+    class.rsplit('$').next().unwrap_or(class)
+}
+
+/// The class a comment would name for `class`: an anonymous class's (`Outer$1`) is its outer
+/// class's, since nothing can name it.
+fn named_class(class: &str) -> &str {
+    let mut class = class;
+    while let Some((outer, last)) = class.rsplit_once('$') {
+        if !last.chars().all(|c| c.is_ascii_digit()) {
+            break;
+        }
+        class = outer;
+    }
+    class
 }
 
 /// The codec forms `new`'s classes declare that its data doesn't use: those `old` lacked are
@@ -420,28 +592,6 @@ fn lambda_numbers(word: &str) -> String {
     out
 }
 
-/// Lines only in `a` and lines only in `b`, counted as multisets.
-fn line_changes(a: &str, b: &str) -> (usize, usize) {
-    let mut counts: BTreeMap<&str, i64> = BTreeMap::new();
-    for line in a.lines() {
-        *counts.entry(line).or_default() += 1;
-    }
-    for line in b.lines() {
-        *counts.entry(line).or_default() -= 1;
-    }
-    let minus = counts
-        .values()
-        .filter(|&&c| c > 0)
-        .map(|&c| c as usize)
-        .sum();
-    let plus = counts
-        .values()
-        .filter(|&&c| c < 0)
-        .map(|&c| -c as usize)
-        .sum();
-    (minus, plus)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -518,11 +668,5 @@ invokevirtual # // Method com/mojang/serialization/codecs/PrimitiveCodec.optiona
         assert!(!Form::Type("domain_warp".into()).used_by(&data));
         assert!(Form::Field("input".into()).used_by(&data));
         assert!(!Form::Field("corner_constraint".into()).used_by(&data));
-    }
-
-    #[test]
-    fn counts_line_changes() {
-        assert_eq!(line_changes("a\nb\nb\nc\n", "a\nb\nd\n"), (2, 1));
-        assert_eq!(line_changes("x\n", "x\n"), (0, 0));
     }
 }

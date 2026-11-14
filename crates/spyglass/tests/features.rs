@@ -15,8 +15,12 @@ use spyglass_oracle::features::FeatureFile;
 #[ignore = "needs the oracle's feature golden files and a bundle: cargo xtask oracle features"]
 fn features_in_are_the_game_s() {
     let version = spyglass_oracle::version();
-    let world = World::open(spyglass_oracle::bundle_dir())
-        .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {version}"));
+    let world = World::open_with_packs(
+        spyglass_oracle::bundle_dir(),
+        spyglass::Dimension::Overworld,
+        &spyglass_oracle::packs(),
+    )
+    .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {version}"));
     let files: Vec<_> = spyglass_oracle::features::files()
         .into_iter()
         .filter(|p| p.to_string_lossy().contains("overworld"))
@@ -73,6 +77,7 @@ fn features_in_are_the_game_s() {
             .collect();
         let answers: HashSet<[i32; 3]> = every.iter().map(|f| f.position).collect();
         game += placed.len();
+        #[expect(clippy::iter_over_hash_type, reason = "only orders the failures")]
         for p in &placed {
             if !answers.contains(p) {
                 failures.push(format!(
@@ -114,8 +119,12 @@ fn features_in_are_the_game_s() {
 #[ignore = "needs a bundle and feature golden files for the seeds it reports: cargo xtask oracle features --seed S"]
 fn two_dungeon_seeds_are_the_game_s() {
     let version = spyglass_oracle::version();
-    let world = World::open(spyglass_oracle::bundle_dir())
-        .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {version}"));
+    let world = World::open_with_packs(
+        spyglass_oracle::bundle_dir(),
+        spyglass::Dimension::Overworld,
+        &spyglass_oracle::packs(),
+    )
+    .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {version}"));
     let query = world
         .search_query(
             "require spawn within 32 of 0,0\n\

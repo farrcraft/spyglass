@@ -124,8 +124,9 @@ pub fn pieces_cached(
         {
             continue;
         }
-        for (start, selection) in
-            starts.starts_in(set, [cx - reach, cz - reach], [cx + reach, cz + reach])
+        // Every start that may be here, a concentric ring's alternatives included.
+        for (start, selection, _) in
+            starts.possible_starts_in(set, [cx - reach, cz - reach], [cx + reach, cz + reach])
         {
             for &(structure, check) in &selection.tries {
                 let info = &sets.structures()[structure];
@@ -214,7 +215,7 @@ pub fn pieces_cached(
 /// each start referencing the chunk places its pieces from that random. Only the structures of
 /// step `step`, on the region as the steps before it left it; `reads` says why a block a
 /// structure reads might not be the region's: what placed before it could have written there.
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     reason = "the decoration's state, passed through"
 )]
@@ -273,8 +274,10 @@ pub fn containers(
             {
                 continue;
             }
-            for (start, selection) in
-                starts.starts_in(set, [cx - reach, cz - reach], [cx + reach, cz + reach])
+            // A concentric ring's tied or platform-dependent positions are candidates in every
+            // chunk they may be in, as locate gives them.
+            for (start, selection, chunk_certain) in
+                starts.possible_starts_in(set, [cx - reach, cz - reach], [cx + reach, cz + reach])
             {
                 let Some(i) = selection.tries.iter().position(|&(s, _)| s == structure) else {
                     continue;
@@ -282,8 +285,11 @@ pub fn containers(
                 if selection.tries[i].1 == Check::Rejected {
                     continue;
                 }
-                // Certain only if it's the set's one try here and it passes.
-                let sure = selection.tries.len() == 1 && selection.tries[i].1 == Check::Passes;
+                // Certain only if the chunk is surely the set's, and it's the set's one try here
+                // and passes.
+                let sure = chunk_certain
+                    && selection.tries.len() == 1
+                    && selection.tries[i].1 == Check::Passes;
                 if info.kind == StructureType::Mineshaft {
                     if let Some(pieces) = starts.mineshaft_pieces(structure, start)
                         && pieces.iter().any(|p| p.bounds().intersects(&chunk))

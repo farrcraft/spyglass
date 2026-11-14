@@ -3151,6 +3151,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "regex-lite"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cab834c73d247e67f4fae452806d17d3c7501756d98c8808d7c9c7aa7d18f973"
+
+[[package]]
 name = "renderdoc-sys"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3635,7 +3641,7 @@ dependencies = [
 
 [[package]]
 name = "spyglass"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "mimalloc",
  "png 0.18.1",
@@ -3658,11 +3664,12 @@ dependencies = [
 
 [[package]]
 name = "spyglass-biome"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "serde_json",
  "spyglass-data",
  "spyglass-density",
+ "spyglass-math",
  "spyglass-noise",
  "spyglass-oracle",
  "spyglass-rng",
@@ -3670,7 +3677,7 @@ dependencies = [
 
 [[package]]
 name = "spyglass-blocks"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "rayon",
  "serde_json",
@@ -3686,7 +3693,7 @@ dependencies = [
 
 [[package]]
 name = "spyglass-cli"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -3702,10 +3709,11 @@ dependencies = [
 
 [[package]]
 name = "spyglass-data"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "directories",
  "flate2",
+ "regex-lite",
  "serde",
  "serde_json",
  "sha1",
@@ -3716,11 +3724,12 @@ dependencies = [
 
 [[package]]
 name = "spyglass-density"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "rustc-hash 2.1.3",
  "serde_json",
  "spyglass-data",
+ "spyglass-math",
  "spyglass-noise",
  "spyglass-oracle",
  "spyglass-rng",
@@ -3729,7 +3738,7 @@ dependencies = [
 
 [[package]]
 name = "spyglass-extract"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -3745,7 +3754,7 @@ dependencies = [
 
 [[package]]
 name = "spyglass-feature"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "rayon",
  "serde_json",
@@ -3754,6 +3763,7 @@ dependencies = [
  "spyglass-data",
  "spyglass-density",
  "spyglass-loot",
+ "spyglass-math",
  "spyglass-noise",
  "spyglass-oracle",
  "spyglass-rng",
@@ -3763,7 +3773,7 @@ dependencies = [
 
 [[package]]
 name = "spyglass-loot"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "serde_json",
  "spyglass-data",
@@ -3774,10 +3784,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "spyglass-math"
+version = "0.4.0"
+dependencies = [
+ "libm",
+]
+
+[[package]]
 name = "spyglass-noise"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "serde_json",
+ "spyglass-data",
+ "spyglass-math",
  "spyglass-oracle",
  "spyglass-rng",
  "thiserror 2.0.21",
@@ -3785,27 +3804,29 @@ dependencies = [
 
 [[package]]
 name = "spyglass-oracle"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "serde",
  "serde_json",
  "spyglass-data",
  "spyglass-loot",
+ "spyglass-world",
  "tempfile",
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "spyglass-rng"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "md-5",
+ "spyglass-math",
  "spyglass-oracle",
 ]
 
 [[package]]
 name = "spyglass-search"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "rayon",
  "spyglass-data",
@@ -3815,13 +3836,14 @@ dependencies = [
 
 [[package]]
 name = "spyglass-structure"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "rayon",
  "serde_json",
  "spyglass-biome",
  "spyglass-data",
  "spyglass-density",
+ "spyglass-math",
  "spyglass-noise",
  "spyglass-oracle",
  "spyglass-rng",
@@ -3830,7 +3852,7 @@ dependencies = [
 
 [[package]]
 name = "spyglass-terrain"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "rayon",
  "serde_json",
@@ -3843,7 +3865,7 @@ dependencies = [
 
 [[package]]
 name = "spyglass-viewer"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "eframe",
  "egui_extras",
@@ -3859,7 +3881,7 @@ dependencies = [
 
 [[package]]
 name = "spyglass-world"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "directories",
  "flate2",
@@ -5185,14 +5207,16 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "xtask"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "clap",
  "flate2",
+ "libm",
  "serde_json",
  "spyglass-data",
  "spyglass-extract",
+ "spyglass-math",
  "spyglass-world",
  "tar",
  "tempfile",

@@ -32,11 +32,12 @@ mod game;
 mod loot;
 mod render;
 mod save;
+mod saved;
 mod search;
 
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use spyglass_biome::{BiomeId, BiomeSource, Biomes, SearchVolume, SpawnSearch, SpawnTargets};
 use spyglass_blocks::{BlockSettings, ChunkGenerator};
@@ -53,7 +54,7 @@ pub use blocks::{BlockAt, BlockColumn, Carvers, ChunkBlocks};
 pub use features::{FeatureLocate, FeatureOptions, FeatureQuery, FoundFeature, Neighbours};
 pub use game::{Game, GameSession};
 pub use loot::{
-    ContainerLocate, ContainerSource, FoundContainer, Item, ItemQuery, MapDestination, Slot,
+    ContainerLocate, ContainerSource, FoundContainer, InSave, Item, ItemQuery, MapDestination, Slot,
 };
 pub use render::{
     BiomeMap, CarverKind, CarvingMap, DEFAULT_MAP_Y, HeightMap, Image, Layers, MARKER_REACH,
@@ -65,6 +66,7 @@ pub use save::{
     LauncherSave, PackConcern, SaveInfo, SaveInspector, SaveLocation, SaveReport, SaveWarning,
     Scan, find_save, inspect_save, launcher_saves,
 };
+pub use saved::{GeneratedChunk, SaveChunks};
 pub use search::{
     ConstraintResult, Evaluation, Feature, FindMatch, FindOptions, FindOutcome, FindProgress,
     MAX_FIND_TARGETS, Outcome, RankedSeed, SearchHit, SearchOptions, SearchOutcome, SearchProgress,
@@ -75,12 +77,14 @@ pub use spyglass_data::bundle::{
     BUNDLES_ENV, Kind, app_bundles_dir, default_bundles_dir, user_bundles_dir,
 };
 pub use spyglass_data::dimension::Dimension;
+pub use spyglass_data::pack::{FormatRange, Pack, PackError, PackFormat, PackMeta};
 pub use spyglass_data::versions::{CHECKED, Checked};
 pub use spyglass_structure::LOCATE_RADIUS;
 pub use spyglass_terrain::Heightmap;
 /// Coarse timing of terrain, for finding where the time goes; not a stable interface.
 #[cfg(feature = "timing")]
 pub use spyglass_terrain::timing;
+pub use spyglass_world::open_pack;
 
 /// A search query's syntax tree, from [`SearchQuery::query`] (`docs/specs/search.md`).
 pub mod query {
@@ -476,7 +480,57 @@ impl World {
 
     /// `dimension` of the Default world preset, from the bundle in `dir`.
     pub fn open_dimension(dir: impl Into<PathBuf>, dimension: Dimension) -> Result<World> {
-        let bundle = Bundle::open(dir)?;
+        Self::from_bundle(Bundle::open(dir)?, dimension)
+    }
+
+    /// `dimension` of the Default world preset, from the bundle in `dir` with `packs` applied
+    /// over it, lowest first, as a world that enables them applies them
+    /// (`docs/specs/data-packs.md`). Every worldgen file the packs hold is loaded here, so a
+    /// type spyglass doesn't support is an error naming its file, not a failed query later.
+    pub fn open_with_packs(
+        dir: impl Into<PathBuf>,
+        dimension: Dimension,
+        packs: &[Pack],
+    ) -> Result<World> {
+        Self::from_bundle(Bundle::open(dir)?.with_packs(packs)?, dimension)
+    }
+
+    /// `dimension` of the Default world preset, from `bundle` and any packs applied to it. With
+    /// packs, everything loaded on first use otherwise (template pools, block settings,
+    /// features, loot) is loaded now, so what spyglass can't apply is found on opening.
+    pub(crate) fn from_bundle(bundle: Bundle, dimension: Dimension) -> Result<World> {
+        let world = Self::load(bundle, dimension)?;
+        if world.bundle.layers().is_empty() {
+            return Ok(world);
+        }
+        type Step = fn(&World) -> Result<()>;
+        let steps: [Step; 4] = [
+            |w| w.pools().map(drop),
+            |w| w.block_settings().map(drop),
+            |w| w.feature_world().map(drop),
+            |w| w.loot_world().map(drop),
+        ];
+        let mut plain = None;
+        for step in steps {
+            let Err(error) = step(&world) else {
+                continue;
+            };
+            // The packs' fault only if the bundle without them loads: a bundle missing a part
+            // (one extracted before it was added, or a test's) fails on first use, as it would
+            // without packs.
+            let plain = match &plain {
+                Some(plain) => plain,
+                None => plain.insert(Self::load(world.bundle.without_packs(), dimension)?),
+            };
+            if step(plain).is_ok() {
+                return Err(error);
+            }
+        }
+        Ok(world)
+    }
+
+    /// [`World::from_bundle`], loading only what every world loads on opening.
+    fn load(bundle: Bundle, dimension: Dimension) -> Result<World> {
         let id = dimension.id();
         // First, so that a preset without the dimension says so.
         let dimension_type = dimension_type(&bundle, id)?;
@@ -539,6 +593,14 @@ impl World {
     /// The game version, e.g. `26.3`.
     pub fn version(&self) -> &str {
         &self.bundle.manifest().version
+    }
+
+    /// The data packs applied over the bundle, lowest first: each one's name and content hash.
+    pub fn packs(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.bundle
+            .layers()
+            .iter()
+            .map(|layer| (layer.name.as_str(), layer.hash.as_str()))
     }
 
     /// Why this world's answers are unchecked, if they are (ADR 0039).
@@ -629,6 +691,7 @@ impl World {
             terrain: OnceLock::new(),
             chunks: OnceLock::new(),
             parallel: true,
+            save: None,
         })
     }
 
@@ -642,8 +705,7 @@ impl World {
     }
 
     fn exists(&self, registry: &str, id: &str) -> bool {
-        Bundle::resource_path(registry, &full_id(id))
-            .is_ok_and(|path| self.bundle.manifest().files.contains_key(&path))
+        self.bundle.has_resource(registry, &full_id(id))
     }
 
     /// Resolves a `/locate structure` argument, a structure id or a `#tag`, for this world's
@@ -887,6 +949,8 @@ pub struct Session<'w> {
     /// Whether queries run their independent parts in parallel, on the calling thread's rayon
     /// pool; not in a search's checks (ADR 0063).
     parallel: bool,
+    /// A save of this seed, whose chunks answer where the game reads them (ADR 0071).
+    save: Option<saved::SessionSave<'w>>,
 }
 
 /// The biome at a position.
@@ -916,6 +980,10 @@ pub struct StructureStart {
     /// start depends on terrain (unless confirmed), a tied biome cell, or a platform-dependent
     /// ring position.
     pub certain: bool,
+    /// Whether the answer came from the session's save, which holds the chunk with this start
+    /// (ADR 0071), rather than from the seed. Such a start is certain, even in a chunk a tied
+    /// or platform-dependent ring position may be in: the save records where the game put it.
+    pub from_save: bool,
 }
 
 impl StructureStart {
@@ -1060,6 +1128,29 @@ impl<'w> Session<'w> {
         self.seed
     }
 
+    /// This session answering from `save`, a save of its seed in its world's dimension, wherever
+    /// the game reads the save rather than predicting (ADR 0071): structure starts in the
+    /// chunks it holds. An error for another dimension's chunks.
+    pub fn with_save(mut self, save: Arc<SaveChunks>) -> Result<Self> {
+        if save.dimension() != self.world.dimension {
+            return Err(Error::Unsupported(format!(
+                "the save's {} chunks given to a {} session",
+                save.dimension(),
+                self.world.dimension
+            )));
+        }
+        self.save = Some(saved::SessionSave {
+            chunks: save,
+            sets: &self.world.sets,
+        });
+        Ok(self)
+    }
+
+    /// The save it answers from, if any ([`with_save`](Self::with_save)).
+    pub fn save(&self) -> Option<&SaveChunks> {
+        self.save.as_ref().map(|s| &*s.chunks)
+    }
+
     fn biome_names(&self, lookup: &spyglass_biome::Lookup) -> BiomeAt {
         let name = |b: &BiomeId| self.world.source.name(*b).to_string();
         BiomeAt {
@@ -1139,6 +1230,10 @@ impl<'w> Session<'w> {
                 .map(|&s| sets.structures()[s].id.clone())
                 .collect(),
             certain,
+            from_save: self
+                .save
+                .as_ref()
+                .is_some_and(|save| save.chunks.saved_starts(chunk).is_some()),
         }
     }
 
@@ -1154,10 +1249,14 @@ impl<'w> Session<'w> {
     /// The structure starts for this seed: from the climate alone, or confirmed with its
     /// terrain.
     fn starts(&self, confirm: bool) -> Starts<'_> {
-        if confirm {
+        let starts = if confirm {
             Starts::with_terrain(&self.placements, &self.biomes, self.terrain())
         } else {
             Starts::new(&self.placements, &self.biomes)
+        };
+        match &self.save {
+            Some(save) => starts.with_stored(save),
+            None => starts,
         }
     }
 

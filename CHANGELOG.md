@@ -6,6 +6,34 @@ Changes go under **Unreleased** as they're made. `cargo xtask release` turns tha
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-14
+
+### Game versions
+
+Checked against the game for 26.2, 26.3, 26.4-snapshot-5, 26.4-snapshot-6, 26.4-snapshot-7, 26.4-snapshot-8.
+
+### Added
+
+- **Structures in your world come from the world itself** where it has generated the chunk, as the game's `/locate` does: `--world` answers mark them `saved` (`source` in JSON), and a chunk the world saved without a structure has none, whatever the seed says. In the API, `SaveReport::chunks` and `Session::with_save` ([world-saves.md](docs/specs/world-saves.md#structure-starts-in-saves)).
+- **Loot in your world says what's become of each container:** unopened (holding what spyglass shows), opened (with what's in it now) or gone, and `loot find` goes by what's in it now.
+- **`spyglass render --generated`** shades the chunks your world has generated, marking those an older version made; `--inhabited` shades them by the time players spent there. The viewer has both, under **Generated chunks**.
+- **Data packs change spyglass's answers as they change the game's.** With `--world` and in the viewer, the world's enabled packs are applied, in order: those in its `datapacks/` folder, zips and folders, and the built-in ones such as `trade_rebalance`. `--pack <zip|folder>` applies packs for a seed, in every command that takes `--seed`. Overlays, filters and tag merging follow the game ([data-packs.md](docs/specs/data-packs.md)). In the API, `Bundle::with_packs`, `World::open_with_packs`, `Game::open_with_packs` and `SaveReport::packs`.
+- **`spyglass world info` lists the packs it applied** (`applied_packs` in JSON), and reports a dimension the packs can't be applied in, with the file that holds what spyglass doesn't support (`pack_errors`).
+- **Bundles record the version's data pack format and carry the built-in feature packs.** Extract your bundles again to apply packs; spyglass says so if you don't.
+
+### Changed
+
+- **Data pack warnings say only what spyglass can't apply:** a missing pack, a mod's pack or one it can't read. A pack the game doesn't load either, or one made for another format, is a note. In JSON, each `data_pack` warning has a `concern`; in the API, `PackConcern` has new variants in place of `Worldgen` and `Uninspectable`, and `PackContents` holds the read `Pack`.
+- **Java's `Math.sin`, `cos`, `log` and `pow` are computed correctly rounded,** as the game computes them on x86-64 for all but 0.1% of arguments or fewer, the same on every system. Before, spyglass's Windows, Linux and macOS builds each used their system's math library, which differ from each other, and on Windows from the game in about 3% of `sin` and `cos` results. Stronghold ring positions, the spawn search, Gaussians and large dripstone heights can change where they hung on that last bit; stronghold rings and the spawn search still flag answers the game's own platforms could disagree on ([java-math.md](docs/specs/java-math.md)).
+
+### Fixed
+
+- **A stronghold whose ring position is uncertain** (a tied biome cell, or a sine the game's platforms may round differently) had its chests answered as certain, in spyglass's chunk only. They're now candidates, in every chunk the game may put the stronghold in, as `locate` already gave it.
+- **A data pack's own biomes in a structure's biome tag** (Terralith's caves in `#minecraft:has_structure/ancient_city`) were refused as unsupported: the check looked in the bundle only, not the packs.
+- **Block states written as 26.3 writes them** (`{"id": …, "properties": …}`) in a pack's surface rules and noise settings were refused; only features read that form.
+- **Carvers whose shape draws a normal value** (a pack's `clamped_normal`, such as Terralith's canyons) carved from a fresh random's draws. The game keeps one random for a chunk's carvers, whose spare value carries from one carver to the next.
+- **A chest placed over another** (an overgrown pillager outpost watchtower keeping its copy of the tower's chest) was answered with the first chest's loot seed. The later chest replaces it, as in the game.
+
 ## [0.3.1] - 2026-11-11
 
 ### Game versions
@@ -112,7 +140,8 @@ The first release.
 - A warning for a game version this build wasn't checked against. Its answers may differ from the game's ([bundle-format.md](docs/specs/bundle-format.md#checked-versions)).
 - `--version` names the build and the game versions it was checked against.
 
-[Unreleased]: https://github.com/farrcraft/spyglass/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/farrcraft/spyglass/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/farrcraft/spyglass/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/farrcraft/spyglass/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/farrcraft/spyglass/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/farrcraft/spyglass/compare/v0.1.0...v0.2.0

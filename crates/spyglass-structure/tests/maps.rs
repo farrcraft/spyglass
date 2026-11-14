@@ -8,7 +8,6 @@
 
 use serde_json::Value;
 use spyglass_biome::BiomeSource;
-use spyglass_data::bundle::Bundle;
 use spyglass_data::versions::Behavior;
 use spyglass_structure::{JigsawPools, Starts, StructureSets};
 use spyglass_terrain::{Terrain, TerrainSettings};
@@ -23,7 +22,7 @@ fn seed(text: &str) -> i64 {
 #[ignore = "needs oracle-out/<version>/locate with map cases and bundles/<version>: cargo xtask oracle locate"]
 fn map_targets_match_the_game() {
     let dir = spyglass_oracle::out_dir().join("locate");
-    let bundle = Bundle::open(spyglass_oracle::bundle_dir()).unwrap();
+    let bundle = spyglass_oracle::open_bundle().unwrap();
     let behavior = Behavior::of(bundle.manifest().data_version);
     let source = BiomeSource::load(&bundle, "minecraft:normal", "minecraft:overworld").unwrap();
     let sets =

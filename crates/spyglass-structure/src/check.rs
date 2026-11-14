@@ -54,8 +54,17 @@ impl Selection {
     }
 }
 
+/// Structure starts a world save already holds, which decide the chunks it has
+/// (`StructureCheck.tryLoadFromStorage`; `docs/specs/world-saves.md`).
+pub trait StoredStarts: Sync {
+    /// The structures (indices into the sets' structures) that start in `chunk`, if the save
+    /// holds the chunk with starts the game reads: then the game answers from them, and a
+    /// structure not among them doesn't start there. `None` where the game predicts the chunk.
+    fn starts_at(&self, chunk: [i32; 2]) -> Option<Vec<usize>>;
+}
+
 /// Structure starts for one seed: [`Placements`] plus the biome source for the same seed, and
-/// optionally its terrain.
+/// optionally its terrain and a save's stored starts.
 pub struct Starts<'a> {
     /// Where each set's starts may be, before any biome check.
     placements: &'a Placements<'a>,
@@ -65,6 +74,8 @@ pub struct Starts<'a> {
     terrain: Option<&'a Terrain>,
     /// The jigsaw pools, for [`assemble`](Self::assemble) only.
     pools: Option<&'a JigsawPools>,
+    /// A save's starts, which decide the chunks it holds.
+    stored: Option<&'a dyn StoredStarts>,
 }
 
 /// What a check found before its biome test: the conditions' verdict so far, and the test's
@@ -98,6 +109,7 @@ impl<'a> Starts<'a> {
             biomes,
             terrain: None,
             pools: None,
+            stored: None,
         }
     }
 
@@ -113,6 +125,7 @@ impl<'a> Starts<'a> {
             biomes,
             terrain: Some(terrain),
             pools: None,
+            stored: None,
         }
     }
 
@@ -121,6 +134,15 @@ impl<'a> Starts<'a> {
     pub fn with_pools(self, pools: &'a JigsawPools) -> Self {
         Starts {
             pools: Some(pools),
+            ..self
+        }
+    }
+
+    /// The same starts, with a save's: in the chunks `stored` holds, its starts are the answer,
+    /// certain, as the game reads them from storage before predicting.
+    pub fn with_stored(self, stored: &'a dyn StoredStarts) -> Self {
+        Starts {
+            stored: Some(stored),
             ..self
         }
     }
@@ -318,6 +340,65 @@ impl<'a> Starts<'a> {
             .collect()
     }
 
+    /// Whether a save decides `chunk`: it holds the chunk with starts the game reads. Its
+    /// answer is then certain even where a ring position is tied or platform-dependent, since
+    /// the save records where the game that generated it put the start.
+    pub(crate) fn stored_decides(&self, chunk: [i32; 2]) -> bool {
+        self.stored.is_some_and(|s| s.starts_at(chunk).is_some())
+    }
+
+    /// [`starts_in`](Self::starts_in), with whether each chunk is certainly the set's, and for
+    /// a concentric-ring set also the chunks its tied or platform-dependent positions may be in
+    /// instead, as locate considers them: uncertain unless a save decides them. A start's own
+    /// [`Selection`] says what starts there if the chunk is the set's.
+    pub fn possible_starts_in(
+        &self,
+        set: usize,
+        min: [i32; 2],
+        max: [i32; 2],
+    ) -> Vec<([i32; 2], Selection, bool)> {
+        let Some(ring) = self.placements.ring_positions(set) else {
+            return self
+                .starts_in(set, min, max)
+                .into_iter()
+                .map(|(chunk, selection)| (chunk, selection, true))
+                .collect();
+        };
+        let inside =
+            |[x, z]: [i32; 2]| (min[0]..=max[0]).contains(&x) && (min[1]..=max[1]).contains(&z);
+        let mut chunks: Vec<([i32; 2], bool)> = Vec::new();
+        for position in ring {
+            let [x, z] = position.chunk;
+            if inside(position.chunk) && self.placements.is_structure_chunk(set, x, z) {
+                let exact = !position.tie_dependent && !position.platform_dependent;
+                chunks.push((position.chunk, exact));
+            }
+            chunks.extend(
+                position
+                    .alternatives
+                    .iter()
+                    .filter(|&&c| inside(c))
+                    .map(|&c| (c, false)),
+            );
+        }
+        // Ring positions can repeat; a chunk is certain if any position certainly puts it there.
+        let mut merged: Vec<([i32; 2], bool)> = Vec::new();
+        for (chunk, exact) in chunks {
+            match merged.iter_mut().find(|(c, _)| *c == chunk) {
+                Some((_, known)) => *known |= exact,
+                None => merged.push((chunk, exact)),
+            }
+        }
+        merged
+            .into_iter()
+            .map(|(chunk, exact)| {
+                let exact = exact || self.stored_decides(chunk);
+                (chunk, self.select(set, chunk), exact)
+            })
+            .filter(|(_, s, _)| !s.tries.is_empty())
+            .collect()
+    }
+
     /// The game's choice among set `set`'s structures in placement chunk `chunk`: a single entry
     /// directly; otherwise a weighted pick from `setLargeFeatureSeed(seed, x, z)`, removing each
     /// structure that fails and picking again from the same random.
@@ -327,6 +408,16 @@ impl<'a> Starts<'a> {
     pub fn select(&self, set: usize, chunk: [i32; 2]) -> Selection {
         let sets = self.placements.sets();
         let entries = &sets.sets()[set].entries;
+        // StructureCheck.checkStart: a chunk on disk answers from its saved starts, before any
+        // prediction. A set starts at most one structure in a chunk.
+        if let Some(saved) = self.stored.and_then(|s| s.starts_at(chunk)) {
+            let tries = entries
+                .iter()
+                .find(|e| saved.contains(&e.structure))
+                .map(|e| vec![(e.structure, Check::Passes)])
+                .unwrap_or_default();
+            return Selection { tries };
+        }
         let mut tries = Vec::new();
         if let [only] = entries.as_slice() {
             let check = self.check(only.structure, chunk);

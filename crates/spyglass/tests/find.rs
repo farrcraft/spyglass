@@ -433,7 +433,12 @@ const PRESETS: [(&str, i64); 5] = [
 #[test]
 #[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
 fn presets_agree_with_the_library_on_real_data() {
-    let world = World::open(spyglass_oracle::bundle_dir()).unwrap();
+    let world = World::open_with_packs(
+        spyglass_oracle::bundle_dir(),
+        spyglass::Dimension::Overworld,
+        &spyglass_oracle::packs(),
+    )
+    .unwrap();
     for (text, seed) in PRESETS {
         let session = world.session(seed).unwrap();
         let options = FindOptions {

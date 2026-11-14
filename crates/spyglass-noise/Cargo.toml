@@ -11,9 +11,11 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+spyglass-math.workspace = true
 spyglass-rng.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
+spyglass-data.workspace = true
 spyglass-oracle.workspace = true

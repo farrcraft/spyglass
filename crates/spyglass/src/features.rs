@@ -333,7 +333,10 @@ impl<'w> Session<'w> {
     /// [`features_in`](Self::features_in) over the chunks `wanted` keeps, each feature handed
     /// to `visit` as it's found, until it breaks. Chunks already in `placings` aren't placed
     /// again. Keeps the carved chunks of three rows at a time.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the query and its area, the caller's filter and cache, and the visitor"
+    )]
     pub(crate) fn each_feature(
         &self,
         query: &FeatureQuery,
@@ -659,8 +662,12 @@ mod tests {
     #[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
     fn features_are_the_same_on_any_number_of_threads() {
         let version = spyglass_oracle::version();
-        let world = World::open(spyglass_oracle::bundle_dir())
-            .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {version}"));
+        let world = World::open_with_packs(
+            spyglass_oracle::bundle_dir(),
+            crate::Dimension::Overworld,
+            &spyglass_oracle::packs(),
+        )
+        .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {version}"));
         let query = world.feature_query("minecraft:monster_room").unwrap();
         for seed in [0, 12_345] {
             for unlikely in [false, true] {

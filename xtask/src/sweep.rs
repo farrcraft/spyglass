@@ -153,6 +153,7 @@ fn stale_in(dir: &Path, cutoff: SystemTime, found: &mut Vec<Stale>) -> Result<()
             path,
         });
     }
+    #[expect(clippy::iter_over_hash_type, reason = "each name is swept on its own")]
     for outputs in by_name.values() {
         // The newest build of each hash, and the newest hash of all.
         let mut newest_of: HashMap<&str, SystemTime> = HashMap::new();

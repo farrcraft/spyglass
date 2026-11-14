@@ -16,8 +16,7 @@ use spyglass_oracle::probe::{ProbeFile, probe_file};
 /// The bundle for the version under test (`spyglass_oracle::version`).
 fn bundle() -> Bundle {
     let version = spyglass_oracle::version();
-    Bundle::open(spyglass_oracle::bundle_dir())
-        .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {version}"))
+    spyglass_oracle::open_bundle().unwrap_or_else(|e| panic!("{e}; run spyglass-extract {version}"))
 }
 
 /// `Climate.quantizeCoord`: `(long)(f * 10000.0f)`.

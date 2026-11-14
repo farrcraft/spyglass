@@ -239,7 +239,7 @@ impl App {
 
     /// Errors, warnings and notes from the toolbar's work, in one row under it.
     fn notices(&mut self, ui: &mut egui::Ui) {
-        let mut lines: Vec<(egui::Color32, String)> = Vec::new();
+        let mut lines: Vec<(Color32, String)> = Vec::new();
         if let Some(e) = &self.load_error {
             lines.push((style::ERROR, e.clone()));
         }
@@ -264,8 +264,20 @@ impl App {
                     report.save.version_name.as_deref().unwrap_or("?")
                 ),
             ));
+            if !report.packs.is_empty() {
+                let names: Vec<&str> = report.packs.iter().map(Pack::name).collect();
+                lines.push((
+                    style::MUTED,
+                    format!("Data packs applied: {}.", names.join(", ")),
+                ));
+            }
             for warning in &report.warnings {
-                lines.push((style::WARN, warning.to_string()));
+                let colour = if warning.is_note() {
+                    style::MUTED
+                } else {
+                    style::WARN
+                };
+                lines.push((colour, warning.to_string()));
             }
         }
         if self.exporting.is_some() {

@@ -22,7 +22,12 @@ fn blocks_through_the_api_are_the_game_s() {
                 continue;
             };
             let file = BlockFile::read(path).unwrap();
-            let world = World::open_dimension(spyglass_oracle::bundle_dir(), dimension).unwrap();
+            let world = World::open_with_packs(
+                spyglass_oracle::bundle_dir(),
+                dimension,
+                &spyglass_oracle::packs(),
+            )
+            .unwrap();
             let session = world.session(file.seed).unwrap();
             let golden = &file.chunks[0];
             let [cx, cz] = golden.chunk;

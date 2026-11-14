@@ -11,7 +11,6 @@
 use std::path::Path;
 
 use rayon::prelude::*;
-use spyglass_data::bundle::Bundle;
 use spyglass_oracle::blocks::BlockFile;
 use spyglass_terrain::{Block, Terrain, TerrainSettings};
 
@@ -48,7 +47,7 @@ fn column_kind(block: Block) -> &'static str {
 /// checked.
 fn check(path: &Path) -> (Vec<String>, usize) {
     let file = BlockFile::read(path).unwrap();
-    let bundle = Bundle::open(spyglass_oracle::bundle_dir())
+    let bundle = spyglass_oracle::open_bundle()
         .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {}", file.version));
     let noise_settings = match file.dimension.as_str() {
         "minecraft:overworld" => "minecraft:overworld",

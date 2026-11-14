@@ -9,7 +9,6 @@ use std::path::{Path, PathBuf};
 
 use rayon::prelude::*;
 use serde_json::Value;
-use spyglass_data::bundle::Bundle;
 use spyglass_terrain::{Block, Heightmap, Terrain, TerrainSettings};
 
 /// The height files for the version under test, in `oracle-out/<version>/heights/<dimension>/`.
@@ -47,7 +46,7 @@ fn check(path: &Path) -> (Vec<String>, usize) {
     let version = file["version"].as_str().unwrap();
     let seed = file["seed"].as_i64().unwrap();
     assert_eq!(version, spyglass_oracle::version(), "{}", path.display());
-    let bundle = Bundle::open(spyglass_oracle::bundle_dir())
+    let bundle = spyglass_oracle::open_bundle()
         .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {version}"));
     // The Default preset's noise settings for the file's dimension; its type has the
     // dimension's id.

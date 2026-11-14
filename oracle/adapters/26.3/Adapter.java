@@ -28,6 +28,7 @@ import net.minecraft.server.packs.PackLocationInfo;
 import net.minecraft.server.packs.PackResources;
 import net.minecraft.server.packs.PackType;
 import net.minecraft.server.packs.PathPackResources;
+import net.minecraft.server.packs.repository.Pack;
 import net.minecraft.server.packs.repository.PackSource;
 import net.minecraft.server.packs.repository.ServerPacksSource;
 import net.minecraft.server.packs.resources.MultiPackResourceManager;
@@ -100,11 +101,21 @@ final class Adapter implements GameApi {
         LayeredRegistryAccess<RegistryLayer> layers = RegistryLayer.createRegistryAccess();
         var all = new ArrayList<PackResources>();
         all.add(ServerPacksSource.createVanillaPackSource().fullResources());
+        // As FolderRepositorySource finds a world's packs: a folder or a zip, its pack.mcmeta read
+        // (Pack.readMetaAndCreate), and opened with the overlays that apply (Pack.open).
         for (Path pack : packs) {
             String name = pack.getFileName().toString();
-            all.add(new PathPackResources(
-                    new PackLocationInfo("file/" + name, Component.literal(name), PackSource.DEFAULT, Optional.empty()),
-                    pack));
+            Pack.ResourcesSupplier supplier = java.nio.file.Files.isDirectory(pack)
+                    ? new PathPackResources.PathResourcesSupplier(pack)
+                    : new net.minecraft.server.packs.FilePackResources.FileResourcesSupplier(pack);
+            Pack read = Pack.readMetaAndCreate(
+                    new PackLocationInfo("file/" + name, Component.literal(name), PackSource.WORLD, Optional.empty()),
+                    supplier, PackType.SERVER_DATA,
+                    new net.minecraft.server.packs.PackSelectionConfig(false, Pack.Position.TOP, false));
+            if (read == null) {
+                throw new IllegalArgumentException("the game doesn't load " + pack + " as a data pack");
+            }
+            read.open().forEach(all::add);
         }
         var resources = new MultiPackResourceManager(PackType.SERVER_DATA, all);
         var tags = TagLoader.loadTagsForExistingRegistries(resources, layers.getLayer(RegistryLayer.STATIC));

@@ -43,6 +43,7 @@ A bundle is a directory, `<bundles folder>/<version id>/`:
 | `data/minecraft/tags/item/**`         | The inner game jar, same path: item tags, for loot.                                                                                             | 236        |
 | `data/minecraft/tags/enchantment/**`  | The inner game jar, same path: enchantment tags, for loot.                                                                                      | 22         |
 | `data/minecraft/tags/instrument/**`   | The inner game jar, same path: instrument tags, for loot.                                                                                       | 3          |
+| `data/minecraft/datapacks/*/**`       | The inner game jar, same path: each built-in feature pack's `pack.mcmeta`, and its files under the directories above ([below](#feature-packs)). | 15         |
 | `reports/biome_parameters/minecraft/` | The data generator's `--reports` output: `overworld.json` and `nether.json`.                                                                    | 2          |
 | `reports/blocks.json`                 | The data generator's `--reports` output: every block's states and defaults.                                                                     | 1          |
 | `reports/block_behaviour.json`        | The [block report](data-sources.md#block-report): each state's behaviour.                                                                       | 1          |
@@ -57,6 +58,10 @@ Rules:
 
 The set of included directories is part of the format. Adding one changes this spec and the extractor's version, but not `format`. Structure templates were added this way ([ADR 0013](../adr/0013-structure-templates-and-nbt.md)), then block tags, then `reports/blocks.json`, then `reports/block_behaviour.json`, then loot's tables, enchantments, instruments, item, enchantment and instrument tags and item components ([ADR 0059](../adr/0059-loot-data-in-the-bundle.md)). A bundle extracted before then has none, and loaders that need them say so and ask for it to be extracted again.
 
+### Feature packs
+
+The jar keeps its built-in feature packs in `data/minecraft/datapacks/<name>/`, each laid out as a data pack (`ServerPacksSource`); a world enables one by its bare name, e.g. `trade_rebalance` ([data-packs.md](data-packs.md#which-packs-in-which-order)). A bundle keeps each pack's `pack.mcmeta` and its files under the directories above, at their jar paths, and `Bundle::feature_pack(name)` reads one as a pack. In 26.3 that's `trade_rebalance`'s chest loot tables and enchantment tags, and the other two packs' `pack.mcmeta` alone. Their files aren't the bundle's own: `registry_ids` and `resource` don't see them unless the pack is applied.
+
 ## `bundle.json`
 
 UTF-8 JSON, pretty-printed with two-space indent, keys in the order below, and a trailing newline:
@@ -70,6 +75,7 @@ UTF-8 JSON, pretty-printed with two-space indent, keys in the order below, and a
   "jar_sha1": "33680f5f2ac32864d6d7cf5e56a705fdb3e05f4c",
   "java_version": "25.0.3",
   "extractor": "0.1.0",
+  "pack_format": [121, 0],
   "files": {
     "data/minecraft/dimension_type/overworld.json": "…",
     "reports/biome_parameters/minecraft/overworld.json": "ed8590a657f04acb51074c2082d2b97c81a56f70"
@@ -86,6 +92,7 @@ UTF-8 JSON, pretty-printed with two-space indent, keys in the order below, and a
 | `jar_sha1`     | SHA-1 of the downloaded server jar (the outer bundler jar), lowercase hex, as in the version JSON.                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `java_version` | `JAVA_VERSION` from the `release` file of the runtime that ran the data generator.                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `extractor`    | The version of `spyglass-extract` that built the bundle.                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `pack_format`  | The version's data pack format, `[major, minor]`, from the inner jar's `version.json` (`pack_version.data_major` and `data_minor`): it picks a data pack's overlays ([data-packs.md](data-packs.md#overlays)). Optional: bundles written before it was recorded don't have it, and packs can't be applied to them until they're extracted again.                                                                                                                                                            |
 | `files`        | Every other file in the bundle, path → SHA-1 of its bytes in lowercase hex, sorted by path (byte order).                                                                                                                                                                                                                                                                                                                                                                                                    |
 
 `bundle.json` contains nothing that varies between runs, such as timestamps or absolute paths. Extracting the same jar with the same extractor gives a byte-identical bundle. The data generator's reports are deterministic (checked for 26.3 on 2026-10-25), and are written with LF line endings on every platform.

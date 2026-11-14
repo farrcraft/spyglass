@@ -30,7 +30,8 @@ final class Game {
 
     /**
      * {@code packs} are the test packs loaded over the vanilla one, which the version's name
-     * records: {@code <version>+<folder name>} for each.
+     * records: {@code <version>+<file name>} for each, unless the {@code spyglass.oracle.version}
+     * system property names it.
      */
     Game(RegistryAccess.Frozen access, LayeredRegistryAccess<RegistryLayer> layers, MultiPackResourceManager resources,
             WorldDimensions dimensions, List<Path> packs) {
@@ -43,7 +44,8 @@ final class Game {
         for (Path pack : packs) {
             version.append('+').append(pack.getFileName());
         }
-        this.version = version.toString();
+        // The xtask names a run with packs by its label, not the packs' file names.
+        this.version = System.getProperty("spyglass.oracle.version", version.toString());
         this.dataVersion = current.dataVersion().version();
     }
 

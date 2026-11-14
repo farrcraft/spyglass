@@ -6,7 +6,6 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde_json::Value;
-use spyglass_data::bundle::Bundle;
 use spyglass_loot::{Loot, MapRequest, World};
 use spyglass_oracle::stacks;
 
@@ -36,7 +35,7 @@ fn every_fill_matches_the_game() {
         "no loot golden files in {}",
         dir.display()
     );
-    let bundle = Bundle::open(spyglass_oracle::bundle_dir()).unwrap();
+    let bundle = spyglass_oracle::open_bundle().unwrap();
     let mut loot = Loot::new();
     let (mut fills, mut stacks, mut wrong) = (0, 0, Vec::new());
     for file in &files {

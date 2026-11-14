@@ -16,8 +16,7 @@ use spyglass_oracle::{BiomeGrid, Cell, biome_files};
 /// The bundle for the version under test (`spyglass_oracle::version`).
 fn bundle() -> Bundle {
     let version = spyglass_oracle::version();
-    Bundle::open(spyglass_oracle::bundle_dir())
-        .unwrap_or_else(|e| panic!("{e}; run spyglass-extract {version}"))
+    spyglass_oracle::open_bundle().unwrap_or_else(|e| panic!("{e}; run spyglass-extract {version}"))
 }
 
 /// The Default preset's dimensions, by their folders in `oracle-out/<version>/biomes/`.

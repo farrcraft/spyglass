@@ -6,6 +6,12 @@ Changes go under **Unreleased** as they're made. `cargo xtask release` turns tha
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-14
+
+### Game versions
+
+Checked against the game for 26.2, 26.3, 26.4-snapshot-5, 26.4-snapshot-6, 26.4-snapshot-7, 26.4-snapshot-8.
+
 ### Added
 
 - **Structures in your world come from the world itself** where it has generated the chunk, as the game's `/locate` does: `--world` answers mark them `saved` (`source` in JSON), and a chunk the world saved without a structure has none, whatever the seed says. In the API, `SaveReport::chunks` and `Session::with_save` ([world-saves.md](docs/specs/world-saves.md#structure-starts-in-saves)).
@@ -134,7 +140,8 @@ The first release.
 - A warning for a game version this build wasn't checked against. Its answers may differ from the game's ([bundle-format.md](docs/specs/bundle-format.md#checked-versions)).
 - `--version` names the build and the game versions it was checked against.
 
-[Unreleased]: https://github.com/farrcraft/spyglass/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/farrcraft/spyglass/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/farrcraft/spyglass/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/farrcraft/spyglass/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/farrcraft/spyglass/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/farrcraft/spyglass/compare/v0.1.0...v0.2.0

@@ -31,7 +31,7 @@ The milestones build toward the goals in the [README](../../README.md#goals): co
 | 23  | [Parity tooling](completed/23-parity-tooling.md)                                      | A checked crate order; version diffs mapped to the code that ports them.  | Completed   |
 | 24  | [Java's `Math`](completed/24-java-math.md)                                            | `Math` as HotSpot computes it, so every build gives the game's answers.   | Completed   |
 | 25  | [What a save knows](completed/25-what-the-save-knows.md)                              | Generated chunks on the map; structures and opened loot from the save.    | Completed   |
-| 26  | [Data packs](26-data-packs.md)                                                        | Answers for worlds whose data packs change generation.                    | In progress |
+| 26  | [Data packs](completed/26-data-packs.md)                                              | Answers for worlds whose data packs change generation.                    | Completed   |
 | 27  | [Decoration order](27-decoration-order.md)                                            | Whether the order around the spawn is knowable, and a third answer if so. | Planned     |
 
 ## Follow-ups

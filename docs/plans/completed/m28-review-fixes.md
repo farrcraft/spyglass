@@ -1,9 +1,9 @@
 # m28. Fixes from the 2026-11-13 review
 
-- Status: In progress
-- Milestone: [28. Fixes from the 2026-11-13 review](../roadmap/28-review-fixes.md)
+- Status: Completed
+- Milestone: [28. Fixes from the 2026-11-13 review](../../roadmap/completed/28-review-fixes.md)
 - Started: 2026-11-13
-- Completed: YYYY-MM-DD
+- Completed: 2026-11-14
 
 ## Goal
 
@@ -49,7 +49,7 @@ Findings marked _(confirm)_ depend on how the game behaves, which the review rea
     - `split(y)` overflows to `inf − inf`, so `pow(2.0, 1e301)`, `pow(0.5, f64::MAX)` and `pow(2.0, -1e305)` give NaN. Java gives ∞ or 0.
     - The comment saying nothing reaches this range is wrong.
   - B3. `ChunkContents::has_features` leaves out `heightmaps` (`chunk.rs:95`). That status exists in 1.18 to 1.19, so containers in proto chunks saved at it lose their save state.
-  - B4. `level.dat`'s enabled packs aren't deduplicated (`spyglass-world/src/packs.rs:50`, `spyglass/src/save.rs:611`). [data-packs.md](../specs/data-packs.md) says "A duplicate counts once, where it first appears".
+  - B4. `level.dat`'s enabled packs aren't deduplicated (`spyglass-world/src/packs.rs:50`, `spyglass/src/save.rs:611`). [data-packs.md](../../specs/data-packs.md) says "A duplicate counts once, where it first appears".
   - B5. A saved start is printed as certain when locate keeps it uncertain.
     - The docs at `spyglass/src/lib.rs:984` and `world-saves.md:85` say a `from_save` start "is certain".
     - Locate's `certain && exact` (`spyglass-structure/src/locate.rs:421`) keeps it uncertain in a concentric ring's tied or platform-dependent alternative chunk.
@@ -80,7 +80,7 @@ Findings marked _(confirm)_ depend on how the game behaves, which the review rea
     - `xtask/src/math_report.rs:158` `report` is about 100 lines.
   - S5. `inverse_factorials` and `rounded` live in `trig.rs` (`:41,139`), but `explog.rs` uses them too.
 - **Documentation**
-  - D1. `spyglass-math/src/lib.rs:9-10` says no measured argument was left open, but [java-math.md](../specs/java-math.md) reports 9 of 6.2 million.
+  - D1. `spyglass-math/src/lib.rs:9-10` says no measured argument was left open, but [java-math.md](../../specs/java-math.md) reports 9 of 6.2 million.
   - D2. `xtask/src/math_report.rs:33` describes the platform's libm as "what spyglass computes today".
   - D3. The workspace `Cargo.toml:69` calls `libm` only a math-report candidate, but `spyglass-math` also uses it at runtime for |x| ≥ 2²⁰.
   - D4. `trig.rs:155` says "past the midpoint below 1". 1 − 2⁻⁵³ is exactly the double below 1.
@@ -121,7 +121,7 @@ The work is in seven phases. Each phase is one or more commits that pass `cargo 
    - **B1:** one shared cap for templates. The templates come from the bundle or from a pack's `pack::MAX_FILE` read, and are capped through `nbt::read_compressed_limited`. The three call sites use it, and over-limit is an error, not a skip.
    - **Retire the unlimited reader:** consider making the unlimited `read_compressed` `#[cfg(test)]`, or removing it, so that no new caller can reach an unlimited read.
    - **B6:** after the fix, grep every non-raw literal with a raw newline, the way m10's R10 did. If more turn up, add a hook or test so they can't come back.
-2. **`spyglass-math`** (P1, P2, B2, S5, G6's math part, G4). Governed by [ADR 0070](../adr/0070-java-math-correctly-rounded.md) and [java-math.md](../specs/java-math.md).
+2. **`spyglass-math`** (P1, P2, B2, S5, G6's math part, G4). Governed by [ADR 0070](../../adr/0070-java-math-correctly-rounded.md) and [java-math.md](../../specs/java-math.md).
    - **P1:** when `y` is an integer and `x`'s significand times `|y|` fits in 106 bits, compute `x^y` exactly in double-double and round half-even.
      - Otherwise, when Ziv's test fails and the double-double value is exactly a midpoint, round half-even.
      - `y == 2.0` is `x * x`, as HotSpot's C2 emits.
@@ -131,7 +131,7 @@ The work is in seven phases. Each phase is one or more commits that pass `cargo 
    - **S5:** move `inverse_factorials` and `rounded` into `dd.rs`, or into a `series` module.
    - **G4:** build the 65,536-entry table once in a `OnceLock`, shared with `carver.rs`'s table if the two are the same `Mth.SIN`. Time `sin_table` in a microbenchmark.
    - **Re-measure:** rerun `cargo xtask oracle math` and `cargo xtask math-report` on Windows, Linux and macOS. The open count in java-math.md must not grow, and no case may come out wrong.
-3. **Saves** (P3, P4, B5, B8, G1–G3). Governed by [ADR 0071](../adr/0071-answers-from-a-save.md) and [world-saves.md](../specs/world-saves.md).
+3. **Saves** (P3, P4, B5, B8, G1–G3). Governed by [ADR 0071](../../adr/0071-answers-from-a-save.md) and [world-saves.md](../../specs/world-saves.md).
    - **P3:**
      - Confirm with a world made in 1.18.1, or from `StructuresBecomeConfiguredFix`'s data version in the 1.18.2 jar.
      - Then treat chunks below that data version as `SavedStarts::Legacy`, predicted rather than certain.
@@ -146,7 +146,7 @@ The work is in seven phases. Each phase is one or more commits that pass `cargo 
      - Bound the cache with a small LRU of parsed chunks, and keep only starts and container summaries, not `components` trees.
    - **G2:** compare the saved block entity's id with the holder's block-entity id, mapping cases such as suspicious sand to `brushable_block`. A mismatch is `Gone`.
    - **G3:** for statuses below `full`, read entities from the chunk's own `entities` list. Confirm with a save that has a proto chunk with a minecart.
-4. **Data packs** (P5–P7, G6's fuzz part). Governed by [ADR 0072](../adr/0072-data-packs-as-layers.md) and [data-packs.md](../specs/data-packs.md).
+4. **Data packs** (P5–P7, G6's fuzz part). Governed by [ADR 0072](../../adr/0072-data-packs-as-layers.md) and [data-packs.md](../../specs/data-packs.md).
    - **P5:**
      - Read format numbers through `codec::int_of`, which already ports `LazilyParsedNumber.intValue`.
      - Drop the 256-part cut-off, or document it as a limit for hostile input in data-packs.md.
@@ -239,7 +239,7 @@ The work is in seven phases. Each phase is one or more commits that pass `cargo 
 ### 7. Close
 
 - [x] Length counts rechecked; any function left over 80 lines named in the notes with its reason.
-- [ ] Verification below run and recorded.
+- [x] Verification below run and recorded (see the 2026-11-14 notes).
 
 ## Verification
 
@@ -254,15 +254,17 @@ The work is in seven phases. Each phase is one or more commits that pass `cargo 
 
 Check these before marking the plan complete, since the plan will be archived and code can't reference it.
 
-- [x] [java-math.md](../specs/java-math.md): midpoints and integer powers, huge exponents, the trig reduction and its bound, and the new counts.
-- [x] [world-saves.md](../specs/world-saves.md): starts in 1.18.0 and 1.18.1 chunks, the presence rule, when a saved start is certain, entities in proto chunks, and containers matched by block-entity type.
-- [x] [data-packs.md](../specs/data-packs.md): format numbers, bad paths and malformed tags.
-- [x] [cli-json.md](../specs/cli-json.md) and the user guide, if B5 changes what is printed. B5 changed neither the text nor the JSON; `your-worlds.md` covers P3 and G2.
+- [x] [java-math.md](../../specs/java-math.md): midpoints and integer powers, huge exponents, the trig reduction and its bound, and the new counts.
+- [x] [world-saves.md](../../specs/world-saves.md): starts in 1.18.0 and 1.18.1 chunks, the presence rule, when a saved start is certain, entities in proto chunks, and containers matched by block-entity type.
+- [x] [data-packs.md](../../specs/data-packs.md): format numbers, bad paths and malformed tags.
+- [x] [cli-json.md](../../specs/cli-json.md) and the user guide, if B5 changes what is printed. B5 changed neither the text nor the JSON; `your-worlds.md` covers P3 and G2.
 - [x] An ADR only if a fix changes a decision. None did: G2's report field follows ADR 0054's pattern, a report format with older bundles still read.
 
 ## Notes
 
 Decisions, surprises and dead ends, newest first.
+
+- 2026-11-14, completed. The verification as recorded: each fix's test is named in its task; `cargo xtask check` passed locally on `03092e9`, and PR CI on `d23635d` (every oracle job, the Windows check and the macOS `spyglass-math` tests); `oracle-test`, `math-report` and the bench as in the notes below; the viewer by eye in S1. No CHANGELOG entry: every fix is to something added since 0.3.1, which Unreleased already describes.
 
 - 2026-11-14, the Math workflow's `measure` job on `d23635d` (Temurin 25.0.5 on ubuntu-24.04, windows-2025 and macos-15), reported by `math-report` on Windows 11: spyglass matches the correctly rounded result in every case on all three, with the same 9 open as before (7 in `log edges`, 2 in `pow integer`). Linux and Windows Server are the same as Windows 11 in every case; the old sets on macOS are unchanged from 2026-11-11. **On AArch64, `pow` is correctly rounded at every midpoint** (fdlibm's), so there spyglass matches the game's `pow` on all 40,000, where x86-64's intrinsic misses 6.58%.
 

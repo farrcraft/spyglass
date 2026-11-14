@@ -33,7 +33,7 @@ The milestones build toward the goals in the [README](../../README.md#goals): co
 | 25  | [What a save knows](completed/25-what-the-save-knows.md)                              | Generated chunks on the map; structures and opened loot from the save.    | Completed   |
 | 26  | [Data packs](completed/26-data-packs.md)                                              | Answers for worlds whose data packs change generation.                    | Completed   |
 | 27  | [Decoration order](27-decoration-order.md)                                            | Whether the order around the spawn is knowable, and a third answer if so. | Planned     |
-| 28  | [Review fixes](28-review-fixes.md)                                                    | The 2026-11-13 review's findings on milestones 23 to 26, fixed.           | In progress |
+| 28  | [Review fixes](completed/28-review-fixes.md)                                          | The 2026-11-13 review's findings on milestones 23 to 26, fixed.           | Completed   |
 
 ## Follow-ups
 

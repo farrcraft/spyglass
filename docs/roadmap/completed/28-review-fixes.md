@@ -1,8 +1,8 @@
 # 28. Fixes from the 2026-11-13 review
 
-- Status: In progress
-- Depends on: [26](completed/26-data-packs.md)
-- Plans: [m28-review-fixes](../plans/m28-review-fixes.md)
+- Status: Completed
+- Depends on: [26](26-data-packs.md)
+- Plans: [m28-review-fixes](../../plans/completed/m28-review-fixes.md)
 
 ## Goal
 
@@ -21,7 +21,7 @@ Not in scope: new behavior beyond what a finding needs.
 
 ## Exit criteria
 
-- [ ] Every finding in the plan is fixed, or closed with a recorded reason.
-- [ ] Every parity and bug fix has a test that fails without it.
-- [ ] No function the plan names is longer than about 80 lines, and no file it names is longer than about 800 non-test lines.
-- [ ] `cargo xtask check` and `cargo xtask oracle-test` pass for every supported version, and `cargo xtask math-report` shows no new open or wrong cases.
+- [x] Every finding in the plan is fixed, or closed with a recorded reason.
+- [x] Every parity and bug fix has a test that fails without it.
+- [x] No function the plan names is longer than about 80 lines, and no file it names is longer than about 800 non-test lines.
+- [x] `cargo xtask check` and `cargo xtask oracle-test` pass for every supported version, and `cargo xtask math-report` shows no new open or wrong cases.

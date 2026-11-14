@@ -264,6 +264,7 @@ Check these before marking the plan complete, since the plan will be archived an
 
 Decisions, surprises and dead ends, newest first.
 
+- 2026-11-14, `cargo xtask bench` on 26.3, back to back with the review's commit 10a05c8 (run from a worktree, on a copy of the bundle with its block report's format set to 4, which that commit reads), each twice, best of the two: the 101 lines total 57.3 s before and 57.9 s after (+1.0%). Only `locate_structure minecraft:mansion confirmed` came out more than 5% slower than the old runs' spread, and three more runs of 15 each overlapped (2.46 to 2.55 ms before, 2.45 to 2.69 after): noise.
 - 2026-11-14, `oracle-test` after phases 2 to 4: every version and variant passes (26.2, 26.3 and the four snapshots, each with `+overrides`, and `26.4-snapshot-8+testpack`) but `26.3+terralith`. There, 32 of 57 tests fail, every one on the three unsupported files data-packs.md names, one more than m26 counted; the count there is updated.
 - 2026-11-13, phase 7:
   - **Lengths, by a brace-matching count of non-test code.** Of the functions the review named, these are still over 80 lines:

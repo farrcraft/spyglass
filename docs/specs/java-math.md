@@ -50,7 +50,7 @@ The rows for `cos`'s table and `float` angles, dripstone's `x^(2/3)` and `pow` o
 
 **Other systems.** The **Math** workflow, run by hand, measures Linux, macOS and Windows from the JDK alone (`java oracle/src/spyglass/oracle/JavaMath.java <out dir>`, no game needed) and uploads each system's files as an artifact; put each in `oracle-out/math/<os>-<arch>/` (`linux-x86_64`, `macos-aarch64`) for `math-report`. The report's platform column is always the libm of the machine running it, not of the system measured.
 
-Run on 2026-11-11 with Temurin 25.0.5 (ubuntu-24.04, windows-2025, macos-15):
+Run on 2026-11-11 with Temurin 25.0.5 (ubuntu-24.04, windows-2025, macos-15), and again on 2026-11-14 with the midpoint and far sets added:
 
 - **Linux x86-64 and Windows Server x86-64:** every case is the same as on Windows 11 above. x86-64 HotSpot's `Math` doesn't depend on the OS, or on 25.0.4 against 25.0.5.
 - **macOS AArch64:** below, as the share of cases where each answer differs from `Math`, all by 1 ulp.
@@ -62,13 +62,18 @@ Run on 2026-11-11 with Temurin 25.0.5 (ubuntu-24.04, windows-2025, macos-15):
 | `sin` angles             | 200,000   | 7.40%        | 7.76%        | 9.14%                        |
 | `sin` broad              | 1,000,000 | 5.11%        | 5.35%        | 6.48%                        |
 | `sin` near k·π/2         | 342,110   | 0            | 0            | 0                            |
+| `sin` near far k·π/2     | 34,000    | 0            | 0            | 0                            |
 | `cos` angles             | 200,000   | 5.57%        | 6.03%        | 7.70%                        |
 | `cos` broad              | 1,000,000 | 4.94%        | 5.23%        | 6.40%                        |
 | `log` Gaussian           | 500,000   | 0            | 1.97%        | 7.23%                        |
 | `log` dripstone          | 200,000   | 0            | 0.76%        | 6.96%                        |
 | `pow` dripstone, `x^4/3` | 200,000   | 0            | 0            | 9.42%                        |
+| `pow` integer powers     | 4,092     | 0            | 0            | 0                            |
+| `pow` midpoints          | 40,000    | 0            | 0            | 0                            |
 | `pow` `float`s, as float | 200,000   | 0            | 0            | 0                            |
 | `pow` broad              | 300,000   | 0            | 0            | 9.74%                        |
+
+`cos` near far multiples of π/2 is like `sin`'s, but for the same one `StrictMath` case as on x86-64. At the midpoints AArch64's `pow`, being fdlibm's, is correctly rounded in every case, so there spyglass's half-to-even rounding is the game's answer exactly.
 
 So on Apple silicon the game's double results differ from spyglass's in 6 to 10% of cases, each by 1 ulp: within ADR 0012's 4-ulp margin for the rings' and the spawn search's trig, which stay flagged. The Gaussian's `log` and dripstone's `pow` aren't flagged; whether a 1-ulp difference there changes a block or a sampled `float` isn't measured. Narrowed to `float`, every system gives the same carvers' table and the same `float` `pow`.
 
@@ -82,7 +87,7 @@ So on Apple silicon the game's double results differ from spyglass's in 6 to 10%
 
 Each result is accurate to about 2^-100 of its value (2^-94 for `pow` near overflow), and is rounded once when the interval it lies in rounds the same way at both ends (Ziv's test): 2^-95 of the value for `sin`, `cos` and `log`, 2^-88 for `pow`. Where the test leaves the rounding open, the double-double's own rounding is returned. Of the 6.3 million measured arguments, 9 were left open, and all 9 still matched: 7 arguments of `log` within a few ulps of 1, where `ln(1 + d) ≈ d − d²/2` lies close to a rounding boundary, and `pow`'s two results of 2^-1022.
 
-`math-report` checks spyglass's functions against the correctly rounded results: they match in every case measured. `spyglass-math/tests/correctly_rounded.rs` holds 886 of those cases, about 40 from each set, and checks them bit for bit on every system CI runs.
+`math-report` checks spyglass's functions against the correctly rounded results: they match in every case measured, on Windows, Linux x86-64 and macOS AArch64 (2026-11-14), with the same 9 left open. `spyglass-math/tests/correctly_rounded.rs` holds 886 of those cases, about 40 from each set, and checks them bit for bit on every system CI runs.
 
 **Cost.** A call takes 0.24 µs for `sin`, 0.39 µs for `log` and 0.92 µs for `pow` (release build, Ryzen 7 5800X), 50 to 100 times the platform's. No call site is hot: the carvers' table is built once per process (65,536 calls, about 15 ms), the rings and the spawn search make a few hundred, and only the `clamped_normal` float provider draws Gaussians. `cargo xtask bench`, run before and after back to back on 2026-11-11, moved by a median of 0% across its 112 lines, each within the machine's noise.
 

@@ -202,7 +202,7 @@ The work is in seven phases. Each phase is one or more commits that pass `cargo 
 - [x] G6 Special cases for `sin`, `cos`, `log` and `pow` (NaN, ±0, ±∞, subnormals; `exp` is internal and reached through `pow`); `correctly_rounded.rs`'s match names `pow` and its message is escaped.
 - [x] S5 `BOUND`, `FACTORIALS`, `inverse_factorials` and `rounded` in `dd.rs`, with compile-time checks that each series fits the table.
 - [x] G4 One `Mth.SIN` in `spyglass_noise::mth::sin_table`, built once, for carvers and density functions (noise now depends on math; blocks no longer does); `in_out_sine` 238 ns → 2 ns a call, same results.
-- [ ] Oracle math, `math-report` on three platforms; java-math.md counts updated. Done for Windows 11 and Linux x86-64 (Docker); the old sets checked on the CI artifacts of all three. macOS needs the Math workflow's `measure` job.
+- [x] Oracle math, `math-report` on three platforms; java-math.md counts updated. Windows 11 and Linux x86-64 (Docker) locally; ubuntu-24.04, windows-2025 and macos-15 from the Math workflow's `measure` job (run 43623768989, `d23635d`). No case wrong anywhere, the same 9 open.
 
 ### 3. Saves
 
@@ -254,7 +254,7 @@ The work is in seven phases. Each phase is one or more commits that pass `cargo 
 
 Check these before marking the plan complete, since the plan will be archived and code can't reference it.
 
-- [ ] [java-math.md](../specs/java-math.md): midpoints and integer powers, huge exponents, the trig reduction and its bound, and the new counts.
+- [x] [java-math.md](../specs/java-math.md): midpoints and integer powers, huge exponents, the trig reduction and its bound, and the new counts.
 - [x] [world-saves.md](../specs/world-saves.md): starts in 1.18.0 and 1.18.1 chunks, the presence rule, when a saved start is certain, entities in proto chunks, and containers matched by block-entity type.
 - [x] [data-packs.md](../specs/data-packs.md): format numbers, bad paths and malformed tags.
 - [x] [cli-json.md](../specs/cli-json.md) and the user guide, if B5 changes what is printed. B5 changed neither the text nor the JSON; `your-worlds.md` covers P3 and G2.
@@ -263,6 +263,8 @@ Check these before marking the plan complete, since the plan will be archived an
 ## Notes
 
 Decisions, surprises and dead ends, newest first.
+
+- 2026-11-14, the Math workflow's `measure` job on `d23635d` (Temurin 25.0.5 on ubuntu-24.04, windows-2025 and macos-15), reported by `math-report` on Windows 11: spyglass matches the correctly rounded result in every case on all three, with the same 9 open as before (7 in `log edges`, 2 in `pow integer`). Linux and Windows Server are the same as Windows 11 in every case; the old sets on macOS are unchanged from 2026-11-11. **On AArch64, `pow` is correctly rounded at every midpoint** (fdlibm's), so there spyglass matches the game's `pow` on all 40,000, where x86-64's intrinsic misses 6.58%.
 
 - 2026-11-14, `cargo xtask bench` on 26.3, back to back with the review's commit 10a05c8 (run from a worktree, on a copy of the bundle with its block report's format set to 4, which that commit reads), each twice, best of the two: the 101 lines total 57.3 s before and 57.9 s after (+1.0%). Only `locate_structure minecraft:mansion confirmed` came out more than 5% slower than the old runs' spread, and three more runs of 15 each overlapped (2.46 to 2.55 ms before, 2.45 to 2.69 after): noise.
 - 2026-11-14, `oracle-test` after phases 2 to 4: every version and variant passes (26.2, 26.3 and the four snapshots, each with `+overrides`, and `26.4-snapshot-8+testpack`) but `26.3+terralith`. There, 32 of 57 tests fail, every one on the three unsupported files data-packs.md names, one more than m26 counted; the count there is updated.

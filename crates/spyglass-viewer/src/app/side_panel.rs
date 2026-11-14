@@ -698,10 +698,52 @@ impl App {
             .iter()
             .filter(|id| self.settings.structures.iter().any(|s| s == **id))
             .count();
-        let mut all = on == ids.len();
         let open = self.expanded.contains(name);
-        let mut toggle_open = false;
+        let row = self.family_row(ui, world, name, &ids, on, open);
+        if let Some(all) = row.set_all {
+            self.settings
+                .structures
+                .retain(|s| !ids.contains(&s.as_str()));
+            if all {
+                self.settings
+                    .structures
+                    .extend(ids.iter().map(|id| id.to_string()));
+            }
+            self.settings.structures.sort();
+            changed = true;
+        }
+        if row.toggle_open {
+            if open {
+                self.expanded.remove(name);
+            } else {
+                self.expanded.insert(name.to_string());
+            }
+        }
+        if open || (!needle.is_empty() && !name.to_lowercase().contains(needle)) {
+            ui.indent(name, |ui| {
+                for id in ids.iter().filter(|id| open || matches(id)) {
+                    changed |= self.variant_checkbox(ui, id);
+                }
+            });
+        }
+        changed
+    }
+
+    /// A structure family's own row: its checkbox (mixed when `on` of `ids` are chosen), badge
+    /// and name, and on the right the button that opens its variants and how many start in
+    /// view.
+    fn family_row(
+        &self,
+        ui: &mut egui::Ui,
+        world: &World,
+        name: &str,
+        ids: &[&str],
+        on: usize,
+        open: bool,
+    ) -> FamilyRow {
+        let mut all = on == ids.len();
         let mut flip = false;
+        let mut toggle_open = false;
         ui.horizontal(|ui| {
             flip = ui
                 .add(egui::Checkbox::new(&mut all, "").indeterminate(on > 0 && on < ids.len()))
@@ -745,44 +787,35 @@ impl App {
                 }
             });
         });
-        if flip {
-            self.settings
-                .structures
-                .retain(|s| !ids.contains(&s.as_str()));
-            if all {
-                self.settings
-                    .structures
-                    .extend(ids.iter().map(|id| id.to_string()));
-            }
-            self.settings.structures.sort();
-            changed = true;
+        FamilyRow {
+            set_all: flip.then_some(all),
+            toggle_open,
         }
-        if toggle_open {
-            if open {
-                self.expanded.remove(name);
-            } else {
-                self.expanded.insert(name.to_string());
-            }
-        }
-        if open || (!needle.is_empty() && !name.to_lowercase().contains(needle)) {
-            ui.indent(name, |ui| {
-                for id in ids.iter().filter(|id| open || matches(id)) {
-                    let mut variant = self.settings.structures.iter().any(|s| s == id);
-                    let label = spyglass::display_name(id);
-                    if ui.checkbox(&mut variant, label).changed() {
-                        if variant {
-                            self.settings.structures.push(id.to_string());
-                            self.settings.structures.sort();
-                        } else {
-                            self.settings.structures.retain(|s| s != id);
-                        }
-                        changed = true;
-                    }
-                }
-            });
-        }
-        changed
     }
+
+    /// One variant's checkbox under its open family. Whether the structures chosen changed.
+    fn variant_checkbox(&mut self, ui: &mut egui::Ui, id: &str) -> bool {
+        let mut variant = self.settings.structures.iter().any(|s| s == id);
+        let label = spyglass::display_name(id);
+        if !ui.checkbox(&mut variant, label).changed() {
+            return false;
+        }
+        if variant {
+            self.settings.structures.push(id.to_string());
+            self.settings.structures.sort();
+        } else {
+            self.settings.structures.retain(|s| s != id);
+        }
+        true
+    }
+}
+
+/// What a click on a structure family's row asked for.
+struct FamilyRow {
+    /// Choose every structure in the family (`true`) or none, when its checkbox was clicked.
+    set_all: Option<bool>,
+    /// Open or close its list of variants.
+    toggle_open: bool,
 }
 
 /// A locate answer's hits as a table: where, how far, and whether certain. Returns the block

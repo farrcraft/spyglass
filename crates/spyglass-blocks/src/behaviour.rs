@@ -81,6 +81,9 @@ pub struct Behaviour {
 #[derive(Debug, Clone, Default)]
 pub struct BlockBehaviour {
     states: HashMap<String, Behaviour>,
+    /// Each block's block-entity type, by block id, for blocks that have one: the `id` a save
+    /// gives the block entity. From format 5 ([`BlockBehaviour::knows_block_entities`]).
+    block_entities: HashMap<String, String>,
     /// The report's format.
     format: u64,
 }
@@ -176,7 +179,7 @@ impl BlockBehaviour {
         let names = state_names(resources)?;
         let report = object(&report, &root)?;
         let format = report.get("format").and_then(Value::as_u64);
-        if !matches!(format, Some(1..=4)) {
+        if !matches!(format, Some(1..=5)) {
             return Err(root.child("format").error(LoadErrorKind::Unsupported {
                 what: "block behaviour report format",
                 name: format!("{format:?}"),
@@ -187,6 +190,7 @@ impl BlockBehaviour {
             .and_then(Value::as_array)
             .ok_or_else(|| root.child("states").error(LoadErrorKind::Missing("states")))?;
         let mut states = HashMap::with_capacity(list.len());
+        let mut block_entities = HashMap::new();
         for (i, entry) in list.iter().enumerate() {
             let at = root.child("states").child(&i.to_string());
             let o = object(entry, &at)?;
@@ -215,6 +219,16 @@ impl BlockBehaviour {
                             .error(LoadErrorKind::Shape("a direction"))
                     })?;
                 sturdy_faces |= 1 << i;
+            }
+            if let Some(entity) = o.get("block_entity") {
+                let entity = entity.as_str().ok_or_else(|| {
+                    at.child("block_entity")
+                        .error(LoadErrorKind::Shape("a block entity type"))
+                })?;
+                let block = name
+                    .split_once('[')
+                    .map_or(name.as_str(), |(block, _)| block);
+                block_entities.insert(block.to_string(), entity.to_string());
             }
             let fluid = match o.get("fluid") {
                 None => None,
@@ -255,6 +269,7 @@ impl BlockBehaviour {
         }
         Ok(BlockBehaviour {
             states,
+            block_entities,
             format: format.unwrap_or(1),
         })
     }
@@ -276,6 +291,18 @@ impl BlockBehaviour {
     /// them.
     pub fn knows_support(&self) -> bool {
         self.format >= 3
+    }
+
+    /// Whether [`BlockBehaviour::block_entity`] is known: false for a bundle extracted before
+    /// the report had it.
+    pub fn knows_block_entities(&self) -> bool {
+        self.format >= 5
+    }
+
+    /// Block `id`'s block-entity type (`minecraft:brushable_block` for
+    /// `minecraft:suspicious_sand`), or `None` if it has none, or the report predates them.
+    pub fn block_entity(&self, id: &str) -> Option<&str> {
+        self.block_entities.get(id).map(String::as_str)
     }
 
     /// The behaviour of the state named `name`, as a palette names it.
@@ -380,6 +407,42 @@ mod tests {
         let flowing = b.of("minecraft:water[level=1]").unwrap().fluid.unwrap();
         assert_eq!((flowing.amount, flowing.source), (7, false));
         assert_eq!(b.of("minecraft:stone"), None);
+    }
+
+    #[test]
+    fn block_entity_types_are_per_block_from_format_5() {
+        let blocks = json!({
+            "minecraft:stone": {"states": [{"id": 0, "default": true}]},
+            "minecraft:suspicious_sand": {
+                "properties": {"dusted": ["0", "1"]},
+                "states": [
+                    {"id": 1, "default": true, "properties": {"dusted": "0"}},
+                    {"id": 2, "properties": {"dusted": "1"}},
+                ],
+            },
+        });
+        let report = |format| {
+            json!({"format": format, "states": [
+                {"id": 0, "solid": true},
+                {"id": 1, "loot_container": true, "slots": 1, "block_entity": "minecraft:brushable_block"},
+                {"id": 2, "loot_container": true, "slots": 1, "block_entity": "minecraft:brushable_block"},
+            ]})
+        };
+        let load = |format| {
+            BlockBehaviour::load(&HashMap::from([
+                (BLOCKS_REPORT.to_string(), blocks.clone()),
+                (BLOCK_BEHAVIOUR_REPORT.to_string(), report(format)),
+            ]))
+            .unwrap()
+        };
+        let b = load(5);
+        assert!(b.knows_block_entities());
+        assert_eq!(
+            b.block_entity("minecraft:suspicious_sand"),
+            Some("minecraft:brushable_block")
+        );
+        assert_eq!(b.block_entity("minecraft:stone"), None);
+        assert!(!load(4).knows_block_entities());
     }
 
     #[test]

@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
+use spyglass_data::codec::full_id;
 use spyglass_structure::{StoredStarts, StructureSets};
 use spyglass_world::chunk::{self, ChunkContents, SavedContainer, SavedStarts};
 use spyglass_world::region::{self, ChunkIndex, ChunkRecord};
@@ -205,10 +206,15 @@ impl SaveChunks {
     /// with `seed`. `None` where the save hasn't placed the features of the chunk holding it,
     /// or (for a minecart in a full chunk) saved no entities there. A minecart in a proto chunk
     /// is among the chunk's own entities.
+    ///
+    /// `block_entity` is a block holder's block-entity type, where the bundle knows it: a
+    /// block entity of another type at `position` (a furnace where the chest was) means the
+    /// container is gone. Without it, any block entity there is taken as the container.
     pub(crate) fn container(
         &self,
         position: [i32; 3],
         holder: &str,
+        block_entity: Option<&str>,
         table: &str,
         seed: Option<i64>,
     ) -> Option<InSave> {
@@ -240,6 +246,7 @@ impl SaveChunks {
                 .as_ref()?
                 .iter()
                 .find(|c| c.position == position)
+                .filter(|c| block_entity.is_none_or(|expected| full_id(&c.id) == expected))
         };
         Some(match found {
             None => InSave::Gone,
@@ -351,6 +358,49 @@ mod tests {
         assert!(panicked.is_err());
         assert_eq!(chunks.get([1, 2], || Some(5)).as_deref(), Some(&5));
         assert_eq!(chunks.get([3, 4], || None), None);
+    }
+
+    #[test]
+    fn a_block_entity_of_another_type_is_gone() {
+        let block_entity = |id: &str, x: i32| SavedContainer {
+            id: id.to_string(),
+            position: [x, 64, 0],
+            loot_table: Some("minecraft:chests/simple_dungeon".to_string()),
+            loot_table_seed: Some(5),
+            items: Vec::new(),
+        };
+        let save = SaveChunks {
+            dimension: Dimension::Overworld,
+            data_version: None,
+            region: PathBuf::new(),
+            index: OnceLock::new(),
+            entities: PathBuf::new(),
+            read: ReadChunks::new(),
+            entities_read: ReadChunks::new(),
+        };
+        save.read.get([0, 0], || {
+            Some(ChunkContents {
+                data_version: Some(4671),
+                status: Some("minecraft:full".to_string()),
+                starts: SavedStarts::Missing,
+                containers: Some(vec![
+                    block_entity("minecraft:chest", 1),
+                    // A player's furnace where a chest was predicted.
+                    block_entity("furnace", 2),
+                ]),
+                entities: Vec::new(),
+            })
+        });
+        let table = "minecraft:chests/simple_dungeon";
+        let at = |x: i32, block_entity: Option<&str>| {
+            save.container([x, 64, 0], "minecraft:chest", block_entity, table, Some(5))
+        };
+        let unopened = Some(InSave::Unopened { as_predicted: true });
+        assert_eq!(at(1, Some("minecraft:chest")), unopened);
+        assert_eq!(at(2, Some("minecraft:chest")), Some(InSave::Gone));
+        // A bundle whose block report doesn't say: any block entity there is taken.
+        assert_eq!(at(2, None), unopened);
+        assert_eq!(at(3, Some("minecraft:chest")), Some(InSave::Gone));
     }
 
     #[test]

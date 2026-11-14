@@ -211,7 +211,7 @@ The work is in seven phases. Each phase is one or more commits that pass `cargo 
 - [x] B5 The other way round from the plan: a start the save holds is certain, even in a ring alternative (`Starts::stored_decides`, in `possible_starts_in` and both locate paths), so "saved" and the docs were right and locate was wrong. `a_saved_start_is_certain_in_a_ring_alternative` (ignored, needs a bundle; fails without the fix); `StructureHit::certain`, `StructureStart::from_save`, world-saves.md. The JSON is unchanged.
 - [x] B8 Closed with no change: see notes.
 - [x] G1 `ReadChunks`: a cell per chunk, the map's lock held only to find it, poison ignored, cleared at 16,384 chunks; tests: one read for eight threads on a chunk, eight chunks read side by side, a panicking read retried, the cap. `components` trees are kept: `InSave::Filled` shows them.
-- [ ] G2 Needs each block's block-entity type, which differs from the block's id (`brushable_block`, `shulker_box`) and changed between versions: an extractor block-report field, so a bundle format change. Waiting on that decision.
+- [x] G2 The block report's format 5 gives each block's `block_entity` (`BlockEntity.getType()`'s id); `BlockBehaviour::block_entity`, `Blocks::block_entity`; `SaveChunks::container` takes the holder's type and reads a block entity of another type at the position as `Gone`, or any type with an older report; chunks before data version 3438 read `suspicious_sand` as `brushable_block`, the only block-entity rename since 1.18 (26.3's `DataFixers`). Tests: `a_block_entity_of_another_type_is_gone`, `suspicious_sand_is_renamed_where_the_game_renames_it`, `block_entity_types_are_per_block_from_format_5`; data-sources.md, world-saves.md, `your-worlds.md`. The bundle format stays 1: older bundles load and match by position. Every local bundle re-extracted (26.2, 26.3, 26.4-snapshot-5 to 8, all format 5); in 26.3 copper chests report `minecraft:chest`, every shulker box `minecraft:shulker_box`, suspicious sand and gravel `minecraft:brushable_block` (not loot containers in 26.3, so the rename only keeps ids straight). `saved_containers_have_the_predicted_seeds` on the local saves gives m25's counts exactly: 455 unopened, 3 filled, 13 gone, the same two certain ones gone.
 - [x] G3 Confirmed from `SerializableChunkData`: a proto chunk saves `entities` in the chunk. `ChunkContents::entities` and `is_full`; minecarts in a proto chunk come from it; `proto_chunks_hold_their_own_entities`; world-saves.md.
 
 ### 4. Data packs
@@ -230,15 +230,15 @@ The work is in seven phases. Each phase is one or more commits that pass `cargo 
 
 ### 6. Splitting long code
 
-- [ ] S1 Viewer `map.rs` is now `app/map/` (`mod.rs` 464 lines, `controls.rs` 413, `marker_layer.rs` 557, `jobs.rs` 255, `menu.rs` 202), and the container window is `app/container.rs`. `App::map` is 87 lines over a `Frame` (the frame's keys and tiles), `Canvas`, `Placing` and `Pointed`; `map_controls`, `map_legend` and `describe` are split. Tests pass; the `run-viewer` check is still to do (the screen was covered on the first try).
-- [x] S1 `layers_tab` into `biomes_section` and `overlays_section`; `structure_list`'s rows into `structure_family`.
+- [x] S1 Viewer `map.rs` is now `app/map/` (`mod.rs` 464 lines, `controls.rs` 413, `marker_layer.rs` 557, `jobs.rs` 255, `menu.rs` 202), and the container window is `app/container.rs`. `App::map` is 87 lines over a `Frame` (the frame's keys and tiles), `Canvas`, `Placing` and `Pointed`; `map_controls`, `map_legend` and `describe` are split. Checked by eye with `run-viewer` on 26.3: the map, its controls and legend, structure and feature markers and their tooltips, the container window and the right-click menu.
+- [x] S1 `layers_tab` into `biomes_section` and `overlays_section`; `structure_list`'s rows into `structure_family`, and its row and variants into `family_row` and `variant_checkbox` (checked by eye: the mixed checkbox, a family on, its variants opened, a variant on).
 - [x] S2 `map_features` calls `map_structures`, `map_feature_layer` and `map_containers`, sharing `check_layer_scale`, `area_chunks` and `reach_chunks`; every error message is unchanged.
 - [x] S3 `pack/mod.rs` (types, `Pack`, `Layer`), `pack/read.rs` (the reader, its budget and path rules), `pack/meta.rs` (`pack.mcmeta`), each with its tests; `validate` into `validate_new`, `validate_old` and `check_pack_format`, over a `Holder`.
-- [x] S4 `code_diff/methods.rs` (method diffing; `code_map` stayed, split into `cited_entry` and `ranked_report`, since its helpers are shared with `unused_report`); `oracle/packs.rs` and `oracle/build.rs` (oracle.rs 1,156 → 732 lines); `locate::run` into `save_job` and `write_answers`, `run_map_cases` into `place_map_chest` and `map_answer`; `math_report::report` into `read_set`, `tally_set` and `cells` (the report's output unchanged). `oracle::run` stays one `match` over 20 subcommands, with a `seeds_or` helper.
+- [x] S4 `code_diff/methods.rs` (method diffing; `code_map` stayed, split into `cited_entry` and `ranked_report`, since its helpers are shared with `unused_report`); `oracle/packs.rs` and `oracle/build.rs` (oracle.rs 1,156 → 732 lines); `locate::run` into `save_job` and `write_answers`, `run_map_cases` into `place_map_chest` and `map_answer`; `math_report::report` into `read_set`, `tally_set` and `cells` (the report's output unchanged). `oracle::run` stays one `match` over 20 subcommands, with a `seeds_or` helper. `locate.rs`'s explorer-map cases moved to `locate/maps.rs` (`locate.rs` 946 → 645 lines).
 
 ### 7. Close
 
-- [ ] Length counts rechecked; any function left over 80 lines named in the notes with its reason.
+- [x] Length counts rechecked; any function left over 80 lines named in the notes with its reason.
 - [ ] Verification below run and recorded.
 
 ## Verification
@@ -255,14 +255,24 @@ The work is in seven phases. Each phase is one or more commits that pass `cargo 
 Check these before marking the plan complete, since the plan will be archived and code can't reference it.
 
 - [ ] [java-math.md](../specs/java-math.md): midpoints and integer powers, huge exponents, the trig reduction and its bound, and the new counts.
-- [ ] [world-saves.md](../specs/world-saves.md): starts in 1.18.0 and 1.18.1 chunks, the presence rule, when a saved start is certain, and entities in proto chunks.
-- [ ] [data-packs.md](../specs/data-packs.md): format numbers, bad paths and malformed tags.
-- [ ] [cli-json.md](../specs/cli-json.md) and the user guide, if B5 changes what is printed.
-- [ ] An ADR only if a fix changes a decision. Expected: none, since each fix brings the code to what ADRs 0070 to 0072 already say.
+- [x] [world-saves.md](../specs/world-saves.md): starts in 1.18.0 and 1.18.1 chunks, the presence rule, when a saved start is certain, entities in proto chunks, and containers matched by block-entity type.
+- [x] [data-packs.md](../specs/data-packs.md): format numbers, bad paths and malformed tags.
+- [x] [cli-json.md](../specs/cli-json.md) and the user guide, if B5 changes what is printed. B5 changed neither the text nor the JSON; `your-worlds.md` covers P3 and G2.
+- [x] An ADR only if a fix changes a decision. None did: G2's report field follows ADR 0054's pattern, a report format with older bundles still read.
 
 ## Notes
 
 Decisions, surprises and dead ends, newest first.
+
+- 2026-11-14, `oracle-test` after phases 2 to 4: every version and variant passes (26.2, 26.3 and the four snapshots, each with `+overrides`, and `26.4-snapshot-8+testpack`) but `26.3+terralith`. There, 32 of 57 tests fail, every one on the three unsupported files data-packs.md names, one more than m26 counted; the count there is updated.
+- 2026-11-13, phase 7:
+  - **Lengths, by a brace-matching count of non-test code.** Of the functions the review named, these are still over 80 lines:
+    - `App::map` (87), `draw_marker_layer` (88, split out of it) and `container_window` (86): each is one pass over one frame's drawing, and splitting them further would pass most of their state through.
+    - xtask `oracle::run` (126): one `match` arm per subcommand, each a call or two.
+
+    Every other function the review named is now under 80 lines. No file the review named is over 750 lines. The count finds about 70 other functions over 80 lines, all older than the review and outside it, most of them close ports of one game method (`sampler.rs`'s `compute`, `mansion.rs`'s `floor`), which follow the game's structure on purpose.
+
+  - The B6 tooltips sit on the generated-chunks checkboxes, which are enabled only with a world open. The viewer opens one through the system's file dialog, which `run-viewer` can't drive, so they weren't seen on screen; their literals were checked in the source.
 
 - 2026-11-13, phase 4:
   - P5 to P7 were checked in one run of the 26.3 harness on a hand-made pack (`--pack <dir> nothing nowhere`, which loads the game and stops): `"min_format": 121.0` with `"max_format": [4294967417, 0.5]`, `is_ocean` as `{"values": [3]}`, and `worldgen/noise/Bad_Name.json`.

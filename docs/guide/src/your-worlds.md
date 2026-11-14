@@ -32,4 +32,4 @@ Where your world has already generated a chunk, the game answers from what it sa
 
 It reads every region file to count those chunks, which takes a few seconds for a large world. `--quick` skips that.
 
-Loot in a world can differ too: a chest you've already opened holds whatever you left in it. With `--world`, each container in a chunk your world has generated says how the world holds it: `in the save: unopened` (it'll hold what spyglass shows), `opened, now …` with what's in it now, or `gone`. `loot find` goes by what's in it now.
+Loot in a world can differ too: a chest you've already opened holds whatever you left in it. With `--world`, each container in a chunk your world has generated says how the world holds it: `in the save: unopened` (it'll hold what spyglass shows), `opened, now …` with what's in it now, or `gone` (broken, or something else in its place). `loot find` goes by what's in it now.

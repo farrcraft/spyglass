@@ -794,6 +794,32 @@ fn entity_chunks_give_their_containers() {
 }
 
 #[test]
+fn suspicious_sand_is_renamed_where_the_game_renames_it() {
+    let id_at = |version: Option<i32>| {
+        let mut root = c([(
+            "block_entities",
+            Tag::List(vec![c([
+                ("id", s("minecraft:suspicious_sand")),
+                ("x", Tag::Int(0)),
+                ("y", Tag::Int(0)),
+                ("z", Tag::Int(0)),
+            ])]),
+        )]);
+        if let (Tag::Compound(root), Some(v)) = (&mut root, version) {
+            root.insert("DataVersion".to_string(), Tag::Int(v));
+        }
+        chunk::read(&raw(&root)).unwrap().containers.unwrap()[0]
+            .id
+            .clone()
+    };
+    // 1.19.4's 1.20 features (3337) and a chunk with no version are renamed; 1.20 on keep
+    // what they saved.
+    assert_eq!(id_at(Some(3337)), "minecraft:brushable_block");
+    assert_eq!(id_at(None), "minecraft:brushable_block");
+    assert_eq!(id_at(Some(3438)), "minecraft:suspicious_sand");
+}
+
+#[test]
 fn entities_are_beside_regions() {
     let dir = tempfile::tempdir().unwrap();
     let save = save_with_packs(dir.path(), &[]);

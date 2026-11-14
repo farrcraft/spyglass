@@ -267,6 +267,14 @@ impl Blocks {
             .map(|b| usize::from(b.container_slots))
     }
 
+    /// Block `id`'s block-entity type, the `id` a save gives its block entity: `Some(None)`
+    /// where it has none, `None` where the bundle's block report predates them.
+    pub fn block_entity(&self, id: &str) -> Option<Option<&str>> {
+        self.source
+            .knows_block_entities()
+            .then(|| self.source.block_entity(id))
+    }
+
     /// Whether the bundle's block report says which faces support (format 3 on).
     pub fn knows_support(&self) -> bool {
         self.source.knows_support()

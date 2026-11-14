@@ -13,7 +13,7 @@ import java.nio.file.Path;
 
 public final class BlockReport {
     /** The report's format; bump it when its shape changes. */
-    private static final int FORMAT = 4;
+    private static final int FORMAT = 5;
 
     /** Flags every version has: the name in the report, then the `BlockState` method. */
     private static final String[][] FLAGS = {
@@ -47,6 +47,12 @@ public final class BlockReport {
         Object fluids =
                 Class.forName("net.minecraft.core.registries.BuiltInRegistries").getField("FLUID").get(null);
         Method fluidKey = fluids.getClass().getMethod("getKey", Object.class);
+        Object entityTypes = Class.forName("net.minecraft.core.registries.BuiltInRegistries")
+                .getField("BLOCK_ENTITY_TYPE")
+                .get(null);
+        Method entityTypeKey = entityTypes.getClass().getMethod("getKey", Object.class);
+        Method entityType = Class.forName("net.minecraft.world.level.block.entity.BlockEntity")
+                .getMethod("getType");
         Class<?> entityBlock = Class.forName("net.minecraft.world.level.block.EntityBlock");
         Class<?> blockPos = Class.forName("net.minecraft.core.BlockPos");
         Class<?> blockState = Class.forName("net.minecraft.world.level.block.state.BlockState");
@@ -92,9 +98,13 @@ public final class BlockReport {
             // config makes items) is named on stderr and taken as no container.
             boolean container = false;
             int slots = 0;
+            Object entityId = null;
             if (entityBlock.isInstance(block)) {
                 try {
                     Object entity = newBlockEntity.invoke(block, origin, state);
+                    if (entity != null) {
+                        entityId = entityTypeKey.invoke(entityTypes, entityType.invoke(entity));
+                    }
                     container = randomizable.isInstance(entity);
                     if (container) {
                         slots = (Integer) containerSize.invoke(entity);
@@ -109,6 +119,11 @@ public final class BlockReport {
             // The slots a loot table fills: `Container.getContainerSize()`.
             if (container) {
                 out.append(",\"slots\":").append(slots);
+            }
+            // Its block entity's type, the `id` a save gives it: not always the block's id
+            // (suspicious sand's is `brushable_block`, every shulker box's `shulker_box`).
+            if (entityId != null) {
+                out.append(",\"block_entity\":\"").append(entityId).append('"');
             }
             flag(out, "falling", falling.isInstance(block));
             StringBuilder faces = new StringBuilder();

@@ -988,9 +988,10 @@ impl<'w> Session<'w> {
                 }
             }
         };
-        let saved = self
-            .save()
-            .and_then(|save| save.container(position, &holder, &table, seed));
+        let saved = self.save().and_then(|save| {
+            let block_entity = loot.blocks.block_entity(&holder).flatten();
+            save.container(position, &holder, block_entity, &table, seed)
+        });
         Ok(FoundContainer {
             position,
             chunk,

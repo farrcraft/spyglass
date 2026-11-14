@@ -15,6 +15,13 @@ const MAX_CHUNK_TREE: u64 = 256 << 20;
 /// version, the same for every game version.
 const CONFIGURED_STRUCTURES: i32 = 2970;
 
+/// The data version from which suspicious sand's block entity is `minecraft:brushable_block`:
+/// the schema of `DataFixers`' "Rename Suspicious Sand to Brushable Block"
+/// (`BlockEntityRenameFix`), 1.20's. Chunks saved before it, by 1.19.4 with its 1.20 features
+/// on, name it `minecraft:suspicious_sand`. The only block entity renamed since 1.18 (26.3's
+/// `DataFixers`).
+const BRUSHABLE_BLOCK: i32 = 3438;
+
 /// What a chunk says about the structures starting in it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SavedStarts {
@@ -142,12 +149,17 @@ pub fn read(raw: &[u8]) -> Result<ChunkContents, NbtError> {
             _ => SavedStarts::Missing,
         }
     };
+    let rename_sand = data_version.is_none_or(|v| v < BRUSHABLE_BLOCK);
     let containers = (!legacy).then(|| {
         list(&root, "block_entities")
             .iter()
             .filter_map(|e| {
                 let position = [int(e, "x")?, int(e, "y")?, int(e, "z")?];
-                container(e, position, true)
+                let mut found = container(e, position, true)?;
+                if rename_sand && found.id == "minecraft:suspicious_sand" {
+                    found.id = "minecraft:brushable_block".to_string();
+                }
+                Some(found)
             })
             .collect()
     });

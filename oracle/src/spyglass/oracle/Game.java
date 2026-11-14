@@ -30,7 +30,7 @@ final class Game {
 
     /**
      * {@code packs} are the test packs loaded over the vanilla one, which the version's name
-     * records: {@code <version>+<folder name>} for each, unless the {@code spyglass.oracle.version}
+     * records: {@code <version>+<file name>} for each, unless the {@code spyglass.oracle.version}
      * system property names it.
      */
     Game(RegistryAccess.Frozen access, LayeredRegistryAccess<RegistryLayer> layers, MultiPackResourceManager resources,

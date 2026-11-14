@@ -6,8 +6,9 @@
 //! `docs/adr/0070-java-math-correctly-rounded.md` for why.
 //!
 //! Each result is computed in double-double arithmetic, to about 2^-100 of its value, and
-//! rounded once when a rounding test shows the bound leaves no doubt. Where it doesn't, which
-//! no measured argument hit, the double-double's own rounding is returned. `sin` and `cos` of
+//! rounded once when a rounding test shows the bound leaves no doubt. Where it doesn't (9 of
+//! the 6.2 million measured arguments, all of which still matched), the double-double's own
+//! rounding is returned. `sin` and `cos` of
 //! |x| ≥ 2^20, and `pow` results below 2^-1021, aren't correctly rounded; no worldgen call
 //! comes near either.
 

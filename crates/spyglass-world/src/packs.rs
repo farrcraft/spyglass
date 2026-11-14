@@ -46,10 +46,14 @@ pub enum PackContents {
 }
 
 impl Save {
-    /// What each enabled data pack contains, in load order.
+    /// What each enabled data pack contains, in load order. A name listed twice counts once,
+    /// where it first appears: `MinecraftServer.configurePackRepository` gathers the list into a
+    /// `LinkedHashSet`.
     pub fn packs(&self) -> Vec<(String, PackContents)> {
+        let mut seen = std::collections::HashSet::new();
         self.enabled_packs
             .iter()
+            .filter(|name| seen.insert(name.as_str()))
             .map(|name| {
                 let contents = match name.strip_prefix("file/") {
                     _ if name == "vanilla" => PackContents::Vanilla,
@@ -248,17 +252,23 @@ mod tests {
             fs::write(&path, zip(files)).unwrap();
             open_pack(&path)
         };
+        // A path that could escape, or that the game skips, is skipped unread; the rest loads.
         for escaping in [
             "data/../../x.json",
             "data/x//y.json",
             "data/x/./y.json",
             "o/data/../x",
+            "data/x/Upper.json",
         ] {
-            assert!(
-                matches!(
-                    open(&[("pack.mcmeta", MCMETA_JSON), (escaping, b"{}")]),
-                    Err(PackError::Limit { .. })
-                ),
+            let pack = open(&[
+                ("pack.mcmeta", MCMETA_JSON),
+                (escaping, b"{}"),
+                ("data/x/y.json", b"{}"),
+            ])
+            .unwrap_or_else(|e| panic!("{escaping}: {e}"));
+            assert_eq!(
+                pack.files().collect::<Vec<_>>(),
+                ["data/x/y.json"],
                 "{escaping}"
             );
         }

@@ -89,7 +89,10 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq libxkbcommon-dev libwayland-dev libx11-dev \
             libxcursor-dev libxrandr-dev libxi-dev libvulkan-dev
-      - run: rustup target add ${{ matrix.target }}
+      - shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: rustup target add "$TARGET"
       # Only tools are cached, never anything derived from the game (ADR 0008).
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -101,12 +104,18 @@ jobs:
       - name: cargo-about
         shell: bash
         run: cargo about --version || cargo install --locked --features cli cargo-about@0.9.3
-      - run: cargo xtask dist --target ${{ matrix.target }}
+      - shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo xtask dist --target "$TARGET"
       - name: The JDK major the smoke test's extraction needs
         if: matrix.extract
         id: jdk
+        shell: bash
+        env:
+          GAME_VERSION: ${{ matrix.extract }}
         run: |
-          echo "major=$(cargo xtask jdk-status --game-version '${{ matrix.extract }}' | cut -d' ' -f1)" \
+          echo "major=$(cargo xtask jdk-status --game-version "$GAME_VERSION" | cut -d' ' -f1)" \
             >> "$GITHUB_OUTPUT"
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         if: matrix.extract
@@ -115,9 +124,15 @@ jobs:
           java-version: ${{ steps.jdk.outputs.major }}
       - name: Smoke test
         shell: bash
+        env:
+          EXTRACT: ${{ matrix.extract }}
         run: |
           archive=$(ls target/archives/spyglass-*)
-          cargo xtask smoke "$archive" ${{ matrix.extract && format('--extract {0}', matrix.extract) || '' }}
+          if [ -n "$EXTRACT" ]; then
+            cargo xtask smoke "$archive" --extract "$EXTRACT"
+          else
+            cargo xtask smoke "$archive"
+          fi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: archive-${{ matrix.target }}

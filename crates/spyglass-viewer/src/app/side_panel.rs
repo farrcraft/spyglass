@@ -429,9 +429,39 @@ impl App {
     /// What's drawn on the map: biomes, overlays, structures, and whether to confirm with
     /// terrain.
     pub(super) fn layers_tab(&mut self, ui: &mut egui::Ui) {
+        self.biomes_section(ui);
+
+        ui.add_space(6.0);
+        self.overlays_section(ui);
+
+        ui.add_space(6.0);
+        self.underground_section(ui);
+
+        ui.add_space(6.0);
+        self.features_section(ui);
+
+        ui.add_space(6.0);
+        self.loot_section(ui);
+
+        ui.add_space(6.0);
+        self.structure_list(ui);
+
+        ui.add_space(6.0);
+        ui.separator();
+        ui.checkbox(&mut self.settings.confirm, "Confirm with terrain");
+        style::hint(
+            ui,
+            "Decides structure starts and locates with the seed's terrain, as the game does. Off, \
+             most surface structures are candidates. Jigsaw and mineshaft bounds are drawn when \
+             confirmed, at 1:4 or closer.",
+        );
+    }
+
+    /// The Biomes section: the height, biomes at the surface, the End's void, tied cells and
+    /// the highlighted biomes.
+    fn biomes_section(&mut self, ui: &mut egui::Ui) {
         let terrain = self.terrain_allowed();
         let ceiling = "Not under a ceiling: the surface there is the ceiling.";
-
         style::heading(ui, "Biomes");
         // The height is the underground layers' too, so it stays usable for them.
         let deep = self.underground().any();
@@ -466,8 +496,13 @@ impl App {
             "Where the game's biome depends on lookup history, show a checker of the biomes it may give.",
         );
         self.highlight_chips(ui);
+    }
 
-        ui.add_space(6.0);
+    /// The Overlays section: the spawn, slime chunks, a save's generated chunks, done things
+    /// and relief shading.
+    fn overlays_section(&mut self, ui: &mut egui::Ui) {
+        let terrain = self.terrain_allowed();
+        let ceiling = "Not under a ceiling: the surface there is the ceiling.";
         style::heading(ui, "Overlays");
         let overworld_only = "Only in the Overworld.";
         let spawn_here = self.spawn_allowed();
@@ -496,7 +531,8 @@ impl App {
             egui::Checkbox::new(&mut self.settings.generated, "Generated chunks"),
         )
         .on_hover_text(
-            "The chunks your world has generated: magenta, fainter where generated partway,              amber where an older version generated them.",
+            "The chunks your world has generated: magenta, fainter where generated partway, \
+             amber where an older version generated them.",
         );
         ui.indent("inhabited", |ui| {
             ui.add_enabled(
@@ -504,7 +540,8 @@ impl App {
                 egui::Checkbox::new(&mut self.settings.inhabited, "By time played"),
             )
             .on_hover_text(
-                "Shade each chunk by the time players spent near it: faint where they passed                  through, strong where they lived.",
+                "Shade each chunk by the time players spent near it: faint where they passed \
+                 through, strong where they lived.",
             );
         });
         if !generated_here {
@@ -524,28 +561,6 @@ impl App {
         } else {
             style::hint(ui, ceiling);
         }
-
-        ui.add_space(6.0);
-        self.underground_section(ui);
-
-        ui.add_space(6.0);
-        self.features_section(ui);
-
-        ui.add_space(6.0);
-        self.loot_section(ui);
-
-        ui.add_space(6.0);
-        self.structure_list(ui);
-
-        ui.add_space(6.0);
-        ui.separator();
-        ui.checkbox(&mut self.settings.confirm, "Confirm with terrain");
-        style::hint(
-            ui,
-            "Decides structure starts and locates with the seed's terrain, as the game does. Off, \
-             most surface structures are candidates. Jigsaw and mineshaft bounds are drawn when \
-             confirmed, at 1:4 or closer.",
-        );
     }
 
     /// The highlighted biomes as removable chips, and a menu to add one.
@@ -652,105 +667,121 @@ impl App {
         }
         let needle = self.structure_filter.to_lowercase();
         let mut changed = false;
-        for (name, mut ids) in groups {
-            let matches = |id: &str| {
-                spyglass::display_name(id).to_lowercase().contains(&needle) || id.contains(&needle)
-            };
-            if !name.to_lowercase().contains(&needle) && !ids.iter().any(|id| matches(id)) {
-                continue;
-            }
-            ids.sort_unstable_by_key(|id| spyglass::display_name(id));
-            let on = ids
-                .iter()
-                .filter(|id| self.settings.structures.iter().any(|s| s == **id))
-                .count();
-            let mut all = on == ids.len();
-            let open = self.expanded.contains(&name);
-            let mut toggle_open = false;
-            let mut flip = false;
-            ui.horizontal(|ui| {
-                flip = ui
-                    .add(egui::Checkbox::new(&mut all, "").indeterminate(on > 0 && on < ids.len()))
-                    .changed();
-                let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), Sense::hover());
-                if let Some(badge) = world.structure_set(ids[0]).map(icons::badge) {
-                    let dim = if on > 0 { 1.0 } else { 0.45 };
-                    ui.painter().rect(
-                        rect,
-                        egui::CornerRadius::same(5),
-                        badge.fill.gamma_multiply(dim),
-                        egui::Stroke::new(1.0, style::GROUND),
-                        egui::StrokeKind::Inside,
-                    );
-                    icons::glyph(ids[0])
-                        .tint(badge.ink.gamma_multiply(dim))
-                        .paint_at(ui, rect.shrink(3.0));
-                }
-                ui.label(&name);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ids.len() > 1 {
-                        let text = if open {
-                            "Hide".to_string()
-                        } else {
-                            format!("{} kinds", ids.len())
-                        };
-                        toggle_open = ui
-                            .add(
-                                egui::Button::new(
-                                    egui::RichText::new(text).size(11.5).color(style::ACCENT),
-                                )
-                                .frame(false),
-                            )
-                            .on_hover_text("Choose among its variants")
-                            .clicked();
-                    }
-                    let seen: usize = ids.iter().filter_map(|id| self.in_view.get(*id)).sum();
-                    if seen > 0 {
-                        ui.label(style::mono(seen.to_string()).color(style::MUTED))
-                            .on_hover_text("Starts in view");
-                    }
-                });
-            });
-            if flip {
-                self.settings
-                    .structures
-                    .retain(|s| !ids.contains(&s.as_str()));
-                if all {
-                    self.settings
-                        .structures
-                        .extend(ids.iter().map(|id| id.to_string()));
-                }
-                self.settings.structures.sort();
-                changed = true;
-            }
-            if toggle_open {
-                if open {
-                    self.expanded.remove(&name);
-                } else {
-                    self.expanded.insert(name.clone());
-                }
-            }
-            if open || (!needle.is_empty() && !name.to_lowercase().contains(&needle)) {
-                ui.indent(&name, |ui| {
-                    for id in ids.iter().filter(|id| open || matches(id)) {
-                        let mut variant = self.settings.structures.iter().any(|s| s == id);
-                        let label = spyglass::display_name(id);
-                        if ui.checkbox(&mut variant, label).changed() {
-                            if variant {
-                                self.settings.structures.push(id.to_string());
-                                self.settings.structures.sort();
-                            } else {
-                                self.settings.structures.retain(|s| s != id);
-                            }
-                            changed = true;
-                        }
-                    }
-                });
-            }
+        for (name, ids) in groups {
+            changed |= self.structure_family(ui, world, &name, ids, &needle);
         }
         if changed {
             self.select();
         }
+    }
+
+    /// One structure family's row in the list, `ids` its structures, and its variants under it
+    /// when opened or when `needle` (the filter, lower-case) matches only them. Hidden if
+    /// nothing in it matches. Whether the structures chosen changed.
+    fn structure_family(
+        &mut self,
+        ui: &mut egui::Ui,
+        world: &World,
+        name: &str,
+        mut ids: Vec<&str>,
+        needle: &str,
+    ) -> bool {
+        let mut changed = false;
+        let matches = |id: &str| {
+            spyglass::display_name(id).to_lowercase().contains(needle) || id.contains(needle)
+        };
+        if !name.to_lowercase().contains(needle) && !ids.iter().any(|id| matches(id)) {
+            return false;
+        }
+        ids.sort_unstable_by_key(|id| spyglass::display_name(id));
+        let on = ids
+            .iter()
+            .filter(|id| self.settings.structures.iter().any(|s| s == **id))
+            .count();
+        let mut all = on == ids.len();
+        let open = self.expanded.contains(name);
+        let mut toggle_open = false;
+        let mut flip = false;
+        ui.horizontal(|ui| {
+            flip = ui
+                .add(egui::Checkbox::new(&mut all, "").indeterminate(on > 0 && on < ids.len()))
+                .changed();
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), Sense::hover());
+            if let Some(badge) = world.structure_set(ids[0]).map(icons::badge) {
+                let dim = if on > 0 { 1.0 } else { 0.45 };
+                ui.painter().rect(
+                    rect,
+                    egui::CornerRadius::same(5),
+                    badge.fill.gamma_multiply(dim),
+                    egui::Stroke::new(1.0, style::GROUND),
+                    egui::StrokeKind::Inside,
+                );
+                icons::glyph(ids[0])
+                    .tint(badge.ink.gamma_multiply(dim))
+                    .paint_at(ui, rect.shrink(3.0));
+            }
+            ui.label(name);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ids.len() > 1 {
+                    let text = if open {
+                        "Hide".to_string()
+                    } else {
+                        format!("{} kinds", ids.len())
+                    };
+                    toggle_open = ui
+                        .add(
+                            egui::Button::new(
+                                egui::RichText::new(text).size(11.5).color(style::ACCENT),
+                            )
+                            .frame(false),
+                        )
+                        .on_hover_text("Choose among its variants")
+                        .clicked();
+                }
+                let seen: usize = ids.iter().filter_map(|id| self.in_view.get(*id)).sum();
+                if seen > 0 {
+                    ui.label(style::mono(seen.to_string()).color(style::MUTED))
+                        .on_hover_text("Starts in view");
+                }
+            });
+        });
+        if flip {
+            self.settings
+                .structures
+                .retain(|s| !ids.contains(&s.as_str()));
+            if all {
+                self.settings
+                    .structures
+                    .extend(ids.iter().map(|id| id.to_string()));
+            }
+            self.settings.structures.sort();
+            changed = true;
+        }
+        if toggle_open {
+            if open {
+                self.expanded.remove(name);
+            } else {
+                self.expanded.insert(name.to_string());
+            }
+        }
+        if open || (!needle.is_empty() && !name.to_lowercase().contains(needle)) {
+            ui.indent(name, |ui| {
+                for id in ids.iter().filter(|id| open || matches(id)) {
+                    let mut variant = self.settings.structures.iter().any(|s| s == id);
+                    let label = spyglass::display_name(id);
+                    if ui.checkbox(&mut variant, label).changed() {
+                        if variant {
+                            self.settings.structures.push(id.to_string());
+                            self.settings.structures.sort();
+                        } else {
+                            self.settings.structures.retain(|s| s != id);
+                        }
+                        changed = true;
+                    }
+                }
+            });
+        }
+        changed
     }
 }
 

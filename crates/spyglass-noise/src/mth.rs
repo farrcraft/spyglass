@@ -1,4 +1,31 @@
-//! The `Mth` helpers noise uses, with the game's `float` operation order.
+//! The `Mth` helpers noise uses, with the game's `float` operation order, and `Mth`'s sine
+//! table, which carvers and density functions read.
+
+use std::sync::OnceLock;
+
+/// `Mth.SIN`'s entries per radian: 65,536 / 2π. A quarter turn, 16,384 entries, makes a sine a
+/// cosine.
+pub const SIN_ENTRIES_PER_RADIAN: f64 = 10_430.378_350_470_453;
+
+/// `Mth.SIN`: `(float) Math.sin(i / 10430.378350470453)` for each of its 65,536 entries, with
+/// the quarter turns set to exactly 0, 1, 0 and −1 if `exact_quarters` (from 26.4). Built once.
+///
+/// Narrowed to `f32`, every entry is the same under every `Math.sin` measured
+/// (docs/specs/java-math.md).
+pub fn sin_table(exact_quarters: bool) -> &'static [f32] {
+    static TABLES: [OnceLock<Vec<f32>>; 2] = [OnceLock::new(), OnceLock::new()];
+    TABLES[usize::from(exact_quarters)].get_or_init(|| {
+        let mut table: Vec<f32> = (0..65_536)
+            .map(|i| spyglass_math::sin(f64::from(i) / SIN_ENTRIES_PER_RADIAN) as f32)
+            .collect();
+        if exact_quarters {
+            for (i, v) in [(0, 0.0), (16_384, 1.0), (32_768, 0.0), (49_152, -1.0)] {
+                table[i] = v;
+            }
+        }
+        table
+    })
+}
 
 /// `Mth.floor(double)`: `(int) Math.floor(d)`, saturating, with NaN as 0 (as Rust's `as` does).
 pub fn floor(d: f64) -> i32 {

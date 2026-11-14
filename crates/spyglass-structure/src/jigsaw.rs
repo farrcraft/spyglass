@@ -1300,8 +1300,8 @@ impl<'a> JigsawLoader<'a> {
         let error = |kind: LoadErrorKind| LoadError::new(id, "", kind);
         let template = match self.bundle.structure_template(id) {
             Ok(bytes) => {
-                let (_, root) = nbt::read_compressed(&bytes)
-                    .map_err(|e| error(LoadErrorKind::Invalid(nbt_error(&e))))?;
+                let (_, root) = nbt::read_template(&bytes)
+                    .map_err(|e| error(LoadErrorKind::Invalid(e.reason())))?;
                 let data_version = self.bundle.manifest().data_version;
                 Template::from_nbt(&root, id, data_version)?
             }
@@ -1317,13 +1317,6 @@ impl<'a> JigsawLoader<'a> {
         let template = Arc::new(template);
         self.templates.insert(id.to_string(), template.clone());
         Ok(template)
-    }
-}
-
-fn nbt_error(e: &nbt::NbtError) -> &'static str {
-    match e {
-        nbt::NbtError::Gzip(_) => "not gzip-compressed NBT",
-        _ => "malformed NBT",
     }
 }
 

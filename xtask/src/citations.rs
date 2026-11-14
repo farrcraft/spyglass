@@ -53,7 +53,9 @@ pub fn scan() -> Result<BTreeMap<String, Vec<Cite>>> {
     Ok(out)
 }
 
-/// The citations in one file's text.
+/// The citations in one file's text: code spans in `//` comments. A `//` inside a string
+/// literal (a URL) also starts a comment here, so a code span after one is a false lead;
+/// citations are only leads, and none has turned up so far.
 fn cites(file: &str, text: &str) -> Vec<(String, Cite)> {
     let mut out = Vec::new();
     for (i, line) in text.lines().enumerate() {

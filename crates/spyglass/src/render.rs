@@ -38,6 +38,34 @@ pub const MAX_FEATURE_SCALE: u32 = 2;
 /// centre is within this of it.
 pub const MARKER_REACH: u32 = 5;
 
+/// Refuses `area` if its scale is past `max`, the largest `what` (`"loot is"`) is drawn at.
+fn check_layer_scale(area: &MapArea, max: u32, what: &str) -> Result<()> {
+    if area.scale > max {
+        return Err(invalid(format!(
+            "{what} drawn at scales up to {max}, not {}",
+            area.scale
+        )));
+    }
+    Ok(())
+}
+
+/// The chunks `area` covers, inclusive.
+fn area_chunks(area: &MapArea) -> ([i32; 2], [i32; 2]) {
+    let end = area.end();
+    let min = area.min.map(|m| m >> 4);
+    let max = [0, 1].map(|d| saturate((end[d] - 1) >> 4));
+    (min, max)
+}
+
+/// The chunks a marker reaching `area` can be in, inclusive.
+fn reach_chunks(area: &MapArea) -> ([i32; 2], [i32; 2]) {
+    let [[x0, x1], [z0, z1]] = area.reach_blocks();
+    (
+        [saturate(x0 >> 4), saturate(z0 >> 4)],
+        [saturate(x1 >> 4), saturate(z1 >> 4)],
+    )
+}
+
 const BACKGROUND: [u8; 3] = [0x20, 0x20, 0x20];
 /// A column with no blocks, where heights are drawn: the void (`docs/specs/render.md#layers`).
 const VOID: [u8; 3] = [0x0b, 0x0b, 0x12];
@@ -854,107 +882,25 @@ impl Session<'_> {
         layers.check(self.world)?;
         let mut features = MapFeatures::default();
         if !layers.structures.is_empty() {
-            let mut targets = Vec::new();
-            for query in &layers.structures {
-                self.check_world(query.world, &query.argument)?;
-                for &target in &query.targets {
-                    if !targets.contains(&target) {
-                        targets.push(target);
-                    }
-                }
-            }
-            // Markers reach past the area, so starts are looked for in the blocks within reach
-            // of it, then kept if their marker reaches it: a marker cut by a tile's edge is drawn
-            // in both tiles.
-            let [[x0, x1], [z0, z1]] = area.reach_blocks();
-            let mut starts = self.starts_by_set(
-                &targets,
-                |offset| {
-                    // The chunks whose position, chunk·16 + offset, is in reach.
-                    let chunk = |block: i64, offset: i32| {
-                        saturate((block - i64::from(offset)).div_euclid(16))
-                    };
-                    (
-                        [chunk(x0, offset[0]), chunk(z0, offset[2])],
-                        [chunk(x1, offset[0]), chunk(z1, offset[2])],
-                    )
-                },
-                layers.confirm,
-            );
-            starts.retain(|s| area.reaches([s.position[0], s.position[2]]));
-            starts.sort_by(|a, b| {
-                (&a.set, a.chunk[1], a.chunk[0]).cmp(&(&b.set, b.chunk[1], b.chunk[0]))
-            });
-            features.structures = starts;
+            features.structures = self.map_structures(area, &layers.structures, layers.confirm)?;
         }
         if !layers.features.is_empty() {
-            if area.scale > MAX_FEATURE_SCALE {
-                return Err(invalid(format!(
-                    "features are drawn at scales up to {MAX_FEATURE_SCALE}, not {}",
-                    area.scale
-                )));
-            }
-            // The chunks a reaching marker's position can be in.
-            let [[x0, x1], [z0, z1]] = area.reach_blocks();
-            let min = [saturate(x0 >> 4), saturate(z0 >> 4)];
-            let max = [saturate(x1 >> 4), saturate(z1 >> 4)];
-            for query in &layers.features {
-                for found in self.features_in(query, min, max, FeatureOptions::default())? {
-                    if area.reaches([found.position[0], found.position[2]])
-                        && !features.features.contains(&found)
-                    {
-                        features.features.push(found);
-                    }
-                }
-            }
-            features.features.sort_by(|a, b| {
-                let key = |f: &FoundFeature| (f.position[2], f.position[0], f.position[1]);
-                key(a).cmp(&key(b)).then_with(|| a.feature.cmp(&b.feature))
-            });
+            features.features = self.map_feature_layer(area, &layers.features)?;
         }
         if let Some(query) = &layers.loot {
-            if area.scale > MAX_FEATURE_SCALE {
-                return Err(invalid(format!(
-                    "loot is drawn at scales up to {MAX_FEATURE_SCALE}, not {}",
-                    area.scale
-                )));
-            }
-            let [[x0, x1], [z0, z1]] = area.reach_blocks();
-            let min = [saturate(x0 >> 4), saturate(z0 >> 4)];
-            let max = [saturate(x1 >> 4), saturate(z1 >> 4)];
-            let mut found = self.containers_holding(query, min, max)?;
-            found.retain(|c| area.reaches([c.position[0], c.position[2]]));
-            found.sort_by_key(|c| (c.position[2], c.position[0], c.position[1]));
-            found.dedup_by(|a, b| {
-                a.position == b.position && a.contents_certain() == b.contents_certain()
-            });
-            features.containers = found;
+            features.containers = self.map_containers(area, query)?;
         }
         if layers.slime_chunks {
-            if area.scale > MAX_SLIME_SCALE {
-                return Err(invalid(format!(
-                    "slime chunks are drawn at scales up to {MAX_SLIME_SCALE}, not {}",
-                    area.scale
-                )));
-            }
-            let end = area.end();
-            let min = area.min.map(|m| m >> 4);
-            let max = [0, 1].map(|d| saturate((end[d] - 1) >> 4));
+            check_layer_scale(area, MAX_SLIME_SCALE, "slime chunks are")?;
+            let (min, max) = area_chunks(area);
             features.slime_chunks = self.slime_chunks(min, max);
         }
         if layers.generated {
-            if area.scale > MAX_SLIME_SCALE {
-                return Err(invalid(format!(
-                    "generated chunks are drawn at scales up to {MAX_SLIME_SCALE}, not {}",
-                    area.scale
-                )));
-            }
+            check_layer_scale(area, MAX_SLIME_SCALE, "generated chunks are")?;
             let save = self
                 .save()
                 .ok_or_else(|| invalid("generated chunks are a save's: open one".to_string()))?;
-            let end = area.end();
-            let min = area.min.map(|m| m >> 4);
-            let max = [0, 1].map(|d| saturate((end[d] - 1) >> 4));
+            let (min, max) = area_chunks(area);
             features.generated = save.generated_in(min, max);
             features.inhabited = layers.inhabited;
         }
@@ -971,6 +917,85 @@ impl Session<'_> {
             .copied()
             .collect();
         Ok(features)
+    }
+
+    /// The structure starts `queries` find whose marker reaches `area`, by set, then by chunk.
+    fn map_structures(
+        &self,
+        area: &MapArea,
+        queries: &[StructureQuery],
+        confirm: bool,
+    ) -> Result<Vec<StructureStart>> {
+        let mut targets = Vec::new();
+        for query in queries {
+            self.check_world(query.world, &query.argument)?;
+            for &target in &query.targets {
+                if !targets.contains(&target) {
+                    targets.push(target);
+                }
+            }
+        }
+        // Markers reach past the area, so starts are looked for in the blocks within reach
+        // of it, then kept if their marker reaches it: a marker cut by a tile's edge is drawn
+        // in both tiles.
+        let [[x0, x1], [z0, z1]] = area.reach_blocks();
+        let mut starts = self.starts_by_set(
+            &targets,
+            |offset| {
+                // The chunks whose position, chunk·16 + offset, is in reach.
+                let chunk =
+                    |block: i64, offset: i32| saturate((block - i64::from(offset)).div_euclid(16));
+                (
+                    [chunk(x0, offset[0]), chunk(z0, offset[2])],
+                    [chunk(x1, offset[0]), chunk(z1, offset[2])],
+                )
+            },
+            confirm,
+        );
+        starts.retain(|s| area.reaches([s.position[0], s.position[2]]));
+        starts.sort_by(|a, b| {
+            (&a.set, a.chunk[1], a.chunk[0]).cmp(&(&b.set, b.chunk[1], b.chunk[0]))
+        });
+        Ok(starts)
+    }
+
+    /// The features `queries` find whose marker reaches `area`, each once, by position.
+    fn map_feature_layer(
+        &self,
+        area: &MapArea,
+        queries: &[FeatureQuery],
+    ) -> Result<Vec<FoundFeature>> {
+        check_layer_scale(area, MAX_FEATURE_SCALE, "features are")?;
+        let (min, max) = reach_chunks(area);
+        let mut found_all: Vec<FoundFeature> = Vec::new();
+        for query in queries {
+            for found in self.features_in(query, min, max, FeatureOptions::default())? {
+                if area.reaches([found.position[0], found.position[2]])
+                    && !found_all.contains(&found)
+                {
+                    found_all.push(found);
+                }
+            }
+        }
+        found_all.sort_by(|a, b| {
+            let key = |f: &FoundFeature| (f.position[2], f.position[0], f.position[1]);
+            key(a).cmp(&key(b)).then_with(|| a.feature.cmp(&b.feature))
+        });
+        Ok(found_all)
+    }
+
+    /// The containers holding `query`'s items whose marker reaches `area`, by position, one per
+    /// position and certainty.
+    fn map_containers(&self, area: &MapArea, query: &ItemQuery) -> Result<Vec<FoundContainer>> {
+        check_layer_scale(area, MAX_FEATURE_SCALE, "loot is")?;
+        let (min, max) = reach_chunks(area);
+        let mut found = self.containers_holding(query, min, max)?;
+        found.retain(|c| area.reaches([c.position[0], c.position[2]]));
+        found.sort_by_key(|c| (c.position[2], c.position[0], c.position[1]));
+        found.dedup_by(|a, b| {
+            a.position == b.position && a.contents_certain() == b.contents_certain()
+        });
+        Ok(found)
     }
 
     /// `area` drawn with `layers` (`docs/specs/render.md`). With an underground layer on,

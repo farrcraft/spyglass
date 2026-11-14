@@ -1,26 +1,25 @@
 //! `sin` and `cos`, correctly rounded for |x| < 2^20.
 //!
-//! The argument is reduced by π/2, held as three doubles (about 160 bits), so that
+//! The argument is reduced by π/2, held as four doubles (about 210 bits), so that
 //! `x = k·π/2 + r` with |r| ≤ π/4 and `r` carried as a double-double; then `sin r` or `cos r`,
 //! chosen and signed by `k mod 4`, is summed as a Taylor series in double-double arithmetic.
 //! The result is accurate to about 2^-100 of its value, and rounded once.
 
-use std::sync::OnceLock;
+use crate::dd::{Dd, inverse_factorials, rounded, two_prod};
 
-use crate::dd::{Dd, two_prod};
-
-/// π/2 in three parts, each the double nearest what's left (from the QD library's constant).
-const PI_2: [f64; 3] = [
+/// π/2 in four parts, each the double nearest what's left (the QD library's constant).
+const PI_2: [f64; 4] = [
     std::f64::consts::FRAC_PI_2,
     6.123_233_995_736_766e-17,
     -1.497_384_904_859_169_8e-33,
+    5.562_271_104_316_826e-50,
 ];
 
 /// 2/π, to pick `k`; its error only moves `r` a little past π/4, which the series covers.
 const FRAC_2_PI: f64 = std::f64::consts::FRAC_2_PI;
 
-/// Arguments from here on are left to the `libm` crate (fdlibm's algorithm): the three-part π/2
-/// stops being enough. No worldgen call comes near.
+/// Arguments from here on are left to the `libm` crate (fdlibm's algorithm), where the reduction
+/// below hasn't been measured. No worldgen call comes near.
 const LIMIT: f64 = 1_048_576.0; // 2^20
 
 /// Below this, `sin x` rounds to `x`: x³/6 is under half an ulp of `x`.
@@ -30,26 +29,16 @@ const SIN_TINY: f64 = 1.0 / 67_108_864.0; // 2^-26
 /// 2^-26.5 it isn't, and `cos x` rounds to the double below 1.
 const COS_TINY: f64 = 1.0 / 134_217_728.0; // 2^-27
 
-/// The relative error bound the rounding test allows for: generous for a series accurate to
-/// about 2^-100.
-pub(crate) const BOUND: f64 = 2.524_354_896_707_238e-29; // 2^-95
-
 /// Terms of each series: the last is below 2^-110 of the result for |r| ≤ π/4 (plus slack).
 const TERMS: usize = 15;
-
-/// `1/n!` for n up to `2·TERMS + 1`, as double-doubles.
-pub(crate) fn inverse_factorials() -> &'static [Dd; 2 * TERMS + 2] {
-    static TABLE: OnceLock<[Dd; 2 * TERMS + 2]> = OnceLock::new();
-    TABLE.get_or_init(|| {
-        let mut table = [Dd::new(1.0); 2 * TERMS + 2];
-        for n in 1..table.len() {
-            table[n] = table[n - 1].div(Dd::new(n as f64));
-        }
-        table
-    })
-}
+const _: () = assert!(2 * TERMS + 1 < crate::dd::FACTORIALS);
 
 /// `x` as `k·π/2 + r`: `r` and `k mod 4`.
+///
+/// The first three products are exact, and the fourth is off by at most 2^-196. Where `r` is
+/// smallest, at the doubles nearest each `k·π/2` below 2^20, the error was measured for every
+/// `k`: at most 2^-105 of `r` (with the third product rounded and three parts, it reached
+/// 2^-90, past the rounding test's bound).
 fn reduce(x: f64) -> (Dd, u32) {
     if x.abs() <= std::f64::consts::FRAC_PI_4 {
         return (Dd::new(x), 0);
@@ -58,7 +47,8 @@ fn reduce(x: f64) -> (Dd, u32) {
     let r = Dd::new(x)
         .sub(two_prod(k, PI_2[0]))
         .sub(two_prod(k, PI_2[1]))
-        .sub(Dd::new(k * PI_2[2]));
+        .sub(two_prod(k, PI_2[2]))
+        .sub(Dd::new(k * PI_2[3]));
     // k is below 2^21 in magnitude, so this is exact.
     (r, (k as i64).rem_euclid(4) as u32)
 }
@@ -135,14 +125,6 @@ pub(crate) fn cos(x: f64) -> (f64, bool) {
     rounded(value)
 }
 
-/// The correctly rounded double, or, where the test leaves it open, the nearest to `value`.
-pub(crate) fn rounded(value: Dd) -> (f64, bool) {
-    match value.round(BOUND) {
-        Some(v) => (v, true),
-        None => (value.hi, false),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -152,9 +134,23 @@ mod tests {
         let below_one = f64::from_bits(1.0f64.to_bits() - 1);
         assert_eq!(cos(COS_TINY / 2.0).0, 1.0);
         assert_eq!(cos(COS_TINY).0, 1.0);
-        // x²/2 = 2^-53: past the midpoint below 1.
+        // x²/2 = 2^-53: cos x is just above 1 - 2^-53, the double below 1.
         assert_eq!(cos(SIN_TINY).0, below_one);
         assert_eq!(sin(SIN_TINY / 2.0).0, SIN_TINY / 2.0);
         assert_eq!(sin(-0.0).0.to_bits(), (-0.0f64).to_bits());
+    }
+
+    #[test]
+    fn javas_special_cases() {
+        for x in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(sin(x).0.is_nan() && sin(x).1, "sin {x}");
+            assert!(cos(x).0.is_nan() && cos(x).1, "cos {x}");
+        }
+        assert_eq!(sin(0.0).0.to_bits(), 0.0f64.to_bits());
+        assert_eq!(cos(-0.0), (1.0, true));
+        let least = f64::from_bits(1);
+        assert_eq!(sin(least), (least, true));
+        assert_eq!(sin(-least), (-least, true));
+        assert_eq!(cos(least), (1.0, true));
     }
 }

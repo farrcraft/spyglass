@@ -119,7 +119,7 @@ fn current_layout() {
             ("Dimension", s("minecraft:overworld")),
         ]),
     );
-    let save = Save::read(dir.path()).unwrap();
+    let mut save = Save::read(dir.path()).unwrap();
     assert_eq!(save.layout, Layout::Current);
     assert_eq!(save.name, "Seed Check");
     assert_eq!(save.data_version, Some(5023));
@@ -145,6 +145,11 @@ fn current_layout() {
             path: dir.path().join("datapacks/mine.zip")
         }
     );
+    // A hand-edited `level.dat` listing a pack twice: it counts once, where it first appears.
+    save.enabled_packs
+        .extend(["file/mine.zip", "vanilla"].map(String::from));
+    let names: Vec<String> = save.packs().into_iter().map(|(name, _)| name).collect();
+    assert_eq!(names, ["vanilla", "file/mine.zip"]);
 }
 
 #[test]
@@ -654,7 +659,12 @@ fn chunks_give_their_starts_and_containers() {
         ("minecraft:full", true),
         ("features", true),
         ("minecraft:light", true),
+        ("minecraft:initialize_light", true),
+        ("minecraft:spawn", true),
+        // 1.18 to 1.19's status after `spawn`.
+        ("minecraft:heightmaps", true),
         ("minecraft:carvers", false),
+        ("minecraft:liquid_carvers", false),
         ("minecraft:structure_starts", false),
     ] {
         let tag = c([("Status", s(status))]);
@@ -668,6 +678,7 @@ fn chunks_give_their_starts_and_containers() {
         contents.starts,
         SavedStarts::Starts(vec![SavedStart {
             structure: "minecraft:village_plains".to_string(),
+            id: "minecraft:village_plains".to_string(),
             chunk: [3, -2],
             references: 1,
             pieces: vec![SavedPiece {
@@ -700,9 +711,40 @@ fn chunks_give_their_starts_and_containers() {
     let bare = chunk::read(&raw(&c([("DataVersion", Tag::Int(4671))]))).unwrap();
     assert_eq!(bare.starts, SavedStarts::Missing);
     assert_eq!(bare.containers, Some(Vec::new()));
-    let empty = c([("structures", c([("starts", c([]))]))]);
+    let starts_at = |version: Option<i32>, starts: Tag| {
+        let mut root = c([("structures", c([("starts", starts)]))]);
+        if let (Some(v), Tag::Compound(root)) = (version, &mut root) {
+            root.insert("DataVersion".to_string(), Tag::Int(v));
+        }
+        chunk::read(&raw(&root)).unwrap().starts
+    };
     assert_eq!(
-        chunk::read(&raw(&empty)).unwrap().starts,
+        starts_at(Some(4671), c([])),
+        SavedStarts::Starts(Vec::new())
+    );
+    // 1.18.2 (2975) keys starts by structure. 1.18.1 (2865) by structure feature, which the
+    // game renames by biome (`StructuresBecomeConfiguredFix`, 2970): predicted, as is a chunk
+    // with no data version, which every fix applies to.
+    let village = || c([("minecraft:village", start("minecraft:village", 3, -2, 0))]);
+    assert_eq!(starts_at(Some(2865), village()), SavedStarts::Legacy);
+    assert_eq!(starts_at(Some(2969), c([])), SavedStarts::Legacy);
+    assert_eq!(starts_at(None, c([])), SavedStarts::Legacy);
+    assert_eq!(
+        starts_at(Some(2970), c([])),
+        SavedStarts::Starts(Vec::new())
+    );
+    assert!(matches!(starts_at(Some(2975), village()), SavedStarts::Starts(s) if s.len() == 1));
+    // A start with no position is at chunk 0, 0, as `getIntOr` reads it; one with no `id`
+    // names no structure, so the game skips it.
+    let unplaced = c([("id", s("minecraft:igloo"))]);
+    let SavedStarts::Starts(found) = starts_at(Some(4671), c([("minecraft:igloo", unplaced)]))
+    else {
+        panic!("current-format starts");
+    };
+    assert_eq!((found[0].chunk, found[0].references), ([0, 0], 0));
+    let nameless = c([("ChunkX", Tag::Int(1))]);
+    assert_eq!(
+        starts_at(Some(4671), c([("minecraft:igloo", nameless)])),
         SavedStarts::Starts(Vec::new())
     );
     // Before 1.18, everything is under Level.
@@ -762,4 +804,31 @@ fn entities_are_beside_regions() {
             region.with_file_name("entities")
         );
     }
+}
+
+#[test]
+fn proto_chunks_hold_their_own_entities() {
+    let minecart = c([
+        ("id", s("minecraft:chest_minecart")),
+        (
+            "Pos",
+            Tag::List(vec![Tag::Double(3.5), Tag::Double(20.0), Tag::Double(-4.5)]),
+        ),
+        ("LootTable", s("minecraft:chests/abandoned_mineshaft")),
+    ]);
+    // Generated partway: its entities are in the chunk, under `entities`.
+    let proto = c([
+        ("DataVersion", Tag::Int(4671)),
+        ("Status", s("minecraft:features")),
+        ("entities", Tag::List(vec![minecart.clone()])),
+    ]);
+    let contents = chunk::read(&raw(&proto)).unwrap();
+    assert!(contents.has_features() && !contents.is_full());
+    assert_eq!(contents.entities.len(), 1);
+    assert_eq!(contents.entities[0].position, [3, 20, -5]);
+    assert_eq!(contents.entities[0].id, "minecraft:chest_minecart");
+    // A full chunk's are in `entities/`.
+    let full = c([("DataVersion", Tag::Int(4671)), ("Status", s("full"))]);
+    let contents = chunk::read(&raw(&full)).unwrap();
+    assert!(contents.is_full() && contents.entities.is_empty());
 }

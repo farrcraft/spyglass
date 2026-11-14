@@ -149,7 +149,7 @@ pub fn fetch_version(entry: &VersionEntry) -> Result<VersionJson, ManifestError>
 
 /// A version's JSON from `body`, checked against `entry`'s SHA-1.
 fn parse_version(entry: &VersionEntry, body: &[u8]) -> Result<VersionJson, ManifestError> {
-    let actual = spyglass_data::bundle::sha1_hex(body).expect("reading a slice doesn't fail");
+    let actual = spyglass_data::bundle::sha1_hex_of(body);
     if !actual.eq_ignore_ascii_case(&entry.sha1) {
         return Err(ManifestError::Sha1 {
             url: entry.url.clone(),

@@ -981,7 +981,8 @@ pub struct StructureStart {
     /// ring position.
     pub certain: bool,
     /// Whether the answer came from the session's save, which holds the chunk with this start
-    /// (ADR 0071), rather than from the seed. Such a start is certain.
+    /// (ADR 0071), rather than from the seed. Such a start is certain, even in a chunk a tied
+    /// or platform-dependent ring position may be in: the save records where the game put it.
     pub from_save: bool,
 }
 

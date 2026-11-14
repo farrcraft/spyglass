@@ -39,9 +39,10 @@ import net.minecraft.world.level.levelgen.WorldOptions;
  *     every column of fixed block regions, and its block columns at a sample of positions.
  * </pre>
  *
- * Any command may be preceded by {@code --pack <dir>} (repeatable): a data pack folder loaded
- * over the vanilla one. The outputs then name the version {@code <version>+<folder name>}, or
- * the {@code spyglass.oracle.version} system property, which the xtask sets to its label.
+ * Any command may be preceded by {@code --pack <path>} (repeatable): a data pack folder or zip
+ * loaded over the vanilla one. The outputs then name the version {@code <version>+<file name>},
+ * once per pack, or by the {@code spyglass.oracle.version} system property, which the xtask
+ * sets to its label.
  */
 public final class Main {
     /** Bump when output for the same game version changes. Recorded in golden-file headers. */

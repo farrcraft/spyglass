@@ -1,7 +1,7 @@
 # Java's Math on each CI system (docs/specs/java-math.md, ADR 0070).
 #
-# - test: spyglass-math's committed cases on macOS, whenever the crate changes. Linux and
-#   Windows run them in CI's `cargo xtask check`.
+# - test: spyglass-math's committed cases on macOS, whenever the crate, the lock file (libm) or
+#   the toolchain changes. Linux and Windows run them in CI's `cargo xtask check`.
 # - measure (run by hand): Math's, StrictMath's and correctly rounded results on Linux, macOS
 #   and Windows, from the JDK alone, uploaded for `cargo xtask math-report`. These are the JDK's
 #   values, not the game's: the game isn't downloaded.
@@ -10,9 +10,17 @@ name: Math
 on:
   push:
     branches: [main]
-    paths: ["crates/spyglass-math/**", ".github/workflows/math.yml"]
+    paths:
+      - "crates/spyglass-math/**"
+      - ".github/workflows/math.yml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
   pull_request:
-    paths: ["crates/spyglass-math/**", ".github/workflows/math.yml"]
+    paths:
+      - "crates/spyglass-math/**"
+      - ".github/workflows/math.yml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
   workflow_dispatch:
 
 permissions:

@@ -472,6 +472,8 @@ final class Containers {
      * game's {@code FEATURES} step has its neighbours at {@code CARVERS} out to 1 and only at
      * {@code STRUCTURE_STARTS} out to 8, so such a read gets a chunk in whatever state the game's
      * generation order left it: no answer is the game's (a sculk patch spreading two chunks out).
+     * The read fails in {@code StaticCache2D.get}, matched by its message: if a game version
+     * rewords it, such chunks fail as before instead of being skipped.
      */
     private static boolean beyondRegion(Throwable e) {
         for (Throwable t = e; t != null; t = t.getCause()) {

@@ -158,9 +158,36 @@ pub enum NbtError {
     Memory(u64),
 }
 
+impl NbtError {
+    /// What went wrong, without the detail: for errors that carry only a static reason, such as
+    /// `LoadErrorKind::Invalid`.
+    pub fn reason(&self) -> &'static str {
+        match self {
+            NbtError::Gzip(_) => "not gzip-compressed NBT",
+            NbtError::TooLarge(_) | NbtError::Memory(_) => "NBT past the size limit",
+            _ => "malformed NBT",
+        }
+    }
+}
+
 /// Reads gzip-compressed NBT (`NbtIo.readCompressed`): the root tag's name and value.
+///
+/// Only for files spyglass made or extracted from the game itself. Anything a user or a pack
+/// supplies goes through [`read_compressed_limited`] or [`read_template`].
 pub fn read_compressed(bytes: &[u8]) -> Result<(String, Tag), NbtError> {
     read_compressed_limited(bytes, u64::MAX)
+}
+
+/// The most a structure template may hold after decompression, and the most memory its tree
+/// may take. The game reads templates without a limit (`NbtAccounter.unlimitedHeap`), but a
+/// pack's template is untrusted, and a few kilobytes of gzip can inflate to gigabytes. The
+/// largest vanilla template (`bastion/hoglin_stable/air_base`) is about 1 MiB uncompressed.
+pub const MAX_TEMPLATE: u64 = 64 << 20;
+
+/// `StructureTemplateManager.readStructure`'s read: gzip-compressed NBT, within
+/// [`MAX_TEMPLATE`], whether the template comes from the bundle or a data pack.
+pub fn read_template(bytes: &[u8]) -> Result<(String, Tag), NbtError> {
+    read_compressed_limited(bytes, MAX_TEMPLATE)
 }
 
 /// [`read_compressed`] for untrusted data: more than `max` bytes after decompression is an
@@ -943,6 +970,21 @@ mod tests {
             read_compressed_limited(&gz, 64 << 20),
             Err(NbtError::Memory(_))
         ));
+    }
+
+    #[test]
+    fn templates_are_read_within_their_limit() {
+        // A template of zeros one byte past the limit: about 64 KiB of gzip, as a pack could
+        // hold it.
+        let bomb = write_compressed_raw(&vec![0; MAX_TEMPLATE as usize + 1]);
+        assert!(bomb.len() < 1 << 20);
+        let error = read_template(&bomb).unwrap_err();
+        assert!(matches!(error, NbtError::TooLarge(MAX_TEMPLATE)));
+        assert_eq!(error.reason(), "NBT past the size limit");
+        let mut root = BTreeMap::new();
+        root.insert("size".to_string(), Tag::List(vec![Tag::Int(1); 3]));
+        let small = write_compressed("", &Tag::Compound(root.clone()));
+        assert_eq!(read_template(&small).unwrap().1, Tag::Compound(root));
     }
 
     #[test]

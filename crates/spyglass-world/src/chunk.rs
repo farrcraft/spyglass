@@ -8,6 +8,13 @@ use spyglass_data::nbt::{self, NbtError, Tag};
 /// (`region`'s limit), and a tree takes several times its bytes.
 const MAX_CHUNK_TREE: u64 = 256 << 20;
 
+/// The data version from which starts are keyed by structure (`minecraft:village_plains`), as
+/// the registry names them: `StructuresBecomeConfiguredFix`'s schema, 1.18.2's. Chunks saved
+/// before it (1.18.0 and 1.18.1 among them) key starts by structure feature (`minecraft:village`,
+/// `minecraft:ocean_ruin`), which that fix renames by the chunk's biomes. A fixed historical
+/// version, the same for every game version.
+const CONFIGURED_STRUCTURES: i32 = 2970;
+
 /// What a chunk says about the structures starting in it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SavedStarts {
@@ -15,8 +22,9 @@ pub enum SavedStarts {
     Missing,
     /// The chunk's starts, by structure, `INVALID` ones left out. Empty if none start here.
     Starts(Vec<SavedStart>),
-    /// Saved before 1.18 (`Level.Structures.Starts`), which the game data-fixes to read;
-    /// spyglass doesn't.
+    /// Starts the game data-fixes to read, and spyglass doesn't: saved before 1.18
+    /// (`Level.Structures.Starts`), or before 1.18.2 renamed them (data version 2970, or none
+    /// saved). The game's answer comes from the fixed starts, so spyglass predicts them.
     Legacy,
 }
 
@@ -25,7 +33,11 @@ pub enum SavedStarts {
 pub struct SavedStart {
     /// The structure, e.g. `minecraft:village_plains`: the key in `starts`.
     pub structure: String,
-    /// `ChunkX` and `ChunkZ`: its start chunk.
+    /// `id`: the structure the start loads as, normally the key. The game keeps the start only
+    /// if both name a structure its registry has (`SerializableChunkData.unpackStructureStart`,
+    /// `StructureStart.loadStaticStart`).
+    pub id: String,
+    /// `ChunkX` and `ChunkZ`: its start chunk, 0 where missing, as the game reads them.
     pub chunk: [i32; 2],
     /// `references`: how many exploration maps have pointed at it.
     pub references: i32,
@@ -83,17 +95,29 @@ pub struct ChunkContents {
     /// emptied or never filled is still found; `None` for a chunk saved before 1.18,
     /// whose block entities are in `Level.TileEntities`, in older formats.
     pub containers: Option<Vec<SavedContainer>>,
+    /// The containers among a proto chunk's own `entities`, such as chest minecarts: a chunk
+    /// keeps its entities until it's full, and then they move to `entities/`
+    /// (`SerializableChunkData`). Empty for a full chunk.
+    pub entities: Vec<SavedContainer>,
 }
 
 impl ChunkContents {
     /// Whether its features have been placed, structures' pieces and their containers among
-    /// them: a status of `features` or later (`ChunkStatus`), namespaced or not.
+    /// them: a status of `features` or later (`ChunkStatus`), namespaced or not. 1.18 to 1.19
+    /// end with `light`, `spawn`, `heightmaps`, `full`; 1.20 dropped `heightmaps` and added
+    /// `initialize_light` before `light`.
     pub fn has_features(&self) -> bool {
         let status = self.status.as_deref().unwrap_or_default();
         matches!(
             status.strip_prefix("minecraft:").unwrap_or(status),
-            "features" | "initialize_light" | "light" | "spawn" | "full"
+            "features" | "initialize_light" | "light" | "spawn" | "heightmaps" | "full"
         )
+    }
+
+    /// Whether generation finished (status `full`), so its entities are in `entities/`.
+    pub fn is_full(&self) -> bool {
+        let status = self.status.as_deref().unwrap_or_default();
+        status.strip_prefix("minecraft:").unwrap_or(status) == "full"
     }
 }
 
@@ -101,8 +125,11 @@ impl ChunkContents {
 /// skip them too, or fail to load the chunk.
 pub fn read(raw: &[u8]) -> Result<ChunkContents, NbtError> {
     let (_, root) = nbt::read_limited(raw, MAX_CHUNK_TREE)?;
+    let data_version = int(&root, "DataVersion");
     let legacy = root.get("Level").is_some();
-    let starts = if legacy {
+    // The game reads a missing data version as -1, so every fix applies.
+    let feature_keys = data_version.is_none_or(|v| v < CONFIGURED_STRUCTURES);
+    let starts = if legacy || feature_keys {
         SavedStarts::Legacy
     } else {
         match root.get("structures").and_then(|s| s.get("starts")) {
@@ -125,10 +152,11 @@ pub fn read(raw: &[u8]) -> Result<ChunkContents, NbtError> {
             .collect()
     });
     Ok(ChunkContents {
-        data_version: int(&root, "DataVersion"),
+        data_version,
         status: root.get("Status").and_then(Tag::as_str).map(str::to_string),
         starts,
         containers,
+        entities: entity_containers(list(&root, "entities")),
     })
 }
 
@@ -136,17 +164,23 @@ pub fn read(raw: &[u8]) -> Result<ChunkContents, NbtError> {
 /// table or items, such as chest minecarts.
 pub fn read_entities(raw: &[u8]) -> Result<Vec<SavedContainer>, NbtError> {
     let (_, root) = nbt::read_limited(raw, MAX_CHUNK_TREE)?;
-    Ok(list(&root, "Entities")
+    Ok(entity_containers(list(&root, "Entities")))
+}
+
+/// The entities among `entities` with a loot table or items, each at its `Pos` rounded down.
+fn entity_containers(entities: &[Tag]) -> Vec<SavedContainer> {
+    entities
         .iter()
         .filter_map(|e| {
             let pos = list(e, "Pos");
             let coord = |i: usize| pos.get(i)?.as_double().map(|v| v.floor() as i32);
             container(e, [coord(0)?, coord(1)?, coord(2)?], false)
         })
-        .collect())
+        .collect()
 }
 
-/// A start, unless it's `INVALID` or malformed.
+/// A start as `StructureStart.loadStaticStart` reads it, unless it's `INVALID` (no structure
+/// here) or has no `id` (read as `""`, which names no structure, so the game skips it too).
 fn saved_start(structure: &str, start: &Tag) -> Option<SavedStart> {
     let id = start.get("id")?.as_str()?;
     if id == "INVALID" {
@@ -154,7 +188,11 @@ fn saved_start(structure: &str, start: &Tag) -> Option<SavedStart> {
     }
     Some(SavedStart {
         structure: structure.to_string(),
-        chunk: [int(start, "ChunkX")?, int(start, "ChunkZ")?],
+        id: id.to_string(),
+        chunk: [
+            int(start, "ChunkX").unwrap_or(0),
+            int(start, "ChunkZ").unwrap_or(0),
+        ],
         references: int(start, "references").unwrap_or(0),
         pieces: list(start, "Children")
             .iter()

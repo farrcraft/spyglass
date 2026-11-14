@@ -156,6 +156,59 @@ fn stored_starts_decide_the_chunks_a_save_holds() {
     assert_eq!(stored[1..], predicted[2..]);
 }
 
+/// A stronghold the save holds in a chunk a tied or platform-dependent ring position may be in
+/// is certain: the save says where the game put it.
+#[test]
+#[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
+fn a_saved_start_is_certain_in_a_ring_alternative() {
+    let bundle = bundle();
+    let source = BiomeSource::overworld(&bundle).unwrap();
+    let sets = StructureSets::overworld(&bundle, &source).unwrap();
+    let strongholds = sets
+        .sets()
+        .iter()
+        .position(|s| s.id == "minecraft:strongholds")
+        .unwrap();
+    let stronghold = sets.sets()[strongholds].entries[0].structure;
+    // The first seed with a ring position that has an alternative chunk.
+    let (seed, alternative) = (0..64)
+        .find_map(|seed| {
+            let biomes = source.with_seed(seed).unwrap();
+            let placements = sets.with_seed(seed, &biomes);
+            let found = placements
+                .ring_positions(strongholds)
+                .unwrap()
+                .iter()
+                .find_map(|p| p.alternatives.first().copied());
+            Some((seed, found?))
+        })
+        .expect("a seed below 64 with a ring alternative");
+    let biomes = source.with_seed(seed).unwrap();
+    let placements = sets.with_seed(seed, &biomes);
+    let area = |[x, z]: [i32; 2]| ([x - 1, z - 1], [x + 1, z + 1]);
+    let (min, max) = area(alternative);
+    let predicted = Starts::new(&placements, &biomes).possible_starts_in(strongholds, min, max);
+    assert!(
+        predicted
+            .iter()
+            .all(|&(c, _, exact)| c != alternative || !exact)
+    );
+
+    let saved = Saved {
+        empty: [i32::MAX, i32::MAX],
+        holding: alternative,
+        structure: stronghold,
+    };
+    let stored = Starts::new(&placements, &biomes).with_stored(&saved);
+    let decided = stored.possible_starts_in(strongholds, min, max);
+    let found = decided.iter().find(|(c, _, _)| *c == alternative).unwrap();
+    assert!(found.2 && found.1.definite() == Some(stronghold));
+    let from = [alternative[0] << 4, 64, alternative[1] << 4];
+    let search = stored.locate(&[stronghold], from, 100);
+    let hit = search.hits.iter().find(|h| h.chunk == alternative).unwrap();
+    assert!(hit.certain);
+}
+
 #[test]
 #[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
 fn selects_starts_near_the_origin() {
@@ -247,6 +300,35 @@ fn ring_chunks_in_a_box_settle_only_what_they_need() {
                 expected,
                 "seed {seed} box {min:?} {max:?}"
             );
+        }
+    }
+}
+
+/// Every template the game ships reads within `nbt::MAX_TEMPLATE`, the cap that keeps a pack's
+/// templates from inflating without bound.
+#[test]
+#[ignore = "needs a bundle"]
+fn every_vanilla_template_is_within_the_limit() {
+    fn templates(dir: &std::path::Path, found: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                templates(&path, found);
+            } else if path.extension().is_some_and(|e| e == "nbt") {
+                found.push(path);
+            }
+        }
+    }
+    let mut found = Vec::new();
+    templates(
+        &spyglass_oracle::bundle_dir().join("data/minecraft/structure"),
+        &mut found,
+    );
+    assert!(found.len() > 1000, "only {} templates", found.len());
+    for path in found {
+        let bytes = std::fs::read(&path).unwrap();
+        if let Err(e) = spyglass_data::nbt::read_template(&bytes) {
+            panic!("{}: {e}", path.display());
         }
     }
 }

@@ -66,7 +66,8 @@ eframe = { version = "0.37.0", features = ["persistence"] }
 # The viewer's map icons are SVGs, rasterised by egui_extras' resvg loader (ADR 0045).
 egui_extras = { version = "0.37.0", default-features = false, features = ["svg"] }
 flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs"] }
-# musl's math functions in Rust: a candidate xtask math-report measures against Java's Math.
+# musl's math functions in Rust: spyglass-math's sin and cos for |x| >= 2^20, and a candidate
+# xtask math-report measures against Java's Math.
 libm = "0.2.16"
 md-5 = "0.11.0"
 # The CLI's and viewer's global allocator, faster for threaded queries (ADR 0064).

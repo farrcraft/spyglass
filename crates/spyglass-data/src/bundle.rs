@@ -125,6 +125,57 @@ fn io_err(path: &Path) -> impl FnOnce(io::Error) -> BundleError + '_ {
     }
 }
 
+/// Whether `json` reads as `TagFile.CODEC` reads a tag file: `values` a list of entries, and
+/// `replace`, if given, a boolean. The game skips a pack's file that doesn't ("Couldn't read
+/// tag list"), keeping the tag's files below it.
+fn reads_as_tag_file(json: &serde_json::Value) -> bool {
+    let replace_ok = json.get("replace").is_none_or(|r| java_bool(r).is_some());
+    let values_ok = json
+        .get("values")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|values| values.iter().all(tag_entry));
+    replace_ok && values_ok
+}
+
+/// `TagEntry.CODEC`: an id or `#tag` (`ExtraCodecs.TAG_OR_ELEMENT_ID`), or
+/// `{"id": ..., "required": bool}`.
+fn tag_entry(entry: &serde_json::Value) -> bool {
+    let tag_or_id = |text: &str| identifier(text.strip_prefix('#').unwrap_or(text));
+    match entry {
+        serde_json::Value::String(text) => tag_or_id(text),
+        serde_json::Value::Object(full) => {
+            full.get("id")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(tag_or_id)
+                && full.get("required").is_none_or(|r| java_bool(r).is_some())
+        }
+        _ => false,
+    }
+}
+
+/// Whether `text` is an `Identifier` (`Identifier.read`): split at the first `:`, the namespace
+/// (`minecraft` if none, or if the `:` comes first) of `[a-z0-9_.-]` and the path of
+/// `[a-z0-9/._-]`.
+fn identifier(text: &str) -> bool {
+    let (namespace, path) = match text.split_once(':') {
+        Some(("", path)) => ("minecraft", path),
+        Some(split) => split,
+        None => ("minecraft", text),
+    };
+    let plain = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit() || "_-.".contains(c);
+    namespace.chars().all(plain) && path.chars().all(|c| plain(c) || c == '/')
+}
+
+/// A JSON value as DFU's `JsonOps.getBooleanValue` reads one: a boolean, or a number, true if
+/// its low byte isn't 0.
+fn java_bool(value: &serde_json::Value) -> Option<bool> {
+    match value {
+        serde_json::Value::Bool(b) => Some(*b),
+        number @ serde_json::Value::Number(_) => crate::codec::int_of(number).map(|n| n as i8 != 0),
+        _ => None,
+    }
+}
+
 /// Whether a game version is a release or a snapshot (ADR 0028). Pre-releases and release
 /// candidates are snapshots, as the version manifest says.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -190,7 +241,8 @@ pub struct Manifest {
     pub files: BTreeMap<String, String>,
 }
 
-/// Lower-case hex SHA-1 of everything `reader` yields: a file, or bytes (`&[u8]` reads too).
+/// Lower-case hex SHA-1 of everything `reader` yields, such as a file. For bytes in memory,
+/// [`sha1_hex_of`] can't fail.
 pub fn sha1_hex(mut reader: impl Read) -> io::Result<String> {
     let mut hasher = Sha1::new();
     let mut buf = vec![0; 1 << 16];
@@ -201,11 +253,22 @@ pub fn sha1_hex(mut reader: impl Read) -> io::Result<String> {
         }
         hasher.update(&buf[..read]);
     }
-    Ok(hasher
+    Ok(hex(hasher))
+}
+
+/// Lower-case hex SHA-1 of `bytes`.
+pub fn sha1_hex_of(bytes: &[u8]) -> String {
+    let mut hasher = Sha1::new();
+    hasher.update(bytes);
+    hex(hasher)
+}
+
+fn hex(hasher: Sha1) -> String {
+    hasher
         .finalize()
         .iter()
         .map(|b| format!("{b:02x}"))
-        .collect())
+        .collect()
 }
 
 /// An opened bundle, for reading its resources. Opening reads `bundle.json` and checks its format,
@@ -485,7 +548,7 @@ impl Bundle {
                 .files
                 .get(path)
                 .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(bytes).ok())
-                .filter(|json| json.get("values").is_some_and(serde_json::Value::is_array));
+                .filter(reads_as_tag_file);
             stack.extend(readable);
         }
         if stack.len() <= 1 {
@@ -495,7 +558,7 @@ impl Bundle {
         }
         let mut values = Vec::new();
         for file in stack {
-            if file.get("replace").and_then(serde_json::Value::as_bool) == Some(true) {
+            if file.get("replace").and_then(java_bool) == Some(true) {
                 values.clear();
             }
             match file.get("values").and_then(serde_json::Value::as_array) {
@@ -1000,10 +1063,31 @@ mod tests {
             is_hot(&base.with_packs([&replaces, &adds]).unwrap()),
             serde_json::json!({"values": ["mod:only", "minecraft:plains", "#mod:hot"]})
         );
-        // The game skips a tag file it can't read, keeping what's below.
+        // The game skips a tag file it can't read, keeping what's below: `values` not a list,
+        // an entry that isn't an id, a `#tag` or `{id, required}`, or a `replace` that isn't a
+        // boolean (a number counts, by its low byte).
+        for unreadable in [
+            unreadable,
+            tag(r#"{"values": [3]}"#),
+            tag(r#"{"values": ["Minecraft:Plains"]}"#),
+            tag(r#"{"values": [{"required": false}]}"#),
+            tag(r#"{"values": [{"id": "minecraft:plains", "required": "no"}]}"#),
+            tag(r#"{"replace": "yes", "values": []}"#),
+        ] {
+            assert_eq!(
+                is_hot(&base.with_packs([&unreadable]).unwrap()),
+                serde_json::json!({"values": ["minecraft:desert"]}),
+            );
+        }
+        let numbered = tag(r#"{"replace": 1, "values": [{"id": "plains", "required": 0}]}"#);
         assert_eq!(
-            is_hot(&base.with_packs([&unreadable]).unwrap()),
-            serde_json::json!({"values": ["minecraft:desert"]})
+            is_hot(&base.with_packs([&numbered]).unwrap()),
+            serde_json::json!({"values": [{"id": "plains", "required": 0}]})
+        );
+        let byte_zero = tag(r#"{"replace": 256, "values": [":plains"]}"#);
+        assert_eq!(
+            is_hot(&base.with_packs([&byte_zero]).unwrap()),
+            serde_json::json!({"values": ["minecraft:desert", ":plains"]})
         );
         // A tag only a pack has.
         let new = pack(

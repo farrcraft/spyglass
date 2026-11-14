@@ -2,7 +2,6 @@
 //! as a carving mask from 26.3, and straight into the chunk in 26.2 (`docs/specs/carvers.md`).
 
 use std::collections::{HashMap, HashSet};
-use std::sync::OnceLock;
 
 use serde_json::Value;
 use spyglass_biome::{BiomeId, BiomeNames};
@@ -10,6 +9,7 @@ use spyglass_data::anchor::{AnchorHeights, VerticalAnchor};
 use spyglass_data::codec::{At, LoadError, LoadErrorKind, field, float, full_id, int, object};
 use spyglass_data::providers::{FloatProvider, HeightProvider, IntProvider};
 use spyglass_density::Resources;
+use spyglass_noise::mth::{SIN_ENTRIES_PER_RADIAN, sin_table};
 use spyglass_rng::{LegacyRandomSource, LegacyWorldgenRandom, RandomSource};
 
 /// The carvers registry, and 26.2's.
@@ -682,27 +682,6 @@ pub enum Trig {
     Rounded,
 }
 
-/// The game's sine table: `(float) Math.sin(i / 10430.378350470453)`, with the quarter turns
-/// exact if `exact`.
-fn sin_table(exact: bool) -> &'static [f32] {
-    static TABLES: [OnceLock<Vec<f32>>; 2] = [OnceLock::new(), OnceLock::new()];
-    TABLES[usize::from(exact)].get_or_init(|| {
-        let mut table: Vec<f32> = (0..65_536)
-            .map(|i| spyglass_math::sin(f64::from(i) / ENTRIES_PER_RADIAN) as f32)
-            .collect();
-        if exact {
-            for (i, v) in [(0, 0.0), (16_384, 1.0), (32_768, 0.0), (49_152, -1.0)] {
-                table[i] = v;
-            }
-        }
-        table
-    })
-}
-
-/// The sine table's entries per radian: 65,536 / 2π. A quarter turn, 16,384 entries, makes a
-/// sine a cosine.
-const ENTRIES_PER_RADIAN: f64 = 10_430.378_350_470_453;
-
 impl Trig {
     /// The table entry at `(long) index & 65535`.
     fn entry(self, index: f64) -> f32 {
@@ -712,19 +691,19 @@ impl Trig {
     /// `Mth.sin(double)`.
     pub fn sin(self, x: f64) -> f32 {
         match self {
-            Trig::Truncated => self.entry(x * ENTRIES_PER_RADIAN),
+            Trig::Truncated => self.entry(x * SIN_ENTRIES_PER_RADIAN),
             // dcmpl/iflt: NaN takes the negative branch.
-            Trig::Rounded if x >= 0.0 => self.entry(x * ENTRIES_PER_RADIAN + 0.5),
-            Trig::Rounded => -self.entry(-x * ENTRIES_PER_RADIAN + 0.5),
+            Trig::Rounded if x >= 0.0 => self.entry(x * SIN_ENTRIES_PER_RADIAN + 0.5),
+            Trig::Rounded => -self.entry(-x * SIN_ENTRIES_PER_RADIAN + 0.5),
         }
     }
 
     /// `Mth.cos(double)`.
     pub fn cos(self, x: f64) -> f32 {
         match self {
-            Trig::Truncated => self.entry(x * ENTRIES_PER_RADIAN + 16_384.0),
-            Trig::Rounded if x >= 0.0 => self.entry(x * ENTRIES_PER_RADIAN + 16_384.0 + 0.5),
-            Trig::Rounded => self.entry(-x * ENTRIES_PER_RADIAN + 16_384.0 + 0.5),
+            Trig::Truncated => self.entry(x * SIN_ENTRIES_PER_RADIAN + 16_384.0),
+            Trig::Rounded if x >= 0.0 => self.entry(x * SIN_ENTRIES_PER_RADIAN + 16_384.0 + 0.5),
+            Trig::Rounded => self.entry(-x * SIN_ENTRIES_PER_RADIAN + 16_384.0 + 0.5),
         }
     }
 }

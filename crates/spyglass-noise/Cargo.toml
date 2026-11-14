@@ -11,6 +11,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+spyglass-math.workspace = true
 spyglass-rng.workspace = true
 thiserror.workspace = true
 

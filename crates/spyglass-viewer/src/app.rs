@@ -32,6 +32,7 @@ use crate::tiles::{
 use crate::userdata::{Marker, Store, WorldKey};
 use crate::view::{TILE, Tile, View};
 
+mod container;
 mod extract_panel;
 mod map;
 mod markers_panel;

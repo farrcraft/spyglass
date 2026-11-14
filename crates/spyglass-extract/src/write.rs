@@ -7,7 +7,7 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
-use spyglass_data::bundle::{FORMAT, Kind, MANIFEST, Manifest, sha1_hex};
+use spyglass_data::bundle::{FORMAT, Kind, MANIFEST, Manifest, sha1_hex_of};
 use spyglass_data::pack::PackFormat;
 use zip::ZipArchive;
 use zip::result::ZipError;
@@ -338,7 +338,7 @@ fn put(
         fs::create_dir_all(parent).map_err(io_err(parent))?;
     }
     fs::write(&out, bytes).map_err(io_err(&out))?;
-    files.insert(path.to_string(), sha1_hex(bytes).map_err(io_err(&out))?);
+    files.insert(path.to_string(), sha1_hex_of(bytes));
     Ok(())
 }
 

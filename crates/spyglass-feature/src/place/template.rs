@@ -118,8 +118,8 @@ impl Template {
             }
             Err(e) => return Err(at.error(e.into())),
         };
-        let (_, root) = nbt::read_compressed(&bytes)
-            .map_err(|_| at.error(LoadErrorKind::Invalid("not gzip-compressed NBT")))?;
+        let (_, root) =
+            nbt::read_template(&bytes).map_err(|e| at.error(LoadErrorKind::Invalid(e.reason())))?;
         let size = int3(root.get("size"), &at.child("size"))?;
         let list = root
             .get("blocks")

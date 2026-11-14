@@ -3685,7 +3685,6 @@ dependencies = [
  "spyglass-biome",
  "spyglass-data",
  "spyglass-density",
- "spyglass-math",
  "spyglass-noise",
  "spyglass-oracle",
  "spyglass-rng",
@@ -3797,6 +3796,7 @@ version = "0.3.1"
 dependencies = [
  "serde_json",
  "spyglass-data",
+ "spyglass-math",
  "spyglass-oracle",
  "spyglass-rng",
  "thiserror 2.0.21",

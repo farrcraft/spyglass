@@ -3,6 +3,37 @@
 //! two-sum, Dekker's split product), never a fused multiply-add, so every platform computes the
 //! same bits.
 
+use std::sync::OnceLock;
+
+/// The relative error bound the rounding test allows for, for `sin`, `cos` and `log`: generous
+/// for a result accurate to about 2^-100.
+pub(crate) const BOUND: f64 = 2.524_354_896_707_238e-29; // 2^-95
+
+/// How many inverse factorials [`inverse_factorials`] holds: enough for `sin`, `cos` and `exp`.
+pub(crate) const FACTORIALS: usize = 32;
+
+/// `1/n!` for `n` below [`FACTORIALS`], as double-doubles: the Taylor coefficients of `exp`,
+/// `sin` and `cos`.
+pub(crate) fn inverse_factorials() -> &'static [Dd; FACTORIALS] {
+    static TABLE: OnceLock<[Dd; FACTORIALS]> = OnceLock::new();
+    TABLE.get_or_init(|| {
+        let mut table = [Dd::new(1.0); FACTORIALS];
+        for n in 1..table.len() {
+            table[n] = table[n - 1].div(Dd::new(n as f64));
+        }
+        table
+    })
+}
+
+/// The correctly rounded double for a result accurate to [`BOUND`], or, where the test leaves
+/// it open, the nearest to `value`.
+pub(crate) fn rounded(value: Dd) -> (f64, bool) {
+    match value.round(BOUND) {
+        Some(v) => (v, true),
+        None => (value.hi, false),
+    }
+}
+
 /// `hi + lo`, normalized.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct Dd {
@@ -30,7 +61,7 @@ fn fast_two_sum(a: f64, b: f64) -> Dd {
 }
 
 /// `a` as two halves of 26 bits each, whose products are exact (Dekker's split). Overflows for
-/// `|a|` above about 2^996, which nothing here reaches.
+/// `|a|` above about 2^996: `pow` answers exponents from 2^64 up before splitting them.
 fn split(a: f64) -> (f64, f64) {
     let t = 134_217_729.0 * a; // 2^27 + 1
     let hi = t - (t - a);

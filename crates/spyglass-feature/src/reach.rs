@@ -523,7 +523,7 @@ fn one_displacement(modifier: &Value) -> ([i32; 3], [i32; 3], bool) {
 /// A structure template's size, from its NBT.
 fn template_size(resources: &dyn Resources, id: &str) -> Option<[i32; 3]> {
     let bytes = resources.structure_template(id).ok()?;
-    let (_, root) = spyglass_data::nbt::read_compressed(&bytes).ok()?;
+    let (_, root) = spyglass_data::nbt::read_template(&bytes).ok()?;
     let list = root.get("size")?.as_list()?;
     let sides: Vec<i32> = list.iter().filter_map(|t| t.as_int()).collect();
     (sides.len() == 3).then(|| [sides[0], sides[1], sides[2]])

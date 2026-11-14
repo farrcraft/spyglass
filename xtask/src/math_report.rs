@@ -30,7 +30,8 @@ struct Candidate {
     binary: fn(f64, f64) -> f64,
 }
 
-/// What spyglass computes today: the platform's libm, through Rust's `f64` methods.
+/// The platform's libm, through Rust's `f64` methods: what spyglass computed before
+/// `spyglass-math` (ADR 0070).
 #[expect(
     clippy::disallowed_methods,
     reason = "the platform's functions are the candidate being measured"
@@ -191,72 +192,86 @@ fn report(dir: &Path, platform: &str) -> Result<String> {
         let function = set["function"].as_str().context("a set has no function")?;
         let name = set["set"].as_str().context("a set has no name")?;
         let arity = set["args"].as_u64().context("a set has no args")? as usize;
-        let file = dir.join(format!("{function}-{}.bin", name.replace('/', "_")));
-        let bytes =
-            fs::read(&file).with_context(|| format!("failed to read {}", file.display()))?;
-        let width = arity + 3;
-        let values: Vec<f64> = bytes
-            .as_chunks::<8>()
-            .0
-            .iter()
-            .map(|b| f64::from_le_bytes(*b))
-            .collect();
-        // The carvers' table and density functions' `pow` narrow the result to a float, so
-        // there only the floats' differences matter: a second row counts those.
-        let narrows = matches!(name, "table" | "float");
-        let mut tallies = vec![(String::new(), Tally::default())];
-        if narrows {
-            tallies.push((" (as float)".to_string(), Tally::default()));
-        }
-        for record in values.chunks_exact(width) {
-            for (i, (_, tally)) in tallies.iter_mut().enumerate() {
-                let cut = |v: f64| if i == 1 { f64::from(v as f32) } else { v };
-                let math = cut(record[arity]);
-                tally.cases += 1;
-                tally.count("StrictMath", cut(record[arity + 1]), math);
-                for candidate in CANDIDATES {
-                    let ours = if arity == 1 {
-                        (candidate.unary)(function, record[0])
-                    } else {
-                        (candidate.binary)(record[0], record[1])
-                    };
-                    tally.count(candidate.name, cut(ours), math);
-                }
-                tally.count("correctly rounded", math, cut(record[arity + 2]));
-                let (value, settled) = ours_settled(function, &record[..arity]);
-                tally.count("spyglass vs CR", cut(value), cut(record[arity + 2]));
-                if !settled {
-                    tally
-                        .differ
-                        .entry("spyglass unsettled".into())
-                        .or_default()
-                        .0 += 1;
-                }
-            }
-        }
-        for (suffix, tally) in &tallies {
-            let cells: String = columns
-                .iter()
-                .map(|c| {
-                    let (n, ulps) = tally.differ.get(c).copied().unwrap_or_default();
-                    let cell = if n == 0 {
-                        "0".to_string()
-                    } else {
-                        format!("{:.3}% ({ulps})", 100.0 * n as f64 / tally.cases as f64)
-                    };
-                    format!("{cell:>20}")
-                })
-                .collect();
+        let values = read_set(dir, function, name)?;
+        for (suffix, tally) in &tally_set(function, name, arity, &values) {
             let _ = writeln!(
                 out,
-                "{:<28}{:>9}{cells}",
+                "{:<28}{:>9}{}",
                 format!("{function} {name}{suffix}"),
-                tally.cases
+                tally.cases,
+                cells(&columns, tally)
             );
         }
     }
     out.push('\n');
     Ok(out)
+}
+
+/// A set's records, as the doubles `cargo xtask oracle math` wrote them.
+fn read_set(dir: &Path, function: &str, name: &str) -> Result<Vec<f64>> {
+    let file = dir.join(format!("{function}-{}.bin", name.replace('/', "_")));
+    let bytes = fs::read(&file).with_context(|| format!("failed to read {}", file.display()))?;
+    Ok(bytes
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|b| f64::from_le_bytes(*b))
+        .collect())
+}
+
+/// Every comparison over a set's records, each `arity` arguments then `Math`'s, `StrictMath`'s
+/// and the correctly rounded answer, by row suffix. The carvers' table and density functions'
+/// `pow` narrow the result to a float, so there only the floats' differences matter: a second
+/// row counts those.
+fn tally_set(function: &str, name: &str, arity: usize, values: &[f64]) -> Vec<(String, Tally)> {
+    let narrows = matches!(name, "table" | "float");
+    let mut tallies = vec![(String::new(), Tally::default())];
+    if narrows {
+        tallies.push((" (as float)".to_string(), Tally::default()));
+    }
+    for record in values.chunks_exact(arity + 3) {
+        for (i, (_, tally)) in tallies.iter_mut().enumerate() {
+            let cut = |v: f64| if i == 1 { f64::from(v as f32) } else { v };
+            let math = cut(record[arity]);
+            tally.cases += 1;
+            tally.count("StrictMath", cut(record[arity + 1]), math);
+            for candidate in CANDIDATES {
+                let ours = if arity == 1 {
+                    (candidate.unary)(function, record[0])
+                } else {
+                    (candidate.binary)(record[0], record[1])
+                };
+                tally.count(candidate.name, cut(ours), math);
+            }
+            tally.count("correctly rounded", math, cut(record[arity + 2]));
+            let (value, settled) = ours_settled(function, &record[..arity]);
+            tally.count("spyglass vs CR", cut(value), cut(record[arity + 2]));
+            if !settled {
+                tally
+                    .differ
+                    .entry("spyglass unsettled".into())
+                    .or_default()
+                    .0 += 1;
+            }
+        }
+    }
+    tallies
+}
+
+/// A row's cells: for each column, the share of cases that differ and the largest gap in ulps.
+fn cells(columns: &[String], tally: &Tally) -> String {
+    columns
+        .iter()
+        .map(|c| {
+            let (n, ulps) = tally.differ.get(c).copied().unwrap_or_default();
+            let cell = if n == 0 {
+                "0".to_string()
+            } else {
+                format!("{:.3}% ({ulps})", 100.0 * n as f64 / tally.cases as f64)
+            };
+            format!("{cell:>20}")
+        })
+        .collect()
 }
 
 #[cfg(test)]

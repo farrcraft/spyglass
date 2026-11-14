@@ -460,6 +460,9 @@ impl ChunkGenerator<'_> {
                         .biome_at(start[0].wrapping_mul(4), 0, start[1].wrapping_mul(4));
                 let first = lookup.biome();
                 // A tied biome's candidates would have drawn from the random as it is now.
+                // Only its Gaussian state carries over, and no ported carver draws one
+                // (`nextGaussian`), so today the copy changes nothing; it keeps the order
+                // faithful for one that does.
                 let before = random.clone();
                 for (i, (carver, legacy)) in carving.carvers.of(first).enumerate() {
                     seed(&mut random, i, start);

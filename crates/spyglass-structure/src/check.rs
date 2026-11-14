@@ -340,10 +340,17 @@ impl<'a> Starts<'a> {
             .collect()
     }
 
+    /// Whether a save decides `chunk`: it holds the chunk with starts the game reads. Its
+    /// answer is then certain even where a ring position is tied or platform-dependent, since
+    /// the save records where the game that generated it put the start.
+    pub(crate) fn stored_decides(&self, chunk: [i32; 2]) -> bool {
+        self.stored.is_some_and(|s| s.starts_at(chunk).is_some())
+    }
+
     /// [`starts_in`](Self::starts_in), with whether each chunk is certainly the set's, and for
     /// a concentric-ring set also the chunks its tied or platform-dependent positions may be in
-    /// instead, as locate considers them: only ever uncertain. A start's own [`Selection`] says
-    /// what starts there if the chunk is the set's.
+    /// instead, as locate considers them: uncertain unless a save decides them. A start's own
+    /// [`Selection`] says what starts there if the chunk is the set's.
     pub fn possible_starts_in(
         &self,
         set: usize,
@@ -384,7 +391,10 @@ impl<'a> Starts<'a> {
         }
         merged
             .into_iter()
-            .map(|(chunk, exact)| (chunk, self.select(set, chunk), exact))
+            .map(|(chunk, exact)| {
+                let exact = exact || self.stored_decides(chunk);
+                (chunk, self.select(set, chunk), exact)
+            })
             .filter(|(_, s, _)| !s.tries.is_empty())
             .collect()
     }

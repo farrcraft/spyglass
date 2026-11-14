@@ -1049,24 +1049,13 @@ fn in_out_sine(t: f32) -> f32 {
 }
 
 /// `Mth.cos(double)`: the sine table at `|x| · 65536 / 2π + 16384`, rounded half up, wrapped.
+/// The table's quarter turns are exact, as in every version with this upscaler. Only the cosine
+/// mode, unused in vanilla, reads it.
 fn mth_cos(x: f64) -> f32 {
-    const RADIANS_TO_INDEX: f64 = 10_430.378_350_470_453;
+    use spyglass_noise::mth::{SIN_ENTRIES_PER_RADIAN, sin_table};
     // dcmpl: NaN takes the negated branch, and (long) NaN is 0 either way.
     let x = if x >= 0.0 { x } else { -x };
-    sin_table((((x * RADIANS_TO_INDEX + 16_384.0) + 0.5) as i64 & 65_535) as usize)
-}
-
-/// `Mth.SIN[i]`: `(float) Math.sin(i / 10430.378350470453)`, with the quarter turns set exactly.
-///
-/// Narrowed to `f32`, every entry is the same under every `Math.sin` measured
-/// (docs/specs/java-math.md). Only the cosine mode, unused in vanilla, reads the table.
-fn sin_table(i: usize) -> f32 {
-    match i {
-        0 | 32_768 => 0.0,
-        16_384 => 1.0,
-        49_152 => -1.0,
-        _ => spyglass_math::sin(i as f64 / 10_430.378_350_470_453) as f32,
-    }
+    sin_table(true)[(((x * SIN_ENTRIES_PER_RADIAN + 16_384.0) + 0.5) as i64 & 65_535) as usize]
 }
 
 /// `PolymorphicUpscaler`: an upscaler for three modes and cell sizes (the game builds a

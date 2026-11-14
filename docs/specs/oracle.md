@@ -339,7 +339,7 @@ The blocks of whole chunks as generation leaves them before features, with no st
   - 26.4: noise biomes, upscaled biomes, then `buildTerrain`.
 - **The glue:** each adapter's `Chunks.java` repeats what the server's status tasks do around each step: the biome steps of the chunk and its neighbours, the set of possible biomes, and the biome manager's seed.
 - **The stand-ins:** the region and the structure manager are stand-ins that hand out the neighbouring chunks and no structures. There's no blending.
-- **Without carvers:** the second run loads a data pack, generated from the bundle into `target/oracle/<version>/no-carvers/`, that empties every biome's `carvers` list. With `--pack`, it's generated from the bundle with the packs applied and goes over them, so it has every biome as the packs give it, their own and their overrides of vanilla's, and changes only the carvers.
+- **Without carvers:** the second run loads a data pack, generated from the bundle into `target/oracle/<version>/no-carvers/` (for a variant, `target/oracle/<version>/<label>/no-carvers/`, so two variants' runs don't replace each other's), that empties every biome's `carvers` list. With `--pack`, it's generated from the bundle with the packs applied and goes over them, so it has every biome as the packs give it, their own and their overrides of vanilla's, and changes only the carvers.
 
 **Checks:**
 

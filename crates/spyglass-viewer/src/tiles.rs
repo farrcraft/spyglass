@@ -598,7 +598,6 @@ impl<K: Copy + Eq + Hash, V> Cache<K, V> {
     }
 }
 
-/// Slime chunks as the library's features, for `Image::draw_features`.
 /// The chunk overlays `style` draws on a tile: its slime chunks and its save's generated chunks.
 pub fn chunk_features(data: &TileData, style: &Style) -> MapFeatures {
     MapFeatures {

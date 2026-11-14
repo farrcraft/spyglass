@@ -73,6 +73,7 @@ final class JavaMath {
             sets.add(new Set(function, "float-angles", floatAngles(2, 200_000), null));
             sets.add(new Set(function, "broad", broadTrig(3, 1_000_000), null));
             sets.add(new Set(function, "edges", trigEdges(), null));
+            sets.add(new Set(function, "far-edges", farTrigEdges(), null));
         }
         sets.add(new Set("log", "gaussian", gaussianS(4, 500_000), null));
         sets.add(new Set("log", "dripstone", uniform(5, 200_000, 0.0, 0.384), null));
@@ -83,6 +84,8 @@ final class JavaMath {
         sets.add(new Set("pow", "dripstone-2/3", drip, filled(drip.length, 0.6666666666666666)));
         double[][] powers = integerPowers();
         sets.add(new Set("pow", "integer", powers[0], powers[1]));
+        double[][] midpoints = midpointPowers(10, 10_000);
+        sets.add(new Set("pow", "midpoints", midpoints[0], midpoints[1]));
         double[][] floats = floatPowers(8, 200_000);
         sets.add(new Set("pow", "float", floats[0], floats[1]));
         double[][] broad = broadPowers(9, 300_000);
@@ -211,6 +214,61 @@ final class JavaMath {
             x.add(Math.scalb(1.75, e));
         }
         return x.stream().mapToDouble(Double::doubleValue).toArray();
+    }
+
+    /**
+     * Arguments next to the multiples of π/2 that come closest to a double, for k from 20,001 to
+     * 2^20/(π/2): the 2,000 with the smallest remainder, each with 8 doubles either side. There
+     * the remainder is smallest beside the argument, so the reduction's error weighs most.
+     */
+    private static double[] farTrigEdges() {
+        int last = (int) (Math.scalb(1.0, 20) / (Math.PI / 2.0));
+        record Near(int k, double r) {}
+        List<Near> nearest = IntStream.rangeClosed(20_001, last).parallel()
+                .mapToObj(k -> {
+                    double centre = k * (Math.PI / 2.0);
+                    BigDecimal r = new BigDecimal(centre).subtract(HALF_PI.multiply(BigDecimal.valueOf(k), WIDE), WIDE);
+                    return new Near(k, Math.abs(r.doubleValue()));
+                })
+                .sorted((a, b) -> Double.compare(a.r, b.r))
+                .limit(2_000)
+                .toList();
+        var x = new ArrayList<Double>();
+        for (Near near : nearest) {
+            double centre = near.k * (Math.PI / 2.0);
+            double below = centre;
+            double above = centre;
+            x.add(centre);
+            for (int u = 0; u < 8; u++) {
+                below = Math.nextDown(below);
+                above = Math.nextUp(above);
+                x.add(below);
+                x.add(above);
+            }
+        }
+        return x.stream().mapToDouble(Double::doubleValue).toArray();
+    }
+
+    /**
+     * Powers whose exact result has 54 significant bits or fewer, so many lie exactly halfway
+     * between two doubles: odd 27-bit bases squared, 18-bit cubed, 14-bit to the fourth, and
+     * squares of 18-bit numbers to the 1.5th. {@code n} of each.
+     */
+    private static double[][] midpointPowers(long seed, int n) {
+        var random = new SplittableRandom(seed);
+        double[][] xy = new double[2][4 * n];
+        for (int i = 0; i < n; i++) {
+            xy[0][i] = random.nextLong(1L << 26, 1L << 27) | 1;
+            xy[1][i] = 2.0;
+            xy[0][n + i] = random.nextLong(1L << 17, 1L << 18) | 1;
+            xy[1][n + i] = 3.0;
+            xy[0][2 * n + i] = random.nextLong(1L << 13, 1L << 14) | 1;
+            xy[1][2 * n + i] = 4.0;
+            double root = random.nextLong(1L << 17, 1L << 18) | 1;
+            xy[0][3 * n + i] = root * root;
+            xy[1][3 * n + i] = 1.5;
+        }
+        return xy;
     }
 
     /** The Gaussian's {@code s = v1² + v2²} for uniform {@code v} in (-1, 1), kept in (0, 1). */
@@ -419,7 +477,11 @@ final class JavaMath {
         return sum.multiply(TWO, MC);
     }
 
-    /** x^y for positive x: exactly when y is a small integer, else exp(y·ln x). */
+    /**
+     * x^y for positive x: exactly when y is a small integer, or half of one with x a perfect
+     * square (a result exactly halfway between two doubles must be found exactly), else
+     * exp(y·ln x).
+     */
     static double powExact(double x, double y) {
         if (y == 0.0 || x == 1.0) {
             return 1.0;
@@ -427,6 +489,14 @@ final class JavaMath {
         if (y == Math.rint(y) && Math.abs(y) <= 1100) {
             BigDecimal power = new BigDecimal(x).pow((int) Math.abs(y));
             return round(y > 0 ? power : BigDecimal.ONE.divide(power, MC));
+        }
+        double twice = 2.0 * y;
+        if (twice == Math.rint(twice) && Math.abs(twice) <= 1100) {
+            BigDecimal root = new BigDecimal(x).sqrt(WIDE);
+            if (root.multiply(root).compareTo(new BigDecimal(x)) == 0) {
+                BigDecimal power = root.pow((int) Math.abs(twice));
+                return round(y > 0 ? power : BigDecimal.ONE.divide(power, MC));
+            }
         }
         BigDecimal t = new BigDecimal(y).multiply(ln(x), MC);
         // exp t = 2^k · exp s, with t = k·ln 2 + s and |s| ≤ ln 2 / 2.

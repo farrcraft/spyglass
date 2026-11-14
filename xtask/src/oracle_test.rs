@@ -489,10 +489,8 @@ pub fn run(version: Option<&str>) -> Result<()> {
 /// (`<version>+<label>`), the packs file its harness runs wrote (`spyglass_oracle::bundle_dir`,
 /// `spyglass_oracle::packs`).
 fn has_bundle(root: &Path, version: &str) -> bool {
-    let (base, variant) = match version.split_once('+') {
-        Some((base, _)) => (base, true),
-        None => (version, false),
-    };
+    let base = crate::oracle::base_version(version);
+    let variant = base != version;
     root.join("bundles")
         .join(base)
         .join("bundle.json")
@@ -501,7 +499,7 @@ fn has_bundle(root: &Path, version: &str) -> bool {
             || root
                 .join("oracle-out")
                 .join(version)
-                .join("packs.json")
+                .join(crate::oracle::PACKS_FILE)
                 .is_file())
 }
 
@@ -523,7 +521,7 @@ fn bundled_versions(root: &Path) -> Vec<String> {
         .filter(|name| name.contains('+') && has_bundle(root, name))
         .collect();
     for variant in variants {
-        let base = variant.split_once('+').map_or("", |(b, _)| b);
+        let base = crate::oracle::base_version(&variant);
         if let Some(&(data_version, _)) = found.iter().find(|(_, v)| v == base) {
             found.push((data_version, variant));
         }

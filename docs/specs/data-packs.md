@@ -25,7 +25,7 @@ A pack's `pack.mcmeta` may have a `filter`: `{"block": [{"namespace": regex, "pa
 
 ### Tags merge
 
-Tags are the exception: every pack's file for a tag is read, lowest first (`TagLoader.load`, `getResourceStack`), each adding its `values` to the list, and a file with `"replace": true` clearing what lower packs gave. A filter hides lower packs' files as it does any file. A file that doesn't parse as a tag is skipped ("Couldn't read tag list") and the rest kept. Building a tag (`TagLoader.build`) keeps each element once, in the order first named. An entry is an id, a `#tag`, or `{"id": ..., "required": bool}` (default `true`); an entry that doesn't resolve is skipped if it isn't required, and if it is, the whole tag is dropped with an error, and loading goes on.
+Tags are the exception: every pack's file for a tag is read, lowest first (`TagLoader.load`, `getResourceStack`), each adding its `values` to the list, and a file with `"replace": true` clearing what lower packs gave. A filter hides lower packs' files as it does any file. A file that doesn't parse as a tag (`TagFile.CODEC`) is skipped ("Couldn't read tag list") and the rest kept: `values` not a list, an entry that isn't an id or `#tag` an `Identifier` can hold or an object with a string `id`, or a `replace` or `required` that isn't a boolean. DFU's `JsonOps` reads a number as a boolean too, true if its low byte isn't 0 (seen in 26.3: a pack's `is_ocean` of `[3]` was skipped, the world loaded). Building a tag (`TagLoader.build`) keeps each element once, in the order first named. An entry is an id, a `#tag`, or `{"id": ..., "required": bool}` (default `true`); an entry that doesn't resolve is skipped if it isn't required, and if it is, the whole tag is dropped with an error, and loading goes on.
 
 ### `pack.mcmeta`
 
@@ -43,7 +43,7 @@ Tags are the exception: every pack's file for a tag is read, lowest first (`TagL
 }
 ```
 
-`pack` is required, with a `description` (any text component). Its formats (`PackFormat`, `PackMetadataSection`) are, from 1.21.9 on, `min_format` and `max_format`: a non-negative int `N` or a list `[N]` (`N.0` as a minimum, `N.2147483647` as a maximum), or `[N, M]` (`N.M`). Before, `pack_format` (an int) and `supported_formats` (an int, `[min, max]` or `{"min_inclusive", "max_inclusive"}`). Format 81 is the last without a minor part, and the validation (`IntermediaryFormat.validate`) follows from it:
+`pack` is required, with a `description` (any text component). Its formats (`PackFormat`, `PackMetadataSection`) are, from 1.21.9 on, `min_format` and `max_format`: a non-negative int `N` or a list of 1 to 256 (`[N]`, `N.0` as a minimum, `N.2147483647` as a maximum; `[N, M, ...]`, `N.M`). Every int here is a JSON number read as `Number.intValue()` (`Codec.INT`): `121.0` is 121, and `4294967417` keeps its low 32 bits, 121 (26.3 loaded a pack declaring both). Before, `pack_format` (an int) and `supported_formats` (an int, `[min, max]` or `{"min_inclusive", "max_inclusive"}`). Format 81 is the last without a minor part, and the validation (`IntermediaryFormat.validate`) follows from it:
 
 | Fields                     | Range                                                                                                                                                                                                                                                 |
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -89,7 +89,8 @@ Tag entries that don't resolve stay spyglass's own rule: a bundle has no registr
 `spyglass_world::open_pack(path)` reads a folder or a zip (`spyglass-data` reads no archives, [ADR 0016](../adr/0016-extractor-crate-and-read-only-data.md); it parses and layers what `PackReader` is given): its `pack.mcmeta`, parsed and validated as [above](#packmcmeta), and every file under `data/` at its root or in a folder one level down (where overlays are). The rest (`assets/`, functions' siblings at the root) isn't read. Packs are untrusted input, as saves are ([world-saves.md](world-saves.md#limits)):
 
 - at most 200,000 entries, 32 MiB a file after inflating, and 512 MiB a pack;
-- a path with an empty, `.` or `..` segment, a `\` or a `:` is an error;
+- a structure template's NBT at most 64 MiB after its own decompression, and its tree at most 64 MiB in memory (`nbt::MAX_TEMPLATE`). The game has no such limit, but a few kilobytes of gzip can inflate to gigabytes; the largest vanilla template is about 1 MiB. A template past it fails to load as malformed NBT does;
+- a file is skipped unread, as the game skips it ("Invalid path in pack", seen in 26.3 for `worldgen/noise/Bad_Name.json`), if its namespace or path has a character an `Identifier` can't hold (`[a-z0-9_.-]`, and `/` in a path): uppercase, `\`, `:`, a space. spyglass also skips a path with an empty, `.` or `..` segment, which the game would take into the id; nothing reads a pack's files by filesystem path, so none can reach outside it;
 - symbolic links in a folder aren't followed.
 
 A `filter` pattern is read with `regex_lite`, whose syntax covers the patterns packs use; a pattern it can't read is an error, since the pack couldn't be applied as the game applies it. `\w`, `\d` and `\s` are ASCII in both, as in Java without `UNICODE_CHARACTER_CLASS`.
@@ -120,7 +121,7 @@ Packs found in `datapacks/` but in neither list aren't applied: the game adds th
 
 ## Testing
 
-- **Unit tests** on packs built in the test: formats in every form, valid and not; packs the game skips; overlays chosen by format, the last on top; filters matching anywhere; zips and folders alike; oversized and escaping zip entries. On layered bundles: replacement, new ids, filters above and below, tag merging with and without `replace`, unreadable tag files, feature packs, and a bundle without a format.
+- **Unit tests** on packs built in the test: formats in every form, valid and not; packs the game skips; overlays chosen by format, the last on top; filters matching anywhere; zips and folders alike; oversized zip entries, and escaping or invalid paths skipped. On layered bundles: replacement, new ids, filters above and below, tag merging with and without `replace`, unreadable tag files, feature packs, and a bundle without a format.
 - **Saves** built in the test: each concern, a pack that turns the fixture's temperature round and changes its biomes, through `open_world` and `open_game`, and a pack with an unsupported density function type failing on opening.
 - **The oracle:** [the test pack](oracle.md#the-test-pack), loaded by the harness as the game loads a world's pack and applied by spyglass over the plain bundle; and [the fixture pack](oracle.md#the-fixture-pack), through every comparison.
 - **Fuzzing:** `cargo xtask fuzz pack` on `open_pack` with arbitrary zips, `pack.mcmeta` included.

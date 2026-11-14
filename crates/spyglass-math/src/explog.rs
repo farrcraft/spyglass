@@ -3,12 +3,13 @@
 //! `ln x` splits `x = m·2^e` with `m` in [√½, √2), so `ln x = e·ln 2 + 2·atanh z` with
 //! `z = (m − 1)/(m + 1)`, at most 0.172, whose odd series converges fast. `pow` is
 //! `exp(y·ln x)` with both in double-double arithmetic, `exp` reduced by ln 2 to a short Taylor
-//! series and scaled by a power of two; Java's special cases come first.
+//! series and scaled by a power of two; Java's special cases come first. A result exactly
+//! halfway between two doubles defeats any rounding test, so where the test fails, an exact
+//! power is looked for ([`exact_power`]).
 
 use std::sync::OnceLock;
 
-use crate::dd::{Dd, two_prod, two_sum};
-use crate::trig::{inverse_factorials, rounded};
+use crate::dd::{Dd, FACTORIALS, inverse_factorials, rounded, two_prod, two_sum};
 
 /// ln 2 in three parts (from the QD library's constant).
 const LN_2: [f64; 3] = [
@@ -26,6 +27,7 @@ const ATANH_TERMS: usize = 23;
 
 /// Terms of the exp series: the last is below 2^-115 for |s| ≤ ln 2 / 2.
 const EXP_TERMS: usize = 25;
+const _: () = assert!(EXP_TERMS <= FACTORIALS);
 
 /// `1/(2n + 1)` for the atanh series, as double-doubles.
 fn odd_reciprocals() -> &'static [Dd; ATANH_TERMS] {
@@ -112,6 +114,11 @@ pub(crate) fn pow(x: f64, y: f64) -> (f64, bool) {
     if y == 1.0 {
         return (x, true);
     }
+    if y == 2.0 {
+        // HotSpot's intrinsic (and so the interpreter) computes `pow(x, 2.0)` as `x * x`,
+        // special cases included; it's also the correctly rounded result.
+        return (x * x, true);
+    }
     if x.is_nan() || y.is_nan() {
         return (f64::NAN, true);
     }
@@ -144,10 +151,25 @@ pub(crate) fn pow(x: f64, y: f64) -> (f64, bool) {
     (if x < 0.0 && odd(y) { -value } else { value }, settled)
 }
 
+/// From here on, `x^y` is out of range for every `x` other than 1: |ln x| is at least about
+/// 2^-53, so |y·ln x| is at least 2^11, past ln(MAX). Below it, `y`'s split for the product is
+/// far from overflowing.
+const HUGE_EXPONENT: f64 = 18_446_744_073_709_552_000.0; // 2^64, exactly
+
 /// `x^y` for positive finite `x` and finite non-zero `y`.
 fn pow_positive(x: f64, y: f64) -> (f64, bool) {
     if x == 1.0 {
         return (1.0, true);
+    }
+    if y.abs() >= HUGE_EXPONENT {
+        return (
+            if (x > 1.0) == (y > 0.0) {
+                f64::INFINITY
+            } else {
+                0.0
+            },
+            true,
+        );
     }
     let t = ln(x).mul_f(y);
     // Past ln(MAX) with room to spare, or below half the least subnormal.
@@ -160,7 +182,10 @@ fn pow_positive(x: f64, y: f64) -> (f64, bool) {
     let (value, k) = exp(t);
     let (near_one, settled) = match value.round(POW_BOUND) {
         Some(v) => (v, true),
-        None => (value.hi, false),
+        None => match exact_power(x, y) {
+            Some(exact) => return (exact, true),
+            None => (value.hi, false),
+        },
     };
     if k > 1023 {
         // Only up to 2^1024 · 1.42: scaled in two steps, so the last rounds as IEEE overflow does.
@@ -172,6 +197,54 @@ fn pow_positive(x: f64, y: f64) -> (f64, bool) {
         return (near_one * power_of_two(k + 600) * power_of_two(-600), false);
     }
     (near_one * power_of_two(k), settled)
+}
+
+/// `x^y` when it's exact or exactly halfway between two doubles, correctly rounded (half to
+/// even); `None` otherwise, or outside the normal range.
+///
+/// `y` is a double, so a power that isn't an integer is `n/2^j`, and `x^y` is then a dyadic
+/// rational only if `x` is a perfect `2^j`-th power: square roots are taken, while exact,
+/// until `y` is an integer `n`. Then `x = m·2^e` with `m` odd, and `x^n = m^n·2^(e·n)`, which
+/// is exact or a midpoint only if `m^n` has at most 54 bits.
+fn exact_power(x: f64, y: f64) -> Option<f64> {
+    let (mut x, mut y) = (x, y);
+    while y != y.trunc() {
+        let root = x.sqrt();
+        if two_prod(root, root) != Dd::new(x) {
+            return None;
+        }
+        x = root;
+        y *= 2.0;
+    }
+    if !(1.0..=64.0).contains(&y) {
+        // A negative power is a midpoint only for a power of two, which is exact and settles.
+        return None;
+    }
+    let bits = x.to_bits();
+    let biased = ((bits >> 52) & 0x7ff) as i32;
+    let fraction = bits & ((1 << 52) - 1);
+    let (mut odd, mut exponent) = if biased == 0 {
+        (fraction, -1074)
+    } else {
+        (fraction | (1 << 52), biased - 1075)
+    };
+    exponent += odd.trailing_zeros() as i32;
+    odd >>= odd.trailing_zeros();
+    let n = y as u32;
+    let mut power: u64 = 1;
+    for _ in 0..n {
+        power = power.checked_mul(odd).filter(|&p| p < 1 << 54)?;
+    }
+    // At most 54 bits, so `as` rounds it half to even, once, to 53.
+    let rounded = power as f64;
+    let scale = exponent * n as i32;
+    let top = 63 - power.leading_zeros() as i32 + scale;
+    if !(-1022..=1023).contains(&top) {
+        return None;
+    }
+    // In two steps, so each factor is a normal power of two.
+    let first = scale.clamp(-1022, 1023);
+    Some(rounded * power_of_two(first) * power_of_two(scale - first))
 }
 
 #[cfg(test)]
@@ -197,6 +270,70 @@ mod tests {
         assert!(log(-1.0).0.is_nan());
         assert_eq!(log(0.0).0, f64::NEG_INFINITY);
         assert_eq!(log(1.0), (0.0, true));
+        assert!(log(f64::NAN).0.is_nan());
+        assert!(log(f64::NEG_INFINITY).0.is_nan());
+        assert_eq!(log(-0.0).0, f64::NEG_INFINITY);
+        assert_eq!(log(f64::INFINITY).0, f64::INFINITY);
+        // Subnormals are scaled into the normal range first: ln(2^-1074) = −1074·ln 2.
+        assert_eq!(log(f64::from_bits(1)), (-744.440_071_921_381_2, true));
+        assert_eq!(log(f64::MIN_POSITIVE), (-708.396_418_532_264_1, true));
+        assert!(pow(f64::NAN, 2.0).0.is_nan());
+        assert!(pow(2.0, f64::NAN).0.is_nan());
+        assert!(pow(-1.0, f64::INFINITY).0.is_nan());
+        assert!(pow(-1.0, f64::NEG_INFINITY).0.is_nan());
+        assert_eq!(pow(0.0, -0.5).0, f64::INFINITY);
+        assert_eq!(pow(f64::INFINITY, 0.5).0, f64::INFINITY);
+        assert_eq!(pow(f64::INFINITY, -0.5).0, 0.0);
+        assert!(pow(-8.0, 1.0 / 3.0).0.is_nan());
+    }
+
+    #[test]
+    fn huge_exponents_overflow_or_underflow() {
+        assert_eq!(pow(2.0, 1e301), (f64::INFINITY, true));
+        assert_eq!(pow(0.5, f64::MAX), (0.0, true));
+        assert_eq!(pow(2.0, -1e305), (0.0, true));
+        assert_eq!(pow(0.5, -f64::MAX), (f64::INFINITY, true));
+        // The smallest |ln x| there is: x one ulp from 1, either side.
+        let above_one = 1.0 + f64::EPSILON;
+        let below_one = 1.0 - f64::EPSILON / 2.0;
+        assert_eq!(pow(above_one, HUGE_EXPONENT), (f64::INFINITY, true));
+        assert_eq!(pow(below_one, HUGE_EXPONENT), (0.0, true));
+        assert_eq!(pow(above_one, -HUGE_EXPONENT), (0.0, true));
+        // Odd for a negative base: 2^64 is even.
+        assert_eq!(pow(-2.0, 1e301).0, f64::INFINITY);
+        assert_eq!(HUGE_EXPONENT, (1u128 << 64) as f64);
+    }
+
+    #[test]
+    fn squares_are_products() {
+        let x = 134_217_727.0; // 2^27 − 1: its square is halfway between two doubles
+        assert_eq!(pow(x, 2.0), (x * x, true));
+        assert_eq!(pow(x, 2.0).0, 18_014_398_241_046_528.0);
+        assert_eq!(pow(-0.0, 2.0).0.to_bits(), 0.0f64.to_bits());
+        assert_eq!(pow(1e200, 2.0).0, f64::INFINITY);
+        assert!(pow(f64::NAN, 2.0).0.is_nan());
+    }
+
+    #[test]
+    fn midpoints_round_half_to_even() {
+        // 2^18 − 1 cubed has 54 bits, odd: exactly halfway. It's 3 mod 4, so even is up.
+        let base = 262_143.0;
+        let cube = 18_014_192_351_838_207_u64; // (2^18 − 1)^3
+        assert_eq!(pow(base, 3.0), (cube as f64, true));
+        assert_eq!(cube as f64, (cube + 1) as f64);
+        // (2^18 − 1)² to the 1.5th is the same cube.
+        assert_eq!(pow(base * base, 1.5), (cube as f64, true));
+        assert_eq!(exact_power(base * base, 1.5), Some(cube as f64));
+        // Not a perfect square, or more than 54 bits: no exact power.
+        assert_eq!(exact_power(3.0, 1.5), None);
+        assert_eq!(exact_power(1_234_567.0, 3.0), None);
+        assert_eq!(exact_power(3.0, -2.0), None);
+        // Scaled by the base's power of two, in the normal range only.
+        assert_eq!(
+            exact_power(base * power_of_two(-300), 3.0),
+            Some(cube as f64 * power_of_two(-900))
+        );
+        assert_eq!(exact_power(base * power_of_two(-400), 3.0), None);
     }
 
     #[test]

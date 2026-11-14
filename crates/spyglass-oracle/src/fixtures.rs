@@ -11,7 +11,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
-use spyglass_data::bundle::{Bundle, FORMAT, MANIFEST, Manifest, sha1_hex};
+use spyglass_data::bundle::{Bundle, FORMAT, MANIFEST, Manifest, sha1_hex_of};
 use tempfile::TempDir;
 
 /// A bundle in its own temporary bundles folder, deleted when dropped: the bundle is
@@ -32,7 +32,7 @@ impl TestBundle {
             fs::create_dir_all(file.parent().expect("a parent")).expect("create folders");
             let text = value.to_string();
             fs::write(&file, &text).expect("write a bundle file");
-            listed.insert(path.clone(), sha1_hex(text.as_bytes()).expect("hash"));
+            listed.insert(path.clone(), sha1_hex_of(text.as_bytes()));
         }
         let manifest = Manifest {
             format: FORMAT,

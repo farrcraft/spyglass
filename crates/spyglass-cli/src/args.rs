@@ -466,6 +466,14 @@ pub struct Render {
     /// Tint the caves and ravines carvers cut at `--y` (scales up to 4).
     #[arg(long)]
     pub carvers: bool,
+    /// Draw the flower bone meal grows on grass at `--y`, the block above the grass: opaque
+    /// where it's certain, fainter as it's less likely, and dimmed where none grows.
+    #[arg(long)]
+    pub flowers: bool,
+    /// With `--flowers` implied: show only this flower, e.g. `minecraft:cornflower`, dimming
+    /// the blocks that can't grow it.
+    #[arg(long, value_name = "ID")]
+    pub flower: Option<String>,
     /// A pin at block `x,z`, with a colour `#rrggbb` after another comma (amber if none).
     /// Repeat it for more; they're drawn last, in order.
     #[arg(long = "pin", allow_hyphen_values = true, value_parser = pin)]

@@ -136,8 +136,8 @@ Four parts, each building on the one before: the flower at a block, the map and 
   - for fixed regions at several heights, the zoomed biome and its bone meal features;
   - for each bone meal feature's provider, at fixed positions across the build height, its state under several fixed `LegacyRandomSource` seeds.
 - [x] `Session::biome_at_block` and `Session::flower_at`, checked against the oracle's files (`cargo xtask oracle-test`), with the providers' states compared draw for draw.
-- [ ] `Session::flower_map` and the flower layer in `render`, with its colour table, and the spec's Layers list updated.
-- [ ] `Session::flower_heights`, with a test that its shares match the map at each height.
+- [x] `Session::flower_map` and the flower layer in `render`, with its colour table, and the spec's Layers list updated.
+- [x] `Session::flower_heights`, with a test that its shares match the map at each height.
 - [ ] The search constraint: parsing, canonical form, the biome-first sampling, scores, and the outcome. [search.md](../specs/search.md) gets its grammar and meaning.
 - [ ] CLI: `flower at`, `flower heights`, `render --flowers`, with `--json`; [cli-json.md](../specs/cli-json.md) updated.
 - [ ] Viewer: the layer, the key and highlight, the hover answer, and Best height.
@@ -167,6 +167,8 @@ Four parts, each building on the one before: the flower at a block, the map and 
 ## Notes
 
 Newest first.
+
+- 2026-11-15: The flower map, layer and best heights. A pixel that's down to chance shows its most likely flower, fainter the less likely, rather than a checker of its flowers: plains' nine flowers made a checker noise, where the likeliest one at its chance reads at a glance. `render --flowers` and `--flower <id>` came with it, as the layer needed `Layers` fields every front end sets. A view still equals its tiles with flowers on.
 
 - 2026-11-15: `Session::biome_at_block` and `Session::flower_at`, through the API, match the oracle's block biomes in all three versions. The zoom needs only `BiomeZoom` and the session's biomes, not the block settings, so a flower answer doesn't load the chunk generator. [ADR 0075](../adr/0075-flower-answers-carry-exact-chances.md) (proposed) records the answers' exact chances.
 

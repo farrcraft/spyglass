@@ -67,6 +67,10 @@ pub struct Export {
     pub noise_caves: bool,
     /// Carvers' caves and canyons at the area's height.
     pub carvers: bool,
+    /// The flower bone meal grows at the area's height.
+    pub flowers: bool,
+    /// With flowers, the one flower shown, by block id.
+    pub flower: Option<String>,
     /// The user's markers in view.
     pub pins: Vec<Pin>,
 }
@@ -163,6 +167,14 @@ impl Export {
                 }
             }
         }
+        match (&self.flower, self.flowers) {
+            (Some(flower), true) => {
+                args.push("--flower".to_string());
+                args.push(quote(flower));
+            }
+            (None, true) => args.push("--flowers".to_string()),
+            _ => {}
+        }
         for pin in &self.pins {
             let [r, g, b] = pin.colour;
             let [x, z] = pin.position;
@@ -230,6 +242,8 @@ mod tests {
             veins: true,
             noise_caves: true,
             carvers: true,
+            flowers: false,
+            flower: None,
             pins: Vec::new(),
         };
         // Underground layers aren't drawn past scale 4, so the command doesn't ask for them;
@@ -277,6 +291,8 @@ mod tests {
             veins: false,
             noise_caves: false,
             carvers: false,
+            flowers: false,
+            flower: None,
             pins: vec![
                 Pin {
                     position: [-3, 4],

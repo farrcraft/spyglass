@@ -59,10 +59,11 @@ pub use loot::{
     ContainerLocate, ContainerSource, FoundContainer, InSave, Item, ItemQuery, MapDestination, Slot,
 };
 pub use render::{
-    BiomeMap, CarverKind, CarvingMap, DEFAULT_MAP_Y, HeightMap, Image, Layers, MARKER_REACH,
-    MAX_FEATURE_SCALE, MAX_PIXELS, MAX_SCALE, MAX_SIDE, MAX_SLIME_SCALE, MAX_UNDERGROUND_SCALE,
-    MapArea, MapFeatures, Pin, UndergroundMap, Vein, VeinPart, biome_colour, display_name,
-    feature_colour, structure_colour, vein_colour,
+    BiomeMap, CarverKind, CarvingMap, DEFAULT_MAP_Y, FlowerCount, FlowerMap, FlowerPixel,
+    FlowerShare, HeightMap, Image, Layers, MARKER_REACH, MAX_FEATURE_SCALE, MAX_PIXELS, MAX_SCALE,
+    MAX_SIDE, MAX_SLIME_SCALE, MAX_UNDERGROUND_SCALE, MapArea, MapFeatures, Pin, UndergroundMap,
+    Vein, VeinPart, biome_colour, display_name, feature_colour, flower_colour, structure_colour,
+    vein_colour,
 };
 pub use save::{
     LauncherSave, PackConcern, SaveInfo, SaveInspector, SaveLocation, SaveReport, SaveWarning,

@@ -81,7 +81,7 @@ pub struct BoneMealFeature {
 }
 
 /// A flower and its chance.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub struct FlowerChance {
     /// The block state, its id then any non-default properties: `minecraft:poppy`,
@@ -112,6 +112,33 @@ impl World {
     }
 }
 
+impl World {
+    /// Fails unless `flower` (a block id) is a flower some bone meal feature can place.
+    pub(crate) fn check_flower(&self, flower: &str) -> Result<()> {
+        let flowers = self.flowers()?;
+        if flowers.states().any(|(_, name)| block_id(name) == flower) {
+            Ok(())
+        } else {
+            Err(Error::Unknown {
+                what: "flower",
+                id: flower.to_string(),
+            })
+        }
+    }
+
+    /// Every flower some bone meal feature can place, by block id, sorted.
+    pub fn bone_meal_flowers(&self) -> Result<Vec<String>> {
+        let mut ids: Vec<String> = self
+            .flowers()?
+            .states()
+            .map(|(_, name)| block_id(name).to_string())
+            .collect();
+        ids.sort();
+        ids.dedup();
+        Ok(ids)
+    }
+}
+
 impl Session<'_> {
     /// The biome block `pos` has in the world, as the game's level gives it
     /// (`ServerLevel.getBiome`): `BiomeManager`'s zoom picks one of the nearby quarts, with a
@@ -123,11 +150,21 @@ impl Session<'_> {
 
     /// The biome lookup at block `pos`, through `zoom` (the seed's).
     pub(crate) fn block_lookup(&self, zoom: &BiomeZoom, pos: [i32; 3]) -> Lookup {
+        let [qx, qy, qz] = self.block_quart(zoom, pos);
+        self.biomes.biome_at(qx, qy, qz)
+    }
+
+    /// The quart block `pos` takes its biome from, through `zoom`, with its y clamped to the
+    /// level as the level's chunks clamp it.
+    pub(crate) fn block_quart(&self, zoom: &BiomeZoom, pos: [i32; 3]) -> [i32; 3] {
         let [qx, qy, qz] = zoom.quart(pos);
         let terrain = &self.world.terrain;
         let min_qy = terrain.level_min_y >> 2;
-        let qy = qy.clamp(min_qy, min_qy + (terrain.level_height >> 2) - 1);
-        self.biomes.biome_at(qx, qy, qz)
+        [
+            qx,
+            qy.clamp(min_qy, min_qy + (terrain.level_height >> 2) - 1),
+            qz,
+        ]
     }
 
     /// What bone meal grows on grass at `pos`, the block above the grass: for each biome the
@@ -182,14 +219,19 @@ impl Session<'_> {
 
 /// Odds as named flowers, most likely first, then by name.
 pub(crate) fn flower_chances(flowers: &Flowers, odds: &[FlowerOdds]) -> Vec<FlowerChance> {
-    let mut out: Vec<FlowerChance> = odds
-        .iter()
-        .map(|o| FlowerChance {
-            flower: flowers.state_name(o.state).to_string(),
-            chance: o.chance,
-        })
-        .collect();
-    out.sort_by(|a, b| {
+    sorted(
+        odds.iter()
+            .map(|o| FlowerChance {
+                flower: flowers.state_name(o.state).to_string(),
+                chance: o.chance,
+            })
+            .collect(),
+    )
+}
+
+/// Flowers, most likely first, then by name.
+pub(crate) fn sorted(mut flowers: Vec<FlowerChance>) -> Vec<FlowerChance> {
+    flowers.sort_by(|a, b| {
         // Exact: a/b > c/d when a·d > c·b, both far inside u128 (ADR 0075).
         let cross = |x: Chance, y: Chance| {
             x.numerator
@@ -200,5 +242,5 @@ pub(crate) fn flower_chances(flowers: &Flowers, odds: &[FlowerOdds]) -> Vec<Flow
             .cmp(&cross(a.chance, b.chance))
             .then_with(|| a.flower.cmp(&b.flower))
     });
-    out
+    flowers
 }

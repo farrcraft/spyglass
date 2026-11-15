@@ -223,6 +223,11 @@ pub(crate) const TESTS: &[(&str, &str, &[Input])] = &[
     ),
     (
         "spyglass",
+        "best_heights_agree_with_the_map",
+        &[Input::Bundle],
+    ),
+    (
+        "spyglass",
         "flowers_through_the_api_are_the_game_s",
         &[Input::Flowers, Input::Bundle],
     ),

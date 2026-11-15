@@ -834,6 +834,8 @@ fn the_real_world_renders_the_same_in_tiles() {
             veins: scale <= spyglass::MAX_UNDERGROUND_SCALE,
             noise_caves: scale <= spyglass::MAX_UNDERGROUND_SCALE,
             carvers: scale <= spyglass::MAX_UNDERGROUND_SCALE,
+            flowers: true,
+            flower: None,
             pins: vec![Pin {
                 position: [200, -300],
                 colour: [0xf0, 0xb0, 0x30],

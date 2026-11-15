@@ -77,3 +77,54 @@ fn flowers_through_the_api_are_the_game_s() {
         &failures[..failures.len().min(20)]
     );
 }
+
+#[test]
+#[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
+fn best_heights_agree_with_the_map() {
+    let world = World::open_with_packs(
+        spyglass_oracle::bundle_dir(),
+        Dimension::Overworld,
+        &spyglass_oracle::packs(),
+    )
+    .unwrap();
+    // Seed 1's nearest flower forest to the origin, around (-736, -256).
+    let session = world.session(1).unwrap();
+    let area = spyglass::MapArea::centred_on([-736, -256], [96, 96], 2, 64).unwrap();
+    let shares = session
+        .flower_heights(&area, "minecraft:cornflower", [40, 140], 20)
+        .unwrap();
+    assert_eq!(shares.len(), 6);
+    assert!(
+        shares.iter().any(|s| s.possible > 0),
+        "no cornflowers near a flower forest"
+    );
+    for share in shares {
+        let map = session
+            .flower_map(&spyglass::MapArea { y: share.y, ..area })
+            .unwrap();
+        let (mut certain, mut possible) = (0, 0);
+        for j in 0..area.size[1] {
+            for i in 0..area.size[0] {
+                let pixel = map.at([i, j]);
+                if pixel.certain() == Some("minecraft:cornflower") {
+                    certain += 1;
+                }
+                if pixel.chance_of("minecraft:cornflower").numerator > 0 {
+                    possible += 1;
+                }
+            }
+        }
+        assert_eq!(
+            (share.certain, share.possible),
+            (certain, possible),
+            "at y {}",
+            share.y
+        );
+        assert_eq!(share.pixels, 96 * 96);
+    }
+    assert!(
+        session
+            .flower_heights(&area, "minecraft:diamond_block", [40, 140], 20)
+            .is_err()
+    );
+}

@@ -136,6 +136,8 @@ impl App {
             veins: self.underground().veins,
             noise_caves: self.underground().noise_caves,
             carvers: self.underground().carvers,
+            flowers: false,
+            flower: None,
             pins: if self.settings.export_markers {
                 self.export_pins(world.dimension_kind(), &area)
             } else {
@@ -218,6 +220,8 @@ impl App {
                 veins: export.veins && export.area.scale <= MAX_UNDERGROUND_SCALE,
                 noise_caves: export.noise_caves && export.area.scale <= MAX_UNDERGROUND_SCALE,
                 carvers: export.carvers && export.area.scale <= MAX_UNDERGROUND_SCALE,
+                flowers: export.flowers,
+                flower: export.flower.clone(),
                 pins: export.pins.clone(),
             };
             let image = session

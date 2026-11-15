@@ -2,6 +2,7 @@
 //! structure, slime-chunk and spawn overlays from the existing queries. The viewer and
 //! `spyglass render` both draw through here, so they make the same image.
 
+mod flowers;
 mod palette;
 mod underground;
 
@@ -10,6 +11,7 @@ use std::io;
 
 use spyglass_biome::{BiomeId, Lookup};
 
+pub use flowers::{FlowerCount, FlowerMap, FlowerPixel, FlowerShare, flower_colour};
 pub use palette::{biome_colour, display_name, feature_colour, structure_colour};
 pub use underground::{
     CarverKind, CarvingMap, MAX_UNDERGROUND_SCALE, UndergroundMap, Vein, VeinPart, vein_colour,
@@ -258,6 +260,12 @@ pub struct Layers {
     /// The caves and ravines carvers cut, at the area's `y`. Scales up to
     /// [`MAX_UNDERGROUND_SCALE`].
     pub carvers: bool,
+    /// The flower bone meal grows at each pixel's block, at the area's `y`: the block above
+    /// the grass ([`Session::flower_map`]).
+    pub flowers: bool,
+    /// With [`flowers`](Self::flowers), one flower to show, by block id (e.g.
+    /// `minecraft:cornflower`): blocks that can't grow it are dimmed.
+    pub flower: Option<String>,
     /// Pins a front end puts on the map, drawn last, in this order.
     pub pins: Vec<Pin>,
 }
@@ -292,6 +300,8 @@ impl Default for Layers {
             veins: false,
             noise_caves: false,
             carvers: false,
+            flowers: false,
+            flower: None,
             pins: Vec::new(),
         }
     }
@@ -325,6 +335,9 @@ impl Layers {
         }
         if self.veins && !world.block_settings()?.has_veins() {
             return refuse("ore veins");
+        }
+        if let (true, Some(flower)) = (self.flowers, &self.flower) {
+            world.check_flower(flower)?;
         }
         Ok(())
     }
@@ -1030,7 +1043,9 @@ impl Session<'_> {
                     .colorize(self.world, layers.ties, &layers.highlight)?
             }
             Some(heights) => heights.elevation(),
-            None if layers.need_underground() => Image::underground_background(area.size),
+            None if layers.need_underground() || layers.flowers => {
+                Image::underground_background(area.size)
+            }
             None => Image::background(area.size),
         };
         if let (Some(heights), true) = (&heights, layers.relief) {
@@ -1041,6 +1056,9 @@ impl Session<'_> {
         }
         if layers.need_underground() {
             image.draw_underground(&self.underground_map(area, layers, None)?, layers);
+        }
+        if layers.flowers {
+            image.draw_flowers(&self.flower_map(area)?, layers.flower.as_deref());
         }
         image.draw_features(area, features);
         Ok(image)

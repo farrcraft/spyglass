@@ -47,7 +47,7 @@ const FLOAT_STEPS: u128 = 1 << 24;
 pub type FlowerState = u16;
 
 /// A chance as an exact fraction, in lowest terms.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Chance {
     /// The numerator.
     pub numerator: u128,
@@ -133,7 +133,7 @@ fn gcd(mut a: u128, mut b: u128) -> u128 {
 }
 
 /// One flower a block can grow, and its chance given that bone meal makes a flower there.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FlowerOdds {
     /// The state.
     pub state: FlowerState,

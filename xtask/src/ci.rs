@@ -112,6 +112,7 @@ pub fn run(args: &Ci) -> Result<()> {
                     Kind::Features => harness.features(args.threads, &seeds),
                     Kind::Containers => harness.containers(args.threads, &seeds),
                     Kind::Loot => harness.loot(),
+                    Kind::Flowers => harness.flowers(args.threads, oracle::GOLDEN_SEEDS),
                     Kind::Locate | Kind::Bundle => Ok(()),
                 })?;
             }

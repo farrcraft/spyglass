@@ -168,4 +168,31 @@ interface GameApi {
     void createStructures(Game game, ChunkGenerator generator, ChunkGeneratorStructureState state,
             StructureManager structures, ChunkAccess chunk, StructureTemplateManager templates,
             ResourceKey<Level> level);
+
+    /**
+     * {@code BiomeGenerationSettings.getBoneMealFeatures}: the biome's bone meal features, in
+     * order and with repeats, each by its registry id.
+     */
+    List<BoneMealFeature> boneMealFeatures(Game game, Holder<Biome> biome);
+
+    /** A bone meal feature: its id, and the game's object for {@link #boneMealState}. */
+    record BoneMealFeature(String id, Object feature) {}
+
+    /**
+     * The state a bone meal feature's provider gives at {@code pos} ({@code getState}, with no
+     * level, which vanilla's flower providers don't read), or {@code null} if the feature isn't
+     * a {@code simple_block}.
+     */
+    BlockState boneMealState(Object feature, net.minecraft.util.RandomSource random, BlockPos pos);
+
+    /**
+     * {@code BiomeManager.getBiome} at a block, over {@code quarts}' biomes, seeded with
+     * {@code BiomeManager.obfuscateSeed(seed)}: the biome {@code ServerLevel.getBiome} gives.
+     */
+    Holder<Biome> zoomedBiome(long seed, QuartLookup quarts, int x, int y, int z);
+
+    /** Quart biomes, by quart position. */
+    interface QuartLookup {
+        Holder<Biome> at(int qx, int qy, int qz);
+    }
 }

@@ -93,4 +93,4 @@ States are answers as block states: `pink_petals` and `wildflowers` with each `f
 
 ## Testing
 
-`spyglass-feature`'s unit tests check each provider's odds against the share of states its `getState` draws over many random seeds, and that every answer's chances sum to 1. The oracle's [flower files](oracle.md) check, for every supported version, each bone meal feature's provider draw for draw at fixed positions across the build height with fixed random seeds, and the biome and bone meal features at fixed blocks of the golden seeds.
+`spyglass-feature`'s unit tests check each provider's odds against the share of states its `getState` draws over many random seeds, and that every answer's chances sum to 1. The oracle's [flower files](oracle.md#flower-files) check, for every supported version, each bone meal feature's provider draw for draw at fixed positions across the build height with fixed random seeds, and the biome and bone meal features at fixed blocks of the golden seeds.

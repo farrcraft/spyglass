@@ -442,4 +442,30 @@ final class Adapter implements GameApi {
     public JsonArray probeTerrain(Game game, List<String> seeds) {
         return ProbeWorldgen.terrain(game, seeds);
     }
+
+    @Override
+    public List<BoneMealFeature> boneMealFeatures(Game game, Holder<Biome> biome) {
+        var registry = game.access.lookupOrThrow(Registries.CONFIGURED_FEATURE);
+        var out = new ArrayList<BoneMealFeature>();
+        for (var feature : biome.value().getGenerationSettings().getBoneMealFeatures()) {
+            out.add(new BoneMealFeature(registry.getKey(feature).toString(), feature));
+        }
+        return out;
+    }
+
+    @Override
+    public BlockState boneMealState(Object feature, net.minecraft.util.RandomSource random, BlockPos pos) {
+        if (!(feature instanceof net.minecraft.world.level.levelgen.feature.ConfiguredFeature<?, ?> configured)
+                || !(configured.config()
+                        instanceof net.minecraft.world.level.levelgen.feature.configurations.SimpleBlockConfiguration simple)) {
+            return null;
+        }
+        return simple.toPlace().getState(null, random, pos);
+    }
+
+    @Override
+    public Holder<Biome> zoomedBiome(long seed, QuartLookup quarts, int x, int y, int z) {
+        return new net.minecraft.world.level.biome.BiomeManager(quarts::at,
+                net.minecraft.world.level.biome.BiomeManager.obfuscateSeed(seed)).getBiome(new BlockPos(x, y, z));
+    }
 }

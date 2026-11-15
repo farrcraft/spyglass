@@ -37,6 +37,9 @@ import net.minecraft.world.level.levelgen.WorldOptions;
  * heights &lt;out dir&gt; [--dimension ID] [--threads N] &lt;seed&gt;...
  *     One height golden file per seed (&lt;seed&gt;.json): the generator's worldgen heightmaps at
  *     every column of fixed block regions, and its block columns at a sample of positions.
+ * flowers &lt;out dir&gt; [--dimension ID] [--threads N] &lt;seed&gt;...
+ *     What bone meal grows (Flowers): each bone meal feature's provider at fixed positions
+ *     (providers.json), and the block biomes of fixed and found patches per seed (&lt;seed&gt;.json).
  * replay &lt;out dir&gt; [--threads N] &lt;order file&gt;...
  *     For each decoration order Join recorded, every chunk it decorated with the target features'
  *     calls on its own and as replayed in the recorded order (Features.replay).
@@ -86,6 +89,8 @@ public final class Main {
                 case "blocks" -> Blocks.run(game, Path.of(args[1]), dimension(args), positional(args),
                         intOption(args, "--threads", Runtime.getRuntime().availableProcessors()));
                 case "features" -> Features.run(game, Path.of(args[1]), dimension(args), positional(args),
+                        intOption(args, "--threads", Runtime.getRuntime().availableProcessors()));
+                case "flowers" -> Flowers.run(game, Path.of(args[1]), dimension(args), positional(args),
                         intOption(args, "--threads", Runtime.getRuntime().availableProcessors()));
                 case "replay" -> Features.replay(game, Path.of(args[1]), positional(args).stream().map(Path::of).toList(),
                         intOption(args, "--threads", Runtime.getRuntime().availableProcessors()));
@@ -186,7 +191,8 @@ public final class Main {
                 + " | spawn <out dir> [--dimension ID] <seed>... | heights <out dir> [--dimension ID] [--threads N]"
                 + " <seed>... | blocks <out dir> [--dimension ID] [--threads N] <seed>..."
                 + " | features <out dir> [--dimension ID] [--threads N] <seed>..."
-                + " | containers <out dir> [--dimension ID] [--threads N] <seed>... | loot <out dir>");
+                + " | containers <out dir> [--dimension ID] [--threads N] <seed>... | loot <out dir>"
+                + " | flowers <out dir> [--dimension ID] [--threads N] <seed>...");
         System.exit(2);
     }
 }

@@ -22,25 +22,26 @@ CI runs the Rust crates against these for a fixed set of seeds per supported ver
 
 `cargo xtask oracle` builds and runs the harness. Every subcommand takes `--game-version` (default `latest`), `--cache-dir` and `--java`, and `--pack <folder|zip>` (repeatable, lowest first) with `--name <label>`, which load data packs over the vanilla one ([below](#packs)).
 
-| Command                                                                                | Does                                                                                                                                               |
-| -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `build`                                                                                | Fetch and verify the server jar, unpack its libraries, compile the harness.                                                                        |
-| `biomes <seed> [--dimension] [--x] [--z] [--size] --out <file>`                        | Write one golden biome file. Block coordinates; x, z and size must be multiples of 16.                                                             |
-| `check-save <world> [--dimension]`                                                     | Compare the harness with the biomes stored in a real save. Fails on any unexplained cell.                                                          |
-| `probe`                                                                                | Write the [probe files](#probe-files) into `oracle-out/<version>/probe/`.                                                                          |
-| `structures`                                                                           | Write the [structure golden files](#structure-golden-files) for the golden seeds and dimensions.                                                   |
-| `spawn`                                                                                | Write the [spawn golden files](#spawn-golden-files) for the golden seeds and dimensions.                                                           |
-| `heights [--threads N]`                                                                | Write the [height golden files](#height-golden-files) for the golden seeds and dimensions.                                                         |
-| `blocks [--threads N] [--seed S]…`                                                     | Write the [block golden files](#block-golden-files), with and without carvers, for the golden seeds (or those given).                              |
-| `features [--threads N] [--seed S]…`                                                   | Write the [feature golden files](#feature-golden-files) for the golden seeds and seed 56 (or those given).                                         |
-| `containers [--threads N] [--seed S]…`                                                 | Write the [container golden files](#container-golden-files) for the golden seeds (or those given).                                                 |
-| `column <seed> <x> <z> [--dimension]`                                                  | Print a generated chunk's column beside `getBaseColumn`'s, marking where they differ. For debugging.                                               |
-| `locate`                                                                               | Ask a real dedicated server `/locate` questions ([below](#locate-answers)). Not part of `golden`.                                                  |
-| `order [--seed S]… [--random N] [--runs N] [--cpus N] [--no-join] [--view-distance N]` | Record the order the game decorates chunks in around a new world's spawn, with a player joined ([below](#order-files)). Not part of `golden`.      |
-| `replay [--threads N] [--seed S]…`                                                     | Replay the recorded orders' decoration, each chunk on its own and in the recorded order ([below](#replayed-orders)). Not part of `golden`.         |
-| `test-pack`                                                                            | Write probe and structure files with the [test pack](#the-test-pack) loaded, into `oracle-out/<version>+testpack/`.                                |
-| `fixture-pack [--only-pack]`                                                           | Write [the fixture pack](#the-fixture-pack), then the golden set with it loaded, into `oracle-out/<version>+overrides/`.                           |
-| `golden`                                                                               | Regenerate the whole golden set below, probe, structure, spawn, height, block, feature and container files included, into `oracle-out/<version>/`. |
+| Command                                                                                | Does                                                                                                                                                       |
+| -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `build`                                                                                | Fetch and verify the server jar, unpack its libraries, compile the harness.                                                                                |
+| `biomes <seed> [--dimension] [--x] [--z] [--size] --out <file>`                        | Write one golden biome file. Block coordinates; x, z and size must be multiples of 16.                                                                     |
+| `check-save <world> [--dimension]`                                                     | Compare the harness with the biomes stored in a real save. Fails on any unexplained cell.                                                                  |
+| `probe`                                                                                | Write the [probe files](#probe-files) into `oracle-out/<version>/probe/`.                                                                                  |
+| `structures`                                                                           | Write the [structure golden files](#structure-golden-files) for the golden seeds and dimensions.                                                           |
+| `spawn`                                                                                | Write the [spawn golden files](#spawn-golden-files) for the golden seeds and dimensions.                                                                   |
+| `heights [--threads N]`                                                                | Write the [height golden files](#height-golden-files) for the golden seeds and dimensions.                                                                 |
+| `blocks [--threads N] [--seed S]…`                                                     | Write the [block golden files](#block-golden-files), with and without carvers, for the golden seeds (or those given).                                      |
+| `features [--threads N] [--seed S]…`                                                   | Write the [feature golden files](#feature-golden-files) for the golden seeds and seed 56 (or those given).                                                 |
+| `containers [--threads N] [--seed S]…`                                                 | Write the [container golden files](#container-golden-files) for the golden seeds (or those given).                                                         |
+| `flowers [--threads N] [--seed S]…`                                                    | Write the [flower files](#flower-files) for the golden seeds (or those given).                                                                             |
+| `column <seed> <x> <z> [--dimension]`                                                  | Print a generated chunk's column beside `getBaseColumn`'s, marking where they differ. For debugging.                                                       |
+| `locate`                                                                               | Ask a real dedicated server `/locate` questions ([below](#locate-answers)). Not part of `golden`.                                                          |
+| `order [--seed S]… [--random N] [--runs N] [--cpus N] [--no-join] [--view-distance N]` | Record the order the game decorates chunks in around a new world's spawn, with a player joined ([below](#order-files)). Not part of `golden`.              |
+| `replay [--threads N] [--seed S]…`                                                     | Replay the recorded orders' decoration, each chunk on its own and in the recorded order ([below](#replayed-orders)). Not part of `golden`.                 |
+| `test-pack`                                                                            | Write probe and structure files with the [test pack](#the-test-pack) loaded, into `oracle-out/<version>+testpack/`.                                        |
+| `fixture-pack [--only-pack]`                                                           | Write [the fixture pack](#the-fixture-pack), then the golden set with it loaded, into `oracle-out/<version>+overrides/`.                                   |
+| `golden`                                                                               | Regenerate the whole golden set below, probe, structure, spawn, height, block, feature, container and flower files included, into `oracle-out/<version>/`. |
 
 `build` runs automatically before the others, and does nothing when nothing changed:
 
@@ -517,6 +518,43 @@ Every container loot table of the version filled by the game's own `LootTable.fi
 **Checks:** `spyglass-loot`'s `every_fill_matches_the_game`, every fill slot for slot. A component equal to the item's default, which the game's patch leaves out (a goat horn's `ponder_goat_horn`, an ominous bottle's amplifier 0), compares as left out. In every supported version all 30,000 (26.2) or 31,500 fills match. **Determinism:** repeated runs of one harness build write the same bytes.
 
 `cargo xtask oracle loot` takes about 15 seconds, most of it loading the game; the files are 17 to 18 MB a version.
+
+## Flower files
+
+What bone meal grows on grass ([flowers.md](flowers.md)), in two parts, in `oracle-out/<version>/flowers/`. Both have a header of `format` (1), `harness`, `version`, `data_version` and `dimension` (the Overworld).
+
+**`providers.json`:** every bone meal feature any Overworld biome can pick, each drawn at 400 fixed positions with 8 fixed random seeds (`random_seeds`):
+
+```json
+{
+  "random_seeds": [0, 1, 2, 3, 42, -7, 123456789, -9223372036854775808],
+  "features": [
+    {
+      "feature": "minecraft:flower_plain",
+      "cases": [
+        {
+          "pos": [40, -60, -13],
+          "states": ["minecraft:dandelion", "..."],
+          "next": [-1155484576, "..."]
+        }
+      ]
+    }
+  ]
+}
+```
+
+- **Positions:** from `java.util.Random(0x5eedf10e7)`, a quarter each within 64 blocks of the origin, within 4,096, and within 3,000,000, at heights from −60 to 300 in turn.
+- **`states`:** the provider's `getState(null, new LegacyRandomSource(seed), pos)` for each random seed, named as block files name them. **`next`:** that source's `nextInt()` afterwards, which shows whether spyglass drew as many times as the game.
+
+**`<seed>.json`:** for each golden seed (`seed`), the biome `BiomeManager.getBiome` gives at every block of a set of patches, with each biome's bone meal features:
+
+- **Patches:** chunk (0, 0) at each of the providers' heights, then up to 4 per biome that has bone meal features, found by scanning the chunk column at every 24th chunk out to 480: each at the first height of the scanned column the biome is at.
+- **`patches`:** each a `chunk` and a `y`, and its 256 blocks' `biomes`, x fastest, as indexes into `biome_palette`.
+- **`bone_meal_features`:** by biome in the palette, `getBoneMealFeatures`' ids in order, repeats kept.
+
+**How the harness makes them:** quart biomes come from the adapter's chunk biome windows, as golden biome files' do, with each quart's y clamped to the level as a level's chunks clamp it. The zoom is the game's own `BiomeManager`, seeded with `BiomeManager.obfuscateSeed(seed)`.
+
+**Checks:** `spyglass-feature`'s `flower_providers_match_the_game`: every state and next draw, each biome's bone meal features, and every patch block's biome, which must be among spyglass's candidates there. In 26.2, 26.3 and 26.4-snapshot-8 all 25,600 draws and about 435,000 block biomes match. `cargo xtask oracle flowers` takes about 20 seconds, most of it loading the game; the files are about 130 KB a seed, and 1.2 MB for the providers.
 
 ## Locate answers
 

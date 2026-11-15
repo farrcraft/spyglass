@@ -67,6 +67,7 @@ pub(crate) enum Kind {
     Blocks,
     Features,
     Containers,
+    Flowers,
     Locate,
     Loot,
     Bundle,
@@ -74,7 +75,7 @@ pub(crate) enum Kind {
 
 impl Kind {
     /// Every kind, in the order a job makes them.
-    pub(crate) const ALL: [Kind; 11] = [
+    pub(crate) const ALL: [Kind; 12] = [
         Kind::Probe,
         Kind::Biomes,
         Kind::Structures,
@@ -83,6 +84,7 @@ impl Kind {
         Kind::Blocks,
         Kind::Features,
         Kind::Containers,
+        Kind::Flowers,
         Kind::Locate,
         Kind::Loot,
         Kind::Bundle,
@@ -98,6 +100,7 @@ impl Kind {
             Kind::Blocks => "blocks",
             Kind::Features => "features",
             Kind::Containers => "containers",
+            Kind::Flowers => "flowers",
             Kind::Locate => "locate",
             Kind::Loot => "loot",
             Kind::Bundle => "bundle",
@@ -125,6 +128,7 @@ impl Kind {
             Kind::Blocks => &[Input::Blocks, Input::BlocksNoCarvers],
             Kind::Features => &[Input::Features],
             Kind::Containers => &[Input::Containers],
+            Kind::Flowers => &[Input::Flowers],
             Kind::Locate => &[Input::Locate],
             Kind::Loot => &[Input::Loot],
             Kind::Bundle => &[],
@@ -178,6 +182,7 @@ impl Unit {
             Kind::Features if self.seed == Some(DUNGEON_SEED) => costs.features + costs.dungeon,
             Kind::Features => costs.features,
             Kind::Containers => costs.containers,
+            Kind::Flowers => costs.flowers,
             Kind::Locate => costs.locate,
             Kind::Loot => costs.loot,
             Kind::Bundle => costs.bundle,
@@ -243,6 +248,9 @@ struct Costs {
     /// chunks, and the loot queries over them (about 5 minutes of it, 22 in 26.2). Estimated from local runs
     /// (16 threads) at four times as long, until CI's logs have them.
     containers: f64,
+    /// `oracle flowers`, every golden seed, and its comparisons. Estimated from local runs at
+    /// four times as long, until CI's logs have them.
+    flowers: f64,
     /// `oracle locate`'s server, its map cases included, and their comparisons.
     locate: f64,
     /// `oracle loot`'s fills, and their comparison.
@@ -268,6 +276,7 @@ const COSTS: &[Costs] = &[
         features: 5.0,
         dungeon: 22.0,
         containers: 37.0,
+        flowers: 1.0,
         locate: 12.0,
         loot: 1.0,
         bundle: 14.0,
@@ -284,6 +293,7 @@ const COSTS: &[Costs] = &[
         features: 3.1,
         dungeon: 4.5,
         containers: 12.0,
+        flowers: 1.0,
         locate: 5.0,
         loot: 1.0,
         bundle: 3.0,
@@ -301,6 +311,7 @@ const COSTS: &[Costs] = &[
         features: 3.1,
         dungeon: 4.8,
         containers: 12.5,
+        flowers: 1.0,
         locate: 5.5,
         loot: 1.0,
         bundle: 11.0,
@@ -419,7 +430,7 @@ fn plan(depths: &[Depth]) -> Result<Vec<Job>> {
     Ok(jobs)
 }
 
-/// A job's name in the checks list: `oracle 26.2 1/4: heights ×3, features ×2`.
+/// A job's name in the checks list: `oracle 26.2 1/4: heights Ã—3, features Ã—2`.
 fn name(job: &Job, index: usize, of: usize) -> String {
     let mut parts = Vec::new();
     for kind in Kind::ALL {
@@ -427,7 +438,7 @@ fn name(job: &Job, index: usize, of: usize) -> String {
         match (n, kind.seeds()) {
             (0, _) => {}
             (_, None) => parts.push(kind.name().to_string()),
-            (n, Some(_)) => parts.push(format!("{} ×{n}", kind.name())),
+            (n, Some(_)) => parts.push(format!("{} Ã—{n}", kind.name())),
         }
     }
     let mut name = format!("oracle {}", job.version);

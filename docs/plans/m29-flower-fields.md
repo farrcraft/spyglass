@@ -132,7 +132,7 @@ Four parts, each building on the one before: the flower at a block, the map and 
 
 - [x] Load the flower providers, the `block_state_provider` registry, the bone meal tag, and each biome's bone meal features, for 26.2, 26.3 and 26.4.
 - [x] Port the providers' `getState` and their odds (`spyglass_feature::flowers`), with unit tests for each provider's odds summing to 1.
-- [ ] Oracle: a `flowers` command, with 26.2's and 26.3's adapters if the harness's game API needs them (26.4 builds on 26.3). For each golden seed it writes `oracle-out/<version>/flowers/<seed>.json`:
+- [x] Oracle: a `flowers` command, with 26.2's and 26.3's adapters if the harness's game API needs them (26.4 builds on 26.3). For each golden seed it writes `oracle-out/<version>/flowers/<seed>.json`:
   - for fixed regions at several heights, the zoomed biome and its bone meal features;
   - for each bone meal feature's provider, at fixed positions across the build height, its state under several fixed `LegacyRandomSource` seeds.
 - [ ] `Session::biome_at_block` and `Session::flower_at`, checked against the oracle's files (`cargo xtask oracle-test`), with the providers' states compared draw for draw.
@@ -167,6 +167,8 @@ Four parts, each building on the one before: the flower at a block, the map and 
 ## Notes
 
 Newest first.
+
+- 2026-11-15: `oracle flowers` and its comparison: all 25,600 provider draws (state and next draw) and about 435,000 block biomes match in 26.2, 26.3 and 26.4-snapshot-8. The harness needs three adapter calls (each biome's bone meal features, a provider's state, the zoomed biome), and one 26.3 implementation compiles under 26.4. It's part of `golden` and CI, as kind `flowers`, at an estimated minute.
 
 - 2026-11-15: The spec, loading and the providers' port are done, with tests passing on 26.2, 26.3 and 26.4-snapshot-8 (the odds against 20,000 draws per feature and position):
   - 26.2's providers work in `double`, 26.3's in `float`, since 26.3's noise returns a `float`. The noise's form in the data decides which, as for the geode.

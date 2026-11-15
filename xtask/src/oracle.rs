@@ -118,6 +118,19 @@ pub enum OracleCmd {
         #[arg(long = "seed")]
         seeds: Vec<String>,
     },
+    /// Write flower golden files (each bone meal feature's provider at fixed positions, and the
+    /// block biomes of fixed and found patches for each golden seed) into
+    /// `oracle-out/<version>/flowers/`.
+    Flowers {
+        #[command(flatten)]
+        common: Common,
+        /// Parallel seeds. Defaults to the number of CPUs.
+        #[arg(long)]
+        threads: Option<usize>,
+        /// Only these seeds, instead of the golden ones.
+        #[arg(long = "seed")]
+        seeds: Vec<String>,
+    },
     /// Print one column of a generated chunk beside the generator's `getBaseColumn`, marking
     /// where they differ. For finding where blocks go wrong.
     Column {
@@ -462,6 +475,14 @@ pub fn run(cmd: OracleCmd) -> Result<()> {
             let harness = build(&common)?;
             harness.containers(threads, &seeds_or(&seeds, GOLDEN_SEEDS.to_vec()))
         }
+        OracleCmd::Flowers {
+            common,
+            threads,
+            seeds,
+        } => {
+            let harness = build(&common)?;
+            harness.flowers(threads, &seeds_or(&seeds, GOLDEN_SEEDS.to_vec()))
+        }
         OracleCmd::Column {
             common,
             seed,
@@ -499,7 +520,7 @@ fn seeds_or<'s>(seeds: &'s [String], default: Vec<&'s str>) -> Vec<&'s str> {
 }
 
 /// Every golden file: probes, structures, spawn, heights, blocks, features, containers, the
-/// biome grids and loot, with feature files for `feature_seeds`.
+/// biome grids, loot and flowers, with feature files for `feature_seeds`.
 fn golden(common: &Common, threads: Option<usize>, feature_seeds: &[&str]) -> Result<()> {
     let mut harness = build(common)?;
     harness.probe()?;
@@ -511,6 +532,7 @@ fn golden(common: &Common, threads: Option<usize>, feature_seeds: &[&str]) -> Re
     harness.containers(threads, GOLDEN_SEEDS)?;
     harness.golden_biomes(threads)?;
     harness.loot()?;
+    harness.flowers(threads, GOLDEN_SEEDS)?;
     println!(
         "golden files in {}",
         repo_root()
@@ -665,6 +687,24 @@ impl Harness {
             fs::remove_dir_all(&dir)?;
         }
         self.run(&["loot".into(), dir.into()])
+    }
+
+    /// Writes `oracle-out/<version>/flowers/` for the Overworld, replacing what was there: bone
+    /// meal grows flowers only on grass, and only Overworld biomes have bone meal features.
+    pub(crate) fn flowers(&self, threads: Option<usize>, seeds: &[&str]) -> Result<()> {
+        let dir = repo_root()
+            .join("oracle-out")
+            .join(&self.version)
+            .join("flowers");
+        if dir.exists() {
+            fs::remove_dir_all(&dir)?;
+        }
+        let mut args: Vec<OsString> = vec!["flowers".into(), dir.into()];
+        if let Some(threads) = threads {
+            args.extend(["--threads".into(), threads.to_string().into()]);
+        }
+        args.extend(seeds.iter().map(OsString::from));
+        self.run(&args)
     }
 
     /// Writes `oracle-out/<version>/heights/<dimension>/` for each golden dimension, replacing

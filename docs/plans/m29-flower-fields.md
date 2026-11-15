@@ -121,7 +121,7 @@ Four parts, each building on the one before: the flower at a block, the map and 
 
 ## Tasks
 
-- [ ] Write `docs/specs/flowers.md` from the 26.3 bytecode:
+- [x] Write `docs/specs/flowers.md` from the 26.3 bytecode:
   - bone meal's walk and its two outcomes;
   - how a biome's bone meal features are gathered and picked;
   - each provider's codec (26.2 and 26.3 spellings) and `getState`, with its draws;
@@ -130,8 +130,8 @@ Four parts, each building on the one before: the flower at a block, the map and 
 
   Check 26.2 and 26.4-snapshot-8 against it (`cargo xtask version-diff --code`).
 
-- [ ] Load the flower providers, the `block_state_provider` registry, the bone meal tag, and each biome's bone meal features, for 26.2, 26.3 and 26.4.
-- [ ] Port the providers' `getState` and their odds (`spyglass_feature::flowers`), with unit tests for each provider's odds summing to 1.
+- [x] Load the flower providers, the `block_state_provider` registry, the bone meal tag, and each biome's bone meal features, for 26.2, 26.3 and 26.4.
+- [x] Port the providers' `getState` and their odds (`spyglass_feature::flowers`), with unit tests for each provider's odds summing to 1.
 - [ ] Oracle: a `flowers` command, with 26.2's and 26.3's adapters if the harness's game API needs them (26.4 builds on 26.3). For each golden seed it writes `oracle-out/<version>/flowers/<seed>.json`:
   - for fixed regions at several heights, the zoomed biome and its bone meal features;
   - for each bone meal feature's provider, at fixed positions across the build height, its state under several fixed `LegacyRandomSource` seeds.
@@ -167,6 +167,11 @@ Four parts, each building on the one before: the flower at a block, the map and 
 ## Notes
 
 Newest first.
+
+- 2026-11-15: The spec, loading and the providers' port are done, with tests passing on 26.2, 26.3 and 26.4-snapshot-8 (the odds against 20,000 draws per feature and position):
+  - 26.2's providers work in `double`, 26.3's in `float`, since 26.3's noise returns a `float`. The noise's form in the data decides which, as for the geode.
+  - 26.4-snapshot-8 changes nothing that matters: `Math.clamp` for `Mth.clamp`, and a list built another way.
+  - `getBoneMealFeatures` walks each placed feature's feature, then what the selectors nest (`random_selector`'s features then `default`, `random_boolean_selector`'s true then false, `simple_random_selector`, `sequence`, `overlay`, `weighted_random_selector`), depth first, keeping repeats.
 
 - 2026-11-15: The 26.3 bytecode shows four things the milestone didn't say:
   - The noise providers are seeded by their own `seed` field, not the world's, so a field's shape is the same in every world, and only the biome depends on the seed. The search uses that.

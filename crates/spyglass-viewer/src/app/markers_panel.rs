@@ -172,6 +172,7 @@ impl App {
             structures: settings.structures.clone(),
             highlight: settings.highlight.clone(),
             features: settings.features.clone(),
+            flower: settings.flower.clone(),
             flags: Flags {
                 ties: settings.ties,
                 slime: settings.slime_chunks,
@@ -182,6 +183,7 @@ impl App {
                 veins: settings.veins,
                 caves: settings.noise_caves,
                 carvers: settings.carvers,
+                flowers: settings.flowers,
             },
         })
     }
@@ -214,6 +216,8 @@ impl App {
                 settings.veins = view.flags.veins;
                 settings.noise_caves = view.flags.caves;
                 settings.carvers = view.flags.carvers;
+                settings.flowers = view.flags.flowers;
+                settings.flower = view.flower.clone();
                 let centre = view.centre.map(|c| f64::from(c) + 0.5);
                 let shown = View {
                     centre,

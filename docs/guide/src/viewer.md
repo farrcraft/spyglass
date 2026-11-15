@@ -21,6 +21,7 @@ Drag to pan, and scroll to zoom around the pointer, or use the arrow keys and `+
 - **Structures** to mark. Hover a marker for what it is.
 - **Tied biome cells**, **slime chunks** and **the world spawn**.
 - **Generated chunks**, with one of your worlds open, at 16 blocks per pixel or closer: the chunks it has generated, magenta, fainter where generated partway, amber where an older version generated them; **By time played** shades them instead by how long players spent nearby. Structures and loot in those chunks come from your world ([your own worlds](your-worlds.md#what-the-world-already-holds)): a structure there is listed as **Saved**, and a container's window says whether it's been opened and what it holds now.
+- **Flowers**: what bone meal grows on grass at each block, at the height shown, with a key of the flowers in view. Click a flower in the key to show only it, and **Best height** lists the heights where it covers most of the view ([flower farms](flower-farms.md#in-the-viewer)).
 - **Confirm with terrain** (on by default) decides structure markers and locates with the seed's terrain, as the game does, and up close draws the bounds of villages, other jigsaw structures and mineshafts.
 
 Some layers appear only when you zoom in, since they cost more to draw:

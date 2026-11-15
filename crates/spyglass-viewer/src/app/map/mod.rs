@@ -69,6 +69,7 @@ impl App {
         self.take_finished(source, frame.selection);
         let layout_keys = self.request_jobs(&frame, world, &session);
         let drawn = self.draw_tiles(ui, &painter, &frame, world, centre);
+        self.count_flowers(&frame);
         if timing::enabled() {
             self.note_timing(&frame, &layout_keys, drawn);
         }
@@ -202,6 +203,8 @@ impl App {
             // The underground layers only on the view's own tiles: the coarser ones shown
             // while they load would cost as much again.
             underground: self.underground(),
+            // Flowers cost about what biomes do, so the stand-ins have them too.
+            flowers: self.settings.flowers,
             marking: !self.selection.queries.is_empty() && self.structures_generate(),
             // Features only up close: each chunk they could be in is placed.
             featuring: !self.selection.features.is_empty()
@@ -253,6 +256,9 @@ impl App {
                         if let Some(underground) = &data.underground {
                             image.draw_underground(underground, &key.underground.layers());
                         }
+                        if let Some(Ok(flowers)) = &data.flowers {
+                            image.draw_flowers(&flowers.map, style.flower.as_deref());
+                        }
                         if style.slime_chunks || style.generated {
                             image.draw_features(data.biomes.area(), &chunk_features(data, style));
                         }
@@ -303,6 +309,13 @@ impl App {
                         ui.label(format!("{name} (tied: {})", tied.join(", ")));
                     }
                 });
+                if self.settings.flowers {
+                    let y = self.settings.view.y;
+                    if let Ok(answer) = session.flower_at([x, y, z]) {
+                        ui.label(flower_summary(&answer))
+                            .on_hover_text(format!("What bone meal grows at y {y}"));
+                    }
+                }
             } else {
                 ui.label(
                     egui::RichText::new(
@@ -368,6 +381,8 @@ struct Frame {
     surface: bool,
     /// The underground layers, on the view's own tiles only.
     underground: Underground,
+    /// Whether flowers are drawn.
+    flowers: bool,
     /// Whether structures are marked, features placed, and loot containers marked.
     marking: bool,
     featuring: bool,
@@ -389,6 +404,7 @@ impl Frame {
             } else {
                 Underground::default()
             },
+            flowers: self.flowers,
             tile,
         }
     }
@@ -418,6 +434,49 @@ struct Canvas<'a> {
     rect: Rect,
     /// The view's centre on screen.
     centre: Pos2,
+}
+
+/// The most flowers the status bar lists at a block.
+const STATUS_FLOWERS: usize = 3;
+
+/// What bone meal grows at a block, for the status bar: the flower if it's certain, else the
+/// likeliest few with their chances in spyglass's biome, and whether a tie could change it.
+fn flower_summary(answer: &spyglass::FlowerAt) -> String {
+    if let Some(flower) = answer.certain() {
+        return format!("{} (certain)", spyglass::display_name(flower));
+    }
+    let first = answer.first();
+    if first.flowers.is_empty() {
+        return "No flower".to_string();
+    }
+    // A flower's states together (pink petals' counts), in the order they first come.
+    let mut blocks: Vec<&str> = Vec::new();
+    for f in &first.flowers {
+        let block = f
+            .flower
+            .split_once('[')
+            .map_or(f.flower.as_str(), |(id, _)| id);
+        if !blocks.contains(&block) {
+            blocks.push(block);
+        }
+    }
+    let mut parts: Vec<String> = blocks
+        .iter()
+        .take(STATUS_FLOWERS)
+        .map(|block| {
+            let chance = first.chance_of(block).as_f64();
+            format!("{} {:.0}%", spyglass::display_name(block), 100.0 * chance)
+        })
+        .collect();
+    if blocks.len() > STATUS_FLOWERS {
+        parts.push(format!("{} more", blocks.len() - STATUS_FLOWERS));
+    }
+    let tied = if answer.biomes.len() > 1 {
+        " (tied)"
+    } else {
+        ""
+    };
+    format!("{}{tied}", parts.join(", "))
 }
 
 /// The hatch behind tiles not drawn yet: lines at 45°, each from the bottom edge to the top,

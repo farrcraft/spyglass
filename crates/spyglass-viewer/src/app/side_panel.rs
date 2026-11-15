@@ -136,8 +136,12 @@ impl App {
             veins: self.underground().veins,
             noise_caves: self.underground().noise_caves,
             carvers: self.underground().carvers,
-            flowers: false,
-            flower: None,
+            flowers: self.settings.flowers,
+            flower: self
+                .settings
+                .flower
+                .clone()
+                .filter(|_| self.settings.flowers),
             pins: if self.settings.export_markers {
                 self.export_pins(world.dimension_kind(), &area)
             } else {
@@ -300,7 +304,9 @@ impl App {
                 egui::Slider::new(&mut self.settings.view.y, min_y..=top)
                     .clamping(egui::SliderClamping::Always),
             )
-            .on_hover_text("Biomes and the underground layers are drawn at this y: a slice.");
+            .on_hover_text(
+                "Biomes, the underground layers and flowers are drawn at this y: a slice.",
+            );
         });
         ui.horizontal(|ui| {
             let centre = self.settings.view.centre.map(|c| c.floor() as i32);
@@ -354,6 +360,173 @@ impl App {
                 style::hint(ui, "Zoom to 1:4 or closer to see them.");
             }
         }
+    }
+
+    /// Flowers: what bone meal grows at each block at the view's height, the key of those in
+    /// view (click one to show only it), and the heights where the one shown covers most of
+    /// the view.
+    fn flowers_section(&mut self, ui: &mut egui::Ui) {
+        style::heading(ui, "Flowers");
+        ui.checkbox(&mut self.settings.flowers, "Bone meal flowers")
+            .on_hover_text(
+                "The flower bone meal grows on grass at each block, at the height above: the \
+                 flower's own block, one above the grass.",
+            );
+        if !self.settings.flowers {
+            return;
+        }
+        style::hint(
+            ui,
+            "Opaque where the flower is certain, fainter as it's less likely; dimmed where no \
+             flower grows. Hover the map for the answer at a block.",
+        );
+        if let Some(error) = &self.flower_error {
+            ui.colored_label(style::ERROR, error);
+        }
+        let mut toggle = None;
+        ui.add_space(2.0);
+        if let Some(flower) = &self.settings.flower
+            && !self.flowers_in_view.iter().any(|f| f.flower == *flower)
+            && flower_row(ui, flower, true, "not in view").clicked()
+        {
+            toggle = Some(flower.clone());
+        }
+        let pixels = self.flowers_in_view_pixels.max(1);
+        for count in self.flowers_in_view.iter().take(KEY_ROWS) {
+            let selected = self.settings.flower.as_ref() == Some(&count.flower);
+            let note = if count.certain > 0 {
+                format!(
+                    "{} · certain {}",
+                    percent(count.possible, pixels),
+                    percent(count.certain, pixels)
+                )
+            } else {
+                percent(count.possible, pixels)
+            };
+            if flower_row(ui, &count.flower, selected, &note)
+                .on_hover_text(
+                    "The share of the view it can grow in, and is certain in. Click to show \
+                     only it.",
+                )
+                .clicked()
+            {
+                toggle = Some(count.flower.clone());
+            }
+        }
+        if let Some(flower) = toggle {
+            self.settings.flower = if self.settings.flower.as_ref() == Some(&flower) {
+                None
+            } else {
+                Some(flower)
+            };
+            self.best_heights = None;
+        }
+        ui.add_space(4.0);
+        self.best_height(ui);
+    }
+
+    /// Best height: the heights where the flower shown covers most of the view, worked out in
+    /// the background over the view at a coarser scale. Clicking a height moves the view to it.
+    fn best_height(&mut self, ui: &mut egui::Ui) {
+        let Some(flower) = self.settings.flower.clone() else {
+            style::hint(
+                ui,
+                "Click a flower to show only it and find its best height.",
+            );
+            return;
+        };
+        ui.horizontal(|ui| {
+            let running = self.flower_heights.is_some();
+            if ui
+                .add_enabled(!running, egui::Button::new("Best height"))
+                .on_hover_text(
+                    "The heights where this flower covers most of the view: certain first, \
+                     then possible.",
+                )
+                .clicked()
+            {
+                self.start_best_height(ui.ctx(), flower.clone());
+            }
+            if running {
+                ui.spinner();
+            }
+        });
+        let mut go = None;
+        match &self.best_heights {
+            Some(Ok(best)) if best.flower == flower => {
+                let rows = best.best();
+                if rows.is_empty() {
+                    style::hint(ui, "It doesn't grow anywhere in view, at any height.");
+                } else {
+                    style::hint(ui, &best.over);
+                    egui::Grid::new("best heights")
+                        .num_columns(3)
+                        .striped(true)
+                        .show(ui, |ui| {
+                            for share in rows {
+                                let percent = |n: u64| percent(n, share.pixels);
+                                if ui
+                                    .selectable_label(
+                                        self.settings.view.y == share.y,
+                                        style::mono(format!("y {}", share.y)),
+                                    )
+                                    .on_hover_text("Show the map at this height")
+                                    .clicked()
+                                {
+                                    go = Some(share.y);
+                                }
+                                ui.label(format!("certain {}", percent(share.certain)));
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "possible {}",
+                                        percent(share.possible)
+                                    ))
+                                    .color(style::MUTED),
+                                );
+                                ui.end_row();
+                            }
+                        });
+                }
+            }
+            Some(Err(e)) => {
+                ui.colored_label(style::ERROR, e);
+            }
+            _ => {}
+        }
+        if let Some(y) = go {
+            self.settings.view.y = y;
+        }
+    }
+
+    /// Starts working out `flower`'s best heights over the view, every
+    /// [`BEST_HEIGHT_STEP`] blocks through the level.
+    fn start_best_height(&mut self, ctx: &egui::Context, flower: String) {
+        let (Some(shown), Some(world)) = (&self.shown, self.world) else {
+            return;
+        };
+        let Some(view) = visible_area(&self.settings.view, self.map_size) else {
+            return;
+        };
+        let area = coarser(view, BEST_HEIGHT_PIXELS);
+        let over = format!(
+            "Over the {} × {} blocks in view, every {BEST_HEIGHT_STEP} blocks of height.",
+            u64::from(view.size[0]) * u64::from(view.scale),
+            u64::from(view.size[1]) * u64::from(view.scale),
+        );
+        let [min_y, height] = world.level();
+        let range = [min_y, min_y + height - 1];
+        let session = shown.session.clone();
+        self.best_heights = None;
+        self.flower_heights = Some(Pending::spawn(ctx, move || {
+            let shares = session
+                .flower_heights(&area, &flower, range, BEST_HEIGHT_STEP)
+                .map_err(|e| e.to_string())?;
+            Ok(BestHeights {
+                flower,
+                over,
+                shares,
+            })
+        }));
     }
 
     /// Features to mark: dungeons, geodes, wells, fossils and lava lakes, up close.
@@ -442,6 +615,9 @@ impl App {
         self.underground_section(ui);
 
         ui.add_space(6.0);
+        self.flowers_section(ui);
+
+        ui.add_space(6.0);
         self.features_section(ui);
 
         ui.add_space(6.0);
@@ -467,8 +643,9 @@ impl App {
         let terrain = self.terrain_allowed();
         let ceiling = "Not under a ceiling: the surface there is the ceiling.";
         style::heading(ui, "Biomes");
-        // The height is the underground layers' too, so it stays usable for them.
-        let deep = self.underground().any();
+        // The height is the underground layers' and the flowers' too, so it stays usable for
+        // them.
+        let deep = self.underground().any() || self.settings.flowers;
         ui.add_enabled_ui(!(self.settings.surface && terrain) || deep, |ui| {
             self.height_row(ui);
         });
@@ -857,4 +1034,121 @@ fn hit_table(ui: &mut egui::Ui, id: &str, hits: &[locate::Hit]) -> Option<[i32; 
             }
         });
     go
+}
+
+/// The most flowers the key lists.
+const KEY_ROWS: usize = 12;
+/// The most pixels a side Best height samples the view at: it coarsens the scale until the
+/// view fits.
+const BEST_HEIGHT_PIXELS: u32 = 128;
+/// Blocks between the heights Best height tries.
+const BEST_HEIGHT_STEP: u32 = 2;
+/// The heights Best height lists.
+const BEST_HEIGHT_ROWS: usize = 6;
+
+/// Best height's answer for a flower.
+pub(super) struct BestHeights {
+    /// The flower, by block id.
+    pub flower: String,
+    /// What it was worked out over, for the panel.
+    pub over: String,
+    /// Each height's share, lowest first.
+    pub shares: Vec<spyglass::FlowerShare>,
+}
+
+impl BestHeights {
+    /// The heights to list: where the flower is certain in the most pixels, then where it can
+    /// grow in the most, then the lowest; only heights where it can grow.
+    pub fn best(&self) -> Vec<spyglass::FlowerShare> {
+        let mut best: Vec<spyglass::FlowerShare> = self
+            .shares
+            .iter()
+            .copied()
+            .filter(|s| s.possible > 0)
+            .collect();
+        best.sort_by_key(|s| (std::cmp::Reverse((s.certain, s.possible)), s.y));
+        best.truncate(BEST_HEIGHT_ROWS);
+        best
+    }
+}
+
+/// `area` at a coarser scale, covering the same blocks, until neither side is over `pixels`
+/// (or the scale is [`spyglass::MAX_SCALE`]). Its corner moves back to a multiple of the new
+/// scale, as a map area's must.
+fn coarser(area: spyglass::MapArea, pixels: u32) -> spyglass::MapArea {
+    let mut out = area;
+    while (out.size[0] > pixels || out.size[1] > pixels) && out.scale < spyglass::MAX_SCALE {
+        let scale = out.scale * 2;
+        let step = i64::from(scale);
+        for d in 0..2 {
+            let min = i64::from(area.min[d]);
+            let end = min + i64::from(area.size[d]) * i64::from(area.scale);
+            let start = min.div_euclid(step) * step;
+            out.min[d] = i32::try_from(start).expect("within the area's blocks");
+            out.size[d] = u32::try_from((end - start + step - 1) / step).expect("fewer pixels");
+        }
+        out.scale = scale;
+    }
+    out
+}
+
+/// `part` of `whole` as a percentage, with a decimal below 10% so a small field doesn't read
+/// as none: `0%` only for none, `<0.1%` for a sliver.
+fn percent(part: u64, whole: u64) -> String {
+    if part == 0 {
+        return "0%".to_string();
+    }
+    let share = 100.0 * part as f64 / whole.max(1) as f64;
+    if share < 0.1 {
+        "<0.1%".to_string()
+    } else if share < 10.0 {
+        format!("{share:.1}%")
+    } else {
+        format!("{share:.0}%")
+    }
+}
+
+/// A row of the flower key: its swatch, its name and `note`, selected if it's the flower shown.
+fn flower_row(ui: &mut egui::Ui, flower: &str, selected: bool, note: &str) -> egui::Response {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        let [r, g, b] = spyglass::flower_colour(flower);
+        let (swatch, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), Sense::hover());
+        ui.painter()
+            .rect_filled(swatch, 2.0, Color32::from_rgb(r, g, b));
+        let response = ui.selectable_label(selected, spyglass::display_name(flower));
+        ui.label(egui::RichText::new(note).color(style::MUTED));
+        response
+    })
+    .inner
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn small_shares_keep_a_decimal() {
+        assert_eq!(percent(0, 100), "0%");
+        assert_eq!(percent(1, 10_000), "<0.1%");
+        assert_eq!(percent(25, 1_000), "2.5%");
+        assert_eq!(percent(1, 3), "33%");
+        assert_eq!(percent(5, 5), "100%");
+    }
+
+    #[test]
+    fn best_height_samples_the_same_blocks_coarser() {
+        let view = spyglass::MapArea::centred_on([100, -40], [1000, 300], 2, 64).unwrap();
+        let area = coarser(view, BEST_HEIGHT_PIXELS);
+        assert_eq!(area.scale, 16);
+        assert!(area.size[0] <= BEST_HEIGHT_PIXELS && area.size[1] <= BEST_HEIGHT_PIXELS);
+        area.check().unwrap();
+        // It covers every block the view does.
+        let end = |a: &spyglass::MapArea, d: usize| {
+            i64::from(a.min[d]) + i64::from(a.size[d]) * i64::from(a.scale)
+        };
+        for d in 0..2 {
+            assert!(area.min[d] <= view.min[d] && end(&area, d) >= end(&view, d));
+        }
+    }
 }

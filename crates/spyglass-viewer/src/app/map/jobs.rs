@@ -213,6 +213,59 @@ impl App {
         [covered, detailed]
     }
 
+    /// The flowers the view's own tiles show, for the Layers tab's key: each tile's key summed,
+    /// whole tiles, so the edges count a little past the view. Tiles still loading count as
+    /// nothing.
+    pub(super) fn count_flowers(&mut self, frame: &Frame) {
+        self.flowers_in_view.clear();
+        self.flowers_in_view_pixels = 0;
+        self.flower_error = None;
+        if !frame.flowers {
+            return;
+        }
+        let tile_pixels = u64::from(TILE) * u64::from(TILE);
+        for &tile in &frame.tiles {
+            let Some(entry) = self.cache.get(&frame.key(tile)) else {
+                continue;
+            };
+            match &entry.data {
+                Ok(TileData {
+                    flowers: Some(Ok(flowers)),
+                    ..
+                }) => {
+                    self.flowers_in_view_pixels += tile_pixels;
+                    for count in &flowers.key {
+                        match self
+                            .flowers_in_view
+                            .iter_mut()
+                            .find(|f| f.flower == count.flower)
+                        {
+                            Some(f) => {
+                                f.possible += count.possible;
+                                f.certain += count.certain;
+                            }
+                            None => self.flowers_in_view.push(InView {
+                                flower: count.flower.clone(),
+                                possible: count.possible,
+                                certain: count.certain,
+                            }),
+                        }
+                    }
+                }
+                Ok(TileData {
+                    flowers: Some(Err(e)),
+                    ..
+                }) => self.flower_error = Some(e.clone()),
+                _ => {}
+            }
+        }
+        self.flowers_in_view.sort_by(|a, b| {
+            b.possible
+                .cmp(&a.possible)
+                .then_with(|| a.flower.cmp(&b.flower))
+        });
+    }
+
     /// For viewer-timing: when the view is first covered, and first fully drawn, since what's
     /// shown last changed. `drawn` is [`draw_tiles`](Self::draw_tiles)'s count.
     pub(super) fn note_timing(
@@ -237,6 +290,7 @@ impl App {
                 frame.relief,
                 frame.surface,
                 frame.underground,
+                frame.flowers,
             ),
             (
                 view.centre.map(f64::to_bits),

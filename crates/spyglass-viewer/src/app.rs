@@ -27,7 +27,7 @@ use crate::search::{self, FindRun, Match, Running, SearchSettings, SeedRun};
 use crate::style;
 use crate::tiles::{
     Cache, Entry, FeatureKey, Job, JobKey, LayoutKey, LootMark, MarkerKey, Output, Pool, Style,
-    TileKey, Underground, chunk_features,
+    TileData, TileKey, Underground, chunk_features,
 };
 use crate::userdata::{Marker, Store, WorldKey};
 use crate::view::{TILE, Tile, View};
@@ -105,6 +105,10 @@ struct Settings {
     noise_caves: bool,
     /// Carvers' caves and ravines at the view's height, up close.
     carvers: bool,
+    /// The flower bone meal grows at each block, at the view's height.
+    flowers: bool,
+    /// The one flower shown, by block id; `None` shows each block's most likely flower.
+    flower: Option<String>,
     /// Structure ids to mark.
     structures: Vec<String>,
     /// Placed feature ids to mark, up close.
@@ -143,6 +147,8 @@ impl Default for Settings {
             veins: false,
             noise_caves: false,
             carvers: false,
+            flowers: false,
+            flower: None,
             structures: Vec::new(),
             features: Vec::new(),
             containers: false,
@@ -412,6 +418,25 @@ pub struct App {
     data_problems_seen: bool,
     /// The name being typed for a world, and which.
     world_name: (Option<WorldKey>, String),
+    /// Best height being worked out for a flower, and the answer last worked out.
+    flower_heights: Option<Pending<Result<side_panel::BestHeights, String>>>,
+    best_heights: Option<Result<side_panel::BestHeights, String>>,
+    /// The flowers the view's own tiles showed last frame, most pixels first, and how many
+    /// pixels those tiles have: the Layers tab's key.
+    flowers_in_view: Vec<InView>,
+    flowers_in_view_pixels: u64,
+    /// Why a tile's flowers couldn't be worked out, if one's couldn't.
+    flower_error: Option<String>,
+}
+
+/// A flower in the view's key.
+struct InView {
+    /// Its block id.
+    flower: String,
+    /// The pixels it can grow at.
+    possible: u64,
+    /// The pixels it certainly grows at.
+    certain: u64,
 }
 
 /// A search and its query.
@@ -517,6 +542,11 @@ impl App {
             data_note: None,
             data_problems_seen: false,
             world_name: (None, String::new()),
+            flower_heights: None,
+            best_heights: None,
+            flowers_in_view: Vec::new(),
+            flowers_in_view_pixels: 0,
+            flower_error: None,
         };
         app.scan(&cc.egui_ctx);
         // With nothing found on a first run, bundles go beside spyglass unless the user picks
@@ -663,6 +693,11 @@ impl App {
         if let Some(result) = self.locating.as_ref().and_then(Pending::poll) {
             self.locating = None;
             self.found = Some(result.unwrap_or_else(|()| Err("the search failed".to_string())));
+        }
+        if let Some(result) = self.flower_heights.as_ref().and_then(Pending::poll) {
+            self.flower_heights = None;
+            self.best_heights =
+                Some(result.unwrap_or_else(|()| Err("working out heights failed".to_string())));
         }
         if let Some(result) = self.exporting.as_ref().and_then(Pending::poll) {
             self.exporting = None;
@@ -890,6 +925,7 @@ impl App {
                 && self.generated_allowed()
                 && self.settings.view.scale <= spyglass::MAX_SLIME_SCALE,
             inhabited: self.settings.inhabited,
+            flower: self.settings.flower.clone(),
         }
     }
 

@@ -140,7 +140,7 @@ Four parts, each building on the one before: the flower at a block, the map and 
 - [x] `Session::flower_heights`, with a test that its shares match the map at each height.
 - [x] The search constraint: parsing, canonical form, the biome-first sampling, scores, and the outcome. [search.md](../specs/search.md) gets its grammar and meaning.
 - [x] CLI: `flower at`, `flower heights`, `render --flowers`, with `--json`; [cli-json.md](../specs/cli-json.md) updated.
-- [ ] Viewer: the layer, the key and highlight, the hover answer, and Best height.
+- [x] Viewer: the layer, the key and highlight, the hover answer, and Best height.
 - [ ] Benchmarks: a flower map tile and a flower search added to `cargo xtask bench`, with their times in the spec.
 - [ ] User guide: the flower-farm page, and the layer, command and constraint in [maps.md](../guide/src/maps.md), [command.md](../guide/src/command.md) and [seed-search.md](../guide/src/seed-search.md).
 - [ ] Update the milestone's exit criteria.
@@ -167,6 +167,8 @@ Four parts, each building on the one before: the flower at a block, the map and 
 ## Notes
 
 Newest first.
+
+- 2026-11-15: The viewer's flower layer, key, hover answer and Best height. Flowers are worked out on each tile's worker with its biomes, at every scale (they cost about what biomes do, so the coarse stand-ins have them too), and the flower shown is part of the tile's style, so choosing one restyles without sampling again. A tile whose flowers fail keeps its biomes. The viewer has no area selection, so Best height works over the area in view, coarsened to at most 128 pixels a side, every 2 blocks through the level: a few seconds. On seed 12345 it agrees with `flower heights` (cornflowers best at y 94 in the flower forest at 190, −2060). The view text carries the layer (`flowers`) and the flower shown (`fl`). The guide's example spot (1000, −2000) turned out to be deep ocean at y 71; the page now uses that flower forest.
 
 - 2026-11-15: The flower-field constraint: `flower F field N [chance P%] place [at y A [to B]] [step S]`. The `at y` comes after the place, as for biome sampling, and there's no count: one field of N blocks is the question a farm asks. Heights are tried every 4 blocks; a field joins samples side to side at one height. Over 200 seeds on 26.3, a 300-block certain cornflower field within 1,000 of the spawn took about 0.17 s a seed and was met in 65; the top seed's field checks out with `flower at` and `flower heights`.
 

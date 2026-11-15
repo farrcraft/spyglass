@@ -18,11 +18,11 @@ Deep dark and dripstone caves grow plains flowers, so an underground farm there 
 
 ## Finding a field
 
-Draw the flowers on a map at the height your platform will be, the height of the flower's block, one above the grass:
+Seed 12345 has a flower forest about 2,000 blocks north of the spawn, around x 190, z −2060. Draw the flowers on a map at the height your platform will be, the height of the flower's block, one above the grass:
 
 ```sh
-spyglass render --seed 12345 --centre 1000,-2000 --scale 1 --size 512x512 --y 71 --flowers -o flowers.png
-spyglass render --seed 12345 --centre 1000,-2000 --scale 1 --size 512x512 --y 71 --flower minecraft:cornflower -o cornflowers.png
+spyglass render --seed 12345 --centre 190,-2060 --scale 1 --size 256x256 --y 94 --flowers -o flowers.png
+spyglass render --seed 12345 --centre 190,-2060 --scale 1 --size 256x256 --y 94 --flower minecraft:cornflower -o cornflowers.png
 ```
 
 With `--flowers`, each block shows its most likely flower: solid where it's certain, and fainter the less likely it is. With `--flower`, only that flower is drawn, and every block that can't grow it is dimmed. Try a few heights with `--y` to see the bands move.
@@ -30,7 +30,7 @@ With `--flowers`, each block shows its most likely flower: solid where it's cert
 ## Checking a block
 
 ```sh
-spyglass flower at 1012,71,-1988 --seed 12345
+spyglass flower at 165,94,-2074 --seed 12345
 ```
 
 This gives each flower that can grow at the block, with its chance, and why: the biome there, and whether its flowers go by position or by chance. Give the flower's block, one above the grass. "100%" means bone meal always grows that flower there.
@@ -42,10 +42,20 @@ The chances are for one flower at that block. Each block bone meal reaches gets 
 A band that's narrow at one height can be wide at another. To find the best height for an area:
 
 ```sh
-spyglass flower heights minecraft:cornflower --min 980,-2020 --max 1040,-1960 --y 60..140 --seed 12345
+spyglass flower heights minecraft:cornflower --min 120,-2110 --max 260,-2010 --y 60..110 --seed 12345
 ```
 
-It lists, for each height, the share of the area where the flower is certain and where it can grow, and marks the best. Use `--step` to try every few heights, and `--scale` for a large area.
+It lists, for each height, the share of the area where the flower is certain and where it can grow, and marks the best. Use `--step` to try every few heights, and `--scale` for a large area. Here the cornflowers are widest at y 94, about 20 blocks above the ground, so the farm is a platform of grass at y 93.
+
+## In the viewer
+
+Turn on **Bone meal flowers** in the **Flowers** section of the Layers tab. The map then shows each block's flower at the height **Height** sets, as `render --flowers` does, at every scale. Move the height to watch the bands shift.
+
+- **The key** under the checkbox lists the flowers in view, with the share of the view each can grow in and is certain in. Click one to show only it; click it again to show them all.
+- **Hover** the map: the status bar gives the answer at the block under the pointer, at the height shown.
+- **Best height**, with a flower chosen, tries every other height of the world over the area in view and lists the best, most certain first. Click a height to move the map to it.
+
+A shared view text keeps the flower layer and the flower shown.
 
 ## Finding a seed
 

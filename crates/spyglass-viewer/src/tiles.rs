@@ -1,11 +1,11 @@
 //! Map tiles: computed on worker threads, cached on the UI thread.
 //!
-//! Workers do the slow parts: a tile's biome map, heights, underground layers and slime
+//! Workers do the slow parts: a tile's biome map, heights, underground layers, flowers and slime
 //! chunks (keeping each tile's carving map across heights), separately the structure starts on
 //! a tile for the structures chosen, the features and loot containers chosen up close, and the
 //! layouts of jigsaw structures shown up close. The UI thread turns biome maps into textures with the current
-//! style (ties, highlight, slime, relief) through the library's `BiomeMap::colorize`,
-//! `Image::shade` and `Image::draw_features`, so restyling never samples biomes again, and draws
+//! style (ties, highlight, slime, relief, the flower shown) through the library's
+//! `BiomeMap::colorize`, `Image::shade`, `Image::draw_flowers` and `Image::draw_features`, so restyling never samples biomes again, and draws
 //! structure markers and bounds itself.
 //!
 //! Each frame, the map lists every job it would like, most wanted first, and the list replaces
@@ -21,9 +21,9 @@ use std::thread;
 
 use eframe::egui;
 use spyglass::{
-    BiomeMap, CarvingMap, DEFAULT_MAP_Y, FeatureQuery, FoundContainer, FoundFeature,
-    GeneratedChunk, HeightMap, ItemQuery, Layers, MAX_SLIME_SCALE, MapFeatures, Session,
-    StructureLayout, StructureQuery, StructureStart, UndergroundMap,
+    BiomeMap, CarvingMap, DEFAULT_MAP_Y, FeatureQuery, FlowerCount, FlowerMap, FoundContainer,
+    FoundFeature, GeneratedChunk, HeightMap, ItemQuery, Layers, MAX_SLIME_SCALE, MapFeatures,
+    Session, StructureLayout, StructureQuery, StructureStart, UndergroundMap,
 };
 
 use crate::timing;
@@ -42,6 +42,8 @@ pub struct TileKey {
     pub surface: bool,
     /// The underground layers to compute at `y`.
     pub underground: Underground,
+    /// The flower bone meal grows at each pixel's block at `y`.
+    pub flowers: bool,
     /// Where the tile is, and its scale.
     pub tile: Tile,
 }
@@ -135,10 +137,21 @@ pub struct TileData {
     pub heights: Option<HeightMap>,
     /// The underground layers, where the key asked for them.
     pub underground: Option<Box<UndergroundMap>>,
+    /// The flowers, where the key asked for them, or why they couldn't be worked out: the
+    /// tile's biomes are drawn either way.
+    pub flowers: Option<Result<TileFlowers, String>>,
     /// Slime chunks, at scales where they're drawn.
     pub slime_chunks: Vec<[i32; 2]>,
     /// The session's save's generated chunks, at the same scales; empty without a save.
     pub generated: Vec<GeneratedChunk>,
+}
+
+/// A tile's flowers and its key, worked out once on the worker.
+pub struct TileFlowers {
+    /// What bone meal grows at each pixel's block.
+    pub map: FlowerMap,
+    /// The flowers it shows, with how many pixels each can grow at and is certain at.
+    pub key: Vec<FlowerCount>,
 }
 
 /// What a job computes.
@@ -370,6 +383,14 @@ fn compute(job: &Job, carvings: &Carvings) -> Result<Output, String> {
             } else {
                 None
             };
+            let flowers = key.flowers.then(|| {
+                timing::job(timing_name("flowers"), || job.session.flower_map(&area))
+                    .map(|map| TileFlowers {
+                        key: map.key(),
+                        map,
+                    })
+                    .map_err(|e| e.to_string())
+            });
             let slime = Layers {
                 biomes: false,
                 slime_chunks: true,
@@ -396,6 +417,7 @@ fn compute(job: &Job, carvings: &Carvings) -> Result<Output, String> {
                 biomes,
                 heights,
                 underground,
+                flowers,
                 slime_chunks,
                 generated,
             })))
@@ -521,6 +543,9 @@ pub struct Style {
     pub generated: bool,
     /// Shade them by inhabited time.
     pub inhabited: bool,
+    /// With flowers on the tile, the one flower shown, by block id; `None` shows each block's
+    /// most likely flower.
+    pub flower: Option<String>,
 }
 
 /// A computed tile and its texture in some style.
@@ -630,14 +655,22 @@ mod tests {
             heights: false,
             surface: false,
             underground: Underground::default(),
+            flowers: false,
             tile: Tile { scale: 4, x, z: 0 },
         }
     }
 
     /// The fixture world with one structure set of towers in plains.
     fn session() -> Arc<Session<'static>> {
+        session_with(&[])
+    }
+
+    /// [`session`]'s world with `extra` files too.
+    fn session_with(extra: &[(String, serde_json::Value)]) -> Arc<Session<'static>> {
         let fixture = fixtures::overworld(
             &[
+                extra,
+                &[
                 resource(
                     "worldgen/structure_set",
                     "towers",
@@ -650,7 +683,9 @@ mod tests {
                     "tower",
                     json!({"type": "minecraft:stronghold", "biomes": "minecraft:plains", "step": "surface_structures"}),
                 ),
-            ],
+                ],
+            ]
+            .concat(),
             true,
         );
         // Kept for the test's life: the world reads its block settings when first asked.
@@ -785,6 +820,93 @@ mod tests {
                 .unwrap();
             assert_eq!(data.underground.as_deref(), Some(&expected), "y {}", key.y);
         }
+    }
+
+    #[test]
+    fn flower_tiles_are_the_library_s_at_every_height() {
+        // Plains grows a poppy or a dandelion, 2 to 1; the tied forest grows nothing.
+        let session = session_with(&[
+            resource(
+                "worldgen/biome",
+                "plains",
+                json!({"temperature": 0.8, "features": [["minecraft:flower_test"]]}),
+            ),
+            resource(
+                "worldgen/placed_feature",
+                "flower_test",
+                json!({"feature": "minecraft:flower_test", "placement": []}),
+            ),
+            resource(
+                "worldgen/configured_feature",
+                "flower_test",
+                json!({"type": "minecraft:simple_block", "config": {"to_place": {
+                    "type": "minecraft:weighted_state_provider",
+                    "entries": [{"data": {"Name": "minecraft:poppy"}, "weight": 2},
+                        {"data": {"Name": "minecraft:dandelion"}, "weight": 1}]}}}),
+            ),
+            resource(
+                "tags/worldgen/configured_feature",
+                "can_spawn_from_bone_meal",
+                json!({"values": ["minecraft:flower_test"]}),
+            ),
+            (
+                "reports/blocks.json".to_string(),
+                json!({
+                    "minecraft:air": {"states": [{"id": 0, "default": true}]},
+                    "minecraft:poppy": {"states": [{"id": 1, "default": true}]},
+                    "minecraft:dandelion": {"states": [{"id": 2, "default": true}]},
+                }),
+            ),
+        ]);
+        let (wake, woken) = channel();
+        let pool = Pool::with_threads(2, move || {
+            let _ = wake.send(());
+        });
+        let flowers = |y, scale| TileKey {
+            y,
+            flowers: true,
+            tile: Tile { scale, x: -1, z: 0 },
+            ..key(0)
+        };
+        pool.want(vec![
+            job(&session, JobKey::Biomes(flowers(64, 1))),
+            job(&session, JobKey::Biomes(flowers(100, 16))),
+        ]);
+        for (key, result) in run(&pool, &woken, 2) {
+            let (JobKey::Biomes(key), Ok(Output::Biomes(data))) = (key, result) else {
+                panic!("a biome tile");
+            };
+            let area = key.tile.area(key.y).unwrap();
+            let expected = session.flower_map(&area).unwrap();
+            let Some(Ok(found)) = &data.flowers else {
+                panic!("flowers on the tile");
+            };
+            assert_eq!(found.map, expected, "y {}", key.y);
+            assert_eq!(found.key, expected.key());
+            assert!(found.key.iter().any(|f| f.flower == "minecraft:poppy"));
+        }
+    }
+
+    #[test]
+    fn a_tile_whose_flowers_fail_keeps_its_biomes() {
+        // The fixture has no bone meal tag.
+        let session = session();
+        let (wake, woken) = channel();
+        let pool = Pool::with_threads(1, move || {
+            let _ = wake.send(());
+        });
+        let flowers = TileKey {
+            flowers: true,
+            ..key(0)
+        };
+        pool.want(vec![job(&session, JobKey::Biomes(flowers))]);
+        let (_, result) = run(&pool, &woken, 1).remove(0);
+        let Ok(Output::Biomes(data)) = result else {
+            panic!("a biome tile");
+        };
+        assert!(matches!(data.flowers, Some(Err(_))));
+        let area = flowers.tile.area(flowers.y).unwrap();
+        assert_eq!(data.biomes, session.biome_map(&area).unwrap());
     }
 
     #[test]

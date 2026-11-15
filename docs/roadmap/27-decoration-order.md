@@ -1,8 +1,8 @@
 # 27. Decoration order around the spawn
 
-- Status: Planned
+- Status: In progress
 - Depends on: [19](completed/19-features.md)
-- Plans: none yet
+- Plans: [m27-order-measurement](../plans/m27-order-measurement.md)
 
 ## Goal
 

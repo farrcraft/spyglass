@@ -87,7 +87,7 @@ The answer at a block is the flowers it can grow, each with its chance given tha
 - `weighted`: each entry's `weight / totalWeight`, summed over entries with the same state;
 - `noise_threshold`: below the threshold, `1 / |low_states|` for each low state (summed over repeats); otherwise `high_chance / |high_states|` for each high state, and `1 − high_chance` for the default state. `high_chance` is a float: the chance is the share of `nextFloat()`'s 2²⁴ values below it, `ceil(high_chance · 2²⁴) / 2²⁴`.
 
-Chances are kept as exact fractions. A flower is **certain** at a block when its chance there is 1. Where the biome has no bone meal features, the answer is no flower.
+Chances are kept as exact fractions ([ADR 0075](../adr/0075-flower-answers-carry-exact-chances.md)). A flower is **certain** at a block when its chance there is 1. Where the biome has no bone meal features, the answer is no flower.
 
 States are answers as block states: `pink_petals` and `wildflowers` with each `facing` and `flower_amount`, and the meadow's `tall_grass` and `short_grass`, are states like any flower's. Front ends name a flower by its block id and may group a block's states.
 

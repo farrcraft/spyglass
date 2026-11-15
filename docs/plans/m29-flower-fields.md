@@ -135,7 +135,7 @@ Four parts, each building on the one before: the flower at a block, the map and 
 - [x] Oracle: a `flowers` command, with 26.2's and 26.3's adapters if the harness's game API needs them (26.4 builds on 26.3). For each golden seed it writes `oracle-out/<version>/flowers/<seed>.json`:
   - for fixed regions at several heights, the zoomed biome and its bone meal features;
   - for each bone meal feature's provider, at fixed positions across the build height, its state under several fixed `LegacyRandomSource` seeds.
-- [ ] `Session::biome_at_block` and `Session::flower_at`, checked against the oracle's files (`cargo xtask oracle-test`), with the providers' states compared draw for draw.
+- [x] `Session::biome_at_block` and `Session::flower_at`, checked against the oracle's files (`cargo xtask oracle-test`), with the providers' states compared draw for draw.
 - [ ] `Session::flower_map` and the flower layer in `render`, with its colour table, and the spec's Layers list updated.
 - [ ] `Session::flower_heights`, with a test that its shares match the map at each height.
 - [ ] The search constraint: parsing, canonical form, the biome-first sampling, scores, and the outcome. [search.md](../specs/search.md) gets its grammar and meaning.
@@ -167,6 +167,8 @@ Four parts, each building on the one before: the flower at a block, the map and 
 ## Notes
 
 Newest first.
+
+- 2026-11-15: `Session::biome_at_block` and `Session::flower_at`, through the API, match the oracle's block biomes in all three versions. The zoom needs only `BiomeZoom` and the session's biomes, not the block settings, so a flower answer doesn't load the chunk generator. [ADR 0075](../adr/0075-flower-answers-carry-exact-chances.md) (proposed) records the answers' exact chances.
 
 - 2026-11-15: `oracle flowers` and its comparison: all 25,600 provider draws (state and next draw) and about 435,000 block biomes match in 26.2, 26.3 and 26.4-snapshot-8. The harness needs three adapter calls (each biome's bone meal features, a provider's state, the zoomed biome), and one 26.3 implementation compiles under 26.4. It's part of `golden` and CI, as kind `flowers`, at an estimated minute.
 

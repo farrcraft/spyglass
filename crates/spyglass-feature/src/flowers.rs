@@ -6,6 +6,7 @@
 //! pick at a block is the same in every world; only the biome depends on the seed.
 
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 
 use serde_json::{Map, Value};
 use spyglass_biome::BiomeId;
@@ -80,20 +81,32 @@ impl Chance {
         }
     }
 
+    // The arithmetic is checked: vanilla's chances are far inside u128, and a data pack whose
+    // weights overflowed it would otherwise get a wrong chance (ADR 0075).
     fn add(self, other: Chance) -> Chance {
+        const OVERFLOW: &str = "a chance's fraction overflowed u128";
         let g = gcd(self.denominator, other.denominator);
-        let denominator = self.denominator / g * other.denominator;
-        Chance::new(
-            self.numerator * (denominator / self.denominator)
-                + other.numerator * (denominator / other.denominator),
-            denominator,
-        )
+        let denominator = (self.denominator / g)
+            .checked_mul(other.denominator)
+            .expect(OVERFLOW);
+        let left = self
+            .numerator
+            .checked_mul(denominator / self.denominator)
+            .expect(OVERFLOW);
+        let right = other
+            .numerator
+            .checked_mul(denominator / other.denominator)
+            .expect(OVERFLOW);
+        Chance::new(left.checked_add(right).expect(OVERFLOW), denominator)
     }
 
     fn times(self, other: Chance) -> Chance {
+        const OVERFLOW: &str = "a chance's fraction overflowed u128";
         Chance::new(
-            self.numerator * other.numerator,
-            self.denominator * other.denominator,
+            self.numerator.checked_mul(other.numerator).expect(OVERFLOW),
+            self.denominator
+                .checked_mul(other.denominator)
+                .expect(OVERFLOW),
         )
     }
 
@@ -461,7 +474,7 @@ pub struct BoneMealFeature {
     /// Its provider's type, e.g. `minecraft:noise_threshold`, for saying why.
     pub provider_type: String,
     /// What it places, or why spyglass can't say.
-    provider: Result<Provider, LoadError>,
+    provider: Result<Provider, Arc<LoadError>>,
 }
 
 impl BoneMealFeature {
@@ -474,7 +487,7 @@ impl BoneMealFeature {
     }
 
     /// Why spyglass can't answer for it, if it can't.
-    pub fn error(&self) -> Option<&LoadError> {
+    pub fn error(&self) -> Option<&Arc<LoadError>> {
         self.provider.as_ref().err()
     }
 }
@@ -601,8 +614,11 @@ impl Flowers {
         feature: usize,
         pos: [i32; 3],
         random: &mut impl RandomSource,
-    ) -> Result<FlowerState, &LoadError> {
-        let provider = self.features[feature].provider.as_ref()?;
+    ) -> Result<FlowerState, Arc<LoadError>> {
+        let provider = self.features[feature]
+            .provider
+            .as_ref()
+            .map_err(Arc::clone)?;
         Ok(provider.state(pos, random))
     }
 
@@ -611,8 +627,11 @@ impl Flowers {
         &self,
         feature: usize,
         pos: [i32; 3],
-    ) -> Result<Vec<FlowerOdds>, &LoadError> {
-        let provider = self.features[feature].provider.as_ref()?;
+    ) -> Result<Vec<FlowerOdds>, Arc<LoadError>> {
+        let provider = self.features[feature]
+            .provider
+            .as_ref()
+            .map_err(Arc::clone)?;
         Ok(provider
             .odds(pos)
             .into_iter()
@@ -624,12 +643,15 @@ impl Flowers {
     /// makes a flower: each of the biome's features with chance `1/n`, times its own odds.
     /// Empty where the biome has no bone meal features. The error of the first feature
     /// spyglass can't answer for, if any.
-    pub fn odds(&self, biome: BiomeId, pos: [i32; 3]) -> Result<Vec<FlowerOdds>, &LoadError> {
+    pub fn odds(&self, biome: BiomeId, pos: [i32; 3]) -> Result<Vec<FlowerOdds>, Arc<LoadError>> {
         let list = self.biome_features(biome);
         let mut total: BTreeMap<FlowerState, Chance> = BTreeMap::new();
         let pick = Chance::new(1, list.len().max(1) as u128);
         for &feature in list {
-            let provider = self.features[feature].provider.as_ref()?;
+            let provider = self.features[feature]
+                .provider
+                .as_ref()
+                .map_err(Arc::clone)?;
             for (state, chance) in provider.odds(pos) {
                 let entry = total.entry(state).or_insert(Chance::new(0, 1));
                 *entry = entry.add(pick.times(chance));
@@ -777,7 +799,7 @@ impl<R: Resources + ?Sized> Loader<'_, R> {
         BoneMealFeature {
             id: id.to_string(),
             provider_type,
-            provider,
+            provider: provider.map_err(Arc::new),
         }
     }
 

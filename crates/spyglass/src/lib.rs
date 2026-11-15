@@ -28,6 +28,7 @@
 
 mod blocks;
 mod features;
+mod flowers;
 mod game;
 mod loot;
 mod render;
@@ -52,6 +53,7 @@ use spyglass_terrain::{Terrain, TerrainSettings};
 
 pub use blocks::{BlockAt, BlockColumn, Carvers, ChunkBlocks};
 pub use features::{FeatureLocate, FeatureOptions, FeatureQuery, FoundFeature, Neighbours};
+pub use flowers::{BoneMealFeature, FlowerAt, FlowerBiome, FlowerChance};
 pub use game::{Game, GameSession};
 pub use loot::{
     ContainerLocate, ContainerSource, FoundContainer, InSave, Item, ItemQuery, MapDestination, Slot,
@@ -79,6 +81,7 @@ pub use spyglass_data::bundle::{
 pub use spyglass_data::dimension::Dimension;
 pub use spyglass_data::pack::{FormatRange, Pack, PackError, PackFormat, PackMeta};
 pub use spyglass_data::versions::{CHECKED, Checked};
+pub use spyglass_feature::flowers::Chance;
 pub use spyglass_structure::LOCATE_RADIUS;
 pub use spyglass_terrain::Heightmap;
 /// Coarse timing of terrain, for finding where the time goes; not a stable interface.
@@ -467,6 +470,8 @@ pub struct World {
     features: OnceLock<features::FeatureWorld>,
     /// Loaded on first loot query.
     loot: OnceLock<loot::LootWorld>,
+    /// Loaded on first flower query.
+    flowers: OnceLock<spyglass_feature::flowers::Flowers>,
     /// Each biome's map colour, by [`BiomeId`].
     palette: Vec<[u8; 3]>,
 }
@@ -497,18 +502,19 @@ impl World {
 
     /// `dimension` of the Default world preset, from `bundle` and any packs applied to it. With
     /// packs, everything loaded on first use otherwise (template pools, block settings,
-    /// features, loot) is loaded now, so what spyglass can't apply is found on opening.
+    /// features, loot, flowers) is loaded now, so what spyglass can't apply is found on opening.
     pub(crate) fn from_bundle(bundle: Bundle, dimension: Dimension) -> Result<World> {
         let world = Self::load(bundle, dimension)?;
         if world.bundle.layers().is_empty() {
             return Ok(world);
         }
         type Step = fn(&World) -> Result<()>;
-        let steps: [Step; 4] = [
+        let steps: [Step; 5] = [
             |w| w.pools().map(drop),
             |w| w.block_settings().map(drop),
             |w| w.feature_world().map(drop),
             |w| w.loot_world().map(drop),
+            |w| w.flowers().map(drop),
         ];
         let mut plain = None;
         for step in steps {
@@ -568,6 +574,7 @@ impl World {
             blocks: OnceLock::new(),
             features: OnceLock::new(),
             loot: OnceLock::new(),
+            flowers: OnceLock::new(),
             palette,
         })
     }

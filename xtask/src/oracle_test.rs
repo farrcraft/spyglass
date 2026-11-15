@@ -222,6 +222,11 @@ pub(crate) const TESTS: &[(&str, &str, &[Input])] = &[
         &[Input::Flowers, Input::Bundle],
     ),
     (
+        "spyglass",
+        "flowers_through_the_api_are_the_game_s",
+        &[Input::Flowers, Input::Bundle],
+    ),
+    (
         "spyglass-feature",
         "structure_containers_match_the_game",
         &[Input::Containers, Input::Bundle],

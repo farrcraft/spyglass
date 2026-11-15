@@ -20,7 +20,7 @@ Find where a chosen flower grows, for a player building a flower farm. In some b
 
 Not in scope:
 
-- The flowers the world generated, before any farm: random patches, which depend on the blocks and on the [decoration order](27-decoration-order.md). A later milestone, if wanted.
+- The flowers the world generated, before any farm: random patches, which depend on the blocks and on the [decoration order](completed/27-decoration-order.md). A later milestone, if wanted.
 - Other things bone meal grows (tall grass, mushrooms, moss), and flowers spreading on their own.
 - Searching by colour or dye.
 

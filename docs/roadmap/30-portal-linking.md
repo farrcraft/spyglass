@@ -20,7 +20,7 @@ Show where a Nether portal leads, and where a portal can be built so that it lin
 
 Not in scope:
 
-- Where the game builds a new portal when none is in range: it searches the blocks around the target for room, which needs the world's blocks after features ([decoration order](27-decoration-order.md)). A later milestone could answer it as certain or a candidate, as features are.
+- Where the game builds a new portal when none is in range: it searches the blocks around the target for room, which needs the world's blocks after features ([decoration order](completed/27-decoration-order.md)). A later milestone could answer it as certain or a candidate, as features are.
 - End portals and gateways.
 - Writing portals into a save.
 

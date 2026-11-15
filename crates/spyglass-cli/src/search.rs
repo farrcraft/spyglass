@@ -272,6 +272,21 @@ pub(crate) fn feature_json(f: &Feature) -> json::FeatureAnswer<'_> {
             certain: *certain,
         },
         Feature::Spawn(s) => json::FeatureAnswer::Spawn(json::SpawnAnswer::new(s)),
+        Feature::FlowerField {
+            position: [x, y, z],
+            flower,
+            blocks,
+            certain,
+        } => json::FeatureAnswer::FlowerField {
+            position: Xyz {
+                x: *x,
+                y: *y,
+                z: *z,
+            },
+            flower,
+            blocks: *blocks,
+            certain: *certain,
+        },
         _ => json::FeatureAnswer::Other,
     }
 }

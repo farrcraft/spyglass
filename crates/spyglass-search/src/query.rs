@@ -19,6 +19,15 @@ pub const MAX_SAMPLES: u64 = 1 << 20;
 /// The most grid points a terrain condition may have: a column's height costs far more than its
 /// biome.
 pub const MAX_HEIGHT_SAMPLES: u64 = 1 << 14;
+/// A flower field's grid spacing in blocks unless the constraint says `step`.
+pub const DEFAULT_FLOWER_STEP: u32 = 4;
+/// The heights a flower field's range is sampled at: every this many blocks from its lowest,
+/// and its highest.
+pub const FLOWER_Y_STEP: i32 = 4;
+/// The most samples a flower field may have: grid points, times heights.
+pub const MAX_FLOWER_SAMPLES: u64 = 1 << 20;
+/// The largest field a flower constraint may ask for, in blocks.
+pub const MAX_FIELD: u32 = 1 << 24;
 /// The most blocks `flat` may allow heights to differ by, and the largest height magnitude.
 pub const MAX_HEIGHT: i32 = 4096;
 /// How far apart a `find` query's biome and point matches are unless it says `apart`.
@@ -272,6 +281,23 @@ pub enum Kind {
         /// The grid's spacing.
         step: u32,
     },
+    /// `flower FLOWER field N [chance P%] place [at y A [to B]] [step S]`: a field of at least
+    /// N blocks at one height where bone meal grows the flower with at least P% chance.
+    FlowerField {
+        /// A full block id, e.g. `minecraft:cornflower`.
+        flower: String,
+        /// N: the least blocks, 1 to [`MAX_FIELD`].
+        size: u32,
+        /// P, 1 to 100: 100 asks for the flower to be certain.
+        chance: u32,
+        /// The lowest and highest heights the field may be at: the flower's block, one above
+        /// the grass.
+        heights: [i32; 2],
+        /// Where.
+        place: Place,
+        /// The grid's spacing.
+        step: u32,
+    },
     /// `flat D place [step S]`: the sampled columns' heights differ by at most D.
     Flat {
         /// D.
@@ -470,6 +496,30 @@ impl fmt::Display for Kind {
             } => write!(f, "height {min} to {max} {place}{}", Step(*step)),
             Kind::Flat { range, place, step } => {
                 write!(f, "flat {range} {place}{}", Step(*step))
+            }
+            Kind::FlowerField {
+                flower,
+                size,
+                chance,
+                heights: [low, high],
+                place,
+                step,
+            } => {
+                write!(f, "flower {flower} field {size}")?;
+                if *chance != 100 {
+                    write!(f, " chance {chance}%")?;
+                }
+                write!(f, " {place}")?;
+                if *low != DEFAULT_Y || *high != DEFAULT_Y {
+                    write!(f, " at y {low}")?;
+                    if high != low {
+                        write!(f, " to {high}")?;
+                    }
+                }
+                if *step != DEFAULT_FLOWER_STEP {
+                    write!(f, " step {step}")?;
+                }
+                Ok(())
             }
         }
     }

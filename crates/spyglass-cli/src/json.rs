@@ -628,6 +628,12 @@ pub enum FeatureAnswer<'a> {
         certain: bool,
     },
     Spawn(SpawnAnswer),
+    FlowerField {
+        position: Xyz,
+        flower: &'a str,
+        blocks: u64,
+        certain: bool,
+    },
     Other,
 }
 

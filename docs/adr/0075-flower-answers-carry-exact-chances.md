@@ -1,6 +1,6 @@
 # 0075. Flower answers carry exact chances
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-15
 - See also: [0056](0056-two-certainties-on-its-own-and-whatever-the-neighbours.md)
 

@@ -16,7 +16,7 @@ prefer 3 #minecraft:village within 800 of spawn
 prefer biome minecraft:cherry_grove within 500 of spawn weight 2'
 ```
 
-A constraint counts structures (ids or `#tags`), features, loot or slime chunks in a place, or asks for a biome, the spawn or terrain (`height A to B`, `flat D`) there. `no` asks for none, and `biome B covers 30%` for a share of the place. The place is:
+A constraint counts structures (ids or `#tags`), features, loot or slime chunks in a place, or asks for a biome, the spawn or terrain (`height A to B`, `flat D`) there, or a field of a flower (`flower F field N`, see [Flower farms](flower-farms.md#finding-a-seed)). `no` asks for none, and `biome B covers 30%` for a share of the place. The place is:
 
 - a distance from the spawn or a point: `within 600 of spawn`, `within 300 of 1000,-2000`;
 - a rectangle: `in -500,-500 to 500,500`;
@@ -49,6 +49,12 @@ Two dungeons close enough for one spawner farm:
 
 ```text
 require cluster 2 feature minecraft:monster_room within 16 of each other within 96 of spawn
+```
+
+A field of 300 blocks where bone meal always grows cornflowers, near the spawn, at a height from 64 to 96:
+
+```text
+require flower minecraft:cornflower field 300 within 1000 of spawn at y 64 to 96 step 8
 ```
 
 An enchanted golden apple in a chest near the spawn:

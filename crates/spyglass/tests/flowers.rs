@@ -128,3 +128,52 @@ fn best_heights_agree_with_the_map() {
             .is_err()
     );
 }
+
+#[test]
+#[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
+fn flower_fields_are_what_the_map_shows() {
+    let world = World::open_with_packs(
+        spyglass_oracle::bundle_dir(),
+        Dimension::Overworld,
+        &spyglass_oracle::packs(),
+    )
+    .unwrap();
+    // Seed 1's nearest flower forest to the origin, around (-736, -256), at a few heights.
+    let session = world.session(1).unwrap();
+    let query = world
+        .search_query(
+            "require flower minecraft:orange_tulip field 64 within 200 of -736,-256 at y 60 to 100 step 4\n\
+             prefer flower minecraft:dandelion field 1000000 within 200 of -736,-256",
+        )
+        .unwrap();
+    let e = session.evaluate(&query, false).unwrap();
+    let field = &e.constraints[0];
+    assert_eq!(field.outcome, spyglass::Outcome::Met);
+    let Some(spyglass::Feature::FlowerField {
+        position,
+        flower,
+        blocks,
+        certain,
+    }) = field.features.first()
+    else {
+        panic!("no field: {:?}", field.features);
+    };
+    assert_eq!(flower, "minecraft:orange_tulip");
+    assert!(*certain && *blocks >= 64);
+    // The field's first block grows the flower for certain, as the map says.
+    assert_eq!(
+        session.flower_at(*position).unwrap().certain(),
+        Some("minecraft:orange_tulip")
+    );
+    let area = spyglass::MapArea {
+        min: [position[0], position[2]],
+        size: [1, 1],
+        scale: 1,
+        y: position[1],
+    };
+    let map = session.flower_map(&area).unwrap();
+    assert_eq!(map.at([0, 0]).certain(), Some("minecraft:orange_tulip"));
+    // A field larger than the place can't be met, and scores by the share it has.
+    let too_big = &e.constraints[1];
+    assert!(too_big.best < 1000);
+}

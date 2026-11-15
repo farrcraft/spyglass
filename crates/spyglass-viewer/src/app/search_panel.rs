@@ -802,6 +802,13 @@ pub(super) fn highlight(text: &str, size: f32) -> egui::text::LayoutJob {
         "point",
         "height",
         "flat",
+        "flower",
+        "field",
+        "chance",
+        "y",
+        "feature",
+        "loot",
+        "with",
     ];
     // Word by word: a word runs to the next space or comma, and each space or comma is a
     // word of its own, so the text is coloured with nothing lost.

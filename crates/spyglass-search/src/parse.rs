@@ -3,9 +3,10 @@
 use spyglass_data::dimension::Dimension;
 
 use crate::query::{
-    Anchor, Constraint, Count, DEFAULT_STEP, Find, Importance, Kind, LootItem, MAX_COORDINATE,
-    MAX_ENCHANTMENT_LEVEL, MAX_FEATURE_SIDE, MAX_HEIGHT, MAX_HEIGHT_SAMPLES, MAX_LOOT_SIDE,
-    MAX_PLACE_SIDE, MAX_SAMPLES, Place, Region, Sampling, Target, keyword,
+    Anchor, Constraint, Count, DEFAULT_FLOWER_STEP, DEFAULT_STEP, DEFAULT_Y, FLOWER_Y_STEP, Find,
+    Importance, Kind, LootItem, MAX_COORDINATE, MAX_ENCHANTMENT_LEVEL, MAX_FEATURE_SIDE, MAX_FIELD,
+    MAX_FLOWER_SAMPLES, MAX_HEIGHT, MAX_HEIGHT_SAMPLES, MAX_LOOT_SIDE, MAX_PLACE_SIDE, MAX_SAMPLES,
+    Place, Region, Sampling, Target, keyword,
 };
 
 /// Why a query's text didn't parse, and where.
@@ -21,8 +22,11 @@ pub struct ParseError {
 }
 
 /// The query language's words, which a bare id can't be (`minecraft:end` can).
-const KEYWORDS: [&str; 30] = [
+const KEYWORDS: [&str; 33] = [
     "find",
+    "flower",
+    "field",
+    "chance",
     "feature",
     "loot",
     "with",
@@ -406,6 +410,56 @@ impl<'a> Parser<'_, 'a> {
                 let place = self.place(true)?;
                 let step = self.height_step(&place)?;
                 Ok(Kind::Flat { range, place, step })
+            }
+            "flower" => {
+                self.next += 1;
+                let flower = self.id("a flower")?;
+                self.keyword("field")?;
+                let size = self.number("a field size in blocks", 1, MAX_FIELD)?;
+                let chance = if self.eat("chance") {
+                    self.percentage()?
+                } else {
+                    100
+                };
+                let place = self.place(true)?;
+                let start = self.peek();
+                let mut heights = [DEFAULT_Y; 2];
+                if self.eat("at") {
+                    self.keyword("y")?;
+                    let low = self.signed("a height", MAX_COORDINATE)?;
+                    let high = if self.eat("to") {
+                        self.signed("a height", MAX_COORDINATE)?
+                    } else {
+                        low
+                    };
+                    heights = [low.min(high), low.max(high)];
+                }
+                let step = if self.eat("step") {
+                    self.number("a step", 1, 4096)?
+                } else {
+                    DEFAULT_FLOWER_STEP
+                };
+                let levels =
+                    (i64::from(heights[1]) - i64::from(heights[0])) / i64::from(FLOWER_Y_STEP) + 2;
+                if place.grid_bound(step).saturating_mul(levels.unsigned_abs()) > MAX_FLOWER_SAMPLES
+                {
+                    let message = format!(
+                        "this flower field has over {MAX_FLOWER_SAMPLES} samples: use a larger \
+                         `step`, fewer heights or a smaller place"
+                    );
+                    return Err(match start {
+                        Some(t) => self.error_at(t, message),
+                        None => self.error(message),
+                    });
+                }
+                Ok(Kind::FlowerField {
+                    flower,
+                    size,
+                    chance,
+                    heights,
+                    place,
+                    step,
+                })
             }
             _ => {
                 let count = self.count()?;
@@ -1250,11 +1304,44 @@ mod tests {
             ("require flat -1 within 5 of spawn", (1, 14)),
             ("require flat 3 within 4096 of spawn step 8", (1, 37)),
             ("require flat 3 within 64 of spawn at y 3", (1, 35)),
+            ("require flower a field 0 within 5 of spawn", (1, 24)),
+            ("require flower a within 5 of spawn", (1, 18)),
+            (
+                "require flower a field 5 chance 0% within 5 of spawn",
+                (1, 33),
+            ),
+            (
+                "require flower a field 5 within 30000 of spawn at y 0 to 300 step 1",
+                (1, 48),
+            ),
         ];
         for (text, at) in cases {
             let e = error(text);
             assert_eq!((e.line, e.column), at, "{text:?}: {e}");
         }
+    }
+
+    #[test]
+    fn flower_fields_parse_and_print_canonically() {
+        let query = Query::parse(
+            "require flower cornflower field 200 chance 50% within 1000 of spawn at y 100 to 64 step 8",
+        )
+        .unwrap();
+        assert_eq!(
+            query.to_string().trim(),
+            "require flower minecraft:cornflower field 200 chance 50% within 1000 of spawn at y 64 to 100 step 8"
+        );
+        let plain =
+            Query::parse("require flower minecraft:poppy field 10 within 100 of spawn").unwrap();
+        assert_eq!(
+            plain.to_string().trim(),
+            "require flower minecraft:poppy field 10 within 100 of spawn"
+        );
+        let one = Query::parse("prefer flower poppy field 10 within 100 of spawn at y 70").unwrap();
+        assert_eq!(
+            one.to_string().trim(),
+            "prefer flower minecraft:poppy field 10 within 100 of spawn at y 70"
+        );
     }
 
     /// The spec's query examples: its `text` blocks that start like a query.
@@ -1398,6 +1485,9 @@ mod tests {
             "point",
             "height",
             "flat",
+            "flower",
+            "field",
+            "chance",
             "#is_ocean",
             "feature",
             "monster_room",

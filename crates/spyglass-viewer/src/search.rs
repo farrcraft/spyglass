@@ -402,6 +402,15 @@ pub fn matches(query: &SearchQuery, evaluation: &Evaluation) -> Vec<Match> {
                 Feature::SlimeChunk(_) => ("Slime chunk".to_string(), true),
                 Feature::Biome { biome, certain, .. } => (biome.biome.clone(), *certain),
                 Feature::Spawn(s) => ("World spawn".to_string(), !s.platform_dependent),
+                Feature::FlowerField {
+                    flower,
+                    blocks,
+                    certain,
+                    position,
+                } => (
+                    format!("{blocks}-block field of {flower} at y {}", position[1]),
+                    *certain,
+                ),
                 _ => continue,
             };
             let at = feature.map_block();
@@ -481,7 +490,8 @@ fn place(kind: &ConstraintKind) -> Place {
         | ConstraintKind::Coverage { place, .. }
         | ConstraintKind::Spawn { place }
         | ConstraintKind::Height { place, .. }
-        | ConstraintKind::Flat { place, .. } => *place,
+        | ConstraintKind::Flat { place, .. }
+        | ConstraintKind::FlowerField { place, .. } => *place,
     }
 }
 

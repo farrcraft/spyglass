@@ -47,6 +47,22 @@ spyglass flower heights minecraft:cornflower --min 980,-2020 --max 1040,-1960 --
 
 It lists, for each height, the share of the area where the flower is certain and where it can grow, and marks the best. Use `--step` to try every few heights, and `--scale` for a large area.
 
+## Finding a seed
+
+A seed search can ask for a field of a flower: a patch of blocks at one height where bone meal grows it.
+
+```sh
+spyglass search -q "require flower minecraft:cornflower field 300 within 1000 of spawn at y 64 to 96 step 8" --count 1000
+```
+
+`field 300` asks for at least 300 blocks, joined side to side, at one height. `at y 64 to 96` tries heights from 64 to 96, every 4 blocks; without it, only y 64. By default the flower must be certain at every block of the field. `chance 25%` accepts blocks where it grows at least a quarter of the time, for the flowers plains and meadows grow by chance:
+
+```text
+prefer flower minecraft:red_tulip field 100 chance 25% within 500 of spawn
+```
+
+The field is checked on a grid every `step` blocks (4 by default), so a smaller step is more exact and slower. The answer gives the field's first block and its height; check it with `spyglass flower at`, and choose the height with `spyglass flower heights`. The same constraint works in `spyglass find`, around each place it finds.
+
 ## Your own world
 
 Give `--world` instead of `--seed` to ask about your own world, as with every command. The flowers come from your world's seed and version. A data pack that changes flower features changes the answers too.

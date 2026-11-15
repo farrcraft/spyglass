@@ -1,6 +1,6 @@
 # m27. Measuring the decoration order around the spawn
 
-- Status: Draft
+- Status: In progress
 - Milestone: [27. Decoration order around the spawn](../roadmap/27-decoration-order.md)
 - Started: 2026-11-14
 - Completed:
@@ -29,12 +29,12 @@ What's found goes in the research doc, by version. It decides what the recording
 
 ### Recording the order: `cargo xtask oracle order`
 
-A new oracle command, beside `locate` ([ADR 0015](../adr/0015-locate-checks-on-a-real-server.md)), reusing its `Server` and its EULA opt-in ([ADR 0033](../adr/0033-the-oracle-accepts-the-eula-only-when-asked.md)):
+A new oracle command, beside `locate` ([ADR 0015](../adr/0015-locate-checks-on-a-real-server.md)), with its EULA opt-in ([ADR 0033](../adr/0033-the-oracle-accepts-the-eula-only-when-asked.md)). The first part found that startup decorates only about 48 blocks, so the recording joins a stand-in player ([ADR 0073](../adr/0073-the-oracle-joins-a-stand-in-player.md)):
 
-- Starts the dedicated server on a fresh world per seed, with the game's JFR events recording from the start of the JVM (the server's own JFR option, or `-XX:StartFlightRecording` if that doesn't catch startup; whichever the first part finds records `minecraft.ChunkGeneration` during spawn preparation).
-- Stops the server after `Done (`, and reads the recording with the JDK's own `jfr print --json --events minecraft.ChunkGeneration`, parsed in Rust. No new Java.
+- `spyglass.oracle.Join` starts the stock server in the harness's JVM with `--jfrProfile`, joins one player through the game's `PrepareSpawnTask`, waits for the view distance to load, and stops the server, which writes `debug/*.jfr`. `--no-join` records startup alone.
+- The xtask reads the recording with the JDK's own `jfr print --json --events minecraft.ChunkGeneration`, parsed in Rust.
 - Runs each seed twice by default (`--runs N`), and optionally with a different processor count (`-XX:ActiveProcessorCount`, `--cpus N`), since the order may depend on how many workers there are.
-- Writes `oracle-out/<version>/order/<seed>-<run>.json`: for each chunk that reached `FEATURES`, its position, the event's start and end time and thread, and its index in start order. The file also records the version, seed, processor count and run.
+- Writes `oracle-out/<version>/order/<seed>-<run>.json`: the player's chunk and the view distance, and for each chunk that reached `FEATURES`, its position, the event's start time, duration and thread, its index in start order, and whether it came before the join. The file also records the version, seed, processor count and run.
 
 It's slow (a server start and world creation per run), so like `locate` it isn't part of `oracle golden` or CI.
 
@@ -60,17 +60,19 @@ If the order isn't stable, there's no model to build, and the ADR rejects the th
 
 ## Tasks
 
-- [ ] Read each supported version's server code for what's decorated at creation, from which tickets, and whether `FEATURES` steps can overlap. Write it up in `docs/research/decoration-order.md`.
-- [ ] Check that the game's `minecraft.ChunkGeneration` events are recorded during spawn preparation, and with which option, on 26.2, 26.3 and 26.4.
-- [ ] `cargo xtask oracle order`: run the server with JFR per seed and run, convert the events to order files. Tests for parsing `jfr print --json` output from a fixture the test builds (no game data committed).
+- [x] Read each supported version's server code for what's decorated at creation, from which tickets, and whether `FEATURES` steps can overlap. Write it up in `docs/research/decoration-order.md`.
+- [ ] Check that the game's `minecraft.ChunkGeneration` events are recorded during spawn preparation with `--jfrProfile`, on 26.2, 26.3 and 26.4 (26.3 done).
+- [x] `Join`: the stock server in the harness's JVM, with a player joined through `PrepareSpawnTask` on a stand-in connection ([ADR 0073](../adr/0073-the-oracle-joins-a-stand-in-player.md)).
+- [ ] Find how long the server keeps a player whose keep-alives go unanswered, and check every run's loading finishes well inside it.
+- [ ] `cargo xtask oracle order`: run `Join` per seed and run, convert the events to order files. Tests for parsing `jfr print --json` output from a fixture the test builds (no game data committed).
 - [ ] Record the golden seeds and 50 further seeds per supported release, twice each, at the default processor count and at 2.
 - [ ] `oracle features --order <file>`: replay a recorded order over the area, writing a feature file per run.
 - [ ] Check the replay against the existing runs: an order with the target chunk first reproduces `tries`, and one with its 8 neighbours first reproduces `after_neighbours`.
 - [ ] `cargo xtask order-report`: order stability between runs, seeds, versions and processor counts; answers changed against `tries` and between runs.
 - [ ] Record the measurements in `docs/research/decoration-order.md`.
 - [ ] If the order is stable: prototype the model in `order-report`, and add its agreement with the recordings to the report and the research doc.
-- [ ] ADR 0073: a third answer, "as decorated when the world is created", accepted or rejected, from the measurements.
-- [ ] Update [oracle.md](../specs/oracle.md) for `order`, the order files and `features --order`; CLAUDE.md's command list for `order-report`.
+- [ ] ADR 0074: a third answer, "as decorated when the world is created", accepted or rejected, from the measurements.
+- [ ] Update [oracle.md](../specs/oracle.md) for `Join`, `order`, the order files and `features --order`; CLAUDE.md's command list for `order-report`.
 - [ ] Update the milestone: tick its first two exit criteria, and either list the implementation plan or, if rejected, strike the third criterion with a pointer to the ADR.
 
 ## Verification
@@ -84,12 +86,29 @@ If the order isn't stable, there's no model to build, and the ADR rejects the th
 
 - [ ] `docs/research/decoration-order.md`: what the game decorates at creation, by version; the measurements; the model's agreement, if built.
 - [ ] [oracle.md](../specs/oracle.md): the `order` command and its files, and `features --order`.
-- [ ] ADR 0073, accepting or rejecting a third answer. If it supersedes or amends [ADR 0056](../adr/0056-two-certainties-on-its-own-and-whatever-the-neighbours.md), that ADR's status says so.
+- [x] [ADR 0073](../adr/0073-the-oracle-joins-a-stand-in-player.md): the oracle joins a stand-in player.
+- [ ] ADR 0074, accepting or rejecting a third answer. If it supersedes or amends [ADR 0056](../adr/0056-two-certainties-on-its-own-and-whatever-the-neighbours.md), that ADR's status says so.
 - [ ] [prior-art.md](../research/prior-art.md): Horizon's decoration-order lead updated with what spyglass measured.
 
 ## Notes
 
 Newest first.
+
+- 2026-11-14: A prototype of `Join` on 26.3, seed 1, two runs at view distance 10, 16 workers:
+  - Startup decorated exactly the 3 × 3 around the spawn origin chunk (10, 10); the spawn search stopped at its first chunk.
+  - The player joined at chunk (10, 10) in one run and (10, 9) in the other: the spawn task's position in the spawn radius differs between runs. The join decorated 641 and 729 chunks.
+  - `FEATURES` events came from 15 worker threads, and none overlapped.
+  - Over the 641 chunks both runs decorated, 237 of 2,412 neighbouring pairs (9.8%) were decorated in the opposite order, and 366 chunks (57%) had a different set of neighbours decorated before them.
+
+  One seed only, but it already points away from a stable order. The full measurement still decides, and still has to show how many answers that changes.
+
+- 2026-11-14: What the code says ([research](../research/decoration-order.md#what-the-game-decorates-at-creation)), the same in 26.2, 26.3 and 26.4-snapshot-8:
+  - Without a player, a new world decorates only the 3 × 3 around the spawn origin chunk and around each chunk of the spawn spiral it visits before finding a spawn. There's no spawn-area ticket.
+  - The area the spawn searches ask about is decorated when the first player joins, by the spawn-search and player-loading tickets, out to the view distance.
+  - A dimension's `FEATURES` steps run one at a time on its `worldgen` mailbox, so the order is total. Replaying overlapping pairs both ways isn't needed unless the recordings disagree.
+  - `--jfrProfile` records from before the world loads, and every version names the step `features`.
+
+  This settles the open question below the wrong way for the plan as written: startup alone covers too little to be worth a third answer. Measuring the join needs a player in the oracle's server.
 
 - 2026-11-14: The plan stops at the ADR. Building the third answer is only worth planning once the measurement says it's worth it, which is how the milestone frames it.
 - 2026-11-14: Open questions for the first task: whether the versions supported still prepare a spawn area at startup at all, and whether startup without a player decorates enough to answer the dungeon and loot searches near the spawn that motivate this. If startup decorates little and a player's join does most of it, the oracle needs a way to imitate the join, which isn't planned here; the research doc says what's missing and the ADR decides on what's measured.

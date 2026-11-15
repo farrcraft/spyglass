@@ -128,6 +128,8 @@ pub fn run(args: &Render) -> Result<()> {
                     veins: layers.veins,
                     noise_caves: layers.noise_caves,
                     carvers: layers.carvers,
+                    flowers: layers.flowers,
+                    flower: layers.flower.as_deref(),
                 },
                 structures,
                 features: features

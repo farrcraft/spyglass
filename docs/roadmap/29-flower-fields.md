@@ -26,7 +26,7 @@ Not in scope:
 
 ## Exit criteria
 
-- [ ] The flower at a block, at any height, matches the oracle for every vanilla flower feature that picks by position, for 26.3 and the 26.4 snapshots.
+- [x] The flower at a block, at any height, matches the oracle for every vanilla flower feature that picks by position, for 26.3 and the 26.4 snapshots.
 - [ ] The viewer's flower layer shows the field at a chosen height, and the best-height list for an area agrees with the layer at the heights it names.
-- [ ] A seed search and a search within a seed find fields of a chosen flower and size, and the [search spec](../specs/search.md) covers the constraint.
+- [x] A seed search and a search within a seed find fields of a chosen flower and size, and the [search spec](../specs/search.md) covers the constraint.
 - [ ] The user guide describes the layer, the command and the constraint, with a flower farm as its example.

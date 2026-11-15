@@ -380,6 +380,8 @@ pub struct RenderLayers<'a> {
     pub veins: bool,
     pub noise_caves: bool,
     pub carvers: bool,
+    pub flowers: bool,
+    pub flower: Option<&'a str>,
 }
 
 /// A structure marker on a map.

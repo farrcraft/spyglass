@@ -37,6 +37,9 @@ import net.minecraft.world.level.levelgen.WorldOptions;
  * heights &lt;out dir&gt; [--dimension ID] [--threads N] &lt;seed&gt;...
  *     One height golden file per seed (&lt;seed&gt;.json): the generator's worldgen heightmaps at
  *     every column of fixed block regions, and its block columns at a sample of positions.
+ * replay &lt;out dir&gt; [--threads N] &lt;order file&gt;...
+ *     For each decoration order Join recorded, every chunk it decorated with the target features'
+ *     calls on its own and as replayed in the recorded order (Features.replay).
  * </pre>
  *
  * Any command may be preceded by {@code --pack <path>} (repeatable): a data pack folder or zip
@@ -83,6 +86,8 @@ public final class Main {
                 case "blocks" -> Blocks.run(game, Path.of(args[1]), dimension(args), positional(args),
                         intOption(args, "--threads", Runtime.getRuntime().availableProcessors()));
                 case "features" -> Features.run(game, Path.of(args[1]), dimension(args), positional(args),
+                        intOption(args, "--threads", Runtime.getRuntime().availableProcessors()));
+                case "replay" -> Features.replay(game, Path.of(args[1]), positional(args).stream().map(Path::of).toList(),
                         intOption(args, "--threads", Runtime.getRuntime().availableProcessors()));
                 case "containers" -> Containers.run(game, Path.of(args[1]), dimension(args), positional(args),
                         intOption(args, "--threads", Runtime.getRuntime().availableProcessors()));

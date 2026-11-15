@@ -241,14 +241,7 @@ final class Features {
         root.addProperty("dimension", dimension);
         JsonArray order = order(game, generator);
         root.add("order", order);
-        Set<String> early = new java.util.HashSet<>();
-        for (int step = 0; step <= LAST_STEP && step < order.size(); step++) {
-            for (var id : order.get(step).getAsJsonArray()) {
-                if (!id.isJsonNull()) {
-                    early.add(id.getAsString());
-                }
-            }
-        }
+        Set<String> early = early(order);
 
         var futures = new ArrayList<Future<JsonObject>>();
         for (ChunkPos pos : chunks(game, generator, random, seed, order)) {
@@ -273,6 +266,105 @@ final class Features {
     }
 
     /**
+     * Replays decoration orders the game recorded ({@link Join}'s order files), in the
+     * Overworld: for each file, every chunk it decorated, in its order, with the target features'
+     * calls decorated on its own ({@code tries}, as {@link #run} records them) and in the
+     * recorded order, over the area the run decorated ({@code replayed}). Writes
+     * {@code <out dir>/<the file's folder>/<the file's name>}.
+     */
+    static int replay(Game game, Path outDir, List<Path> orderFiles, int threads) throws Exception {
+        GameApi.get().recordFeatures(game, TARGETS);
+        try (var pool = Executors.newFixedThreadPool(Math.max(1, threads))) {
+            for (Path file : orderFiles) {
+                long t0 = System.nanoTime();
+                Path out = outDir.resolve(file.toAbsolutePath().getParent().getFileName().toString())
+                        .resolve(file.getFileName().toString());
+                Files.createDirectories(out.getParent());
+                write(out, replayOne(game, file, pool));
+                System.out.printf("%s: %.1f s%n", out, (System.nanoTime() - t0) / 1e9);
+            }
+        }
+        return 0;
+    }
+
+    private static JsonObject replayOne(Game game, Path file, ExecutorService pool) throws Exception {
+        JsonObject recorded = com.google.gson.JsonParser.parseString(Files.readString(file)).getAsJsonObject();
+        String version = recorded.get("version").getAsString();
+        if (!version.equals(game.version)) {
+            throw new IllegalArgumentException(file + " was recorded by " + version + ", not " + game.version);
+        }
+        long seed = recorded.get("seed").getAsLong();
+        var order = new ArrayList<ChunkPos>();
+        for (var step : recorded.getAsJsonArray("features")) {
+            var chunk = step.getAsJsonObject().getAsJsonArray("chunk");
+            order.add(new ChunkPos(chunk.get(0).getAsInt(), chunk.get(1).getAsInt()));
+        }
+        String dimension = "minecraft:overworld";
+        if (!(game.stem(dimension).generator() instanceof NoiseBasedChunkGenerator generator)) {
+            throw new IllegalStateException("the Overworld doesn't use a noise-based generator");
+        }
+        var api = GameApi.get();
+        var type = game.stem(dimension).type().value();
+        LevelHeightAccessor height = LevelHeightAccessor.create(type.minY(), type.height());
+        RandomState random = api.randomState(game, generator, height, seed);
+        Set<String> early = early(order(game, generator));
+
+        var alone = new HashMap<ChunkPos, Future<JsonArray>>();
+        for (ChunkPos pos : order) {
+            alone.put(pos, pool.submit(() -> calls(game, generator, height, random, seed, pos, early, false)));
+        }
+        var replayed = new HashMap<ChunkPos, JsonArray>();
+        api.decorateInOrder(game, generator, height, random, seed, order, (pos, decoration) -> {
+            var tries = new ArrayList<Try>();
+            TRIES.set(tries);
+            STEPS.remove();
+            try {
+                decoration.run();
+            } finally {
+                TRIES.remove();
+                GENERATING.remove();
+            }
+            replayed.put(pos, json(tries));
+        });
+
+        var root = new JsonObject();
+        root.addProperty("format", 1);
+        root.addProperty("harness", Main.HARNESS_VERSION);
+        root.addProperty("version", game.version);
+        root.addProperty("data_version", game.dataVersion);
+        root.addProperty("seed", seed);
+        root.addProperty("dimension", dimension);
+        root.addProperty("order_file", file.getFileName().toString());
+        var chunks = new JsonArray();
+        for (ChunkPos pos : order) {
+            var o = new JsonObject();
+            o.add("chunk", ints(pos.x(), pos.z()));
+            try {
+                o.add("tries", alone.get(pos).get());
+            } catch (ExecutionException e) {
+                throw new RuntimeException(e.getCause());
+            }
+            o.add("replayed", replayed.get(pos));
+            chunks.add(o);
+        }
+        root.add("chunks", chunks);
+        return root;
+    }
+
+    /** The placed features of the steps up to {@link #LAST_STEP}, from {@link #order}. */
+    private static Set<String> early(JsonArray order) {
+        Set<String> early = new java.util.HashSet<>();
+        for (int step = 0; step <= LAST_STEP && step < order.size(); step++) {
+            for (var id : order.get(step).getAsJsonArray()) {
+                if (!id.isJsonNull()) {
+                    early.add(id.getAsString());
+                }
+            }
+        }
+        return early;
+    }
+
+    /**
      * The target features' calls decorating the chunk at {@code pos}, up to the last step with a
      * target ({@code early} holds its placed features); with {@code neighboursFirst}, after its 8
      * neighbours were decorated in full.
@@ -293,6 +385,11 @@ final class Features {
             GENERATING.remove();
             STEPS.remove();
         }
+        return json(tries);
+    }
+
+    /** {@code tries} as the files hold them. */
+    private static JsonArray json(List<Try> tries) {
         var list = new JsonArray();
         for (Try t : tries) {
             var j = new JsonObject();

@@ -152,6 +152,16 @@ interface GameApi {
             long seed, ChunkPos pos, boolean neighboursFirst, StructureManager structures);
 
     /**
+     * Decorates each chunk of {@code order} in turn over one set of chunks they share, as a world
+     * decorated in that order would be: every chunk of the order and its 8 neighbours generated
+     * through the step before features, with no structures, and none decorated before its turn.
+     * Each chunk's decoration runs inside {@code around}, given the chunk and the decoration.
+     */
+    void decorateInOrder(Game game, NoiseBasedChunkGenerator generator, LevelHeightAccessor height,
+            RandomState random, long seed, java.util.List<ChunkPos> order,
+            java.util.function.BiConsumer<ChunkPos, Runnable> around);
+
+    /**
      * {@code ChunkGenerator.createStructures} for {@code chunk}, a fresh proto chunk: the starts
      * of every structure set placing there, set on the chunk through {@code structures}.
      */

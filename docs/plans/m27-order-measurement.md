@@ -38,13 +38,13 @@ A new oracle command, beside `locate` ([ADR 0015](../adr/0015-locate-checks-on-a
 
 It's slow (a server start and world creation per run), so like `locate` it isn't part of `oracle golden` or CI.
 
-### What the order changes: `oracle features --order`
+### What the order changes: `oracle replay`
 
-The features harness ([ADR 0053](../adr/0053-the-oracle-decorates-chunks-on-their-own.md)) already decorates a chunk on its own (`tries`) and after all 8 neighbours (`after_neighbours`). A third mode replays a recorded order: generate the area to the step before features, then decorate its chunks one at a time in the recorded order, each over its own 3 × 3, recording the target features' calls and the containers for every chunk.
+The features harness ([ADR 0053](../adr/0053-the-oracle-decorates-chunks-on-their-own.md)) already decorates a chunk on its own (`tries`) and after all 8 neighbours (`after_neighbours`). `oracle replay` replays a recorded order instead: every chunk of the order and its neighbours generated once to the step before features, then each chunk decorated in full in the recorded order over those shared chunks, recording every chunk's target calls (`replayed`) beside its calls on its own (`tries`).
 
-- The replay lives in the oracle's core, over the adapters' existing decorate-one-chunk call, so no adapter needs a new method. If one does, it's added to every adapter.
-- If the first part finds that `FEATURES` steps overlap, the replay runs overlapping pairs in both orders and reports both.
-- The output is a feature file per run, in the existing format plus the order it was replayed from, so the existing comparisons read it.
+- Decorating over shared chunks, rather than each target over a fresh neighbourhood, follows the recorded order exactly, neighbours' neighbours included, and generates each chunk once. It needs one adapter method, `GameApi.decorateInOrder`, in 26.2 and 26.3 (26.4 builds on 26.3).
+- The recordings show `FEATURES` steps never overlap, so each order is replayed as recorded.
+- The output is `oracle-out/<version>/order-features/<seed>/<run>.json`, in the feature files' form ([oracle.md](../specs/oracle.md#replayed-orders)).
 
 `cargo xtask order-report` (beside `math-report`) then reads the order files and the replays and prints:
 
@@ -63,16 +63,16 @@ If the order isn't stable, there's no model to build, and the ADR rejects the th
 - [x] Read each supported version's server code for what's decorated at creation, from which tickets, and whether `FEATURES` steps can overlap. Write it up in `docs/research/decoration-order.md`.
 - [ ] Check that the game's `minecraft.ChunkGeneration` events are recorded during spawn preparation with `--jfrProfile`, on 26.2, 26.3 and 26.4 (26.3 done).
 - [x] `Join`: the stock server in the harness's JVM, with a player joined through `PrepareSpawnTask` on a stand-in connection ([ADR 0073](../adr/0073-the-oracle-joins-a-stand-in-player.md)).
-- [ ] Find how long the server keeps a player whose keep-alives go unanswered, and check every run's loading finishes well inside it.
-- [ ] `cargo xtask oracle order`: run `Join` per seed and run, convert the events to order files. Tests for parsing `jfr print --json` output from a fixture the test builds (no game data committed).
-- [ ] Record the golden seeds and 50 further seeds per supported release, twice each, at the default processor count and at 2.
-- [ ] `oracle features --order <file>`: replay a recorded order over the area, writing a feature file per run.
-- [ ] Check the replay against the existing runs: an order with the target chunk first reproduces `tries`, and one with its 8 neighbours first reproduces `after_neighbours`.
-- [ ] `cargo xtask order-report`: order stability between runs, seeds, versions and processor counts; answers changed against `tries` and between runs.
+- [x] Find how long the server keeps a player whose keep-alives go unanswered (15 to 30 s), and answer them, so loading needn't fit inside it.
+- [x] `cargo xtask oracle order`: run `Join` per seed and run; `Join` writes the order file from the recording with `jdk.jfr.consumer`.
+- [ ] Record the golden seeds and 50 further seeds per supported release, twice each, at the default processor count and at 2 (26.3's golden seeds at the default done).
+- [x] `oracle replay`: replay each recorded order over the area, writing a feature file per run.
+- [x] Check the replay against the existing runs: a chunk with nothing within 2 chunks decorated before it reproduces `tries`, and an order with its 8 neighbours first reproduces `after_neighbours` (26.3's 4 golden chunks that neighbours change).
+- [x] `cargo xtask order-report`: order stability between runs, seeds, versions and processor counts; answers changed against `tries` and between runs.
 - [ ] Record the measurements in `docs/research/decoration-order.md`.
 - [ ] If the order is stable: prototype the model in `order-report`, and add its agreement with the recordings to the report and the research doc.
 - [ ] ADR 0074: a third answer, "as decorated when the world is created", accepted or rejected, from the measurements.
-- [ ] Update [oracle.md](../specs/oracle.md) for `Join`, `order`, the order files and `features --order`; CLAUDE.md's command list for `order-report`.
+- [x] Update [oracle.md](../specs/oracle.md) for `Join`, `order`, the order files and `replay`; CLAUDE.md's command list for `order-report`.
 - [ ] Update the milestone: tick its first two exit criteria, and either list the implementation plan or, if rejected, strike the third criterion with a pointer to the ADR.
 
 ## Verification
@@ -85,7 +85,7 @@ If the order isn't stable, there's no model to build, and the ADR rejects the th
 ## Durable outputs
 
 - [ ] `docs/research/decoration-order.md`: what the game decorates at creation, by version; the measurements; the model's agreement, if built.
-- [ ] [oracle.md](../specs/oracle.md): the `order` command and its files, and `features --order`.
+- [x] [oracle.md](../specs/oracle.md): the `order` command and its files, and `replay`.
 - [x] [ADR 0073](../adr/0073-the-oracle-joins-a-stand-in-player.md): the oracle joins a stand-in player.
 - [ ] ADR 0074, accepting or rejecting a third answer. If it supersedes or amends [ADR 0056](../adr/0056-two-certainties-on-its-own-and-whatever-the-neighbours.md), that ADR's status says so.
 - [ ] [prior-art.md](../research/prior-art.md): Horizon's decoration-order lead updated with what spyglass measured.

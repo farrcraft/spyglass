@@ -330,6 +330,13 @@ final class Adapter implements GameApi {
     }
 
     @Override
+    public void decorateInOrder(Game game, NoiseBasedChunkGenerator generator, LevelHeightAccessor height,
+            RandomState random, long seed, java.util.List<ChunkPos> order,
+            java.util.function.BiConsumer<ChunkPos, Runnable> around) {
+        Decoration.decorateInOrder(game, generator, height, random, seed, order, around);
+    }
+
+    @Override
     public void createStructures(Game game, net.minecraft.world.level.chunk.ChunkGenerator generator,
             net.minecraft.world.level.chunk.ChunkGeneratorStructureState state,
             net.minecraft.world.level.StructureManager structures, net.minecraft.world.level.chunk.ChunkAccess chunk,

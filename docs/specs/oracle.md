@@ -22,23 +22,25 @@ CI runs the Rust crates against these for a fixed set of seeds per supported ver
 
 `cargo xtask oracle` builds and runs the harness. Every subcommand takes `--game-version` (default `latest`), `--cache-dir` and `--java`, and `--pack <folder|zip>` (repeatable, lowest first) with `--name <label>`, which load data packs over the vanilla one ([below](#packs)).
 
-| Command                                                         | Does                                                                                                                                               |
-| --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `build`                                                         | Fetch and verify the server jar, unpack its libraries, compile the harness.                                                                        |
-| `biomes <seed> [--dimension] [--x] [--z] [--size] --out <file>` | Write one golden biome file. Block coordinates; x, z and size must be multiples of 16.                                                             |
-| `check-save <world> [--dimension]`                              | Compare the harness with the biomes stored in a real save. Fails on any unexplained cell.                                                          |
-| `probe`                                                         | Write the [probe files](#probe-files) into `oracle-out/<version>/probe/`.                                                                          |
-| `structures`                                                    | Write the [structure golden files](#structure-golden-files) for the golden seeds and dimensions.                                                   |
-| `spawn`                                                         | Write the [spawn golden files](#spawn-golden-files) for the golden seeds and dimensions.                                                           |
-| `heights [--threads N]`                                         | Write the [height golden files](#height-golden-files) for the golden seeds and dimensions.                                                         |
-| `blocks [--threads N] [--seed S]…`                              | Write the [block golden files](#block-golden-files), with and without carvers, for the golden seeds (or those given).                              |
-| `features [--threads N] [--seed S]…`                            | Write the [feature golden files](#feature-golden-files) for the golden seeds and seed 56 (or those given).                                         |
-| `containers [--threads N] [--seed S]…`                          | Write the [container golden files](#container-golden-files) for the golden seeds (or those given).                                                 |
-| `column <seed> <x> <z> [--dimension]`                           | Print a generated chunk's column beside `getBaseColumn`'s, marking where they differ. For debugging.                                               |
-| `locate`                                                        | Ask a real dedicated server `/locate` questions ([below](#locate-answers)). Not part of `golden`.                                                  |
-| `test-pack`                                                     | Write probe and structure files with the [test pack](#the-test-pack) loaded, into `oracle-out/<version>+testpack/`.                                |
-| `fixture-pack [--only-pack]`                                    | Write [the fixture pack](#the-fixture-pack), then the golden set with it loaded, into `oracle-out/<version>+overrides/`.                           |
-| `golden`                                                        | Regenerate the whole golden set below, probe, structure, spawn, height, block, feature and container files included, into `oracle-out/<version>/`. |
+| Command                                                                                | Does                                                                                                                                               |
+| -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `build`                                                                                | Fetch and verify the server jar, unpack its libraries, compile the harness.                                                                        |
+| `biomes <seed> [--dimension] [--x] [--z] [--size] --out <file>`                        | Write one golden biome file. Block coordinates; x, z and size must be multiples of 16.                                                             |
+| `check-save <world> [--dimension]`                                                     | Compare the harness with the biomes stored in a real save. Fails on any unexplained cell.                                                          |
+| `probe`                                                                                | Write the [probe files](#probe-files) into `oracle-out/<version>/probe/`.                                                                          |
+| `structures`                                                                           | Write the [structure golden files](#structure-golden-files) for the golden seeds and dimensions.                                                   |
+| `spawn`                                                                                | Write the [spawn golden files](#spawn-golden-files) for the golden seeds and dimensions.                                                           |
+| `heights [--threads N]`                                                                | Write the [height golden files](#height-golden-files) for the golden seeds and dimensions.                                                         |
+| `blocks [--threads N] [--seed S]…`                                                     | Write the [block golden files](#block-golden-files), with and without carvers, for the golden seeds (or those given).                              |
+| `features [--threads N] [--seed S]…`                                                   | Write the [feature golden files](#feature-golden-files) for the golden seeds and seed 56 (or those given).                                         |
+| `containers [--threads N] [--seed S]…`                                                 | Write the [container golden files](#container-golden-files) for the golden seeds (or those given).                                                 |
+| `column <seed> <x> <z> [--dimension]`                                                  | Print a generated chunk's column beside `getBaseColumn`'s, marking where they differ. For debugging.                                               |
+| `locate`                                                                               | Ask a real dedicated server `/locate` questions ([below](#locate-answers)). Not part of `golden`.                                                  |
+| `order [--seed S]… [--random N] [--runs N] [--cpus N] [--no-join] [--view-distance N]` | Record the order the game decorates chunks in around a new world's spawn, with a player joined ([below](#order-files)). Not part of `golden`.      |
+| `replay [--threads N] [--seed S]…`                                                     | Replay the recorded orders' decoration, each chunk on its own and in the recorded order ([below](#replayed-orders)). Not part of `golden`.         |
+| `test-pack`                                                                            | Write probe and structure files with the [test pack](#the-test-pack) loaded, into `oracle-out/<version>+testpack/`.                                |
+| `fixture-pack [--only-pack]`                                                           | Write [the fixture pack](#the-fixture-pack), then the golden set with it loaded, into `oracle-out/<version>+overrides/`.                           |
+| `golden`                                                                               | Regenerate the whole golden set below, probe, structure, spawn, height, block, feature and container files included, into `oracle-out/<version>/`. |
 
 `build` runs automatically before the others, and does nothing when nothing changed:
 
@@ -579,6 +581,52 @@ One UTF-8 JSON file per seed, `oracle-out/<version>/locate/<seed>.json`:
 `maps`, from format 3, are the map cases in the order they ran: the entry's table and its function as the table writes it, the position it was filled from, and the target's block x and z, or null where the map marks nothing. A save's file has none.
 
 `seed` is the text given to the server, or the save's seed as text. `dimension` is the case's dimension, which `from` and `answer` are in. Format 1 files have one `dimension` for the whole file, always the Overworld. `answer` is null when the game found nothing; its y is null where the game prints `~`. `found` is the structure or biome named in the message. [locate.md](locate.md#testing) has the Rust-side comparison.
+
+## Order files
+
+Whether the order chunks are decorated in can be known around the spawn depends on what the game does there, so `cargo xtask oracle order` records it ([ADR 0073](../adr/0073-the-oracle-joins-a-stand-in-player.md); background in [decoration-order.md](../research/decoration-order.md)). It runs the dedicated server, so it needs the EULA accepted as [`locate`](#locate-answers) does.
+
+For each seed (the golden seeds, those given with `--seed`, and `--random N` more from a fixed SplitMix64 sequence) and each of `--runs` runs (default 2):
+
+- A throwaway folder, `target/oracle/<version>/order-server/<seed>/<run>/`, gets `eula.txt` and `server.properties` as for `locate`, with `level-seed` and `view-distance` (`--view-distance`, default 10). It's deleted once the run's file is written, and kept with its `join.log` if the run fails.
+- The harness's `spyglass.oracle.Join` runs there, in a JVM with `--add-opens java.base/java.lang=ALL-UNNAMED` and, with `--cpus N`, `-XX:ActiveProcessorCount=N`. It starts `net.minecraft.server.Main --nogui --jfrProfile` in the same JVM, finds the server through the server thread's task, and waits until it's ready.
+- Unless `--no-join`, it joins one player, `spyglass` with its offline UUID: `PrepareSpawnTask` is started and ticked until it's ready, then `spawnPlayer` places the player on a `Connection` over Netty's `EmbeddedChannel`. Everything the server sends it is dropped, except that each `ClientboundKeepAlivePacket` is answered with a `ServerboundKeepAlivePacket`. It waits until every chunk within the view distance of the player's chunk is loaded in full, then 2 seconds more. The run fails if the player is removed first, or any stage takes over 5 minutes.
+- It stops the server, then the profiler (`JvmProfiler.stop`, as `/jfr stop` does), and reads the recording's `minecraft.ChunkGeneration` events.
+
+One UTF-8 JSON file per run, `oracle-out/<version>/order/<seed>/<run>.json`, where `<run>` is `run<n>`, then `-cpus<N>` with `--cpus`, then `-startup` with `--no-join`:
+
+```json
+{
+  "format": 1,
+  "harness": 1,
+  "version": "26.3",
+  "data_version": 5023,
+  "seed": 1,
+  "processors": 16,
+  "player": { "chunk": [9, 9], "pos": [153, 71, 153] },
+  "view_distance": 10,
+  "features": [
+    {
+      "chunk": [11, 9],
+      "start_ns": 0,
+      "duration_ns": 80577000,
+      "thread": "Worker-Main-2",
+      "startup": true
+    }
+  ]
+}
+```
+
+`features` holds every Overworld event whose `status` is `minecraft:features`, by start time. `start_ns` is from the first one's start, `thread` the event's Java thread, and `startup` whether it started before the server was ready. `processors` is what the JVM saw. `player` and `view_distance` are left out with `--no-join`.
+
+### Replayed orders
+
+`cargo xtask oracle replay` decorates each recorded order again in the standalone harness, to see which answers the order changes. Startup-only files are skipped. For each order file it writes `oracle-out/<version>/order-features/<seed>/<run>.json`, in the [feature golden files](#feature-golden-files)' header form, with `order_file`, and `chunks` in the recorded order:
+
+- **`tries`:** the chunk's target features' calls decorated on its own, as in the feature golden files.
+- **`replayed`:** the same calls, from decorating every chunk of the order in turn over one shared set of chunks: every chunk of the order and its 8 neighbours generated through the step before features, with no structures, as [feature golden files](#feature-golden-files) are, and each chunk decorated in full when its turn comes (`GameApi.decorateInOrder`).
+
+`cargo xtask order-report` prints how often two runs of a seed agree on the order and on the spawn chunk, and how many chunks' replayed calls differ from those on their own and between runs, by distance from the spawn chunk and by feature.
 
 ## Probe files
 

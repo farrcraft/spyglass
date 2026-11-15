@@ -9,6 +9,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.BiConsumer;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
@@ -139,6 +141,53 @@ final class Decoration {
                 chunks.put(at, chunk);
             }
         }
+        FeatureStep.Server level = server(game, generator, height, random, seed, manager);
+        if (neighboursFirst) {
+            for (int dz = -1; dz <= 1; dz++) {
+                for (int dx = -1; dx <= 1; dx++) {
+                    if (dx != 0 || dz != 0) {
+                        ChunkPos neighbour = new ChunkPos(pos.x() + dx, pos.z() + dz);
+                        Features.quiet(() -> decorateOne(level, generator, chunks, neighbour, manager));
+                    }
+                }
+            }
+        }
+        decorateOne(level, generator, chunks, pos, manager);
+    }
+
+    /**
+     * {@code ChunkStatusTasks.generateFeatures} for each chunk of {@code order} in turn, over one
+     * set of chunks they share, as the game decorates them in a world: every chunk of the order
+     * and its 8 neighbours generated through {@code buildTerrain} and its heightmap priming, with
+     * no structures, and none decorated before its turn. Each chunk's decoration runs inside
+     * {@code around}, which is given the chunk and the decoration to run.
+     */
+    static void decorateInOrder(Game game, NoiseBasedChunkGenerator generator, LevelHeightAccessor height,
+            RandomState random, long seed, List<ChunkPos> order, BiConsumer<ChunkPos, Runnable> around) {
+        StructureManager manager = StandIns.allocate(Manager.class);
+        Set<ChunkPos> area = new java.util.HashSet<>();
+        for (ChunkPos pos : order) {
+            for (int dz = -1; dz <= 1; dz++) {
+                for (int dx = -1; dx <= 1; dx++) {
+                    area.add(new ChunkPos(pos.x() + dx, pos.z() + dz));
+                }
+            }
+        }
+        Map<ChunkPos, ChunkAccess> chunks = new ConcurrentHashMap<>();
+        area.parallelStream().forEach(at -> {
+            ChunkAccess chunk = Chunks.generate(game, generator, height, random, seed, at);
+            FeatureStep.afterTerrain(chunk);
+            chunks.put(at, chunk);
+        });
+        FeatureStep.Server level = server(game, generator, height, random, seed, manager);
+        for (ChunkPos pos : order) {
+            around.accept(pos, () -> decorateOne(level, generator, chunks, pos, manager));
+        }
+    }
+
+    /** The stand-in server level the regions decorate through. */
+    private static FeatureStep.Server server(Game game, NoiseBasedChunkGenerator generator,
+            LevelHeightAccessor height, RandomState random, long seed, StructureManager manager) {
         FeatureStep.Server level = StandIns.allocate(FeatureStep.Server.class);
         level.seed = seed;
         level.generator = generator;
@@ -151,17 +200,7 @@ final class Decoration {
         Cache cache = StandIns.allocate(Cache.class);
         cache.level = level;
         level.cache = cache;
-        if (neighboursFirst) {
-            for (int dz = -1; dz <= 1; dz++) {
-                for (int dx = -1; dx <= 1; dx++) {
-                    if (dx != 0 || dz != 0) {
-                        ChunkPos neighbour = new ChunkPos(pos.x() + dx, pos.z() + dz);
-                        Features.quiet(() -> decorateOne(level, generator, chunks, neighbour, manager));
-                    }
-                }
-            }
-        }
-        decorateOne(level, generator, chunks, pos, manager);
+        return level;
     }
 
     /** One chunk's {@code generateFeatures}, over the chunks around it in {@code chunks}. */

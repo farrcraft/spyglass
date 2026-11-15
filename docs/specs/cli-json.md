@@ -1,6 +1,6 @@
 # CLI JSON output
 
-Status: stable, format 1. Covers `spyglass locate`, `spyglass loot`, `spyglass heights`, `spyglass blocks`, `spyglass render`, `spyglass search`, `spyglass find` and `spyglass world` with `--json`.
+Status: stable, format 1. Covers `spyglass locate`, `spyglass loot`, `spyglass heights`, `spyglass blocks`, `spyglass flower`, `spyglass render`, `spyglass search`, `spyglass find` and `spyglass world` with `--json`.
 
 Scripts depend on this format, so it's versioned. Within a format version, fields are only ever added. Removing or changing the meaning of a field bumps `format`. The CLI writes the JSON from the library's results ([ADR 0014](../adr/0014-public-api-world-and-session.md)); the library types themselves aren't the format.
 
@@ -13,15 +13,15 @@ Scripts depend on this format, so it's versioned. Within a format version, field
 - Paths are strings. Characters that aren't valid Unicode are replaced with U+FFFD.
 - `seed` is the 64-bit seed after text seeds are hashed ([locate.md](locate.md#text-seeds)).
 
-Every `locate`, `features`, `loot`, `heights`, `blocks` and `render` object starts with:
+Every `locate`, `features`, `loot`, `heights`, `blocks`, `flower` and `render` object starts with:
 
-| Field       | Type   | Meaning                                                                                                                                                               |
-| ----------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `format`    | int    | This format's version: `1`.                                                                                                                                           |
-| `command`   | string | `locate structure`, `locate biome`, `locate feature`, `locate slime`, `locate spawn`, `features`, `loot at`, `loot in`, `loot find`, `heights`, `blocks` or `render`. |
-| `version`   | string | The game version of the bundle used, e.g. `26.3`.                                                                                                                     |
-| `dimension` | string | The dimension answered for: `minecraft:overworld`, `minecraft:the_nether` or `minecraft:the_end` (`--dimension`, or the player's when the position is the player's).  |
-| `seed`      | int    | The world seed.                                                                                                                                                       |
+| Field       | Type   | Meaning                                                                                                                                                                                           |
+| ----------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `format`    | int    | This format's version: `1`.                                                                                                                                                                       |
+| `command`   | string | `locate structure`, `locate biome`, `locate feature`, `locate slime`, `locate spawn`, `features`, `loot at`, `loot in`, `loot find`, `heights`, `blocks`, `flower`, `flower_heights` or `render`. |
+| `version`   | string | The game version of the bundle used, e.g. `26.3`.                                                                                                                                                 |
+| `dimension` | string | The dimension answered for: `minecraft:overworld`, `minecraft:the_nether` or `minecraft:the_end` (`--dimension`, or the player's when the position is the player's).                              |
+| `seed`      | int    | The world seed.                                                                                                                                                                                   |
 
 With `--world`, two more:
 
@@ -165,6 +165,30 @@ With `--column` or `--chunk`:
 | `columns` | array | One for `--column`; 256 for `--chunk`, z outer and x inner. Each is `{x, z, blocks, uncertain}`. |
 
 A column's `blocks` is its states from `min_y` to the level's top, as runs: `[state, count]` pairs, bottom up. `uncertain` lists the y of each block that depends on a tied biome.
+
+## `flower at`
+
+What bone meal grows on grass at a block, the block above the grass ([flowers.md](flowers.md)). `command` is `flower`.
+
+| Field      | Type           | Meaning                                                                                                            |
+| ---------- | -------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `position` | `[x, y, z]`    | The flower's block.                                                                                                |
+| `certain`  | string or null | The flower that certainly grows there, whatever the biome lookup gives; null where it's down to chance.            |
+| `biomes`   | array          | One for each biome the game may give at the block (each of a tie, spyglass's first): `{biome, features, flowers}`. |
+
+A biome's `features` are its bone meal features in the game's order, repeats kept (bone meal picks one of them, each as likely): `{id, provider, by_position}`, with the provider's type and whether it picks by position. Its `flowers` are the states it can grow, most likely first: `{flower, chance}`, with `chance` as `{numerator, denominator, value}`, exact and as a float ([ADR 0075](../adr/0075-flower-answers-carry-exact-chances.md)). They're empty where the biome has no bone meal features.
+
+## `flower heights`
+
+One flower's cover of an area at each height ([render.md](render.md#flowers)). `command` is `flower_heights`.
+
+| Field     | Type     | Meaning                                                                                                             |
+| --------- | -------- | ------------------------------------------------------------------------------------------------------------------- |
+| `flower`  | string   | The flower's block id.                                                                                              |
+| `min`     | `[x, z]` | The area's corner, as given.                                                                                        |
+| `max`     | `[x, z]` | Its other corner, included.                                                                                         |
+| `scale`   | int      | Blocks between samples.                                                                                             |
+| `heights` | array    | `{y, certain, possible, pixels}` for each height tried: the samples where the flower is certain, possible, and all. |
 
 ## `render`
 

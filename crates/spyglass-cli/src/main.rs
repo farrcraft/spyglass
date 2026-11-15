@@ -16,6 +16,7 @@ mod args;
 mod blocks;
 mod features;
 mod find;
+mod flower;
 mod heights;
 mod json;
 mod locate;
@@ -76,6 +77,7 @@ fn run(cli: Cli) -> Result<()> {
         Command::Blocks(args) => blocks::run(&args),
         Command::Features(args) => features::run(&args),
         Command::Loot { what } => loot::run(&what),
+        Command::Flower { what } => flower::run(&what),
     }
 }
 

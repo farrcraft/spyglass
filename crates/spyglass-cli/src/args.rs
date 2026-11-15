@@ -54,6 +54,51 @@ pub enum Command {
         #[command(subcommand)]
         what: Loot,
     },
+    /// The flower bone meal grows on grass: at a block, or the best height for a farm of one
+    /// flower.
+    Flower {
+        #[command(subcommand)]
+        what: Flower,
+    },
+}
+
+/// `spyglass flower` (`docs/specs/flowers.md`).
+#[derive(Subcommand)]
+pub enum Flower {
+    /// What bone meal grows on grass at a block, `x,y,z`: the block above the grass. Each
+    /// flower with its chance, and why: the biome there and its flower features.
+    At {
+        /// The flower's block, `x,y,z`, one above the grass.
+        #[arg(allow_hyphen_values = true, value_parser = xyz)]
+        position: [i32; 3],
+        #[command(flatten)]
+        common: Common,
+    },
+    /// How much of an area one flower covers at each height: where it's certain and where it
+    /// can grow, for choosing a farm's height.
+    Heights {
+        /// The flower, e.g. `minecraft:cornflower`.
+        flower: String,
+        /// The area's corner, `x,z`, with `--max`: every block between them, both included.
+        #[arg(long, allow_hyphen_values = true, value_parser = xz)]
+        min: [i32; 2],
+        /// The area's other corner, `x,z`.
+        #[arg(long, allow_hyphen_values = true, value_parser = xz)]
+        max: [i32; 2],
+        /// The heights to try, `from..to`, both included: the flower's block, one above the
+        /// grass.
+        #[arg(long, default_value = "-64..320", allow_hyphen_values = true, value_parser = y_range)]
+        y: [i32; 2],
+        /// Try every this many heights.
+        #[arg(long, default_value_t = 1)]
+        step: u32,
+        /// Sample every this many blocks across the area (a power of two): larger areas are
+        /// faster at a coarser scale.
+        #[arg(long, default_value_t = 1)]
+        scale: u32,
+        #[command(flatten)]
+        common: Common,
+    },
 }
 
 /// `spyglass loot` (`docs/specs/locate.md#loot`).
@@ -543,6 +588,17 @@ fn xyz(text: &str) -> Result<[i32; 3], String> {
     {
         Ok(parts) if parts.len() == 3 => Ok([parts[0], parts[1], parts[2]]),
         _ => Err(format!("expected x,y,z in blocks, got {text:?}")),
+    }
+}
+
+/// `from..to`, both included.
+fn y_range(text: &str) -> Result<[i32; 2], String> {
+    let parse = |s: &str| s.trim().parse::<i32>();
+    match text.split_once("..").map(|(a, b)| (parse(a), parse(b))) {
+        Some((Ok(from), Ok(to))) if from <= to => Ok([from, to]),
+        _ => Err(format!(
+            "expected from..to in blocks, from at most to, got {text:?}"
+        )),
     }
 }
 

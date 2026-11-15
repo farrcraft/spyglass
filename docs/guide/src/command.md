@@ -66,6 +66,15 @@ spyglass loot at 33,-5,-88 --seed 12345
 
 Placing a container's chunk takes about a tenth of a second. Each container and its contents are certain or a candidate, as features are. A candidate's contents may be another seed's. In a world save, a chest already opened, or in a chunk an older version generated, may hold something else.
 
+## Flowers
+
+```sh
+spyglass flower at 120,71,-340 --seed 12345
+spyglass flower heights minecraft:cornflower --min 100,-400 --max 200,-300 --y 60..140 --seed 12345
+```
+
+`spyglass flower at x,y,z` says what bone meal grows on grass at a block: the flower's block, one above the grass. It gives each flower with its chance, and why: the biome there and its flower features. `spyglass flower heights` gives the share of an area where a flower is certain, and where it can grow, at each height in `--y` (every `--step` blocks). See [Flower farms](flower-farms.md).
+
 ## Heights and blocks
 
 ```sh
@@ -80,6 +89,7 @@ spyglass blocks --seed 12345 --column 100,-37
 ## More
 
 - [Maps](maps.md): `spyglass render`.
+- [Flower farms](flower-farms.md): `spyglass flower`, and the flower layer.
 - [Seed search](seed-search.md): `spyglass search`.
 - [Searching within a seed](search-in-seed.md): `spyglass find`.
 - [Your own worlds](your-worlds.md): `spyglass world`, and `--world` on every command.

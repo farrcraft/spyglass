@@ -139,7 +139,7 @@ Four parts, each building on the one before: the flower at a block, the map and 
 - [x] `Session::flower_map` and the flower layer in `render`, with its colour table, and the spec's Layers list updated.
 - [x] `Session::flower_heights`, with a test that its shares match the map at each height.
 - [ ] The search constraint: parsing, canonical form, the biome-first sampling, scores, and the outcome. [search.md](../specs/search.md) gets its grammar and meaning.
-- [ ] CLI: `flower at`, `flower heights`, `render --flowers`, with `--json`; [cli-json.md](../specs/cli-json.md) updated.
+- [x] CLI: `flower at`, `flower heights`, `render --flowers`, with `--json`; [cli-json.md](../specs/cli-json.md) updated.
 - [ ] Viewer: the layer, the key and highlight, the hover answer, and Best height.
 - [ ] Benchmarks: a flower map tile and a flower search added to `cargo xtask bench`, with their times in the spec.
 - [ ] User guide: the flower-farm page, and the layer, command and constraint in [maps.md](../guide/src/maps.md), [command.md](../guide/src/command.md) and [seed-search.md](../guide/src/seed-search.md).
@@ -167,6 +167,8 @@ Four parts, each building on the one before: the flower at a block, the map and 
 ## Notes
 
 Newest first.
+
+- 2026-11-15: `spyglass flower at` and `flower heights`, with their JSON, and the guide's flower-farms page, which `render --flowers` (committed before it) needed too. The page leaves out the viewer and search until they're built.
 
 - 2026-11-15: The flower map, layer and best heights. A pixel that's down to chance shows its most likely flower, fainter the less likely, rather than a checker of its flowers: plains' nine flowers made a checker noise, where the likeliest one at its chance reads at a glance. `render --flowers` and `--flower <id>` came with it, as the layer needed `Layers` fields every front end sets. A view still equals its tiles with flowers on.
 

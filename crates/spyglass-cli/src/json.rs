@@ -842,3 +842,67 @@ impl<'a> Stack<'a> {
         }
     }
 }
+
+/// A chance: exact, and as a float for convenience.
+#[derive(Serialize)]
+pub struct ChanceJson {
+    pub numerator: u128,
+    pub denominator: u128,
+    pub value: f64,
+}
+
+impl From<spyglass::Chance> for ChanceJson {
+    fn from(c: spyglass::Chance) -> Self {
+        ChanceJson {
+            numerator: c.numerator,
+            denominator: c.denominator,
+            value: c.as_f64(),
+        }
+    }
+}
+
+/// `flower at`: each biome the game may give at the block, with its features and flowers.
+#[derive(Serialize)]
+pub struct FlowerAnswer<'a> {
+    pub position: [i32; 3],
+    pub certain: Option<&'a str>,
+    pub biomes: Vec<FlowerBiomeJson<'a>>,
+}
+
+#[derive(Serialize)]
+pub struct FlowerBiomeJson<'a> {
+    pub biome: &'a str,
+    pub features: Vec<BoneMealFeatureJson<'a>>,
+    pub flowers: Vec<FlowerChanceJson<'a>>,
+}
+
+#[derive(Serialize)]
+pub struct BoneMealFeatureJson<'a> {
+    pub id: &'a str,
+    pub provider: &'a str,
+    pub by_position: bool,
+}
+
+#[derive(Serialize)]
+pub struct FlowerChanceJson<'a> {
+    pub flower: &'a str,
+    pub chance: ChanceJson,
+}
+
+/// `flower heights`: one flower's cover of an area, by height.
+#[derive(Serialize)]
+pub struct FlowerHeightsAnswer<'a> {
+    pub flower: &'a str,
+    pub min: [i32; 2],
+    pub max: [i32; 2],
+    pub scale: u32,
+    pub heights: Vec<FlowerShareJson>,
+}
+
+#[derive(Serialize)]
+pub struct FlowerShareJson {
+    pub y: i32,
+    pub certain: u64,
+    pub possible: u64,
+    pub pixels: u64,
+}

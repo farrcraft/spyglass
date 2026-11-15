@@ -1,8 +1,8 @@
 # 29. Flower fields
 
-- Status: Not started
+- Status: In progress
 - Depends on: [19](completed/19-features.md)
-- Plans: none yet
+- Plans: [m29-flower-fields](../plans/m29-flower-fields.md)
 
 ## Goal
 

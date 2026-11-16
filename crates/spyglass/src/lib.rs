@@ -30,9 +30,12 @@ mod blocks;
 mod features;
 mod flowers;
 mod game;
+mod link_map;
 mod loot;
+mod portals;
 mod render;
 mod save;
+mod save_portals;
 mod saved;
 mod search;
 
@@ -55,8 +58,14 @@ pub use blocks::{BlockAt, BlockColumn, Carvers, ChunkBlocks};
 pub use features::{FeatureLocate, FeatureOptions, FeatureQuery, FoundFeature, Neighbours};
 pub use flowers::{BoneMealFeature, FlowerAt, FlowerBiome, FlowerChance};
 pub use game::{Game, GameSession};
+pub use link_map::{Destination, LinkMap, PixelLink};
 pub use loot::{
     ContainerLocate, ContainerSource, FoundContainer, InSave, Item, ItemQuery, MapDestination, Slot,
+};
+pub use portals::{
+    Axis, Border, DEFAULT_ABSOLUTE_MAX, DEFAULT_BORDER_SIZE, ExitLink, Landing, Link, LinkOutcome,
+    MAX_PORTAL_SIDE, Portal, PortalLinks, PortalTarget, portal_destination, portal_link,
+    portal_search_radius,
 };
 pub use render::{
     BiomeMap, CarverKind, CarvingMap, DEFAULT_MAP_Y, FlowerCount, FlowerMap, FlowerPixel,
@@ -69,6 +78,7 @@ pub use save::{
     LauncherSave, PackConcern, SaveInfo, SaveInspector, SaveLocation, SaveReport, SaveWarning,
     Scan, find_save, inspect_save, launcher_saves,
 };
+pub use save_portals::{PortalFlag, PortalNote, SavePortal, SavePortalLink, SavePortals};
 pub use saved::{GeneratedChunk, SaveChunks};
 pub use search::{
     ConstraintResult, Evaluation, Feature, FindMatch, FindOptions, FindOutcome, FindProgress,
@@ -211,6 +221,9 @@ pub enum Error {
     /// A map area or layers that can't be drawn: the message says why.
     #[error("{0}")]
     InvalidMap(String),
+    /// A portal the game can't have, such as one wider than 21 blocks: the message says why.
+    #[error("{0}")]
+    InvalidPortal(String),
     /// Two dimensions whose coordinates the game doesn't link, such as the End and the
     /// Overworld.
     #[error("{from} and {to} aren't linked by coordinates")]
@@ -554,6 +567,7 @@ impl World {
         let DimensionType {
             coordinate_scale,
             has_ceiling,
+            ..
         } = DimensionType::load(&bundle, &dimension_type)?;
         let palette = source
             .biome_names()
@@ -859,6 +873,9 @@ struct DimensionType {
     coordinate_scale: f64,
     /// `has_ceiling`, false if absent.
     has_ceiling: bool,
+    /// `min_y` and `height`: the lowest block and how many there are, the Overworld's -64 and
+    /// 384 if absent.
+    build: [i32; 2],
 }
 
 impl DimensionType {
@@ -874,6 +891,12 @@ impl DimensionType {
                 .get("has_ceiling")
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false),
+            build: [("min_y", -64), ("height", 384)].map(|(field, default)| {
+                json.get(field)
+                    .and_then(serde_json::Value::as_i64)
+                    .and_then(|v| i32::try_from(v).ok())
+                    .unwrap_or(default)
+            }),
         })
     }
 }

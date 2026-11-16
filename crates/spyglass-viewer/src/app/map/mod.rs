@@ -19,6 +19,7 @@ mod controls;
 mod jobs;
 mod marker_layer;
 mod menu;
+pub(in crate::app) mod portal_layer;
 
 use controls::scale_bar;
 pub(super) use marker_layer::contents_lines;
@@ -60,6 +61,7 @@ impl App {
         {
             self.add_marker(block);
         }
+        self.poll_save_portals(ui.ctx());
         let (Some(shown), Some(world)) = (&self.shown, self.world) else {
             return;
         };
@@ -89,7 +91,13 @@ impl App {
             rect,
             centre,
         };
+        let (portals, portal_hover) = self.draw_portal_layer(ui, &canvas, &frame, world);
         let pointed = self.draw_marker_layer(ui, &canvas, &frame, world, &session, &spawn);
+        if pointed.target.is_none()
+            && let Some(hover) = &portal_hover
+        {
+            self.portal_tooltip(&response, &portals, hover);
+        }
         if response.clicked()
             && let Some((MenuTarget::Marker(id), _)) = &pointed.target
         {
@@ -112,12 +120,21 @@ impl App {
         }
         self.map_controls(ui, rect, spawn_block, keys.focus_goto);
         self.map_legend(ui, rect, world);
+        self.link_area_notice(ui, rect, &portals, world.dimension_kind());
         scale_bar(&painter, rect, view.scale);
 
         if response.secondary_clicked()
             && let Some(p) = response.interact_pointer_pos()
         {
             self.menu_block = Some(view.block_at(offset(p)).map(|b| b.floor() as i32));
+            self.menu_portal = match (&pointed.target, &portal_hover) {
+                (Some((MenuTarget::Marker(id), _)), _) => {
+                    let what = portal_layer::PortalRef::Marker(id.clone());
+                    portals.has(&what).then_some(what)
+                }
+                (None, Some(portal_layer::PortalHover::Portal(i))) => Some(portals.what(*i)),
+                _ => None,
+            };
             self.menu_target = pointed.target;
         }
         self.context_menu(ui, &response, world, view.y);

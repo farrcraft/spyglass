@@ -75,6 +75,16 @@ spyglass flower heights minecraft:cornflower --min 120,-2110 --max 260,-2010 --y
 
 `spyglass flower at x,y,z` says what bone meal grows on grass at a block: the flower's block, one above the grass. It gives each flower with its chance, and why: the biome there and its flower features. `spyglass flower heights` gives the share of an area where a flower is certain, and where it can grow, at each height in `--y` (every `--step` blocks). See [Flower farms](flower-farms.md).
 
+## Portals
+
+```sh
+spyglass portal link nether 100,64,100 --portal overworld:800,64,800
+spyglass portal link overworld 812,70,-400 --axis z --size 4x5 --world "My World"
+spyglass portal link --world "My World"
+```
+
+`spyglass portal link DIMENSION x,y,z` says where a Nether portal leads: the exit blocks a player standing in it aims at, and the portal each one lands at. Give the portal's lowest block, its axis (`--axis x` or `z`) and its size inside the frame (`--size`, 2x3 by default). The portals it can land at are the ones you give with `--portal DIMENSION:x,y,z`, adding `:z` or a size such as `:4x5` where they differ, and with `--world`, the portals the save has. With only `--world`, it lists every portal in the save and where it leads, and flags the ones that don't link back. It needs no seed, only a version (`--game-version`) or a save. See [Nether portals](portals.md).
+
 ## Heights and blocks
 
 ```sh

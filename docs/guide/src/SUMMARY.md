@@ -8,6 +8,7 @@
 - [The spyglass command](command.md)
   - [Maps](maps.md)
   - [Flower farms](flower-farms.md)
+  - [Nether portals](portals.md)
   - [Seed search](seed-search.md)
   - [Searching within a seed](search-in-seed.md)
   - [Your own worlds](your-worlds.md)

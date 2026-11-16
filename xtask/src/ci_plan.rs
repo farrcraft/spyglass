@@ -69,13 +69,14 @@ pub(crate) enum Kind {
     Containers,
     Flowers,
     Locate,
+    Portals,
     Loot,
     Bundle,
 }
 
 impl Kind {
     /// Every kind, in the order a job makes them.
-    pub(crate) const ALL: [Kind; 12] = [
+    pub(crate) const ALL: [Kind; 13] = [
         Kind::Probe,
         Kind::Biomes,
         Kind::Structures,
@@ -86,6 +87,7 @@ impl Kind {
         Kind::Containers,
         Kind::Flowers,
         Kind::Locate,
+        Kind::Portals,
         Kind::Loot,
         Kind::Bundle,
     ];
@@ -102,6 +104,7 @@ impl Kind {
             Kind::Containers => "containers",
             Kind::Flowers => "flowers",
             Kind::Locate => "locate",
+            Kind::Portals => "portals",
             Kind::Loot => "loot",
             Kind::Bundle => "bundle",
         }
@@ -130,6 +133,7 @@ impl Kind {
             Kind::Containers => &[Input::Containers],
             Kind::Flowers => &[Input::Flowers],
             Kind::Locate => &[Input::Locate],
+            Kind::Portals => &[Input::Portals],
             Kind::Loot => &[Input::Loot],
             Kind::Bundle => &[],
         }
@@ -184,6 +188,7 @@ impl Unit {
             Kind::Containers => costs.containers,
             Kind::Flowers => costs.flowers,
             Kind::Locate => costs.locate,
+            Kind::Portals => costs.portals,
             Kind::Loot => costs.loot,
             Kind::Bundle => costs.bundle,
         }
@@ -253,6 +258,9 @@ struct Costs {
     flowers: f64,
     /// `oracle locate`'s server, its map cases included, and their comparisons.
     locate: f64,
+    /// `oracle portals`'s server and its comparison: about 20 s locally, estimated at four
+    /// times as long until CI's logs have it.
+    portals: f64,
     /// `oracle loot`'s fills, and their comparison.
     loot: f64,
     /// The tests that read only the bundle, and the test pack where it loads.
@@ -278,6 +286,7 @@ const COSTS: &[Costs] = &[
         containers: 37.0,
         flowers: 1.0,
         locate: 12.0,
+        portals: 1.5,
         loot: 1.0,
         bundle: 14.0,
     },
@@ -295,6 +304,7 @@ const COSTS: &[Costs] = &[
         containers: 12.0,
         flowers: 1.0,
         locate: 5.0,
+        portals: 1.5,
         loot: 1.0,
         bundle: 3.0,
     },
@@ -313,6 +323,7 @@ const COSTS: &[Costs] = &[
         containers: 12.5,
         flowers: 1.0,
         locate: 5.5,
+        portals: 1.5,
         loot: 1.0,
         bundle: 11.0,
     },

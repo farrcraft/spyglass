@@ -264,11 +264,27 @@ pub fn index_file(path: &Path) -> std::io::Result<RegionIndex> {
         region: region_coords(path),
         chunks: Vec::new(),
     };
+    visit_chunks(path, |index, raw| {
+        let record = raw
+            .and_then(|raw| chunk_fields(&raw))
+            .map_or(ChunkRecord::Unreadable, ChunkRecord::Read);
+        region.chunks.push((index, record));
+    })?;
+    Ok(region)
+}
+
+/// Calls `visit` with each chunk a region file's header lists, in header order: its header
+/// index (`(x & 31) + (z & 31) · 32`) and its uncompressed NBT, or `None` if it can't be read
+/// under the scan's rules. A file shorter than its header lists none.
+pub fn visit_chunks(
+    path: &Path,
+    mut visit: impl FnMut(u16, Option<Vec<u8>>),
+) -> std::io::Result<()> {
     let mut file = File::open(path)?;
     let mut header = Vec::with_capacity(4096);
     (&mut file).take(4096).read_to_end(&mut header)?;
     if header.len() < 4096 {
-        return Ok(region);
+        return Ok(());
     }
     let mut buffer = Vec::new();
     for index in 0..1024 {
@@ -276,12 +292,17 @@ pub fn index_file(path: &Path) -> std::io::Result<RegionIndex> {
         if entry == 0 {
             continue;
         }
-        let record = chunk_data(path, &mut file, &mut buffer, entry, index)
-            .and_then(|raw| chunk_fields(&raw))
-            .map_or(ChunkRecord::Unreadable, ChunkRecord::Read);
-        region.chunks.push((index as u16, record));
+        let raw = chunk_data(path, &mut file, &mut buffer, entry, index);
+        visit(index as u16, raw);
     }
-    Ok(region)
+    Ok(())
+}
+
+/// The chunk at header index `index` of the region file at `path`, if its name parses
+/// (`r.<x>.<z>.mca`).
+pub fn chunk_pos_in(path: &Path, index: u16) -> Option<[i32; 2]> {
+    let [region_x, region_z] = region_coords(path)?;
+    Some(local_to_chunk(region_x, region_z, usize::from(index)))
 }
 
 /// Chunk `pos`'s NBT, uncompressed, from the region files in `dir` (`r.<x>.<z>.mca`): `None`

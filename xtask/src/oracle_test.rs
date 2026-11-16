@@ -46,6 +46,8 @@ pub(crate) enum Input {
     Loot,
     /// The flower files.
     Flowers,
+    /// The portal file.
+    Portals,
 }
 
 impl Input {
@@ -71,6 +73,7 @@ impl Input {
             Input::Containers => "containers",
             Input::Loot => "loot",
             Input::Flowers => "flowers",
+            Input::Portals => "portals",
             Input::DungeonSeed => {
                 return root
                     .join("oracle-out")
@@ -106,6 +109,7 @@ impl Input {
             Input::Containers => "cargo xtask oracle containers",
             Input::Loot => "cargo xtask oracle loot",
             Input::Flowers => "cargo xtask oracle flowers",
+            Input::Portals => "cargo xtask oracle portals",
         }
     }
 }
@@ -230,6 +234,11 @@ pub(crate) const TESTS: &[(&str, &str, &[Input])] = &[
         "spyglass",
         "flowers_through_the_api_are_the_game_s",
         &[Input::Flowers, Input::Bundle],
+    ),
+    (
+        "spyglass",
+        "portal_links_match_the_game",
+        &[Input::Portals, Input::Bundle],
     ),
     (
         "spyglass-feature",

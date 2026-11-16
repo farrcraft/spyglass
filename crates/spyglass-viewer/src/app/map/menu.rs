@@ -21,9 +21,17 @@ impl App {
             .loot
             .as_ref()
             .map(|query| query.argument().to_string());
+        let menu_portal = self.menu_portal.clone();
         let mut action = None;
         response.context_menu(|ui| {
-            action = menu(ui, [bx, bz], menu_target.as_ref(), world, loot.as_deref());
+            action = menu(
+                ui,
+                [bx, bz],
+                menu_target.as_ref(),
+                menu_portal.as_ref(),
+                world,
+                loot.as_deref(),
+            );
         });
         match action {
             Some(Action::Locate(target)) => {
@@ -34,6 +42,8 @@ impl App {
                 self.settings.view.centre = [f64::from(bx) + 0.5, f64::from(bz) + 0.5];
             }
             Some(Action::AddMarker) => self.add_marker([bx, bz]),
+            Some(Action::AddPortal) => self.add_portal([bx, y, bz]),
+            Some(Action::LinkArea(what)) => self.show_link_area(ui.ctx(), what),
             Some(Action::Edit(id)) => self.editing = Some(id),
             Some(Action::MarkerDone(id, done)) => self.change_marker(&id, |m| m.done = done),
             Some(Action::Delete(id)) => {
@@ -50,11 +60,13 @@ impl App {
 }
 
 /// The context menu's contents at block `[bx, bz]`, for `target` if the right-click was on one
-/// (and whether it's done), and what was asked for. `loot` is the Loot item, if one is chosen.
+/// (and whether it's done), and `portal` if it was on a portal, and what was asked for. `loot`
+/// is the Loot item, if one is chosen.
 pub(super) fn menu(
     ui: &mut egui::Ui,
     [bx, bz]: [i32; 2],
     target: Option<&(MenuTarget, bool)>,
+    portal: Option<&portal_layer::PortalRef>,
     world: &World,
     loot: Option<&str>,
 ) -> Option<Action> {
@@ -85,12 +97,33 @@ pub(super) fn menu(
         }
         None => {}
     }
+    if let Some(portal) = portal
+        && world.dimension_kind() != Dimension::End
+        && ui
+            .button("Show its link area")
+            .on_hover_text(
+                "Where in the other dimension a new portal would link to this one, at the \
+                 view's height",
+            )
+            .clicked()
+    {
+        action = Some(Action::LinkArea(portal.clone()));
+        ui.close();
+    }
     if ui
         .button("Add a marker here")
         .on_hover_text("Or press M")
         .clicked()
     {
         action = Some(Action::AddMarker);
+        ui.close();
+    }
+    if ui
+        .button("Add a portal here")
+        .on_hover_text("A Nether portal marker, its lowest block here at the view's height")
+        .clicked()
+    {
+        action = Some(Action::AddPortal);
         ui.close();
     }
     ui.separator();
@@ -188,6 +221,10 @@ pub(in crate::app) enum Action {
     Centre,
     /// Add a marker at the block clicked.
     AddMarker,
+    /// Add a portal marker at the block clicked, at the view's height.
+    AddPortal,
+    /// Show the link area of this portal.
+    LinkArea(portal_layer::PortalRef),
     /// Edit the marker with this id.
     Edit(String),
     /// Mark the marker with this id done or not.

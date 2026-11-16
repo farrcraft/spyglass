@@ -62,6 +62,10 @@ A view that's out of range is fixed as the viewer fixes its settings: the defaul
 | `y`         | integer or null | The block's height, if the user gave one. Within ±30,000,000.                                                   |
 | `name`      | string          | May be empty, as it is by default.                                                                              |
 | `colour`    | string          | `#rrggbb`, lowercase or uppercase hex. Default amber.                                                           |
+| `kind`      | string          | `pin` (the default) or `portal`. See [portal markers](#portal-markers).                                         |
+| `axis`      | string          | A portal's axis, `x` or `z`: which way its blocks run. Default `x`.                                             |
+| `width`     | integer         | A portal's blocks along its axis, 1 to 21. Default 2.                                                           |
+| `height`    | integer         | A portal's blocks up, 1 to 21. Default 3.                                                                       |
 | `done`      | boolean         | Whether it's marked done. Default false.                                                                        |
 | `deleted`   | boolean         | A **tombstone**: the marker was deleted. Kept so that a [merge](#merging) can't bring it back. Default false.   |
 | `modified`  | integer         | When it last changed, in milliseconds. Default 0.                                                               |
@@ -78,6 +82,17 @@ The viewer offers eight colours, but any `#rrggbb` is valid:
 | Pink   | `#f070b0` |
 | White  | `#f0f0f0` |
 | Black  | `#202020` |
+
+### Portal markers
+
+A marker whose `kind` is `portal` marks a Nether portal: `width` × `height` blocks, standing in one column, with the marker's block (`x`, `y`, `z`) its lowest corner, the least x, y and z of its blocks. Its links are [portals.md](portals.md)'s. A portal marker needs a `y`:
+
+- **A portal without a `y`** is shown as a pin, reported, and its `kind`, `axis`, `width` and `height` kept as they are.
+- **A `kind` this spec doesn't name** is shown as a pin, not reported, and kept with any fields that go with it, so a newer viewer's kinds survive.
+- **A wrong `axis`, `width` or `height`** is ignored and reported, and its default used.
+- **A pin** writes no `kind`, `axis`, `width` or `height`, so a file without portal markers is written as before.
+
+A viewer older than portal markers keeps `kind`, `axis`, `width` and `height` as fields it doesn't know, writes them back, and shows the marker as a pin. So the format stays 1.
 
 ### Done places
 

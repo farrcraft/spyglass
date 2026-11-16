@@ -58,6 +58,7 @@ Seed 12345 in 26.3 at 1 block per pixel, centred on 0, 200, with every container
 
 - **Markers:** right-click the map and **Add a marker here**, or press M over it, then name it and pick a colour. Click a marker to edit it. The **Markers** tab lists the world's markers in the dimension shown, and what you've marked done.
 - **Done:** right-click a structure, a locate pin or a search match and **Mark done**. Done things are drawn dimmed. Untick **Done things** in the Layers tab to hide them. A structure stays done when you switch game versions.
+- **Portal markers:** right-click the map and **Add a portal here** for a Nether portal, its lowest block at the view's height. In its window, set its height, direction and size. In the other dimension, the blocks it aims at, the square the game searches around them, and a line to the portal it lands at (or _new portal_) are drawn. Right-click a portal and **Show its link area** to shade where a new portal on the other side would link to it. See [Nether portals](portals.md).
 - **Worlds:** every seed and save you open is kept as a recent world, with its markers and where you left it. Name one in the Markers tab to keep it, and open any from **Worlds** in the toolbar.
 
 Markers, done places and worlds are kept in `spyglass-data.json`, beside the settings:

@@ -194,6 +194,21 @@ pub enum OracleCmd {
         #[arg(long)]
         accept_eula: bool,
     },
+    /// Play portal cases on a real dedicated server through the game's own portal code (ADR
+    /// 0076): random layouts and constructed edges, each search's and trip's answer written to
+    /// `oracle-out/<version>/portals/portals.json`. About a minute; not part of `golden`.
+    /// Running the server means accepting the Minecraft EULA (ADR 0033).
+    Portals {
+        #[command(flatten)]
+        common: Common,
+        /// Random layouts, from a fixed generator, besides the constructed ones.
+        #[arg(long, default_value_t = 40)]
+        random: usize,
+        /// Accept the Minecraft EULA (<https://aka.ms/MinecraftEULA>) for the server this runs,
+        /// as `SPYGLASS_ACCEPT_EULA=1` does.
+        #[arg(long)]
+        accept_eula: bool,
+    },
     /// Replay the orders `order` recorded: each chunk's target features decorated on its own
     /// and in the recorded order, into `oracle-out/<version>/order-features/<seed>/`.
     Replay {
@@ -426,6 +441,15 @@ pub fn run(cmd: OracleCmd) -> Result<()> {
                     view_distance,
                 },
             )
+        }
+        OracleCmd::Portals {
+            common,
+            random,
+            accept_eula,
+        } => {
+            crate::locate::require_eula(accept_eula)?;
+            let harness = build(&common)?;
+            crate::portals::run(&harness, random)
         }
         OracleCmd::Replay {
             common,

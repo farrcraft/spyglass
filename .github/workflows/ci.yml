@@ -222,7 +222,7 @@ jobs:
         with:
           distribution: temurin
           java-version: ${{ steps.jdk.outputs.major }}
-      # `oracle locate` runs Mojang's dedicated server; this accepts the Minecraft EULA for it
+      # `oracle locate` and `oracle portals` run Mojang's dedicated server; this accepts the Minecraft EULA for it
       # (https://aka.ms/MinecraftEULA, ADR 0033).
       - run: cargo xtask ci --game-version "$VERSION" --units "$UNITS"
         env:

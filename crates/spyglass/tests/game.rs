@@ -372,3 +372,100 @@ fn a_world_searches_its_own_dimension() {
     ));
     assert!(game.session(3).evaluate(&both, false).is_ok());
 }
+
+#[test]
+fn a_portal_target_on_a_block_corner_is_the_converted_column() {
+    let bundle = fixtures::overworld_and_nether();
+    let game = Game::open(bundle.path()).unwrap();
+    let border = spyglass::Border::default();
+    let (o, n) = (Dimension::Overworld, Dimension::Nether);
+    for [x, z] in [[17, -9], [-8, 7], [0, 0], [-1, -1], [1_000_003, -2_345_679]] {
+        let pos = [f64::from(x), 70.0, f64::from(z)];
+        let target = game.portal_target(o, pos, &border).unwrap();
+        assert_eq!(target.dimension, n);
+        let [cx, cz] = game.convert([x, z], o, n).unwrap();
+        assert_eq!(target.exit, [cx, 70, cz]);
+        let target = game.portal_target(n, pos, &border).unwrap();
+        assert_eq!(target.dimension, o);
+        let [cx, cz] = game.convert([x, z], n, o).unwrap();
+        assert_eq!(target.exit, [cx, 70, cz]);
+    }
+}
+
+#[test]
+fn a_portal_target_scales_where_the_entity_stands() {
+    let bundle = fixtures::overworld_and_nether();
+    let game = Game::open(bundle.path()).unwrap();
+    let border = spyglass::Border::default();
+    let (o, n) = (Dimension::Overworld, Dimension::Nether);
+    // One Nether block, eight Overworld blocks across, by where in it the player stands.
+    let west = game.portal_target(n, [10.3, 64.0, 0.5], &border).unwrap();
+    let east = game.portal_target(n, [10.7, 64.0, 0.5], &border).unwrap();
+    assert_eq!(west.exit, [82, 64, 4]);
+    assert_eq!(east.exit, [85, 64, 4]);
+    // y isn't scaled or clamped, and the border clamps x and z.
+    let far = game.portal_target(n, [1e7, 400.9, -1e7], &border).unwrap();
+    assert_eq!(far.exit, [29_999_983, 400, -29_999_984]);
+    let into = game
+        .portal_target(o, [-0.5, -100.0, 15.99], &border)
+        .unwrap();
+    assert_eq!(into.exit, [-1, -100, 1]);
+    // The fixture has no End, so a portal there has nowhere to scale from.
+    assert!(matches!(
+        game.portal_target(Dimension::End, [0.0, 0.0, 0.0], &border),
+        Err(Error::Unknown { .. })
+    ));
+}
+
+#[test]
+fn a_standing_player_aims_at_a_box_of_exit_blocks() {
+    use spyglass::{Axis, Border, Link, Portal};
+    let bundle = fixtures::overworld_and_nether();
+    let game = Game::open(bundle.path()).unwrap();
+    let border = Border::default();
+    let (o, n) = (Dimension::Overworld, Dimension::Nether);
+
+    // Out of the Nether, a 2 × 3 portal along x spans 12 × 14 × 2 exit blocks.
+    let nether = Portal::new(n, Axis::X, [0, 64, 0], 2, 3).unwrap();
+    let range = nether.standing_range().unwrap();
+    assert_eq!(range[0], [0.300_000_011_920_928_96, 1.699_999_988_079_071]);
+    assert_eq!(range[1], [64.0, 65.200_000_047_683_72]);
+    let links = game.portal_links(&nether, &[], &border).unwrap().unwrap();
+    assert_eq!(links.dimension, o);
+    assert_eq!(links.exits, [[2, 13], [64, 65], [-3, 10]]);
+    assert_eq!(links.links.len(), 12 * 14 * 2);
+    assert!(links.links.iter().all(|l| l.link == Link::NewPortal));
+    assert_eq!(links.only(), None);
+
+    // Two Overworld portals: the exits split between them by nearness.
+    let portals = [
+        Portal::new(o, Axis::Z, [-20, 64, 4], 2, 3).unwrap(),
+        Portal::new(o, Axis::Z, [40, 64, 4], 2, 3).unwrap(),
+    ];
+    let links = game
+        .portal_links(&nether, &portals, &border)
+        .unwrap()
+        .unwrap();
+    let outcomes = links.outcomes();
+    assert_eq!(outcomes.len(), 2, "{outcomes:?}");
+    // Exits x 2..=10 are nearer x -20 than x 40 (midpoint 10, tied at x 10 across chunks:
+    // chunk -2 comes first), so 9 columns go west and 3 east.
+    assert_eq!(outcomes[0].portals, [0]);
+    assert_eq!(outcomes[0].exits, 9 * 14 * 2);
+    assert_eq!(outcomes[1].portals, [1]);
+
+    // Into the Nether, the same portal's exits are a block or two each way.
+    let overworld = Portal::new(o, Axis::X, [80, 64, 0], 2, 3).unwrap();
+    let into = [Portal::new(n, Axis::X, [11, 70, 0], 2, 3).unwrap()];
+    let links = game
+        .portal_links(&overworld, &into, &border)
+        .unwrap()
+        .unwrap();
+    assert_eq!(links.exits, [[10, 10], [64, 65], [-1, 0]]);
+    assert_eq!(links.only(), Some(0));
+
+    // Too low to stand in.
+    let low = Portal::new(n, Axis::Z, [0, 64, 0], 2, 1).unwrap();
+    assert_eq!(low.standing_range(), None);
+    assert_eq!(game.portal_links(&low, &[], &border).unwrap(), None);
+}

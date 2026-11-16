@@ -240,7 +240,7 @@ public final class Join {
      * thread's task, from {@code MinecraftServer.spin}, holds it in an {@code AtomicReference}.
      * Needs {@code --add-opens java.base/java.lang=ALL-UNNAMED} to read the thread's task.
      */
-    private static MinecraftServer findServer() throws ReflectiveOperationException {
+    static MinecraftServer findServer() throws ReflectiveOperationException {
         for (Thread thread : Thread.getAllStackTraces().keySet()) {
             if (!thread.getName().equals("Server thread")) {
                 continue;
@@ -261,7 +261,7 @@ public final class Join {
         throw new IllegalStateException("no server thread holding a MinecraftServer");
     }
 
-    private interface Check {
+    interface Check {
         boolean done() throws Exception;
     }
 
@@ -269,7 +269,7 @@ public final class Join {
      * Polls {@code check} every 50 ms (a tick), running {@code between} each time, until it's
      * done, or fails after the timeout.
      */
-    private static void waitFor(String what, Check check, Runnable between) throws Exception {
+    static void waitFor(String what, Check check, Runnable between) throws Exception {
         long deadline = System.currentTimeMillis() + STAGE_TIMEOUT_MS;
         while (true) {
             between.run();

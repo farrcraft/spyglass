@@ -410,6 +410,10 @@ pub struct App {
     editing: Option<String>,
     /// What the map's context menu was opened on, and whether it's done.
     menu_target: Option<(MenuTarget, bool)>,
+    /// The portal the map's context menu was opened on, if any.
+    menu_portal: Option<map::portal_layer::PortalRef>,
+    /// Portal markers' and the save's portals' links, and the link area.
+    portals: map::portal_layer::PortalState,
     /// A view text being typed into the Share menu.
     share_text: String,
     /// The last import's, export's or view text's outcome.
@@ -538,6 +542,8 @@ impl App {
             world_key: None,
             editing: None,
             menu_target: None,
+            menu_portal: None,
+            portals: Default::default(),
             share_text: String::new(),
             data_note: None,
             data_problems_seen: false,

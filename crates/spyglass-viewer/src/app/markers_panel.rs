@@ -2,10 +2,11 @@
 //! editor, the worlds menu, sharing a view as text, and importing and exporting the data file.
 //! Also keeping the data in step with the world shown.
 
+use super::map::portal_layer::PortalRef;
 use super::*;
 use crate::share::{Flags, SharedView};
 use crate::style;
-use crate::userdata::{COLOURS, Kind, Place, WorldData, WorldKey};
+use crate::userdata::{COLOURS, Kind, MarkerKind, Place, WorldData, WorldKey};
 
 /// What the map's context menu was opened on, besides a block.
 #[derive(Debug, Clone, PartialEq)]
@@ -254,6 +255,23 @@ impl App {
         }
     }
 
+    /// Adds a portal marker with its lowest block at `[x, y, z]` of the dimension shown, 2 × 3
+    /// along x, and opens it to edit.
+    pub(super) fn add_portal(&mut self, [x, y, z]: [i32; 3]) {
+        let Some(world) = self.world else {
+            return;
+        };
+        let dimension = world.dimension_kind().id();
+        if let Some(here) = self.here_mut() {
+            let id = here.add_marker(dimension, [x, z], String::new());
+            if let Some(marker) = here.marker_mut(&id) {
+                marker.y = Some(y);
+                marker.kind = MarkerKind::PORTAL;
+            }
+            self.editing = Some(id);
+        }
+    }
+
     /// Marks `place` in the dimension shown done or not.
     pub(super) fn set_done(&mut self, place: &Place, done: bool) {
         let Some(world) = self.world else {
@@ -290,6 +308,7 @@ impl App {
         let mut open = true;
         let mut delete = false;
         let mut go = false;
+        let mut link_area = false;
         egui::Window::new("Marker")
             .open(&mut open)
             .collapsible(false)
@@ -330,6 +349,7 @@ impl App {
                 });
                 ui.add_space(4.0);
                 ui.label(style::mono(format!("{}, {}", marker.x, marker.z)).color(style::MUTED));
+                link_area = portal_controls(ui, &mut marker, self.settings.view.y);
                 ui.checkbox(&mut marker.done, "Done");
                 ui.horizontal(|ui| {
                     go = ui.button("Go to it").clicked();
@@ -344,13 +364,28 @@ impl App {
             self.editing = None;
             return;
         }
-        if (marker.name.as_str(), marker.colour, marker.done)
-            != (before.name.as_str(), before.colour, before.done)
-        {
+        if link_area {
+            self.show_link_area(ctx, PortalRef::Marker(id.clone()));
+        }
+        if (
+            marker.name.as_str(),
+            marker.colour,
+            marker.done,
+            marker.kind,
+            marker.y,
+        ) != (
+            before.name.as_str(),
+            before.colour,
+            before.done,
+            before.kind,
+            before.y,
+        ) {
             self.change_marker(&id, |m| {
                 m.name = marker.name;
                 m.colour = marker.colour;
                 m.done = marker.done;
+                m.kind = marker.kind;
+                m.y = marker.y;
             });
         }
         if !open {
@@ -708,4 +743,58 @@ fn set_member(world: &World, set: &str) -> String {
         .find(|id| world.structure_set(id) == Some(set))
         .unwrap_or(set)
         .to_string()
+}
+
+/// The marker editor's kind controls: a pin or a portal, and a portal's height, axis and size.
+/// A portal needs a height, the view's when it has none. Returns whether its link area was
+/// asked for.
+fn portal_controls(ui: &mut egui::Ui, marker: &mut Marker, view_y: i32) -> bool {
+    let mut portal = matches!(marker.kind, MarkerKind::Portal { .. });
+    ui.horizontal(|ui| {
+        ui.selectable_value(&mut portal, false, "Pin");
+        ui.selectable_value(&mut portal, true, "Nether portal")
+            .on_hover_text("Its lowest block is the marker's, so it needs a height");
+    });
+    match (portal, marker.kind) {
+        (true, MarkerKind::Pin) => {
+            marker.kind = MarkerKind::PORTAL;
+            marker.y.get_or_insert(view_y);
+        }
+        (false, MarkerKind::Portal { .. }) => marker.kind = MarkerKind::Pin,
+        _ => {}
+    }
+    let MarkerKind::Portal {
+        axis,
+        width,
+        height,
+    } = &mut marker.kind
+    else {
+        return false;
+    };
+    let side = 1..=spyglass::MAX_PORTAL_SIDE;
+    ui.horizontal(|ui| {
+        ui.label("Lowest block y");
+        let y = marker.y.get_or_insert(view_y);
+        ui.add(egui::DragValue::new(y).range(-30_000_000..=30_000_000));
+    });
+    ui.horizontal(|ui| {
+        ui.label("Along");
+        ui.selectable_value(axis, spyglass::Axis::X, "x");
+        ui.selectable_value(axis, spyglass::Axis::Z, "z");
+        ui.label("Size");
+        ui.add(egui::DragValue::new(width).range(side.clone()));
+        ui.label("×");
+        ui.add(egui::DragValue::new(height).range(side));
+    })
+    .response
+    .on_hover_text("Inside the frame: 2 × 3 is the smallest the game lights");
+    let leads = marker.dimension != Dimension::End.id();
+    leads
+        && ui
+            .button("Show its link area")
+            .on_hover_text(
+                "Where in the other dimension a new portal would link to this one, at the view's \
+                 height",
+            )
+            .clicked()
 }

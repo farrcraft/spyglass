@@ -21,6 +21,10 @@ Where your world has already generated a chunk, the game answers from what it sa
         272 ~ 384           470 blocks  saved      minecraft:village_plains
 ```
 
+## Portals
+
+`spyglass portal link --world "My World"` lists your world's Nether portals, where each one leads, and the ones that don't link back. The viewer draws them on the map. See [Nether portals](portals.md).
+
 ## When answers may differ
 
 `world info` says whether spyglass can answer for a world, and warns about what makes its answers inexact:

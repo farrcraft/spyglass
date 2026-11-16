@@ -21,6 +21,7 @@ mod heights;
 mod json;
 mod locate;
 mod loot;
+mod portal;
 mod render;
 mod search;
 mod world;
@@ -78,6 +79,7 @@ fn run(cli: Cli) -> Result<()> {
         Command::Features(args) => features::run(&args),
         Command::Loot { what } => loot::run(&what),
         Command::Flower { what } => flower::run(&what),
+        Command::Portal { what } => portal::run(&what),
     }
 }
 

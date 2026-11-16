@@ -99,13 +99,34 @@ _Versions:_ 26.4-snapshot-5 stores a biome per block. A section's `biomes` is a 
 
 For reading 26.4 saves, the data version tells the shapes apart: `biomes` holds quarts before 26.4 and blocks from it. A finished chunk's block biomes can't be turned back into quarts exactly, so comparing them with spyglass's quart answers needs `BiomeManager`'s zoom applied to those answers; where `noise_biomes` is present, it compares directly.
 
+## Points of interest
+
+Each dimension keeps its points of interest beside its chunks, in `poi/` (beside `region/`, under the layout's rules), in the [region format](#region-files). `spyglass_world::poi::read(dir, sections)` reads the Nether portal records the portal search uses ([portals.md](portals.md#points-of-interest)), as `SectionStorage.PackedChunk.parse` and the codecs of `PoiSection.Packed` and `PoiRecord.Packed` read them (26.3 bytecode, 2026-11-15):
+
+- **A chunk** is a compound with `DataVersion` and `Sections`. For each section y in the dimension's range (the Overworld's −4 to 19), the game looks up `Sections` by the decimal text of y. Other keys (`20` in the Overworld, `+3`, `03`) are never read.
+- **A section** is a compound with `Valid` and `Records`. `Valid` is lenient: a missing value or one that isn't a number is false, and a number is true when its `byteValue()` isn't 0. `Records` is required: without a list there, the section is read as missing.
+- **A record** is `{pos, type, free_tickets}`. `pos` is three numbers, an int array or a list or array of numbers by each one's `intValue()` (longs narrowed, floats truncated). `type` is a resource id, `minecraft:` when it has no namespace. `free_tickets` is optional, but present it must be a number. A record the codec rejects is skipped, and the rest of its section is kept. Only `minecraft:nether_portal` records are kept, and whether another type is registered isn't checked.
+- **Data fixes:** the game upgrades a chunk saved by an older version before reading it, taking a chunk without `DataVersion` as 1945. `ForcePoiRebuild` (schema 2218, 1.16) has every section of an older chunk rebuilt, so spyglass reads none of its sections as valid. The other fixes (`ReorganizePoi` at 1946, renaming `bee_hive` at 2209, removing unpopulated villager types at 3097) don't touch portal records.
+
+A chunk that can't be read, or whose root isn't a compound, counts as unreadable, as does a region file that can't be read or whose name doesn't parse: their sections are missing to the game too, and it rebuilds them from the chunk's blocks.
+
+## World borders
+
+`Save::world_border(dimension)` gives a dimension's border as the game reads it on opening the save (26.3 bytecode, 2026-11-15):
+
+- **Current layout:** the dimension's `minecraft:world_border` saved data, `dimensions/<namespace>/<path>/data/minecraft/world_border.dat`, whose `data` is `WorldBorder.Settings`: `center_x` and `center_z` (within ±29,999,984), `size`, `lerp_time`, `lerp_target`, `damage_per_block`, `safe_zone`, `warning_blocks` and `warning_time`. Every field is required and a number. A file that doesn't decode is replaced by the default, and spyglass reads it as unreadable, with the default. A dimension without the file has the default border: centre 0, 0, size 59,999,968.
+- **Older layouts:** `level.dat`'s `Data.BorderCenterX`, `BorderCenterZ`, `BorderSize`, `BorderSizeLerpTime` and `BorderSizeLerpTarget`, each defaulted when missing (0, 0, 59,999,968, 0, 0). `LegacyWorldBorderFix` turns them into the settings above, and `LevelDatToSavedDataFileFix` writes them to the Overworld, the Nether and the End, the Nether's centre divided by 8. Other dimensions get none.
+- **Moving borders:** a `lerp_time` above 0 is a border still moving to `lerp_target`. Its bounds then depend on time; spyglass answers with the size it ends at, and says so.
+
 ## Limits
 
 Saves are untrusted input, so reads are capped well above anything the game writes:
 
 - NBT files (`level.dat`, player and world-gen settings files): 64 MiB, both on disk and after decompression, and 64 MiB of memory for the tree they're read into. More is an error.
 - Region files: no limit, since each chunk is read on its own, at most its 255 sectors.
-- One chunk, or one `.mcc` file: 32 MiB, both stored and after decompression. Larger chunks are unreadable.
+- One chunk, or one `.mcc` file: 32 MiB, both stored and after decompression. Larger chunks are unreadable. That holds for `poi/` chunks too.
+- A `poi/` chunk's tree: 256 MiB of memory. More makes the chunk unreadable.
+- `world_border.dat`: as other NBT files. One past the limit is unreadable, and the border the default.
 - A chunk read whole, for its starts and block entities (`chunk::read`, `chunk::read_entities`): 256 MiB of memory for its tree. More is an error, and the chunk is answered as one the save doesn't hold.
 - Data pack folders are walked without following symbolic links. So `spyglass world info` scans by default, and `locate --world` doesn't.
 

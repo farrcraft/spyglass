@@ -1,6 +1,6 @@
 # CLI JSON output
 
-Status: stable, format 1. Covers `spyglass locate`, `spyglass loot`, `spyglass heights`, `spyglass blocks`, `spyglass flower`, `spyglass render`, `spyglass search`, `spyglass find` and `spyglass world` with `--json`.
+Status: stable, format 1. Covers `spyglass locate`, `spyglass loot`, `spyglass heights`, `spyglass blocks`, `spyglass flower`, `spyglass portal`, `spyglass render`, `spyglass search`, `spyglass find` and `spyglass world` with `--json`.
 
 Scripts depend on this format, so it's versioned. Within a format version, fields are only ever added. Removing or changing the meaning of a field bumps `format`. The CLI writes the JSON from the library's results ([ADR 0014](../adr/0014-public-api-world-and-session.md)); the library types themselves aren't the format.
 
@@ -189,6 +189,34 @@ One flower's cover of an area at each height ([render.md](render.md#flowers)). `
 | `max`     | `[x, z]` | Its other corner, included.                                                                                         |
 | `scale`   | int      | Blocks between samples.                                                                                             |
 | `heights` | array    | `{y, certain, possible, pixels}` for each height tried: the samples where the flower is certain, possible, and all. |
+
+## `portal link`
+
+Where a Nether portal leads ([portals.md](portals.md)). `command` is `portal link`. It needs no seed, so it starts with its own header:
+
+| Field      | Type   | Meaning                                                                                                                                                                                                                                                                                                   |
+| ---------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `format`   | int    | This format's version: `1`.                                                                                                                                                                                                                                                                               |
+| `command`  | string | `portal link`.                                                                                                                                                                                                                                                                                            |
+| `version`  | string | The game version of the bundle used.                                                                                                                                                                                                                                                                      |
+| `world`    | object | With `--world`: `name` and `dir`, as above.                                                                                                                                                                                                                                                               |
+| `warnings` | array  | With `--world`, what may make the save's portals or links differ from the game's: `{kind, message, dimension}`, `kind` one of `unreadable_poi`, `old_chunks`, `invalid_sections`, `moving_border` and `unreadable_border` ([portals.md](portals.md#a-saves-portals)). Also `unchecked_version`, as above. |
+
+A **portal** is `{dimension, corner, axis, width, height}`: its lowest block `[x, y, z]`, `axis` `x` or `z`, and its size in blocks. A **save portal** is `{dimension, corner, bounds, blocks, rectangles}`: its lowest block, `[[x_lo, x_hi], [y_lo, y_hi], [z_lo, z_hi]]`, how many portal blocks it has, and those blocks as the portals the search takes.
+
+**From a position** (`DIMENSION x,y,z`):
+
+| Field      | Type   | Meaning                                                                                                                                                                   |
+| ---------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `portal`   | object | The portal linked from, a portal.                                                                                                                                         |
+| `to`       | string | The dimension it leads to.                                                                                                                                                |
+| `exits`    | object | `{x, y, z}`, each `[lo, hi]`: the exit blocks a standing player aims at ([portals.md](portals.md#entering-a-portal)), all of them.                                        |
+| `radius`   | int    | How far the search reaches from each exit in x and z.                                                                                                                     |
+| `outcomes` | array  | `{exits, tied, portals}`: how many exit blocks land at `portals`, most first. No portals: the game builds one. `tied`: more than one, and the game's pick can't be known. |
+
+Each of an outcome's `portals` is `{source, index}` and that portal's fields: `source` `given` with a portal's fields, `index` its place among `--portal`s from 0; or `save` with a save portal's, `index` its place in the save's portals, as `--world` alone lists them.
+
+**From a save** (`--world` alone), `portals` lists every portal: `index`, a save portal's fields, `to`, `outcomes` as above but with `portals` as indices, and `flags`, each `{kind}`: `mislinked` (with `to`, the portal it leads to, and `back`, where that one leads instead), `split`, `unlinked`, `tied` or `too-low` ([portals.md](portals.md#a-saves-portals)). Save portals are the Overworld's first, then the Nether's and the End's, each by lowest block (y, then z, then x).
 
 ## `render`
 

@@ -1,13 +1,18 @@
 //! Reading local Minecraft: Java Edition world saves: the seed, version, generators, data packs,
 //! spawn and single player ([`Save::read`]), what its data packs contain ([`Save::packs`]),
-//! how many chunks older versions generated ([`region`]), and where launchers keep saves
+//! how many chunks older versions generated ([`region`]), its portal records ([`poi`]) and
+//! world borders ([`Save::world_border`]), and where launchers keep saves
 //! ([`launchers`]). It does no worldgen and needs
 //! no game data. See `docs/specs/world-saves.md`.
 
+mod border;
 pub mod chunk;
 pub mod launchers;
 mod packs;
+pub mod poi;
 pub mod region;
+
+pub use border::{BorderRead, SavedBorder};
 
 pub use packs::{PackContents, open_pack};
 
@@ -112,7 +117,7 @@ pub struct Save {
 /// The most a save's NBT files (`level.dat`, player and settings files) may hold, compressed or
 /// not, and the most memory the tree read from one may take. Real ones are kilobytes; the limit
 /// keeps a crafted file from filling memory.
-const MAX_NBT_FILE: u64 = 64 << 20;
+pub(crate) const MAX_NBT_FILE: u64 = 64 << 20;
 
 /// A whole file, unless it's longer than `max` bytes.
 pub(crate) fn read_capped(path: &Path, max: u64) -> io::Result<Vec<u8>> {
@@ -129,7 +134,7 @@ pub(crate) fn read_capped(path: &Path, max: u64) -> io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
-fn read_nbt(path: &Path) -> Result<Tag, WorldError> {
+pub(crate) fn read_nbt(path: &Path) -> Result<Tag, WorldError> {
     let bytes = read_capped(path, MAX_NBT_FILE).map_err(|source| WorldError::Io {
         path: path.to_path_buf(),
         source,

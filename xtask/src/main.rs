@@ -30,6 +30,7 @@ mod oracle_test;
 mod order;
 mod order_report;
 mod pgo;
+mod portals;
 mod profile;
 mod release;
 mod smoke;

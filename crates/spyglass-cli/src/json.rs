@@ -914,3 +914,158 @@ pub struct FlowerShareJson {
     pub possible: u64,
     pub pixels: u64,
 }
+
+/// The fields every `portal` answer starts with: no seed or dimension, since links need
+/// neither.
+#[derive(Serialize)]
+pub struct PortalHeader<'a> {
+    pub format: u32,
+    pub command: &'a str,
+    pub version: &'a str,
+    /// With `--world`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub world: Option<WorldRef>,
+    /// With `--world`, or for a bundle whose version wasn't checked.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warnings: Option<Vec<Warning>>,
+}
+
+/// A portal: its dimension, lowest block, axis and size.
+#[derive(Serialize)]
+pub struct PortalJson {
+    pub dimension: &'static str,
+    pub corner: [i32; 3],
+    pub axis: &'static str,
+    pub width: i32,
+    pub height: i32,
+}
+
+pub fn portal(portal: &spyglass::Portal) -> PortalJson {
+    PortalJson {
+        dimension: portal.dimension.id(),
+        corner: portal.corner,
+        axis: match portal.axis {
+            spyglass::Axis::X => "x",
+            spyglass::Axis::Z => "z",
+        },
+        width: portal.width,
+        height: portal.height,
+    }
+}
+
+/// A save's portal: its blocks as the rectangles the search takes, with its bounds.
+#[derive(Serialize)]
+pub struct SavePortalJson {
+    pub dimension: &'static str,
+    pub corner: [i32; 3],
+    /// `[[x_lo, x_hi], [y_lo, y_hi], [z_lo, z_hi]]`.
+    pub bounds: [[i32; 2]; 3],
+    pub blocks: usize,
+    pub rectangles: Vec<PortalJson>,
+}
+
+pub fn save_portal(save: &spyglass::SavePortal) -> SavePortalJson {
+    SavePortalJson {
+        dimension: save.dimension.id(),
+        corner: save.corner(),
+        bounds: save.bounds(),
+        blocks: save.blocks,
+        rectangles: save.pieces.iter().map(portal).collect(),
+    }
+}
+
+/// `portal link` from a position.
+#[derive(Serialize)]
+pub struct PortalLinkAnswer<'a> {
+    #[serde(flatten)]
+    pub header: PortalHeader<'a>,
+    pub portal: PortalJson,
+    pub to: &'static str,
+    pub exits: Exits,
+    pub radius: i32,
+    pub outcomes: Vec<PortalOutcome>,
+}
+
+/// The exit blocks' inclusive ranges.
+#[derive(Serialize)]
+pub struct Exits {
+    pub x: [i32; 2],
+    pub y: [i32; 2],
+    pub z: [i32; 2],
+}
+
+#[derive(Serialize)]
+pub struct PortalOutcome {
+    pub exits: usize,
+    pub tied: bool,
+    pub portals: Vec<PortalRef>,
+}
+
+/// A portal an outcome lands at: a `--portal` or a save's, by index.
+#[derive(Serialize)]
+pub struct PortalRef {
+    pub source: &'static str,
+    pub index: usize,
+    #[serde(flatten)]
+    pub portal: PortalOrSave,
+}
+
+/// A given portal's fields, or a save portal's.
+#[derive(Serialize)]
+#[serde(untagged)]
+pub enum PortalOrSave {
+    Given(PortalJson),
+    Save(SavePortalJson),
+}
+
+/// `portal link --world`, every portal of the save.
+#[derive(Serialize)]
+pub struct SavePortalsAnswer<'a> {
+    #[serde(flatten)]
+    pub header: PortalHeader<'a>,
+    pub portals: Vec<SavePortalLinkJson>,
+}
+
+#[derive(Serialize)]
+pub struct SavePortalLinkJson {
+    pub index: usize,
+    #[serde(flatten)]
+    pub portal: SavePortalJson,
+    pub to: &'static str,
+    pub outcomes: Vec<SaveOutcome>,
+    pub flags: Vec<FlagJson>,
+}
+
+#[derive(Serialize)]
+pub struct SaveOutcome {
+    pub exits: usize,
+    pub tied: bool,
+    /// Save portals, by index.
+    pub portals: Vec<usize>,
+}
+
+#[derive(Serialize)]
+pub struct FlagJson {
+    pub kind: &'static str,
+    /// For `mislinked`: the portal it leads to.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub to: Option<usize>,
+    /// For `mislinked`: where that portal leads instead.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub back: Option<Vec<usize>>,
+}
+
+pub fn flag(flag: &spyglass::PortalFlag) -> FlagJson {
+    match flag {
+        spyglass::PortalFlag::Mislinked { to, back } => FlagJson {
+            kind: flag.kind(),
+            to: Some(*to),
+            back: Some(back.clone()),
+        },
+        _ => FlagJson {
+            kind: flag.kind(),
+            to: None,
+            back: None,
+        },
+    }
+}

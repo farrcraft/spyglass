@@ -32,7 +32,7 @@ cargo xtask sweep                             # delete stale build outputs from 
 cargo xtask java-report [--check]             # rebuild (or check) the extractor's block report class
 cargo xtask links                             # every relative Markdown link and anchor resolves
 cargo xtask guide [--serve]                   # build (or serve) the user guide, docs/guide/, with mdBook
-cargo xtask fuzz <nbt|region>                 # fuzz a reader of untrusted files (nightly, cargo-fuzz)
+cargo xtask fuzz <nbt|region|poi|pack>        # fuzz a reader of untrusted files (nightly, cargo-fuzz)
 cargo xtask msrv                              # build with the minimum supported Rust version
 cargo xtask linux-check [--full]              # fresh clone + setup + extract on Ubuntu, in Docker
 cargo xtask version-diff <old> <new> [--code] # what changed between two bundles

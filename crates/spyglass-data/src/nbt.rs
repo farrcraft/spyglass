@@ -257,42 +257,168 @@ pub fn read_root_fields<const N: usize>(
     bytes: &[u8],
     names: [&str; N],
 ) -> Result<[Option<RootField>; N], NbtError> {
-    // Skipping builds nothing, so needs no memory limit.
+    let mut found = [const { None }; N];
+    walk(bytes, |root| {
+        root.compound(|name, child| {
+            if let Some(i) = names.iter().position(|&n| n == name) {
+                // A repeated name keeps the last value, as in a compound.
+                found[i] = child.root_field()?;
+            }
+            Ok(())
+        })
+        .map(drop)
+    })?;
+    Ok(found)
+}
+
+/// Reads uncompressed NBT without building its tree, calling `visit` with the root tag. What
+/// `visit` doesn't read of a tag, every tag it doesn't open among them, is skipped, and the whole
+/// input is still checked as [`read`] checks it, except that strings not asked for aren't
+/// decoded. Skipping builds nothing, so it needs no memory limit.
+pub fn walk(
+    bytes: &[u8],
+    visit: impl FnOnce(&mut Walk<'_, '_>) -> Result<(), NbtError>,
+) -> Result<(), NbtError> {
     let mut reader = Reader::new(bytes, u64::MAX);
     let id = reader.u8()?;
     reader.skip_string()?;
-    let mut found = [const { None }; N];
-    // 10 is TAG_Compound, 0 TAG_End, 3 TAG_Int, 4 TAG_Long and 8 TAG_String.
-    if id == 10 {
-        loop {
-            let child = reader.u8()?;
-            if child == 0 {
-                break;
-            }
-            let (child_name, segment) = reader.name()?;
-            reader.path.push(segment);
-            match names.iter().position(|&n| n == child_name) {
-                None => reader.skip(child, 1)?,
-                // A repeated name keeps the last value, as in a compound.
-                Some(i) => {
-                    found[i] = match child {
-                        3 => Some(RootField::Int(reader.i32()?)),
-                        4 => Some(RootField::Long(i64::from_be_bytes(reader.array()?))),
-                        8 => Some(RootField::String(reader.string()?)),
-                        _ => {
-                            reader.skip(child, 1)?;
-                            None
-                        }
-                    };
-                }
-            }
-            reader.path.pop();
-        }
-    } else {
-        reader.skip(id, 0)?;
+    let mut root = Walk {
+        reader: &mut reader,
+        id,
+        depth: 0,
+        read: false,
+    };
+    visit(&mut root)?;
+    root.finish()?;
+    reader.finish()
+}
+
+/// A tag met by [`walk`], read only as far as it's asked. Each tag can be read once: as its
+/// type, by the method for it, which gives `None` (or `false`) for a tag of another type and
+/// leaves it to be skipped.
+pub struct Walk<'r, 'b> {
+    /// The input, at the tag's payload.
+    reader: &'r mut Reader<'b>,
+    /// The tag's type.
+    id: u8,
+    /// How many lists and compounds it's in.
+    depth: usize,
+    /// Whether its payload has been read.
+    read: bool,
+}
+
+impl<'b> Walk<'_, 'b> {
+    /// The tag's type: 1 `TAG_Byte` to 12 `TAG_Long_Array`.
+    pub fn id(&self) -> u8 {
+        self.id
     }
-    reader.finish()?;
-    Ok(found)
+
+    /// The tag's value if it's a `TAG_Int`.
+    pub fn int(&mut self) -> Result<Option<i32>, NbtError> {
+        if self.read || self.id != 3 {
+            return Ok(None);
+        }
+        self.read = true;
+        self.reader.i32().map(Some)
+    }
+
+    /// The tag's value if it's a `TAG_Long`.
+    pub fn long(&mut self) -> Result<Option<i64>, NbtError> {
+        if self.read || self.id != 4 {
+            return Ok(None);
+        }
+        self.read = true;
+        Ok(Some(i64::from_be_bytes(self.reader.array()?)))
+    }
+
+    /// The tag's value if it's a `TAG_String`.
+    pub fn string(&mut self) -> Result<Option<String>, NbtError> {
+        if self.read || self.id != 8 {
+            return Ok(None);
+        }
+        self.read = true;
+        self.reader.string().map(Some)
+    }
+
+    /// The tag as a [`RootField`], if it's an int, a long or a string.
+    fn root_field(&mut self) -> Result<Option<RootField>, NbtError> {
+        Ok(match self.id {
+            3 => self.int()?.map(RootField::Int),
+            4 => self.long()?.map(RootField::Long),
+            8 => self.string()?.map(RootField::String),
+            _ => None,
+        })
+    }
+
+    /// If the tag is a `TAG_Compound`, calls `each` with every child's name and tag, in order,
+    /// and gives `true`. A repeated name is met each time it appears.
+    pub fn compound(
+        &mut self,
+        mut each: impl FnMut(&str, &mut Walk<'_, 'b>) -> Result<(), NbtError>,
+    ) -> Result<bool, NbtError> {
+        if self.read || self.id != 10 {
+            return Ok(false);
+        }
+        self.read = true;
+        self.reader.check_depth(10, self.depth)?;
+        loop {
+            let id = self.reader.u8()?;
+            if id == 0 {
+                return Ok(true);
+            }
+            let (name, segment) = self.reader.name()?;
+            self.reader.path.push(segment);
+            let mut child = Walk {
+                reader: &mut *self.reader,
+                id,
+                depth: self.depth + 1,
+                read: false,
+            };
+            each(&name, &mut child)?;
+            child.finish()?;
+            self.reader.path.pop();
+        }
+    }
+
+    /// If the tag is a `TAG_List`, calls `each` with every element, in order, and gives `true`.
+    pub fn list(
+        &mut self,
+        mut each: impl FnMut(&mut Walk<'_, 'b>) -> Result<(), NbtError>,
+    ) -> Result<bool, NbtError> {
+        if self.read || self.id != 9 {
+            return Ok(false);
+        }
+        self.read = true;
+        self.reader.check_depth(9, self.depth)?;
+        let element = self.reader.u8()?;
+        let len = self.reader.len()?;
+        // An empty list may say its elements are TAG_End.
+        if element == 0 && len == 0 {
+            return Ok(true);
+        }
+        for i in 0..len {
+            self.reader.path.push(Segment::Index(i));
+            let mut child = Walk {
+                reader: &mut *self.reader,
+                id: element,
+                depth: self.depth + 1,
+                read: false,
+            };
+            each(&mut child)?;
+            child.finish()?;
+            self.reader.path.pop();
+        }
+        Ok(true)
+    }
+
+    /// Skips the tag if it wasn't read.
+    fn finish(&mut self) -> Result<(), NbtError> {
+        if !self.read {
+            self.read = true;
+            self.reader.skip(self.id, self.depth)?;
+        }
+        Ok(())
+    }
 }
 
 /// One step of the path to the tag being read: a compound child's name, as the range of its
@@ -1146,6 +1272,99 @@ mod tests {
             read_root_fields(&bytes[..bytes.len() - 1], ["Status"]),
             Err(NbtError::Truncated { .. })
         ));
+    }
+
+    #[test]
+    fn walks_read_what_they_open_and_skip_the_rest() {
+        let compound = |entries: Vec<(&str, Tag)>| {
+            Tag::Compound(
+                entries
+                    .into_iter()
+                    .map(|(k, v)| (k.to_string(), v))
+                    .collect(),
+            )
+        };
+        let root = compound(vec![
+            ("skipped", Tag::List(vec![Tag::IntArray(vec![1, 2, 3])])),
+            (
+                "entities",
+                Tag::List(vec![
+                    compound(vec![
+                        ("id", Tag::String("minecraft:chest".into())),
+                        ("x", Tag::Int(3)),
+                    ]),
+                    compound(vec![("id", Tag::Int(7))]),
+                ]),
+            ),
+            ("time", Tag::Long(-5)),
+        ]);
+        let bytes = write("", &root);
+        let mut ids = Vec::new();
+        let mut time = None;
+        let mut wrong_type = None;
+        walk(&bytes, |root| {
+            assert_eq!(root.id(), 10);
+            let opened = root.compound(|name, child| {
+                match name {
+                    "entities" => {
+                        child.list(|entity| {
+                            entity.compound(|field, value| {
+                                if field == "id" {
+                                    ids.push(value.string()?);
+                                }
+                                Ok(())
+                            })?;
+                            Ok(())
+                        })?;
+                    }
+                    "time" => {
+                        // Asked as the wrong type, then the right one.
+                        wrong_type = Some(child.int()?);
+                        time = child.long()?;
+                    }
+                    _ => {}
+                }
+                Ok(())
+            })?;
+            assert!(opened);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(ids, [Some("minecraft:chest".to_string()), None]);
+        assert_eq!(time, Some(-5));
+        assert_eq!(wrong_type, Some(None));
+        // A tag read once can't be read again, and what's skipped is still checked.
+        walk(&bytes, |root| {
+            assert!(root.compound(|_, _| Ok(())).unwrap());
+            assert!(!root.compound(|_, _| Ok(())).unwrap());
+            Ok(())
+        })
+        .unwrap();
+        assert!(matches!(
+            walk(&bytes[..bytes.len() - 1], |_| Ok(())),
+            Err(NbtError::Truncated { .. })
+        ));
+        let mut extra = bytes.clone();
+        extra.push(0);
+        assert!(matches!(
+            walk(&extra, |_| Ok(())),
+            Err(NbtError::Trailing(1))
+        ));
+        // Nesting stops where the game's does, opened or skipped.
+        let deep = nested_lists(MAX_DEPTH + 1);
+        assert!(matches!(
+            walk(&deep, |_| Ok(())),
+            Err(NbtError::TooDeep { .. })
+        ));
+        fn open_all(tag: &mut Walk<'_, '_>) -> Result<(), NbtError> {
+            tag.list(open_all)?;
+            Ok(())
+        }
+        assert!(matches!(
+            walk(&deep, open_all),
+            Err(NbtError::TooDeep { .. })
+        ));
+        assert!(walk(&nested_lists(MAX_DEPTH), open_all).is_ok());
     }
 
     #[test]

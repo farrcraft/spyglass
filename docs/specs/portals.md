@@ -101,7 +101,14 @@ On the server, placing a portal block adds its record (`PoiManager.add`) and rep
 - **Height matters:** the search counts y in its distance, so the map can change with `y`.
 - **The player's position** is anywhere inside the block, not [the standing range](#entering-a-portal) of a portal built there, which also reaches into the frame's column across the portal. Building a portal entirely within pixels of one destination keeps that link for a player standing anywhere in its blocks.
 
-It equals `portal_link` from each pixel's exit blocks, and a test says so. On a desktop machine (2026-11-16, release build), a 1024 × 768 view with 81 portals in range takes about 50 ms into the Nether and 0.9 s out of it.
+It equals `portal_link` from each pixel's exit blocks, and a test says so. The map is worked out in tiles of 16 × 16 pixels, in parallel, each searching only the portals within the search square of its own exits. `cargo xtask bench` times it among 5,202 portals, one every 160 blocks over ±4,000 in the Overworld and every 20 over ±500 in the Nether (26.3, a desktop machine, 2026-11-16):
+
+| Map                                      | Into the Nether | Out of the Nether |
+| ---------------------------------------- | --------------- | ----------------- |
+| 1024 × 768 at 1:1, a full view           | 39 ms           | 860 ms            |
+| 320 × 240 at 1:4, the viewer's link area | 4 ms            | 84 ms             |
+
+Out of the Nether each pixel is 64 searches, so it costs more. `Game::save_portal_links` on the same 5,202 portals takes 87 ms.
 
 ## A save's portals
 

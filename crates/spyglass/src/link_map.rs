@@ -15,6 +15,10 @@ use crate::{
     portal_search_radius,
 };
 
+/// Pixels along a side of the tiles the map is worked out in: each searches only the portals
+/// near its own exits.
+const TILE: u32 = 16;
+
 /// Which portal a search lands at, without the block of it: what a map shows.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Destination {
@@ -162,71 +166,85 @@ impl Game {
                 (i64::from(area.min[1]) + i64::from(j) * scale) as i32,
             ]
         };
-        // Only portals within the search square of the area's exits can be found.
-        let (corner, _) = block_exits(self, source, block(0, 0), border)?;
-        let (far, y) = block_exits(self, source, block(w - 1, h - 1), border)?;
         let radius = i64::from(portal_search_radius(to));
-        let reach = |lo: i32, hi: i32| [i64::from(lo) - radius, i64::from(hi) + radius];
-        let (x_reach, z_reach) = (
-            reach(corner[0][0], far[0][1]),
-            reach(corner[1][0], far[1][1]),
-        );
-        let (nearby, indices): (Vec<Portal>, Vec<usize>) = portals
-            .iter()
-            .enumerate()
-            .filter(|(_, p)| {
-                let [px, _, pz] = p.extent();
-                p.dimension == to
-                    && px[0] <= x_reach[1]
-                    && px[1] >= x_reach[0]
-                    && pz[0] <= z_reach[1]
-                    && pz[1] >= z_reach[0]
-            })
-            .map(|(i, p)| (*p, i))
-            .unzip();
-        let link_at = |x: i32, z: i32| {
-            Destination::from(&reindex(
-                portal_link(to, [x, y, z], &nearby, border),
-                &indices,
-            ))
-        };
-        let pixel = |exits: [[i32; 2]; 2], cache: &mut HashMap<[i32; 2], Destination>| {
-            let mut links: Vec<Destination> = Vec::new();
-            for z in exits[1][0]..=exits[1][1] {
-                for x in exits[0][0]..=exits[0][1] {
-                    let link = cache.entry([x, z]).or_insert_with(|| link_at(x, z)).clone();
-                    if !links.contains(&link) {
-                        links.push(link);
+        // Tiles of pixels in parallel, each searching only the portals within the search square
+        // of its own exits, and keeping its exit blocks' links: into the Nether, a tile's
+        // pixels share them.
+        let tiles: Vec<[u32; 2]> = (0..h.div_ceil(TILE))
+            .flat_map(|tj| (0..w.div_ceil(TILE)).map(move |ti| [ti, tj]))
+            .collect();
+        let done: Vec<([u32; 2], Vec<PixelLink>)> = tiles
+            .into_par_iter()
+            .map(|[ti, tj]| {
+                let (i0, j0) = (ti * TILE, tj * TILE);
+                let (i1, j1) = ((i0 + TILE).min(w) - 1, (j0 + TILE).min(h) - 1);
+                let (low, y) = block_exits(self, source, block(i0, j0), border)?;
+                let (high, _) = block_exits(self, source, block(i1, j1), border)?;
+                let reach = |lo: i32, hi: i32| [i64::from(lo) - radius, i64::from(hi) + radius];
+                let (x_reach, z_reach) =
+                    (reach(low[0][0], high[0][1]), reach(low[1][0], high[1][1]));
+                let (nearby, indices): (Vec<Portal>, Vec<usize>) = portals
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, p)| {
+                        let [px, _, pz] = p.extent();
+                        p.dimension == to
+                            && px[0] <= x_reach[1]
+                            && px[1] >= x_reach[0]
+                            && pz[0] <= z_reach[1]
+                            && pz[1] >= z_reach[0]
+                    })
+                    .map(|(i, p)| (*p, i))
+                    .unzip();
+                let mut cache: HashMap<[i32; 2], Destination> = HashMap::new();
+                let mut pixels = Vec::with_capacity((TILE * TILE) as usize);
+                for j in j0..=j1 {
+                    for i in i0..=i1 {
+                        let (exits, _) = block_exits(self, source, block(i, j), border)?;
+                        let mut links: Vec<Destination> = Vec::new();
+                        for z in exits[1][0]..=exits[1][1] {
+                            for x in exits[0][0]..=exits[0][1] {
+                                let link = cache
+                                    .entry([x, z])
+                                    .or_insert_with(|| {
+                                        Destination::from(&reindex(
+                                            portal_link(to, [x, y, z], &nearby, border),
+                                            &indices,
+                                        ))
+                                    })
+                                    .clone();
+                                if !links.contains(&link) {
+                                    links.push(link);
+                                }
+                            }
+                        }
+                        pixels.push(if links.len() == 1 {
+                            PixelLink::One(links.pop().expect("one"))
+                        } else {
+                            PixelLink::Mixed(links)
+                        });
                     }
                 }
-            }
-            if links.len() == 1 {
-                PixelLink::One(links.pop().expect("one"))
-            } else {
-                PixelLink::Mixed(links)
-            }
-        };
-        // Rows in parallel, each with its own cache of exit blocks' links: into the Nether a
-        // row's pixels share them; out of it, nothing is shared, and the cache stays small.
-        let rows: Vec<Vec<PixelLink>> = (0..h)
-            .into_par_iter()
-            .map(|j| {
-                let mut cache = HashMap::new();
-                (0..w)
-                    .map(|i| {
-                        let (exits, _) = block_exits(self, source, block(i, j), border)?;
-                        if cache.len() > 4096 {
-                            cache.clear();
-                        }
-                        Ok(pixel(exits, &mut cache))
-                    })
-                    .collect::<Result<Vec<_>>>()
+                Ok(([ti, tj], pixels))
             })
             .collect::<Result<_>>()?;
+        // Back into rows: each pixel's answer, by tile.
+        let mut grid: Vec<Option<PixelLink>> = vec![None; w as usize * h as usize];
+        for ([ti, tj], pixels) in done {
+            let (i0, j0) = (ti * TILE, tj * TILE);
+            let tile_w = (i0 + TILE).min(w) - i0;
+            for (k, pixel) in pixels.into_iter().enumerate() {
+                let (i, j) = (i0 + k as u32 % tile_w, j0 + k as u32 / tile_w);
+                grid[j as usize * w as usize + i as usize] = Some(pixel);
+            }
+        }
         let mut answers: Vec<PixelLink> = Vec::new();
         let mut index: HashMap<PixelLink, u32> = HashMap::new();
         let mut cells = Vec::with_capacity(w as usize * h as usize);
-        for answer in rows.into_iter().flatten() {
+        for answer in grid
+            .into_iter()
+            .map(|a| a.expect("every pixel is in a tile"))
+        {
             let next = answers.len() as u32;
             let at = *index.entry(answer.clone()).or_insert_with(|| {
                 answers.push(answer);

@@ -124,7 +124,7 @@ Five parts, each building on the one before: the link in the library, the oracle
 - [x] User data: the marker `kind`, `axis`, `width` and `height`, read and written leniently, and a test that a file with portal markers round-trips through an older reader's unknown-field path. Update [user-data.md](../specs/user-data.md).
 - [x] CLI: `portal link`, from a position and from a save, with `--json`. Update [cli-json.md](../specs/cli-json.md).
 - [x] Viewer: placing portal markers, the target, square and link in the other dimension, save portals and their flags, and the Link area overlay.
-- [ ] Benchmarks: a full-view link map and a large save's `save_portal_links` added to `cargo xtask bench`, with their times in the spec.
+- [x] Benchmarks: a full-view link map and a large save's `save_portal_links` added to `cargo xtask bench`, with their times in the spec.
 - [x] User guide: the portals page, and [viewer.md](../guide/src/viewer.md), [command.md](../guide/src/command.md) and [your-worlds.md](../guide/src/your-worlds.md).
 - [x] Update the milestone's scope (y isn't clamped) and its exit criteria (26.2 too).
 
@@ -154,6 +154,7 @@ Five parts, each building on the one before: the link in the library, the oracle
 
 Newest first.
 
+- 2026-11-16: Benchmarks are in `cargo xtask bench` (`portal_link_map` both ways, a full view and the viewer's link area, and `save_portal_links`), among 5,202 synthetic portals, with times in [the spec](../specs/portals.md#where-a-portal-links). The first run found the link map filtering portals for the whole area, which out of the Nether keeps nearly all of them: 16.8 s for a full view. It now filters per 16 × 16-pixel tile: 0.86 s, and 84 ms for the viewer's link area.
 - 2026-11-16: The viewer's portals and the guide's [portals page](../guide/src/portals.md) are done. Checked by eye with `run-viewer` on seed 12345 and this machine's 26.3 save: a portal marker placed from the map's menu, its link area in the Overworld (green over its search square, red elsewhere), an Overworld portal added inside it and the link line both ways, and the save's 11 portals with save portal #10 drawn as unlinked. How it's built:
   - Everything is in `app/map/portal_layer.rs`: portal markers and save portals are one list of groups, linked with `Game::portal_links` and `outcomes_by`, worked out again only when the portals change. The save's portals and flags are read on a thread when a save opens.
   - Portals are footprints under the markers, so a portal marker is still a pin for editing, and its footprint and links come with it. The flags are the save's own (`save_portal_links`), among its portals only, since markers aren't real.

@@ -565,7 +565,72 @@ fn main() -> spyglass::Result<()> {
             },
         );
     }
+    portal_lines(&game);
     Ok(())
+}
+
+/// Nether portals (`docs/specs/portals.md`): the link map over a full view and over the
+/// viewer's coarser link area, both ways, among portals spaced as a busy world's might be, and
+/// linking every portal of a large save.
+fn portal_lines(game: &Game) {
+    // A portal every 160 blocks in the Overworld and every 20 in the Nether, over ±4,000 and
+    // ±500 blocks: 51 × 51 in each, 5,202 in all.
+    let mut overworld = Vec::new();
+    let mut nether = Vec::new();
+    for i in -25i32..=25 {
+        for j in -25..=25 {
+            let up = (i * 7 + j * 3).rem_euclid(9);
+            for (records, spacing, y) in [
+                (&mut overworld, 160, 64 + up),
+                (&mut nether, 20, 40 + 4 * up),
+            ] {
+                let [x, z] = [i * spacing + j % 3, j * spacing + i % 5];
+                for h in 0..3 {
+                    for w in 0..2 {
+                        records.push(if (i + j) % 2 == 0 {
+                            [x + w, y + h, z]
+                        } else {
+                            [x, y + h, z + w]
+                        });
+                    }
+                }
+            }
+        }
+    }
+    let save = spyglass::SavePortals::from_records(
+        [overworld, nether, Vec::new()],
+        [spyglass::Border::default(); 3],
+    );
+    let (pieces, _) = save.pieces();
+    let border = spyglass::Border::default();
+    for (source, to) in [
+        (Dimension::Overworld, "into the Nether"),
+        (Dimension::Nether, "out of the Nether"),
+    ] {
+        for (size, scale, view) in [([1024, 768], 1, "full view"), ([320, 240], 4, "link area")] {
+            let area = MapArea::centred_on([30, -20], size, scale, 70).unwrap();
+            report(
+                &format!(
+                    "portal_link_map {} x {} at 1:{scale} {to}, {view}",
+                    size[0], size[1]
+                ),
+                3,
+                || {
+                    black_box(
+                        game.portal_link_map(source, &area, &pieces, &border)
+                            .unwrap(),
+                    );
+                },
+            );
+        }
+    }
+    report(
+        &format!("save_portal_links, {} portals", save.portals.len()),
+        3,
+        || {
+            black_box(game.save_portal_links(&save).unwrap());
+        },
+    );
 }
 
 /// The work the viewer asks for: one 256 × 256 tile, in a new session and then for the tile

@@ -119,6 +119,30 @@ A pack's new biomes get the map's hashed colour for ids it doesn't know ([ADR 00
 
 Packs found in `datapacks/` but in neither list aren't applied: the game adds them on its next start, but the chunks so far were made without them.
 
+### What a pack changes
+
+`Bundle::layer_changes()` says, for each applied pack, what it changes, from the layers' file lists, as [which file wins](#which-file-wins) decides; only tag files are read, for `replace`. Per registry (the folder under `data/<namespace>/`, such as `worldgen/biome` or `tags/worldgen/biome`), a pack's file is:
+
+- **replaced** when a layer below, the bundle included, has a file at the same path that's still in view, and **added** when none has;
+- for a tag, **merged** with what's below, or **replaced** when it says `"replace": true` (a file that doesn't read as a tag is skipped, as the game skips it);
+- **shadowed** when a higher pack has the same path, or hides it with its filter: it never takes effect. A shadowed tag is still merged, unless a higher pack replaces or hides it.
+
+Its `filter` **hides** the files of the packs below it that it matches, counted per registry the same way. Structure templates (`structure/`, `.nbt`) are counted as a registry of their own.
+
+`spyglass::answers_fed_by(registry)` names the answers a registry feeds, so a pack's changes say which answers they touch:
+
+| Answers    | Registries                                                                                                                                                                                             |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| biomes     | `worldgen/biome`, `worldgen/multi_noise_biome_source_parameter_list`, `worldgen/density_function`, `worldgen/noise`, `worldgen/noise_settings`, `dimension`, `dimension_type`, `worldgen/world_preset` |
+| terrain    | `worldgen/noise_settings`, `worldgen/density_function`, `worldgen/noise`, `worldgen/configured_carver`, `dimension`, `dimension_type`                                                                  |
+| structures | `worldgen/structure`, `worldgen/structure_set`, `worldgen/template_pool`, `worldgen/processor_list`, `structure`, `tags/worldgen/biome`, `tags/worldgen/structure`                                     |
+| features   | `worldgen/configured_feature`, `worldgen/placed_feature`, `worldgen/biome`, `tags/block`, `tags/worldgen/biome`                                                                                        |
+| loot       | `loot_table`, `tags/item`, `enchantment`, `tags/enchantment`                                                                                                                                           |
+| flowers    | `worldgen/biome`, `worldgen/configured_feature`, `worldgen/placed_feature`                                                                                                                             |
+| portals    | `dimension`, `dimension_type`, `worldgen/noise_settings`, `tags/block`                                                                                                                                 |
+
+Any other registry, such as `recipe`, `advancement` or `function`, is counted as not read by spyglass, so a pack of recipes only changes no answers.
+
 ## Testing
 
 - **Unit tests** on packs built in the test: formats in every form, valid and not; packs the game skips; overlays chosen by format, the last on top; filters matching anywhere; zips and folders alike; oversized zip entries, and escaping or invalid paths skipped. On layered bundles: replacement, new ids, filters above and below, tag merging with and without `replace`, unreadable tag files, feature packs, and a bundle without a format.

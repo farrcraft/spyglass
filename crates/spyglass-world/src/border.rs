@@ -8,7 +8,11 @@ use std::path::Path;
 
 use spyglass_data::nbt::{self, Tag};
 
-use crate::{Layout, MAX_NBT_FILE, Save, WorldError, read_capped, read_nbt};
+use crate::{Layout, MAX_NBT_FILE, Save, SaveSource, WorldError, read_capped, read_nbt};
+
+/// The `level.dat` fields a border is read from before the current layout.
+const LEGACY_FIELDS: &str =
+    "Data.BorderCenterX, BorderCenterZ, BorderSize, BorderSizeLerpTime, BorderSizeLerpTarget";
 
 /// The default border's side (`WorldBorder.Settings.DEFAULT`'s size).
 const DEFAULT_SIZE: f64 = 5.999_996_8E7;
@@ -87,19 +91,49 @@ impl Save {
     ///
     /// Fails only for a `level.dat` that can't be read or a dimension id that names no folder.
     pub fn world_border(&self, dimension: &str) -> Result<BorderRead, WorldError> {
+        self.world_border_with_source(dimension)
+            .map(|(border, _)| border)
+    }
+
+    /// [`world_border`](Self::world_border), and where it's read from.
+    pub fn world_border_with_source(
+        &self,
+        dimension: &str,
+    ) -> Result<(BorderRead, SaveSource), WorldError> {
         let data = self.region_dir(dimension)?.with_file_name("data");
         match self.layout {
-            Layout::Current => Ok(read_file(&data.join("minecraft").join("world_border.dat"))),
+            Layout::Current => {
+                let path = data.join("minecraft").join("world_border.dat");
+                let file = path
+                    .strip_prefix(&self.dir)
+                    .unwrap_or(&path)
+                    .components()
+                    .map(|c| c.as_os_str().to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join("/");
+                let source = SaveSource {
+                    file,
+                    field: "data".into(),
+                    present: path.is_file(),
+                };
+                Ok((read_file(&path), source))
+            }
             Layout::Legacy | Layout::Before116 => {
+                let mut source = SaveSource {
+                    file: "level.dat".into(),
+                    field: LEGACY_FIELDS.into(),
+                    present: false,
+                };
                 let divisor = match dimension {
                     "minecraft:overworld" | "minecraft:the_end" => 1.0,
                     "minecraft:the_nether" => 8.0,
-                    _ => return Ok(BorderRead::Missing),
+                    _ => return Ok((BorderRead::Missing, source)),
                 };
                 let level = read_nbt(&self.dir.join("level.dat"))?;
-                Ok(level
-                    .get("Data")
-                    .map_or(BorderRead::Missing, |data| legacy(data, divisor)))
+                let data = level.get("Data");
+                source.present = data.and_then(|d| d.get("BorderSize")).is_some();
+                let border = data.map_or(BorderRead::Missing, |data| legacy(data, divisor));
+                Ok((border, source))
             }
         }
     }
@@ -261,6 +295,7 @@ mod tests {
             was_modded: false,
             spawn: None,
             player: None,
+            sources: Default::default(),
         }
     }
 
@@ -288,6 +323,21 @@ mod tests {
             save.world_border("minecraft:overworld").unwrap().settings(),
             SavedBorder::default()
         );
+        let (_, source) = save
+            .world_border_with_source("minecraft:the_nether")
+            .unwrap();
+        assert_eq!(
+            source,
+            SaveSource {
+                file: "dimensions/minecraft/the_nether/data/minecraft/world_border.dat".into(),
+                field: "data".into(),
+                present: true,
+            }
+        );
+        let (_, source) = save
+            .world_border_with_source("minecraft:overworld")
+            .unwrap();
+        assert!(!source.present);
     }
 
     #[test]

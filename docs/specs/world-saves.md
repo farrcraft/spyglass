@@ -56,8 +56,66 @@ A player's `Pos` is three doubles and `Dimension` an id (an int, 0, −1 or 1, b
 | `modded`                | `Data.WasModded` is set: mods can change generation without data packs.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `older_chunks`          | With `Scan::Chunks`, per dimension: chunks in its region files whose own `DataVersion` is older than the save's (or that have none). Their terrain and structures follow the version that generated them.                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `unreadable_regions`    | With `Scan::Chunks`, per dimension: region files that couldn't be opened or read, whose chunks weren't counted.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `moving_border`         | A note, per dimension: its world border is still moving ([world borders](#world-borders)), so answers use the size it ends at.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `pack_error`            | Only in the [report](#the-report), per dimension: an answerable dimension can't be opened with the applied packs, because a pack holds a type spyglass doesn't support or a file it can't read. Blocks answers in that dimension, as opening it fails.                                                                                                                                                                                                                                                                                                                                                                    |
 
 A vanilla dedicated server opening a save that enables a pack it doesn't have logs `Missing data pack <name>` and carries on without it (26.3, checked 2026-10-25).
+
+## The report
+
+`SaveReport::details()` gives `SaveDetails`: everything spyglass took from the save, where it came from and what it decides, so a user can see why an answer for their world is what it is. It's an explanation of spyglass's own answers, not an NBT browser. `spyglass world info` prints it and the viewer's World panel shows it, from the same value. Building it opens the bundle with the save's packs once, as `pack_errors` did, which takes as long as a first query in each dimension. It has four sections, and every warning is beside the item it's about (`SaveWarning::subject`).
+
+### Settings
+
+One `SaveSetting` per value, each with its value, its source (the file relative to the save and the NBT path in it, `spyglass_world::Save::sources`) and what it decides, a fixed text. A value the file doesn't have is marked absent, with the default the game uses.
+
+| Setting                     | `Current`                                                                | `Legacy`                                                      | `Before116`                                  | Decides                                    |
+| --------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------- | -------------------------------------------- | ------------------------------------------ |
+| version                     | `level.dat` `Data.Version.Name`                                          | as `Current`                                                  | as `Current`                                 | what to extract when no bundle matches     |
+| data version                | `level.dat` `Data.DataVersion`                                           | as `Current`                                                  | as `Current`                                 | which bundle answers                       |
+| seed                        | `data/minecraft/world_gen_settings.dat` `data.seed`                      | `level.dat` `Data.WorldGenSettings.seed`                      | `level.dat` `Data.RandomSeed`                | every prediction                           |
+| structures                  | `data/minecraft/world_gen_settings.dat` `data.generate_structures`       | `level.dat` `Data.WorldGenSettings.generate_features`         | `level.dat` `Data.MapFeatures`               | whether structure answers exist            |
+| generator, per dimension    | `data/minecraft/world_gen_settings.dat` `data.dimensions.<id>.generator` | `level.dat` `Data.WorldGenSettings.dimensions.<id>.generator` | `level.dat` `Data.generatorName` (Overworld) | whether spyglass answers in that dimension |
+| world border, per dimension | `dimensions/<namespace>/<path>/data/minecraft/world_border.dat` `data`   | `level.dat` `Data.BorderSize`                                 | as `Legacy`                                  | where portals can be found and built       |
+| spawn                       | `level.dat` `Data.spawn`                                                 | `level.dat` `Data.SpawnX`                                     | as `Legacy`                                  | `--from spawn`, and the spawn origin       |
+| single player               | `players/data/<uuid>.dat` `Pos`                                          | `level.dat` `Data.Player.Pos`                                 | as `Legacy`                                  | `--from player`                            |
+| modded                      | `level.dat` `Data.WasModded`                                             | as `Current`                                                  | as `Current`                                 | nothing, but mods can change generation    |
+
+Where the game reads either of two names (`generate_structures` or `generate_features`), the source is the one found, or the first if neither is. A generator is shown with the bundle's preset it matches, if any. A border is shown with its centre and size, whether it's moving, and whether its file was unreadable.
+
+### Packs
+
+Each enabled pack in load order, `vanilla` first, with what spyglass did with it: applied from `datapacks/`, a built-in feature pack applied from the bundle, the bundle itself (`vanilla`), or not applied, with the `data_pack` warning that says why. An applied pack lists what it changes that spyglass reads ([data-packs.md](data-packs.md#what-a-pack-changes)).
+
+### Dimensions
+
+One per dimension of the Default preset: its region folder, whether spyglass answers in it (and if not, the warnings that block it), and, after `Scan::Chunks`, its holdings:
+
+- chunks: listed in region files, full (`Status` `full`), proto (any other status), unreadable, and unreadable region files;
+- chunks by data version, newest first, each named by a bundle with that data version where one is in the bundles folder, or else by number; chunks with none are from before 1.9;
+- the ticks players spent there (`InhabitedTime`, summed) and the bounds of the listed chunks;
+- structure starts by structure: in chunks saved at data version 2970 or later, each key of `structures.starts` whose start has an `id` that isn't `INVALID` ([structure starts](#structure-starts-in-saves)). These are what answers take from the save instead of the seed. A start whose key or `id` the bundle with packs has no structure for is counted as dropped, as the game drops it. Starts in older chunks (`structures.starts` before 2970, `Level.Structures.Starts` before 1.18) are counted apart, by their keys: the game data-fixes them and spyglass predicts them;
+- sealed loot containers by block entity `id`: entries of a chunk's `block_entities` with a `LootTable`, so not yet filled ([containers](#containers-in-saves)). Older chunks' `Level.TileEntities` and chest minecarts (in `entities/`) aren't counted.
+
+The counts are made in the chunk scan's one pass, read without building any tree (`nbt::walk`).
+
+**Opened containers** aren't counted for the whole save: a save can't tell an opened structure chest from one a player placed, and finding them would mean predicting every container in every generated chunk. Answers count them as they're made instead: `SaveChunks::usage()` tallies the chunks read, the starts answered from the save, the chunks whose save says no start is there, and the containers answered unopened, opened or gone. The viewer shows its session's tally; `spyglass world info` makes no queries, so shows none.
+
+### Warnings and their subjects
+
+| Warning                 | Subject (`SaveSubject`)                                    |
+| ----------------------- | ---------------------------------------------------------- |
+| `no_bundle`             | the data version setting                                   |
+| `unsupported_generator` | that dimension's generator setting                         |
+| `structures_disabled`   | the structures setting                                     |
+| `data_pack`             | that pack                                                  |
+| `modded`                | the modded setting                                         |
+| `older_chunks`          | that dimension's holdings                                  |
+| `unreadable_regions`    | that dimension's holdings                                  |
+| `moving_border`         | that dimension's border setting                            |
+| `pack_error`            | the pack whose file the error names, or else the dimension |
+
+`pack_error` comes from opening each answerable dimension with the packs, so only the report raises it; `SaveReport::warnings` doesn't have it, and `pack_errors()` gives the same errors without the report. The other warnings are the same in both.
 
 ## Region files
 

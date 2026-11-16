@@ -1,6 +1,6 @@
 # 31. What spyglass read from a save
 
-- Status: Not started
+- Status: In progress
 - Depends on: [25](completed/25-what-the-save-knows.md), [26](completed/26-data-packs.md)
 - Plans: [m31-save-inspector](../plans/m31-save-inspector.md)
 

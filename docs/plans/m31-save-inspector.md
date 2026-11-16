@@ -1,6 +1,6 @@
 # m31. What spyglass read from a save
 
-- Status: Draft
+- Status: In progress
 - Milestone: [31. What spyglass read from a save](../roadmap/31-save-inspector.md)
 - Started: 2026-11-16
 - Completed: not yet
@@ -105,7 +105,7 @@ The library maps each registry to the answers it feeds, with a fixed table in `s
 ## Tasks
 
 - [ ] Spec first: [world-saves.md](../specs/world-saves.md) gets a _Report_ section (the four sections, the source of every setting in each layout, what each decides, the holdings and how they're counted, the subject of each warning). It also gets the two new warnings. [data-packs.md](../specs/data-packs.md) gets _What a pack changes_.
-- [ ] `spyglass_world::Save::sources`: the file and NBT path of every value, for the three layouts, with a test per layout.
+- [x] `spyglass_world::Save::sources`: the file and NBT path of every value, for the three layouts, with a test per layout.
 - [ ] The scan's counts: a skipping visitor in `spyglass_data::nbt` for `structures.starts` and `block_entities`, `ChunkFields`' new fields, and unit tests on chunks built in the test (`INVALID`, missing `id`, pre-2970 chunks, empty `starts`, containers with and without `LootTable`, proto chunks). Fuzz it through the existing `region` target.
 - [ ] Time the scan on the largest local save, before and after. Decide between keeping the counts in `Scan::Chunks` and adding `Scan::Holdings`, and record the times in the spec.
 - [ ] `Bundle::layer_changes`, with tests on layered bundles: a replacement, an addition, a filter, a tag merged and replaced, a file shadowed by a higher pack, a pack of recipes only.

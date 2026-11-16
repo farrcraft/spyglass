@@ -9,7 +9,7 @@ use flate2::write::{GzEncoder, ZlibEncoder};
 use spyglass_data::nbt::{self, Compound, Tag};
 use spyglass_world::chunk::{self, SavedPiece, SavedStack, SavedStart, SavedStarts};
 use spyglass_world::region::{ChunkFields, ChunkRecord};
-use spyglass_world::{Layout, PackContents, Save, WorldError, region};
+use spyglass_world::{Layout, PackContents, Save, SaveSource, WorldError, region};
 
 fn raw(root: &Tag) -> Vec<u8> {
     nbt::write("", root)
@@ -135,6 +135,50 @@ fn current_layout() {
     assert_eq!(save.disabled_packs, ["trade_rebalance"]);
     assert_eq!(save.spawn.as_ref().unwrap().pos, [-16.0, 61.0, 16.0]);
     assert_eq!(save.player.as_ref().unwrap().pos, [587.5, 121.0, 2339.75]);
+    let sources = &save.sources;
+    let settings = "data/minecraft/world_gen_settings.dat";
+    assert_eq!(sources.seed, source(settings, "data.seed", true));
+    assert_eq!(
+        sources.generate_structures,
+        source(settings, "data.generate_structures", true)
+    );
+    assert_eq!(
+        sources.generator("minecraft:overworld"),
+        source(
+            settings,
+            "data.dimensions.minecraft:overworld.generator",
+            true
+        )
+    );
+    assert_eq!(
+        sources.generator("minecraft:the_end"),
+        source(
+            settings,
+            "data.dimensions.minecraft:the_end.generator",
+            false
+        )
+    );
+    assert_eq!(
+        sources.data_version,
+        source("level.dat", "Data.DataVersion", true)
+    );
+    assert_eq!(
+        sources.version_name,
+        source("level.dat", "Data.Version.Name", true)
+    );
+    assert_eq!(sources.spawn, source("level.dat", "Data.spawn", true));
+    assert_eq!(
+        sources.was_modded,
+        source("level.dat", "Data.WasModded", true)
+    );
+    assert_eq!(
+        sources.player,
+        source(
+            "players/data/057a1bb7-1493-462e-b89a-e92cb3de0f42.dat",
+            "Pos",
+            true
+        )
+    );
     assert_eq!(
         save.region_dir("minecraft:the_nether").unwrap(),
         dir.path().join("dimensions/minecraft/the_nether/region")
@@ -200,6 +244,50 @@ fn legacy_layout() {
         save.region_dir("minecraft:the_end").unwrap(),
         dir.path().join("DIM1/region")
     );
+    let sources = &save.sources;
+    assert_eq!(
+        sources.seed,
+        source("level.dat", "Data.WorldGenSettings.seed", true)
+    );
+    // The name found, of the two the game reads.
+    assert_eq!(
+        sources.generate_structures,
+        source("level.dat", "Data.WorldGenSettings.generate_features", true)
+    );
+    assert_eq!(
+        sources.generator("minecraft:overworld"),
+        source(
+            "level.dat",
+            "Data.WorldGenSettings.dimensions.minecraft:overworld.generator",
+            true
+        )
+    );
+    assert_eq!(
+        sources.spawn,
+        source("level.dat", "Data.SpawnX, SpawnY, SpawnZ", true)
+    );
+    assert_eq!(sources.player, source("level.dat", "Data.Player.Pos", true));
+    assert_eq!(
+        sources.version_name,
+        source("level.dat", "Data.Version.Name", false)
+    );
+    assert_eq!(
+        sources.was_modded,
+        source("level.dat", "Data.WasModded", false)
+    );
+    let (_, border) = save
+        .world_border_with_source("minecraft:overworld")
+        .unwrap();
+    assert_eq!(border.file, "level.dat");
+    assert!(!border.present);
+}
+
+fn source(file: &str, field: &str, present: bool) -> SaveSource {
+    SaveSource {
+        file: file.into(),
+        field: field.into(),
+        present,
+    }
 }
 
 #[test]
@@ -240,6 +328,25 @@ fn before_1_16() {
     assert_eq!(
         save.region_dir("minecraft:overworld").unwrap(),
         dir.path().join("region")
+    );
+    let sources = &save.sources;
+    assert_eq!(sources.seed, source("level.dat", "Data.RandomSeed", true));
+    assert_eq!(
+        sources.generate_structures,
+        source("level.dat", "Data.MapFeatures", true)
+    );
+    assert_eq!(
+        sources.generator("minecraft:overworld"),
+        source("level.dat", "Data.generatorName, generatorOptions", true)
+    );
+    assert!(!sources.generator("minecraft:the_nether").present);
+    assert_eq!(
+        sources.data_version,
+        source("level.dat", "Data.DataVersion", false)
+    );
+    assert_eq!(
+        sources.spawn,
+        source("level.dat", "Data.SpawnX, SpawnY, SpawnZ", false)
     );
     // A data pack's dimension is under dimensions/, and an id that could lead out isn't one.
     assert_eq!(

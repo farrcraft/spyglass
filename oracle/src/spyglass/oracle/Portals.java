@@ -57,11 +57,13 @@ import net.minecraft.world.level.portal.TeleportTransition;
  *       {@code setSize};
  *   <li>its portals are placed with {@code Level.setBlock}, which adds their points of interest
  *       as play does, and its stale records are added with {@code PoiManager.add} where the block
- *       isn't a portal;
+ *       isn't a portal. A save's existing portal blocks are checked instead, each noted as still a
+ *       portal or not;
  *   <li>each search is the target level's {@code PortalForcer.findClosestPortalPosition}, with
  *       the exit block given;
  *   <li>each trip is {@code NetherPortalBlock.getPortalDestination} for a marker entity standing
- *       at the position given, inside the portal it names. It records the exit block the game
+ *       at the position given, inside the portal it names, or in the save's portal block it
+ *       gives (skipped if that's no longer a portal). It records the exit block the game
  *       searched from and the block it found, through a {@code PortalForcer} that calls the
  *       game's own and notes its arguments and answer. A trip that finds nothing makes the game
  *       build a portal; its portal blocks are set to air before the next case;
@@ -277,6 +279,13 @@ public final class Portals {
                     }
                 }
             }
+            // A save's own portal blocks: checked, not placed, and left as they are.
+            for (JsonElement element : array(layout, "existing")) {
+                JsonObject existing = element.getAsJsonObject();
+                ServerLevel level = level(server, existing);
+                BlockPos block = pos(existing.getAsJsonArray("block"));
+                existing.addProperty("portal", level.getBlockState(block).is(net.minecraft.world.level.block.Blocks.NETHER_PORTAL));
+            }
             for (JsonElement element : array(layout, "stale")) {
                 JsonObject stale = element.getAsJsonObject();
                 ServerLevel level = level(server, stale);
@@ -333,10 +342,20 @@ public final class Portals {
         double x = at.get(0).getAsDouble();
         double y = at.get(1).getAsDouble();
         double z = at.get(2).getAsDouble();
-        JsonObject portal = layout.getAsJsonArray("portals").get(trip.get("portal").getAsInt()).getAsJsonObject();
-        BlockPos entry = entryBlock(portal, x, y, z);
-        if (!from.getBlockState(entry).is(net.minecraft.world.level.block.Blocks.NETHER_PORTAL)) {
-            throw new IllegalStateException(layout.get("name").getAsString() + ": the trip's portal isn't at " + entry);
+        BlockPos entry;
+        if (trip.has("entry")) {
+            // A save's portal block: a trip from one the save records but doesn't have is skipped.
+            entry = pos(trip.getAsJsonArray("entry"));
+            if (!from.getBlockState(entry).is(net.minecraft.world.level.block.Blocks.NETHER_PORTAL)) {
+                trip.addProperty("skipped", true);
+                return;
+            }
+        } else {
+            JsonObject portal = layout.getAsJsonArray("portals").get(trip.get("portal").getAsInt()).getAsJsonObject();
+            entry = entryBlock(portal, x, y, z);
+            if (!from.getBlockState(entry).is(net.minecraft.world.level.block.Blocks.NETHER_PORTAL)) {
+                throw new IllegalStateException(layout.get("name").getAsString() + ": the trip's portal isn't at " + entry);
+            }
         }
         Entity marker = EntityTypes.MARKER.create(from, EntitySpawnReason.COMMAND);
         marker.setPos(x, y, z);

@@ -60,6 +60,131 @@ pub fn run(harness: &Harness, random: usize) -> Result<()> {
     Ok(())
 }
 
+/// Plays a copy of the save in `save` on the server: a trip from the middle of every portal
+/// block its points of interest record, standing at the block's bottom. The answers go to
+/// `oracle-out/<version>/portals/world-<folder>.json`, with the save's path, for the comparison
+/// to read the save's portals as spyglass does.
+pub fn run_world(harness: &Harness, save: &Path) -> Result<()> {
+    if !harness.packs.is_empty() {
+        bail!("oracle portals --world doesn't take --pack: the save's own packs are used");
+    }
+    let read = spyglass_world::Save::read(save)
+        .with_context(|| format!("failed to read the save in {}", save.display()))?;
+    let base = harness
+        .version
+        .split('+')
+        .next()
+        .unwrap_or(&harness.version);
+    if read.version_name.as_deref() != Some(base) {
+        bail!(
+            "{} was last played in {}, not {base}: give --game-version for its version",
+            save.display(),
+            read.version_name.as_deref().unwrap_or("an unknown version")
+        );
+    }
+    let dir = harness.work.join("portals-world");
+    if dir.exists() {
+        fs::remove_dir_all(&dir)?;
+    }
+    fs::create_dir_all(&dir)?;
+    copy_save(save, &dir.join("world"))?;
+    // Accepted by whoever ran this: `require_eula` checked before any server started.
+    fs::write(dir.join("eula.txt"), "eula=true\n")?;
+    fs::write(
+        dir.join("server.properties"),
+        "level-name=world\n\
+         server-ip=127.0.0.1\n\
+         server-port=0\n\
+         online-mode=false\n\
+         pause-when-empty-seconds=-1\n\
+         max-tick-time=-1\n\
+         sync-chunk-writes=false\n\
+         spawn-protection=0\n",
+    )?;
+    let mut existing = Vec::new();
+    let mut trips = Vec::new();
+    for (dimension, sections) in [(OVERWORLD, -4..=19), (NETHER, 0..=15), (END, 0..=15)] {
+        let poi = read.region_dir(dimension)?.with_file_name("poi");
+        for (block, _) in spyglass_world::poi::read(&poi, sections).portals() {
+            existing.push(json!({ "dimension": dimension, "block": block }));
+            let pos = [
+                f64::from(block[0]) + 0.5,
+                f64::from(block[1]),
+                f64::from(block[2]) + 0.5,
+            ];
+            trips.push(json!({ "dimension": dimension, "pos": pos, "entry": block }));
+        }
+    }
+    if trips.is_empty() {
+        bail!("{} records no Nether portals", save.display());
+    }
+    let layout = json!({
+        "name": "world",
+        "kind": "world",
+        "borders": [],
+        "portals": [],
+        "existing": existing,
+        "trips": trips,
+    });
+    let cases = dir.join("cases.json");
+    fs::write(
+        &cases,
+        serde_json::to_string(&json!({ "layouts": [layout] }))? + "\n",
+    )?;
+    let folder = save
+        .file_name()
+        .map_or_else(|| "save".to_string(), |n| n.to_string_lossy().into_owned());
+    let name: String = folder
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let out = repo_root()
+        .join("oracle-out")
+        .join(&harness.version)
+        .join("portals")
+        .join(format!("world-{name}.json"));
+    let started = Instant::now();
+    play(harness, &dir, &cases, &out)?;
+    // The save's path, for the comparison.
+    let mut answers: Value = serde_json::from_str(&fs::read_to_string(&out)?)?;
+    answers["save"] = json!(save.canonicalize()?.to_string_lossy());
+    fs::write(&out, serde_json::to_string(&answers)? + "\n")?;
+    println!(
+        "{}: {} trips, {:.0} s",
+        out.display(),
+        trips.len(),
+        started.elapsed().as_secs_f64()
+    );
+    fs::remove_dir_all(&dir).with_context(|| format!("failed to remove {}", dir.display()))?;
+    Ok(())
+}
+
+/// Copies the save in `from` to `to`, all but its lock, without following links.
+fn copy_save(from: &Path, to: &Path) -> Result<()> {
+    fs::create_dir_all(to)?;
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        let name = entry.file_name();
+        if name == "session.lock" {
+            continue;
+        }
+        if kind.is_dir() {
+            copy_save(&entry.path(), &to.join(&name))?;
+        } else if kind.is_file() {
+            fs::copy(entry.path(), to.join(&name))
+                .with_context(|| format!("failed to copy {}", entry.path().display()))?;
+        }
+    }
+    Ok(())
+}
+
 /// Runs `Portals` in `dir`; a failed run's folder is kept, with its log.
 fn play(harness: &Harness, dir: &Path, cases: &Path, out: &Path) -> Result<()> {
     let log = dir.join("portals.log");

@@ -204,6 +204,11 @@ pub enum OracleCmd {
         /// Random layouts, from a fixed generator, besides the constructed ones.
         #[arg(long, default_value_t = 40)]
         random: usize,
+        /// A world save of the harness's version to play instead: a copy of it is opened on the
+        /// server, and a trip made from every portal block it records, into
+        /// `oracle-out/<version>/portals/world-<folder>.json`. Repeatable.
+        #[arg(long = "world", value_name = "SAVE")]
+        worlds: Vec<PathBuf>,
         /// Accept the Minecraft EULA (<https://aka.ms/MinecraftEULA>) for the server this runs,
         /// as `SPYGLASS_ACCEPT_EULA=1` does.
         #[arg(long)]
@@ -445,11 +450,18 @@ pub fn run(cmd: OracleCmd) -> Result<()> {
         OracleCmd::Portals {
             common,
             random,
+            worlds,
             accept_eula,
         } => {
             crate::locate::require_eula(accept_eula)?;
             let harness = build(&common)?;
-            crate::portals::run(&harness, random)
+            if worlds.is_empty() {
+                crate::portals::run(&harness, random)
+            } else {
+                worlds
+                    .iter()
+                    .try_for_each(|save| crate::portals::run_world(&harness, save))
+            }
         }
         OracleCmd::Replay {
             common,

@@ -136,6 +136,7 @@ pub fn run(args: &Ci) -> Result<()> {
                 oracle::run(OracleCmd::Portals {
                     common: common(),
                     random: 40,
+                    worlds: Vec::new(),
                     accept_eula: true,
                 })
             })

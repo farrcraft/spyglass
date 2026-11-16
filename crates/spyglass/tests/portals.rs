@@ -134,6 +134,89 @@ fn portal_links_match_the_game() {
     assert!(tied > 0, "no tied answers at all");
 }
 
+/// A real save's portals, read and linked by spyglass, against trips the game's server made from
+/// every portal block a copy of the save records (`cargo xtask oracle portals --world SAVE`): the
+/// records are the server's portal blocks, every trip aims where spyglass says, and lands at the
+/// portal spyglass links it to, or builds one where spyglass finds none.
+#[test]
+#[ignore = "needs oracle-out/<version>/portals/world-*.json: cargo xtask oracle portals --world SAVE"]
+fn a_save_s_portal_links_match_the_game() {
+    let dir = spyglass_oracle::out_dir().join("portals");
+    let files: Vec<_> = fs::read_dir(&dir)
+        .unwrap_or_else(|e| {
+            panic!(
+                "{}: {e}; run cargo xtask oracle portals --world SAVE",
+                dir.display()
+            )
+        })
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .is_some_and(|n| n.to_string_lossy().starts_with("world-"))
+        })
+        .collect();
+    assert!(!files.is_empty(), "no world-*.json in {}", dir.display());
+    let bundles = spyglass_oracle::bundle_dir()
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    let mut failures = Vec::new();
+    let mut trips = 0;
+    for path in files {
+        let file: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        let save = file["save"].as_str().unwrap();
+        let report = spyglass::inspect_save(save, &bundles, spyglass::Scan::Quick).unwrap();
+        let game = report.open_game().unwrap();
+        let portals = report.portals(&game).unwrap();
+        let (pieces, _) = portals.pieces();
+        let layout = &file["layouts"][0];
+        for existing in layout["existing"].as_array().unwrap() {
+            if existing["portal"] != true {
+                failures.push(format!(
+                    "{save}: the record at {} {} isn't a portal on the server",
+                    existing["dimension"], existing["block"]
+                ));
+            }
+        }
+        for trip in layout["trips"].as_array().unwrap() {
+            if trip["skipped"] == true {
+                continue;
+            }
+            trips += 1;
+            let from = dimension(&trip["dimension"]);
+            let pos = floats(&trip["pos"]);
+            let pos = [pos[0], pos[1], pos[2]];
+            let to = dimension(&trip["to"]);
+            let border = &portals.borders[to.index()];
+            let target = game.portal_target(from, pos, border).unwrap();
+            let exit = block(&trip["exit"]);
+            if target.dimension != to || target.exit != exit {
+                failures.push(format!(
+                    "{save}: trip from {from} {pos:?}: spyglass aims at {} {:?}, the game {to} {exit:?}",
+                    target.dimension, target.exit
+                ));
+                continue;
+            }
+            let link = portal_link(to, exit, &pieces, border);
+            if let Some(why) = misjudged("random", &link, &trip["found"]) {
+                failures.push(format!(
+                    "{save}: trip from {from} {pos:?}: {why}: spyglass {link:?}, the game {}",
+                    trip["found"]
+                ));
+            }
+        }
+    }
+    println!("{trips} trips");
+    assert!(trips > 0, "no trips");
+    assert!(
+        failures.is_empty(),
+        "{} of {trips} differ, first: {:#?}",
+        failures.len(),
+        &failures[..failures.len().min(20)]
+    );
+}
+
 /// Why spyglass's `link` isn't the game's answer, `found` (a block or null), for a case of
 /// `kind`, or `None` if it is. A certain link must be the game's; a tie must hold it, and only
 /// random layouts and section ties may be tied, while section ties must be.

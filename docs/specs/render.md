@@ -53,7 +53,7 @@ The underground layers are drawn at scales up to `MAX_UNDERGROUND_SCALE` (4); la
 
 `Session::flower_heights(area, flower, [min_y, max_y], step)` gives, for every `step`th height from `min_y` to `max_y`, the pixels of the area where the flower is certain and where it can grow, from `flower_map` at that height. So the best heights for a farm and the layer agree at every height they name.
 
-The layer is drawn at every scale: a pixel costs a biome lookup (cached per quart) and the providers' noises. Flower colours come from a built-in table by block id, and any other block has the hashed colour of its id ([below](#colours)).
+The layer is drawn at every scale: a pixel costs a biome lookup (cached per quart) and the providers' noises. With `cargo xtask bench` on 16 threads, a 128 × 128 tile takes about 20–35 ms at 1:1, where pixels share quarts, and 60–90 ms at 1:16, where none do: about twice a biome tile's cost. `flower_heights` over a 128 × 128 area at 31 heights takes about 2 s. Flower colours come from a built-in table by block id, and any other block has the hashed colour of its id ([below](#colours)).
 
 ## Colours
 

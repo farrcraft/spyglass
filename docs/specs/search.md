@@ -228,7 +228,7 @@ A constraint **holds** in a case when:
 - **Fields:** qualifying samples at the same height, joined to their neighbours `step` apart along x or z. A field's size is its samples times `step²` blocks.
 - **Answer:** the largest field of the case kept, worst first if it holds, as `Feature::FlowerField`: its first sample in grid order, at its height, with its size and whether it holds in the worst case.
 
-The noises behind a flower don't depend on the seed, only the biome does, so a sample in a biome whose bone meal features can't place F costs only its biome lookup.
+The noises behind a flower don't depend on the seed, only the biome does, so a sample in a biome whose bone meal features can't place F costs only its biome lookup. A cornflower field of 300 within 1,000 of the spawn at 9 heights, step 4 (about 1.8 million samples), takes about 1.2 s a seed, and a search about 6 seeds a second on 16 threads (`cargo xtask bench`).
 
 ### Terrain sampling
 

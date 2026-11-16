@@ -1,8 +1,8 @@
 # 29. Flower fields
 
-- Status: In progress
-- Depends on: [19](completed/19-features.md)
-- Plans: [m29-flower-fields](../plans/m29-flower-fields.md)
+- Status: Completed
+- Depends on: [19](19-features.md)
+- Plans: [m29-flower-fields](../../plans/completed/m29-flower-fields.md)
 
 ## Goal
 
@@ -20,13 +20,13 @@ Find where a chosen flower grows, for a player building a flower farm. In some b
 
 Not in scope:
 
-- The flowers the world generated, before any farm: random patches, which depend on the blocks and on the [decoration order](completed/27-decoration-order.md). A later milestone, if wanted.
+- The flowers the world generated, before any farm: random patches, which depend on the blocks and on the [decoration order](27-decoration-order.md). A later milestone, if wanted.
 - Other things bone meal grows (tall grass, mushrooms, moss), and flowers spreading on their own.
 - Searching by colour or dye.
 
 ## Exit criteria
 
 - [x] The flower at a block, at any height, matches the oracle for every vanilla flower feature that picks by position, for 26.3 and the 26.4 snapshots.
-- [ ] The viewer's flower layer shows the field at a chosen height, and the best-height list for an area agrees with the layer at the heights it names.
-- [x] A seed search and a search within a seed find fields of a chosen flower and size, and the [search spec](../specs/search.md) covers the constraint.
-- [ ] The user guide describes the layer, the command and the constraint, with a flower farm as its example.
+- [x] The viewer's flower layer shows the field at a chosen height, and the best-height list for an area agrees with the layer at the heights it names.
+- [x] A seed search and a search within a seed find fields of a chosen flower and size, and the [search spec](../../specs/search.md) covers the constraint.
+- [x] The user guide describes the layer, the command and the constraint, with a flower farm as its example.

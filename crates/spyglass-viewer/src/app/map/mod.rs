@@ -203,7 +203,7 @@ impl App {
             // The underground layers only on the view's own tiles: the coarser ones shown
             // while they load would cost as much again.
             underground: self.underground(),
-            // Flowers cost about what biomes do, so the stand-ins have them too.
+            // Flowers cost about twice what biomes do, cheap enough for the stand-ins too.
             flowers: self.settings.flowers,
             marking: !self.selection.queries.is_empty() && self.structures_generate(),
             // Features only up close: each chunk they could be in is placed.

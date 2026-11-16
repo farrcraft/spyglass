@@ -1,9 +1,9 @@
 # m29. Flower fields
 
-- Status: In progress
-- Milestone: [29. Flower fields](../roadmap/29-flower-fields.md)
+- Status: Completed
+- Milestone: [29. Flower fields](../../roadmap/completed/29-flower-fields.md)
 - Started: 2026-11-15
-- Completed:
+- Completed: 2026-11-15
 
 ## Goal
 
@@ -50,7 +50,7 @@ These notes come from the 26.3 server jar, disassembled locally with `javap` (no
 - a `weighted` provider;
 - `noise_threshold`'s random picks.
 
-The answer at a block is the list of flowers it can grow, each with its chance given that the effect makes a flower. Where the biome has no bone meal feature, the answer is "no flower". Where the biome lookup is tied ([biome-lookup.md](../specs/biome-lookup.md)), there's one answer per candidate biome.
+The answer at a block is the list of flowers it can grow, each with its chance given that the effect makes a flower. Where the biome has no bone meal feature, the answer is "no flower". Where the biome lookup is tied ([biome-lookup.md](../../specs/biome-lookup.md)), there's one answer per candidate biome.
 
 ## Approach
 
@@ -59,7 +59,7 @@ Four parts, each building on the one before: the flower at a block, the map and 
 ### The flower at a block
 
 - **Loading** (`spyglass-feature`, beside `blocks.rs`'s `parse_simple_provider`):
-  - The block state providers the flower features need: the single state, `weighted`, `noise`, `noise_threshold` and `dual_noise`, in 26.2's and 26.3's spellings. The 26.3 `block_state_provider` registry is read from the bundle, and data packs layer it like the other registries ([ADR 0072](../adr/0072-data-packs-as-layers.md)).
+  - The block state providers the flower features need: the single state, `weighted`, `noise`, `noise_threshold` and `dual_noise`, in 26.2's and 26.3's spellings. The 26.3 `block_state_provider` registry is read from the bundle, and data packs layer it like the other registries ([ADR 0072](../../adr/0072-data-packs-as-layers.md)).
   - The feature tag `can_spawn_from_bone_meal`.
   - Each biome's bone meal features, gathered as `getBoneMealFeatures` gathers them, in the same order.
   - A provider the loader doesn't know fails only flower answers, not the bundle, as unsupported features do today.
@@ -71,19 +71,19 @@ Four parts, each building on the one before: the flower at a block, the map and 
 
 ### The map and the best height
 
-- **The map:** `Session::flower_map(area, y) -> FlowerMap` gives each pixel's corner block's answer at `y`, as the underground layers do ([render.md](../specs/render.md#underground)). It also has a key of the flowers it shows. Biomes are looked up once per quart, and each provider's noise once per block.
+- **The map:** `Session::flower_map(area, y) -> FlowerMap` gives each pixel's corner block's answer at `y`, as the underground layers do ([render.md](../../specs/render.md#underground)). It also has a key of the flowers it shows. Biomes are looked up once per quart, and each provider's noise once per block.
 - **The layer:** a flower layer in `Layers` (`Layers::flowers`) draws:
   - a block whose answer is one flower in that flower's colour;
   - a block with odds as a checker of its flowers, the way tied biomes are drawn;
   - a block without a flower left dimmed.
 
-  With a highlighted flower, every block that can't grow it is dimmed, and blocks that can grow it only with odds are drawn lighter. Colours come from a built-in table keyed by block id, with the hashed colour as a fallback ([ADR 0018](../adr/0018-biome-palette.md)'s rule). The layer works at every scale: each pixel is one block's answer, and costs about as much as a biome.
+  With a highlighted flower, every block that can't grow it is dimmed, and blocks that can grow it only with odds are drawn lighter. Colours come from a built-in table keyed by block id, with the hashed colour as a fallback ([ADR 0018](../../adr/0018-biome-palette.md)'s rule). The layer works at every scale: each pixel is one block's answer, and costs about as much as a biome.
 
 - **The best height:** `Session::flower_heights(area, flower, y range, step) -> Vec<FlowerShare>` gives, for each y in the range, the share of the area's blocks where the flower is certain and the share where it's possible. It uses the map's sampling, so the list agrees with the layer at every height it names.
 
 ### The search
 
-- **The constraint**, in [search.md](../specs/search.md)'s grammar:
+- **The constraint**, in [search.md](../../specs/search.md)'s grammar:
 
   ```text
   constraint = ... | [ count ] "flower" BLOCK "field" INT [ "chance" PERCENT ] [ "at" "y" INT [ "to" INT ] ] place [ "step" INT ]
@@ -98,7 +98,7 @@ Four parts, each building on the one before: the flower at a block, the map and 
 
 - **Cost:**
   - The flower picked at a block doesn't depend on the seed. Only the biome does.
-  - So the search first asks the biome sampler where the biomes whose features can grow the flower are, at the constraint's step (a cheap biome check, [search.md](../specs/search.md#biome-sampling)).
+  - So the search first asks the biome sampler where the biomes whose features can grow the flower are, at the constraint's step (a cheap biome check, [search.md](../../specs/search.md#biome-sampling)).
   - Then it samples the providers only there.
   - It works in a seed search and in a search within one seed (`find` with `here`) with no changes beyond the constraint itself.
 
@@ -110,7 +110,7 @@ Four parts, each building on the one before: the flower at a block, the map and 
   - `spyglass render --flowers [--flower FLOWER] --y Y`.
   - The search constraint.
 
-  Each takes `--json`, in [cli-json.md](../specs/cli-json.md)'s style.
+  Each takes `--json`, in [cli-json.md](../../specs/cli-json.md)'s style.
 
 - **Viewer:**
   - The flower layer under the Layers panel. It uses the map's own height control, so the user can move through heights.
@@ -138,12 +138,12 @@ Four parts, each building on the one before: the flower at a block, the map and 
 - [x] `Session::biome_at_block` and `Session::flower_at`, checked against the oracle's files (`cargo xtask oracle-test`), with the providers' states compared draw for draw.
 - [x] `Session::flower_map` and the flower layer in `render`, with its colour table, and the spec's Layers list updated.
 - [x] `Session::flower_heights`, with a test that its shares match the map at each height.
-- [x] The search constraint: parsing, canonical form, the biome-first sampling, scores, and the outcome. [search.md](../specs/search.md) gets its grammar and meaning.
-- [x] CLI: `flower at`, `flower heights`, `render --flowers`, with `--json`; [cli-json.md](../specs/cli-json.md) updated.
+- [x] The search constraint: parsing, canonical form, the biome-first sampling, scores, and the outcome. [search.md](../../specs/search.md) gets its grammar and meaning.
+- [x] CLI: `flower at`, `flower heights`, `render --flowers`, with `--json`; [cli-json.md](../../specs/cli-json.md) updated.
 - [x] Viewer: the layer, the key and highlight, the hover answer, and Best height.
-- [ ] Benchmarks: a flower map tile and a flower search added to `cargo xtask bench`, with their times in the spec.
-- [ ] User guide: the flower-farm page, and the layer, command and constraint in [maps.md](../guide/src/maps.md), [command.md](../guide/src/command.md) and [seed-search.md](../guide/src/seed-search.md).
-- [ ] Update the milestone's exit criteria.
+- [x] Benchmarks: a flower map tile and a flower search added to `cargo xtask bench`, with their times in the spec.
+- [x] User guide: the flower-farm page, and the layer, command and constraint in [maps.md](../../guide/src/maps.md), [command.md](../../guide/src/command.md) and [seed-search.md](../../guide/src/seed-search.md).
+- [x] Update the milestone's exit criteria.
 
 ## Verification
 
@@ -156,19 +156,21 @@ Four parts, each building on the one before: the flower at a block, the map and 
 
 ## Durable outputs
 
-- [ ] `docs/specs/flowers.md`: bone meal on grass, the bone meal features, the providers and their odds.
-- [ ] [render.md](../specs/render.md): the flower layer, its colours and highlight.
-- [ ] [search.md](../specs/search.md): the flower-field constraint.
-- [ ] [cli-json.md](../specs/cli-json.md): `flower at`, `flower heights`.
-- [ ] [oracle.md](../specs/oracle.md): the `flowers` command and its files.
-- [ ] An ADR if answers with odds need a new form in the API. Today's answers are certain or candidates ([ADR 0056](../adr/0056-two-certainties-on-its-own-and-whatever-the-neighbours.md)), and a chance per flower is new. Decide when `FlowerAt` is designed.
-- [ ] The user guide's flower-farm page.
+- [x] [flowers.md](../../specs/flowers.md): bone meal on grass, the bone meal features, the providers and their odds.
+- [x] [render.md](../../specs/render.md): the flower layer, its colours and highlight.
+- [x] [search.md](../../specs/search.md): the flower-field constraint.
+- [x] [cli-json.md](../../specs/cli-json.md): `flower at`, `flower heights`.
+- [x] [oracle.md](../../specs/oracle.md): the `flowers` command and its files.
+- [x] An ADR if answers with odds need a new form in the API. Today's answers are certain or candidates ([ADR 0056](../../adr/0056-two-certainties-on-its-own-and-whatever-the-neighbours.md)), and a chance per flower is new. [ADR 0075](../../adr/0075-flower-answers-carry-exact-chances.md) records it.
+- [x] The user guide's [flower-farm page](../../guide/src/flower-farms.md).
 
 ## Notes
 
 Newest first.
 
-- 2026-11-15: The viewer's flower layer, key, hover answer and Best height. Flowers are worked out on each tile's worker with its biomes, at every scale (they cost about what biomes do, so the coarse stand-ins have them too), and the flower shown is part of the tile's style, so choosing one restyles without sampling again. A tile whose flowers fail keeps its biomes. The viewer has no area selection, so Best height works over the area in view, coarsened to at most 128 pixels a side, every 2 blocks through the level: a few seconds. On seed 12345 it agrees with `flower heights` (cornflowers best at y 94 in the flower forest at 190, −2060). The view text carries the layer (`flowers`) and the flower shown (`fl`). The guide's example spot (1000, −2000) turned out to be deep ocean at y 71; the page now uses that flower forest.
+- 2026-11-15: The bench's flower lines, on 26.3 with 16 threads: a 128 × 128 flower tile takes 20–35 ms at 1:1 and 60–90 ms at 1:16, about twice a biome tile, not the same as the plan guessed: at 1:16 no two pixels share a quart, and each pays the zoom and the providers' noise. Best height's work (31 heights of 128 × 128) takes about 2 s, and one `flower_at` under 0.1 ms. The cornflower-field search evaluates a seed in about 1.2 s and runs at about 6 seeds/s.
+
+- 2026-11-15: The viewer's flower layer, key, hover answer and Best height. Flowers are worked out on each tile's worker with its biomes, at every scale (about twice the cost of biomes, cheap enough for the coarse stand-ins too), and the flower shown is part of the tile's style, so choosing one restyles without sampling again. A tile whose flowers fail keeps its biomes. The viewer has no area selection, so Best height works over the area in view, coarsened to at most 128 pixels a side, every 2 blocks through the level: a few seconds. On seed 12345 it agrees with `flower heights` (cornflowers best at y 94 in the flower forest at 190, −2060). The view text carries the layer (`flowers`) and the flower shown (`fl`). The guide's example spot (1000, −2000) turned out to be deep ocean at y 71; the page now uses that flower forest.
 
 - 2026-11-15: The flower-field constraint: `flower F field N [chance P%] place [at y A [to B]] [step S]`. The `at y` comes after the place, as for biome sampling, and there's no count: one field of N blocks is the question a farm asks. Heights are tried every 4 blocks; a field joins samples side to side at one height. Over 200 seeds on 26.3, a 300-block certain cornflower field within 1,000 of the spawn took about 0.17 s a seed and was met in 65; the top seed's field checks out with `flower at` and `flower heights`.
 
@@ -176,7 +178,7 @@ Newest first.
 
 - 2026-11-15: The flower map, layer and best heights. A pixel that's down to chance shows its most likely flower, fainter the less likely, rather than a checker of its flowers: plains' nine flowers made a checker noise, where the likeliest one at its chance reads at a glance. `render --flowers` and `--flower <id>` came with it, as the layer needed `Layers` fields every front end sets. A view still equals its tiles with flowers on.
 
-- 2026-11-15: `Session::biome_at_block` and `Session::flower_at`, through the API, match the oracle's block biomes in all three versions. The zoom needs only `BiomeZoom` and the session's biomes, not the block settings, so a flower answer doesn't load the chunk generator. [ADR 0075](../adr/0075-flower-answers-carry-exact-chances.md) records the answers' exact chances.
+- 2026-11-15: `Session::biome_at_block` and `Session::flower_at`, through the API, match the oracle's block biomes in all three versions. The zoom needs only `BiomeZoom` and the session's biomes, not the block settings, so a flower answer doesn't load the chunk generator. [ADR 0075](../../adr/0075-flower-answers-carry-exact-chances.md) records the answers' exact chances.
 
 - 2026-11-15: `oracle flowers` and its comparison: all 25,600 provider draws (state and next draw) and about 435,000 block biomes match in 26.2, 26.3 and 26.4-snapshot-8. The harness needs three adapter calls (each biome's bone meal features, a provider's state, the zoomed biome), and one 26.3 implementation compiles under 26.4. It's part of `golden` and CI, as kind `flowers`, at an estimated minute.
 

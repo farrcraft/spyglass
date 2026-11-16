@@ -69,8 +69,8 @@ Placing a container's chunk takes about a tenth of a second. Each container and 
 ## Flowers
 
 ```sh
-spyglass flower at 120,71,-340 --seed 12345
-spyglass flower heights minecraft:cornflower --min 100,-400 --max 200,-300 --y 60..140 --seed 12345
+spyglass flower at 165,94,-2074 --seed 12345
+spyglass flower heights minecraft:cornflower --min 120,-2110 --max 260,-2010 --y 60..110 --seed 12345
 ```
 
 `spyglass flower at x,y,z` says what bone meal grows on grass at a block: the flower's block, one above the grass. It gives each flower with its chance, and why: the biome there and its flower features. `spyglass flower heights` gives the share of an area where a flower is certain, and where it can grow, at each height in `--y` (every `--step` blocks). See [Flower farms](flower-farms.md).

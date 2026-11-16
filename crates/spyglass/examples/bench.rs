@@ -230,6 +230,7 @@ fn main() -> spyglass::Result<()> {
     viewer_tiles(&world, &mut seeds)?;
     underground_tiles(&world, &mut seeds)?;
     feature_tiles(&world, &mut seeds)?;
+    flower_tiles(&world, &mut seeds);
     let view = MapArea::centred_on([0, 0], [1024, 1024], 16, 64)?;
     let layers = Layers {
         structures: vec![villages.clone(), stronghold.clone()],
@@ -388,6 +389,31 @@ fn main() -> spyglass::Result<()> {
             last: i64::MAX,
         },
         64,
+        None,
+        false,
+    );
+    // A cornflower farm near the spawn (`docs/specs/search.md#flower-fields`): the biomes at
+    // every sample of nine heights, and the providers only where a biome can grow it.
+    let cornflowers = world.search_query(
+        "require flower minecraft:cornflower field 300 within 1000 of spawn at y 64 to 96 step 8",
+    )?;
+    report(
+        "evaluate cornflower field near spawn, new session",
+        5,
+        || {
+            let session = world.session(*seeds.next().unwrap()).unwrap();
+            black_box(session.evaluate(&cornflowers, false).unwrap());
+        },
+    );
+    rate_world(
+        &world,
+        "search, cornflower field near spawn, all threads",
+        &cornflowers,
+        spyglass::SeedSource::Range {
+            first: 0,
+            last: i64::MAX,
+        },
+        256,
         None,
         false,
     );
@@ -706,6 +732,49 @@ fn feature_tiles<'a>(
         );
     }
     Ok(())
+}
+
+/// The flower layer on one of the viewer's 128 × 128 tiles at y 72, in a session that has
+/// drawn the tile west of it, at 1:1 and 1:16 (it's drawn at every scale); Best height's work,
+/// a 128 × 128 area at 1:8 every 2 blocks from y 60 to 120; and one block's answer, in a new
+/// session (`docs/specs/render.md#flowers`).
+fn flower_tiles<'a>(world: &World, seeds: &mut impl Iterator<Item = &'a i64>) {
+    let tile = |scale: u32, x: i32| MapArea {
+        min: [x * 128 * scale as i32, 0],
+        size: [128, 128],
+        scale,
+        y: 72,
+    };
+    for scale in [1, 16] {
+        report_after(
+            &format!("128 x 128 tile flowers at 1:{scale}, next tile"),
+            5,
+            || {
+                let session = world.session(*seeds.next().unwrap()).unwrap();
+                black_box(session.flower_map(&tile(scale, 0)).unwrap());
+                session
+            },
+            |session| {
+                black_box(session.flower_map(&tile(scale, 1)).unwrap());
+            },
+        );
+    }
+    report_after(
+        "flower_heights cornflower, 128 x 128 at 1:8, y 60 to 120 step 2",
+        3,
+        || world.session(*seeds.next().unwrap()).unwrap(),
+        |session| {
+            black_box(
+                session
+                    .flower_heights(&tile(8, 0), "minecraft:cornflower", [60, 120], 2)
+                    .unwrap(),
+            );
+        },
+    );
+    report("flower_at one block, new session", 10, || {
+        let session = world.session(*seeds.next().unwrap()).unwrap();
+        black_box(session.flower_at([100, 72, -200]).unwrap());
+    });
 }
 
 /// [`rate`] for a search in one world.

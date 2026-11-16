@@ -1,8 +1,8 @@
 # 30. Nether portal linking
 
-- Status: In progress
-- Depends on: [08](completed/08-dimensions-and-versions.md), [17](completed/17-markers-and-saved-seeds.md), [25](completed/25-what-the-save-knows.md)
-- Plans: [m30-portal-linking](../plans/m30-portal-linking.md)
+- Status: Completed
+- Depends on: [08](08-dimensions-and-versions.md), [17](17-markers-and-saved-seeds.md), [25](25-what-the-save-knows.md)
+- Plans: [m30-portal-linking](../../plans/completed/m30-portal-linking.md)
 
 ## Goal
 
@@ -16,17 +16,17 @@ Show where a Nether portal leads, and where a portal can be built so that it lin
 - **Portals from a save.** The portals a save already has, from its points-of-interest files (`poi/`), as markers in both dimensions, with each one's link. Portals that don't link back to each other (A leads to B, but B leads to C) are flagged.
 - **The command.** `spyglass portal link` from a position or a save's portals, with `--json`.
 - **Data.** The user-data spec gains the portal marker kind, as a compatible change to the file's format: older files still load.
-- **Untrusted input:** the points-of-interest reader keeps [hardening](completed/10-hardening.md)'s limits, and a fuzz target covers it.
+- **Untrusted input:** the points-of-interest reader keeps [hardening](10-hardening.md)'s limits, and a fuzz target covers it.
 
 Not in scope:
 
-- Where the game builds a new portal when none is in range: it searches the blocks around the target for room, which needs the world's blocks after features ([decoration order](completed/27-decoration-order.md)). A later milestone could answer it as certain or a candidate, as features are.
+- Where the game builds a new portal when none is in range: it searches the blocks around the target for room, which needs the world's blocks after features ([decoration order](27-decoration-order.md)). A later milestone could answer it as certain or a candidate, as features are.
 - End portals and gateways.
 - Writing portals into a save.
 
 ## Exit criteria
 
-- [ ] Links from many entry positions, with portals placed at random in both dimensions, match the oracle's real server for 26.2, 26.3 and the 26.4 snapshots, including ties and the edges of the search area.
-- [ ] A portal marker placed in one dimension shows its target, link and search area in the other, and the overlay shows where a new portal keeps the link.
-- [ ] A real 26.3 save's portals appear with their links, and a mislinked pair is flagged.
-- [ ] A new spec covers linking, the [user-data spec](../specs/user-data.md) covers the marker kind, and the user guide describes portal markers, the overlay and the command.
+- [x] Links from many entry positions, with portals placed at random in both dimensions, match the oracle's real server for 26.2, 26.3 and the 26.4 snapshots, including ties and the edges of the search area.
+- [x] A portal marker placed in one dimension shows its target, link and search area in the other, and the overlay shows where a new portal keeps the link.
+- [x] A real 26.3 save's portals appear with their links, and a mislinked pair is flagged.
+- [x] A new spec covers linking, the [user-data spec](../../specs/user-data.md) covers the marker kind, and the user guide describes portal markers, the overlay and the command.

@@ -7,7 +7,6 @@ Code must not reference plans. Anything durable a plan produces belongs in a spe
 ## Active
 
 - [m22-user-guide](m22-user-guide.md): the user guide on GitHub Pages, for milestone [22](../roadmap/22-user-guide.md).
-- [m30-portal-linking](m30-portal-linking.md): Nether portal links, portal markers and a save's portals, for milestone [30](../roadmap/30-portal-linking.md).
 - [m31-save-inspector](m31-save-inspector.md): the report of what spyglass read from a save and how answers used it, for milestone [31](../roadmap/31-save-inspector.md).
 
 The follow-ups of milestones 08 and 11 ([roadmap](../roadmap/README.md#follow-ups)) need no plan of their own.

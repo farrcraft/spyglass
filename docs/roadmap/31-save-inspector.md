@@ -2,7 +2,7 @@
 
 - Status: Not started
 - Depends on: [25](completed/25-what-the-save-knows.md), [26](completed/26-data-packs.md)
-- Plans: none yet
+- Plans: [m31-save-inspector](../plans/m31-save-inspector.md)
 
 ## Goal
 

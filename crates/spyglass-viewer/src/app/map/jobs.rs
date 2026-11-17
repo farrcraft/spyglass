@@ -310,6 +310,12 @@ impl App {
                 .iter()
                 .all(|&r| self.markers.contains(&frame.marker_key(r)));
         let laid_out = layout_keys.iter().all(|(k, _)| self.layouts.contains(k));
+        // Features and loot in every region drawn, the ring around the view's included.
+        let placed = frame.regions.iter().all(|&r| {
+            let key = frame.feature_key(r);
+            (!frame.featuring || self.feature_markers.contains(&key))
+                && (!frame.looting || self.loot_markers.contains(&key))
+        });
         let view = frame.view;
         let shown = (
             (
@@ -329,11 +335,19 @@ impl App {
                 self.map_size,
             ),
         );
-        self.fill.frame(
+        let reached = self.fill.frame(
             shown,
             covered == tiles.len(),
-            detailed == tiles.len() && marked && laid_out,
+            detailed == tiles.len() && marked && laid_out && placed,
         );
+        // The zoom asked for while timing, once.
+        if let (Some(zoom), Some(reached)) = (self.timing_zoom, reached)
+            && (reached == timing::Filled::Full || zoom.at_covered)
+        {
+            self.timing_zoom = None;
+            self.settings.view.scale = zoom.scale;
+            eprintln!("timing: zoom to 1:{}", zoom.scale);
+        }
     }
 }
 

@@ -254,14 +254,14 @@ Scenarios 1 to 5 are run before the change and after it, three times each. Neith
   - with every pixel known, nothing is sampled.
 - [x] Viewer reuse: assembly on the UI thread's budget, partial jobs, and the finer-from-coarser start. Measure each layer's saving and drop the start where it's under 15%.
 - [x] Past the limit: draw cached regions with outlines and the hatch, behind a constant. Check by eye and decide, with the decision and why in the notes and render.md.
-- [ ] Memory: measure tile and region sizes and resident memory, decide on a byte budget, set the counts, and record them in render.md.
+- [x] Memory: measure tile and region sizes and resident memory, decide on a byte budget, set the counts, and record them in render.md.
 - [ ] The side panel: `style::section`, the five tabs' new look and badges, wrapping, every section listed through the helper, `Settings::folded`, the summaries, and **What spyglass read** unfolding warned sections. Tests:
   - fold state survives a settings round trip, and old settings load;
   - each Layers summary for on, paused and off;
   - a World section with a warning says so folded.
 - [x] Text boxes: `style::text_box`, and all twelve single-line boxes through it. A test that its padding in a menu is egui's in a panel, within a pixel, and one that egui's own box in a menu isn't. Checked by eye in **Filter saves** and **Filter biomes**.
 - [x] Checkboxes in menus: `style::menu_checkbox` for **Highlight a biome** and **Include markers**, with a test that it restores every widget state's fill and outline. Checked by eye in **Highlight a biome**.
-- [ ] Viewer timing: `SPYGLASS_VIEWER_TIMING_ZOOM` and scenarios 6 to 9. Run 1 to 9 three times before the change and after, on the same machine and seed, and record the times.
+- [x] Viewer timing: `SPYGLASS_VIEWER_TIMING_ZOOM` and scenarios 6 to 9. Run 1 to 9 three times before the change and after, on the same machine and seed, and record the times.
 - [ ] Check by eye with the `run-viewer` skill:
   - each limited layer greyed and paused past its limit, and back;
   - zooming out stops the spinner's jobs;
@@ -292,11 +292,30 @@ Scenarios 1 to 5 are run before the change and after it, three times each. Neith
 - [ ] An ADR for stoppable map calls.
 - [ ] The user guide's [viewer.md](../guide/src/viewer.md): the side panel, folding, zoom limits, and new screenshots.
 - [ ] The changelog: the new public API and the deprecation.
-- [ ] The viewer-timing results for scenarios 1 to 9, before and after.
+- [x] The viewer-timing results for scenarios 1 to 9, before and after.
 
 ## Notes
 
 Newest first.
+
+- 2026-11-17: Viewer timing and memory. `SPYGLASS_VIEWER_TIMING_ZOOM=<scale>[,covered]` zooms once, when the window is first full or first covered; "full" now also waits for the feature and loot regions drawn, ring included, or scenario 6 would be full before its dungeons. `cargo xtask viewer-timing` has scenarios 6 to 9 and prints the viewer's working set at the end and its peak. Scenario 9 zooms once covered, since at full nothing runs to stop. 26.3, seed 0, 1280 × 800, this machine, three runs each; "before" is the m31 tip (`b4a0de7`) in a worktree, which has scenarios 1 to 5 only. A first set of runs had scenarios 2 and 3 at up to 10.7 and 16.0 s with each heights job at 2.2 to 3.4 s, the machine busy; rerun quiet:
+
+  | Scenario                                 | Before: full  | After: covered | After: full   | Peak memory |
+  | ---------------------------------------- | ------------- | -------------- | ------------- | ----------- |
+  | 1: 1:4, biomes                           | 0.22–0.35 s   | 0.07–0.10 s    | 0.22–0.24 s   | 299 MB      |
+  | 2: 1:4, at the surface                   | 8.66–8.99 s   | 0.06–0.07 s    | 8.26–8.60 s   | 329–335 MB  |
+  | 3: + relief, swamp huts                  | 8.48–8.68 s   | 0.06–0.07 s    | 8.38–8.49 s   | 326–332 MB  |
+  | 4: 1:16, villages                        | 0.25 s        | 0.08–0.11 s    | 0.24–0.27 s   | 302–311 MB  |
+  | 5: 2 during a search                     | 15.54–34.32 s | 0.08–0.12 s    | 13.50–14.85 s | 325–332 MB  |
+  | 6: 1:2, every feature                    | –             | 0.08–0.10 s    | 212–232 s     | 760–769 MB  |
+  | 6: zoomed to 1:1                         | –             | 0.02 s         | 0.07 s        |             |
+  | 7: 1:1, surface and relief               | –             | 2.18–2.28 s    | 2.20–2.28 s   | 379–414 MB  |
+  | 7: zoomed to 1:4                         | –             | 0.07–0.12 s    | 8.39–9.04 s   |             |
+  | 8: 1:4, every underground layer at y 0   | –             | 0.08–0.12 s    | 14.40–15.71 s | 421–436 MB  |
+  | 8: zoomed to 1:1                         | –             | 0.08–0.10 s    | 1.85–2.12 s   |             |
+  | 9: 1:2, features and loot, zoomed to 1:8 | –             | 0.07–0.09 s    | 0.22–0.24 s   | 378–380 MB  |
+
+  None slower. Scenario 6's zoom placed no chunk: no `features` job after it. Scenario 7's zoom computed 46 to 49 of its tiles, since only the middle sixteenth of a 1:4 view was cached at 1:1. Scenario 9's 45 stops freed their workers 7 to 55 ms after the stop. Memory: the tile cache stays a count of 1,024 (a 4K screen is 510 tiles at one scale); a tile is about 100 KB with biomes and its texture, 320 KB with every layer (32 KB biomes at 1:4 and out, 65 KB heights, 96 KB underground, 64 KB flowers, 64 KB texture), so 100 to 330 MB at most. A byte budget would only bite with every layer on at 4K, and there it would drop tiles on screen, so it's not used. Regions measured with a scratch example on seed 12345: around a village, 36 features (4 KB) and 30 containers (104 KB); around a trial chamber, 21 features (2 KB) and 80 containers (127 KB), the containers counted as their debug text, so on the high side; 1,024 regions of each are kept. Peak memory is mostly the library's: 770 MB placing every feature kind at 1:2. Recorded in [render.md](../specs/render.md#reuse-across-scales).
 
 - 2026-11-17: Past the limit, decided by eye: kept, to 1:4 rather than 1:8. `zoom::DRAW_FOUND` and `zoom::FOUND_REACH`. Past their limit, features and loot draw what the region caches hold, nothing new is asked for, regions looked at are outlined where they meet ones that aren't, and those are hatched; the controls' hover text and the section's line say what's drawn was found earlier. Checked with the `run-viewer` skill, seed 12345, dungeons at 1:2 with the ring still filling, then 1:4 and 1:8. At 1:4 the searched area reads at a glance: an outline round it, the hatch outside, and the outlined gaps between dungeons read as none there. At 1:8 the dungeons inside pile into one grey blob and the hatch covers nearly the whole map, so `FOUND_REACH` is 2. Recorded in [render.md](../specs/render.md#reuse-across-scales).
 - 2026-11-17: Viewer reuse. Measured first, with a scratch example on 26.3 (three seeds, 128 × 128 tiles, each after its source in the same session, as the viewer has them). Started from the parent's quarter, a tile saved: 1:1 from 1:2, biomes −1%, heights 1%, surface −4%, flowers 9%, carving 2%, underground 5%; 1:2 from 1:4, biomes 12%, flowers −9%, carving −14%, the rest 2%; 1:4 from 1:8, all within 2%. Every layer is under 15%, so there's no finer-from-coarser start at all. Assembled from finer tiles, a coarse tile saved 88–100% per layer; its known pixels and maps took about 6 ms in all, flowers 5 of them. So assembling isn't done on the UI thread, as drafted: a tile or two a frame would take most of a second over a 70-tile view, where the workers do it in a few frames. A tile its finer tiles cover whole is a job at the front of the queue, ahead of the coarse stand-ins; one covered in part is a job with the pixels it has. Tile data is shared (`Arc<TileData>`) so a job can carry the tiles it takes pixels from; a tile serves if it has the layers needed (heights and flowers if needed, the same underground layers if any), looked up without marking it used. Carving maps are assembled the same way in the workers' own cache. Checked with the `run-viewer` skill, seed 12345, relief at 1:2, then zoomed out: the 1:4 tiles under the old view took 0.1 ms for heights and 0.2 ms for biomes, those in part about 15 ms, and the view was full in 9.2 s against 12 s for 1:2; no seams by eye. Tests: a 1:2 tile from all its finer tiles and from two equals the tile computed, at y and at the surface, heights with their edge row; a tile's carvings from the four under it equal its own; which cached tiles serve a key.

@@ -161,7 +161,7 @@ Project-level commands live in the `xtask` crate and run as `cargo xtask <comman
 | `cargo xtask release`       | Sets the version and dates the changelog for a release ([releasing](releasing.md)).                                                 |
 | `cargo xtask sweep`         | Deletes stale build outputs from `target/` ([ADR 0061](adr/0061-keeping-target-small.md)).                                          |
 | `cargo xtask version-diff`  | Reports what changed between two bundles ([adding a version](adding-a-version.md)).                                                 |
-| `cargo xtask viewer-timing` | Times the viewer's cold start in five fixed scenarios (`dist` build; [measuring the viewer](#measuring-the-viewer)).                |
+| `cargo xtask viewer-timing` | Times the viewer's cold start and a zoom in nine fixed scenarios (`dist` build; [measuring the viewer](#measuring-the-viewer)).     |
 
 ### Profiling
 
@@ -272,7 +272,7 @@ cargo run --release -p spyglass-viewer
 
 ### Measuring the viewer
 
-Two environment variables are for measuring the viewer. `SPYGLASS_VIEWER_TIMING=1` writes each tile job's time to stderr, and how long the map takes to cover the window and to fill it, after anything changes what it shows (on Windows, redirect stderr to see it). `SPYGLASS_VIEWER_SETTINGS=<file>` keeps settings in that file instead of the per-user one, and user data in that file's folder, so a measurement can start from known settings. `cargo xtask viewer-timing` uses both: it starts the viewer from settings of its own in five scenarios, from biomes at 1:4 to biomes at the surface while a search runs in another process, and prints the timings.
+Two environment variables are for measuring the viewer. `SPYGLASS_VIEWER_TIMING=1` writes each tile job's time to stderr, and how long the map takes to cover the window and to fill it, after anything changes what it shows (on Windows, redirect stderr to see it). `SPYGLASS_VIEWER_SETTINGS=<file>` keeps settings in that file instead of the per-user one, and user data in that file's folder, so a measurement can start from known settings. `SPYGLASS_VIEWER_TIMING_ZOOM=<scale>` zooms the map to that scale once the window is first full (`<scale>,covered`: once it's first covered, while jobs still run), so the zoom is timed too, and the jobs it stops say how long they took to stop. `cargo xtask viewer-timing` uses all three: it starts the viewer from settings of its own in nine scenarios, from biomes at 1:4 to biomes at the surface while a search runs in another process, the last four zooming in or out, and prints the timings and the viewer's peak memory.
 
 ## Next steps
 

@@ -408,6 +408,8 @@ pub struct App {
     expanded: std::collections::HashSet<String>,
     /// How long the map takes to fill the window, with `SPYGLASS_VIEWER_TIMING`.
     fill: crate::timing::Fill,
+    /// The zoom still to make while timing (`SPYGLASS_VIEWER_TIMING_ZOOM`).
+    timing_zoom: Option<crate::timing::Zoom>,
     /// The user's markers, done places and worlds (`docs/specs/user-data.md`).
     store: Store,
     /// The world shown, as the user data keys it.
@@ -546,6 +548,7 @@ impl App {
             in_view: HashMap::new(),
             expanded: std::collections::HashSet::new(),
             fill: crate::timing::Fill::default(),
+            timing_zoom: crate::timing::zoom(),
             store: data_dir.map_or_else(Store::detached, |dir| Store::open(&dir)),
             world_key: None,
             editing: None,

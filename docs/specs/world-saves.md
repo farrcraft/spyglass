@@ -103,17 +103,17 @@ The counts are made in the chunk scan's one pass, read without building any tree
 
 ### Warnings and their subjects
 
-| Warning                 | Subject (`SaveSubject`)                                    |
-| ----------------------- | ---------------------------------------------------------- |
-| `no_bundle`             | the data version setting                                   |
-| `unsupported_generator` | that dimension's generator setting                         |
-| `structures_disabled`   | the structures setting                                     |
-| `data_pack`             | that pack                                                  |
-| `modded`                | the modded setting                                         |
-| `older_chunks`          | that dimension's holdings                                  |
-| `unreadable_regions`    | that dimension's holdings                                  |
-| `moving_border`         | that dimension's border setting                            |
-| `pack_error`            | the pack whose file the error names, or else the dimension |
+| Warning                 | Subject (`SaveSubject`)                                                                                                                                                       |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `no_bundle`             | the data version setting                                                                                                                                                      |
+| `unsupported_generator` | that dimension's generator setting                                                                                                                                            |
+| `structures_disabled`   | the structures setting                                                                                                                                                        |
+| `data_pack`             | that pack                                                                                                                                                                     |
+| `modded`                | the modded setting                                                                                                                                                            |
+| `older_chunks`          | that dimension's holdings                                                                                                                                                     |
+| `unreadable_regions`    | that dimension's holdings                                                                                                                                                     |
+| `moving_border`         | that dimension's border setting                                                                                                                                               |
+| `pack_error`            | the pack whose file the error names, by its `data/...` path or by an id one of the packs has a file for (most loaders' errors name the resource by id), or else the dimension |
 
 `pack_error` comes from opening each answerable dimension with the packs, so only the report raises it; `SaveReport::warnings` doesn't have it, and `pack_errors()` gives the same errors without the report. The other warnings are the same in both.
 
@@ -202,5 +202,5 @@ Saves are untrusted input, so reads are capped well above anything the game writ
 - **Unit tests** build saves of each layout, the single player, errors, data packs (worldgen and other files, missing packs, names outside `datapacks/`, symlink cycles on Unix) and region files (every compression, `.mcc` chunks, unversioned and corrupt chunks, short files, lengths past their sectors and at the 4-byte boundary, zero-length external chunks, offsets past the end, decompression bombs, region files that can't be read) in the test, with `nbt::write` (ADR 0008).
 - **Fixture tests per dimension**, on a fixture bundle with an Overworld and a Nether: a save whose Nether generator isn't the Default one, or is missing, blocks the Nether only, in `open_world` and `open_game` alike.
 - **The CLI tests** run `world info` and `locate --world` on saves built in the test: Default, superflat, no bundle, packs, and `--from player`.
-- **Ignored tests on the machine's own saves**: in every answerable save no older version touched, the structure starts saved within 48 chunks of the spawn origin are the certain predicted ones, and every certain prediction in a chunk the save holds is saved (200 starts in four 26.3 saves, 2026-11-11). Every save in the launchers reads (191 on the development machine, all three layouts, 1.9 to 26.3), and every answerable save that no older version generated part of has its Overworld spawn in the 11 × 11 chunks around spyglass's spawn origin. Every Default 26.3 save there stores all three dimensions' generators, each the Default preset's; a superflat one is blocked in the Overworld only.
+- **Ignored tests on the machine's own saves**: in every answerable save no older version touched, the structure starts saved within 48 chunks of the spawn origin are the certain predicted ones, and every certain prediction in a chunk the save holds is saved (200 starts in four 26.3 saves, 2026-11-11). Every save in the launchers reads (191 on the development machine, all three layouts, 1.9 to 26.3), and every answerable save that no older version generated part of has its Overworld spawn in the 11 × 11 chunks around spyglass's spawn origin. Every Default 26.3 save there stores all three dimensions' generators, each the Default preset's; a superflat one is blocked in the Overworld only. Every save there has a report (`details()`, 193 saves), and in every answerable 26.3 save no older version touched, the starts the chunk scan keeps are those the whole-chunk reader gives, chunk by chunk, within 48 chunks of the spawn origin (29,720 chunks and 228 starts in five saves, 2026-11-16). `world info --json` and `details()` agree field for field on a 26.3 save with chunks from an older version and on a copy of a 26.3 save with Terralith enabled.
 - **In game**: `cargo xtask oracle locate --world <save>` runs the dedicated server on a copy of the save ([oracle.md](oracle.md#locate-answers)), and the `/locate` comparison opens the save through `inspect_save`. For the two Seed Check worlds, all 200 cases agree.

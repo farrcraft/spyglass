@@ -127,7 +127,7 @@ Packs found in `datapacks/` but in neither list aren't applied: the game adds th
 - for a tag, **merged** with what's below, or **replaced** when it says `"replace": true` (a file that doesn't read as a tag is skipped, as the game skips it);
 - **shadowed** when a higher pack has the same path, or hides it with its filter: it never takes effect. A shadowed tag is still merged, unless a higher pack replaces or hides it.
 
-Its `filter` **hides** the files of the packs below it that it matches, counted per registry the same way. Structure templates (`structure/`, `.nbt`) are counted as a registry of their own.
+Its `filter` **hides** the files of the packs below it that it matches, counted per registry the same way. Structure templates (`structure/`, `.nbt`) are counted as a registry of their own. A file counts only with its registry's extension (`.nbt` for templates, `.mcfunction` for functions, `.json` for the rest), as `FileToIdConverter` lists them: Terralith's `.json.disabled` structures aren't resources.
 
 `spyglass::answers_fed_by(registry)` names the answers a registry feeds, so a pack's changes say which answers they touch:
 
@@ -154,13 +154,13 @@ Any other registry, such as `recipe`, `advancement` or `function`, is counted as
 
 ### A widely used pack
 
-Terralith 2.6.5 for 26.3, the data pack edition (`Terralith_v2.6.5+26.3.zip`, 2,619 entries), downloaded by hand into the gitignored `packs/`, loaded by the harness with `--pack packs/Terralith_v2.6.5+26.3.zip --name terralith` and compared as `26.3+terralith` (2026-11-13). It replaces the Overworld's noise settings, parameter list and surface rules, overrides 40 vanilla biomes and adds 97, and brings 50 structures and 300 templates.
+Terralith 2.6.5 for 26.3, the data pack edition (`Terralith_v2.6.5+26.3.zip`, 2,619 entries), downloaded by hand into the gitignored `packs/`, loaded by the harness with `--pack packs/Terralith_v2.6.5+26.3.zip --name terralith` and compared as `26.3+terralith` (2026-11-13). It replaces the Overworld's noise settings, parameter list and surface rules, replaces 39 vanilla biomes and adds 95, and brings 29 structures and 183 templates, as `Bundle::layer_changes` counts them and the zip's entries confirm (2026-11-16; an earlier count here, 40, 97, 50 and 300, was wrong). 18 more structure files are named `.json.disabled`, which the game's registries don't list.
 
 What agrees with the game, every value of the golden set: the noise probe, density functions, biomes (every golden cell), the aquifer, the noise fill, spawn, heights, and every block of the golden chunks without carvers and with them.
 
 What spyglass doesn't support, so a world with Terralith isn't answered ([above](#worlds)), each the first such file of its kind:
 
-- **Old templates.** 290 of its 300 structure templates were saved by older versions (data versions 2730 to 4325, 1.17 to 1.21.x), which the game brings up to date with its data fixers when it loads them. spyglass reads only the version's own (`terralith:mage/tower`, 3839).
+- **Old templates.** 173 of its 183 structure templates were saved by older versions (data versions 2730 to 4325, 1.17 to 1.21.x), which the game brings up to date with its data fixers when it loads them. spyglass reads only the version's own (`terralith:mage/tower`, 3839).
 - **Feature forms:** a `minecraft:weighted` block state provider as a `filling_provider` (`terralith:taiga/mega/boulders`), and doubtless more behind it.
 - **Loot:** a `minecraft:tag` entry (`terralith:spire/rare`).
 

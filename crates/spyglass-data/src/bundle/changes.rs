@@ -71,9 +71,14 @@ pub fn registry_and_id(path: &str) -> Option<(String, String)> {
     }
     let registry = parts[..depth].join("/");
     let file = parts[depth..].join("/");
-    let name = file
-        .rsplit_once('.')
-        .map_or(file.as_str(), |(stem, _)| stem);
+    // The game lists a registry's files by its one extension (`FileToIdConverter`), so a file
+    // with another, such as a pack's `x.json.disabled`, is no resource.
+    let extension = match registry.as_str() {
+        "structure" => ".nbt",
+        "function" => ".mcfunction",
+        _ => ".json",
+    };
+    let name = file.strip_suffix(extension)?;
     Some((registry, format!("{namespace}:{name}")))
 }
 

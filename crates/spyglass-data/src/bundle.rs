@@ -1107,6 +1107,12 @@ mod tests {
             ("structure".into(), "mod:igloo/top".into())
         );
         assert_eq!(registry_and_id("data/mod/worldgen/biome"), None);
+        // A file the game doesn't list: another extension.
+        assert_eq!(
+            registry_and_id("data/mod/worldgen/structure/camp.json.disabled"),
+            None
+        );
+        assert_eq!(registry_and_id("data/mod/structure/hut.json"), None);
     }
 
     #[test]

@@ -104,7 +104,7 @@ The library maps each registry to the answers it feeds, with a fixed table in `s
 
 ## Tasks
 
-- [ ] Spec first: [world-saves.md](../specs/world-saves.md) gets a _Report_ section (the four sections, the source of every setting in each layout, what each decides, the holdings and how they're counted, the subject of each warning). It also gets the two new warnings. [data-packs.md](../specs/data-packs.md) gets _What a pack changes_.
+- [x] Spec first: [world-saves.md](../specs/world-saves.md) gets a _Report_ section (the four sections, the source of every setting in each layout, what each decides, the holdings and how they're counted, the subject of each warning). It also gets the two new warnings. [data-packs.md](../specs/data-packs.md) gets _What a pack changes_.
 - [x] `spyglass_world::Save::sources`: the file and NBT path of every value, for the three layouts, with a test per layout.
 - [x] The scan's counts: a skipping visitor in `spyglass_data::nbt` for `structures.starts` and `block_entities`, `ChunkFields`' new fields, and unit tests on chunks built in the test (`INVALID`, missing `id`, pre-2970 chunks, empty `starts`, containers with and without `LootTable`, proto chunks). Fuzz it through the existing `region` target.
 - [x] Time the scan on the largest local save, before and after. Decide between keeping the counts in `Scan::Chunks` and adding `Scan::Holdings`, and record the times in the spec.
@@ -115,32 +115,33 @@ The library maps each registry to the answers it feeds, with a fixed table in `s
 - [x] `SaveChunks::usage`, counted where `StoredStarts` and the container lookup already answer, with a test that a locate and a loot query move the right counts.
 - [x] CLI: `world info`'s text and `--json`. [cli-json.md](../specs/cli-json.md) gets `settings`, `packs`, `dimensions` and `about`, and the CLI tests cover each section and `--quick`.
 - [ ] Viewer: the World panel, the shorter notice, moving the view from the panel, and the session's usage. Checked by eye with the `run-viewer` skill.
-- [ ] Ignored tests on the machine's saves: every launcher save's `details()` builds. In every answerable 26.3 save no older version touched, the start counts match what `SaveChunks` reads for the chunks within 48 of the spawn origin.
+- [x] Ignored tests on the machine's saves: every launcher save's `details()` builds. In every answerable 26.3 save no older version touched, the start counts match what `SaveChunks` reads for the chunks within 48 of the spawn origin.
 - [ ] The exit criterion's two real saves: one 26.3 save with a data pack (Terralith or the fixture pack) and one with chunks from an older version. `world info --json` and the panel's `SaveDetails` are compared field for field in an ignored test.
-- [ ] Guide: [your-worlds.md](../guide/src/your-worlds.md), [viewer.md](../guide/src/viewer.md), [data-packs.md](../guide/src/data-packs.md). The changelog notes the new `SaveWarning` variants and the deprecated `applied_packs`.
+- [x] Guide: [your-worlds.md](../guide/src/your-worlds.md), [viewer.md](../guide/src/viewer.md), [data-packs.md](../guide/src/data-packs.md). The changelog notes the new `SaveWarning` variants and the deprecated `applied_packs`.
 - [ ] Update the milestone: reword the scope's opened-containers item ([above](#what-the-save-holds)) and tick the exit criteria.
 
 ## Verification
 
 - **Warnings:** a test per warning kind, on a save built in the test, that `details()` places it beside the right subject, and that `world info`'s text prints it under that line.
 - **Counts:** unit tests on built chunks for every rule of the start and container counts. The ignored test on local saves checks that the scan's start counts agree with `SaveChunks`' on-demand reads.
-- **Packs:** `layer_changes` on built packs, and on Terralith 2.6.5 (from the gitignored `packs/`), whose known changes are in [data-packs.md](../specs/data-packs.md#a-widely-used-pack): 40 vanilla biomes replaced, 97 added, 50 structures, 300 templates.
+- **Packs:** `layer_changes` on built packs, and on Terralith 2.6.5 (from the gitignored `packs/`), whose known changes are in [data-packs.md](../specs/data-packs.md#a-widely-used-pack): 39 vanilla biomes replaced, 95 added, 29 structures, 183 templates (the spec's earlier 40, 97, 50 and 300 were wrong).
 - **Same report:** the CLI's JSON and the viewer's `SaveDetails` for the two real saves are compared in an ignored test, and by eye in the panel.
 - **Cost:** the scan's time on the largest local save, before and after, in the spec.
 - `cargo xtask check` passes.
 
 ## Durable outputs
 
-- [ ] [world-saves.md](../specs/world-saves.md): the report, the settings' sources, the holdings and their counting, the warnings' subjects, `PackError` and `MovingBorder`.
-- [ ] [data-packs.md](../specs/data-packs.md): what a pack changes, and the registry-to-answers table.
-- [ ] [cli-json.md](../specs/cli-json.md): `world info`'s new fields, and `applied_packs` deprecated.
+- [x] [world-saves.md](../specs/world-saves.md): the report, the settings' sources, the holdings and their counting, the warnings' subjects, `PackError` and `MovingBorder`.
+- [x] [data-packs.md](../specs/data-packs.md): what a pack changes, and the registry-to-answers table.
+- [x] [cli-json.md](../specs/cli-json.md): `world info`'s new fields, and `applied_packs` deprecated.
 - [ ] An ADR if the counts need their own scan level, or if `SaveWarning` is made `#[non_exhaustive]` to stop the next variant from breaking callers.
-- [ ] The user guide's [your-worlds.md](../guide/src/your-worlds.md), [viewer.md](../guide/src/viewer.md) and [data-packs.md](../guide/src/data-packs.md).
+- [x] The user guide's [your-worlds.md](../guide/src/your-worlds.md), [viewer.md](../guide/src/viewer.md) and [data-packs.md](../guide/src/data-packs.md).
 
 ## Notes
 
 Newest first.
 
+- 2026-11-16: The two real saves. "Modrinth Latest upgraded" (26.3, 19,761 of 21,636 Overworld chunks from data version 4790) and a copy of "Portal Link Test" with Terralith put in `datapacks/` and enabled in `level.dat` give the same report from `world info --json` and `details()`, field for field (`spyglass-cli/tests/local_report.rs`). The copy stands in for a world generated with a pack: none of the machine's saves has one. Terralith showed `layer_changes` counting its 18 `.json.disabled` structure files, which the game doesn't list; a file now counts only with its registry's extension. It also showed the spec's Terralith counts were wrong (39, 95, 29 and 183, not 40, 97, 50 and 300; 173 old templates, not 290). Its three `pack_error`s land under the pack, naming `data/terralith/structure/mage/tower.nbt`. The local-saves test: 193 reports build, and the scan's starts match the whole-chunk reader's in 29,720 chunks of five saves.
 - 2026-11-16: The World tab is built and compiles clean with clippy, but isn't checked by eye yet: the viewer opened behind other windows on the desktop, so the run-viewer skill couldn't see or click it. It's a side-panel tab, not a separate panel, shown only while a save is, and the notice row is one line with a **What spyglass read** button. The report is built on the inspect worker after `inspect_save`.
 - 2026-11-16: A pack error rarely names a file: the density function loader's names the resource by id (`minecraft:zero: type: unsupported density function type`). So the report finds the pack by a `data/` path in the message, else by an id one of the packs has a file for, else by a namespace only packs have. The registry test found two registries the draft table missed, `worldgen/carver` and `tags/instrument`. `MovingBorder` is raised by `inspect_save` (the borders are three small files), `PackError` only by `details()`.
 - 2026-11-16: The counts are read by a new tree-free walker, `nbt::walk`, which `read_root_fields` now uses too. On hermitcraftvanilla-s5 (4.5 GB) `world info --json` went from 6.3 to 7.1 s to 7.1 to 7.9 s, three runs each, twice: about 14%, so the counts stay in `Scan::Chunks` and no ADR is needed. Reading `Level` for pre-1.18 chunks also gives them their `Status` and `InhabitedTime`, which the scan missed before. 120 s of `cargo xtask fuzz region` found nothing.

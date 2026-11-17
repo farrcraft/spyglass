@@ -32,12 +32,15 @@ pub const ERROR: Color32 = Color32::from_rgb(0xf0, 0x80, 0x78);
 pub const OVERLAY: Color32 = Color32::from_rgba_premultiplied(0x1a, 0x1b, 0x1f, 0xf0);
 
 /// Sets the viewer's look on `ctx`: dark whatever the system prefers.
+/// The space around a button's or a text box's text.
+const BUTTON_PADDING: Vec2 = Vec2::new(8.0, 4.0);
+
 pub fn apply(ctx: &egui::Context) {
     ctx.set_theme(Theme::Dark);
     ctx.style_mut_of(Theme::Dark, |style| {
         let spacing = &mut style.spacing;
         spacing.item_spacing = Vec2::new(8.0, 6.0);
-        spacing.button_padding = Vec2::new(8.0, 4.0);
+        spacing.button_padding = BUTTON_PADDING;
         spacing.interact_size.y = 24.0;
         spacing.menu_margin = Margin::same(6);
         spacing.window_margin = Margin::same(12);
@@ -118,6 +121,18 @@ pub fn hint(ui: &mut egui::Ui, text: &str) {
     });
 }
 
+/// A single-line text box, padded as it is in a panel wherever it is. egui takes a text box's
+/// padding from the buttons', which a menu shrinks to almost nothing (`menu_style`), so in a
+/// menu the text would sit in the box's top-left corner.
+pub fn text_box(text: &mut dyn egui::TextBuffer) -> egui::TextEdit<'_> {
+    egui::TextEdit::singleline(text)
+        .margin(Margin::symmetric(
+            BUTTON_PADDING.x as i8,
+            BUTTON_PADDING.y as i8,
+        ))
+        .align(egui::Align2::LEFT_CENTER)
+}
+
 /// Numbers: coordinates, seeds, scores.
 pub fn mono(text: impl Into<String>) -> RichText {
     RichText::new(text).font(FontId::monospace(12.5))
@@ -136,4 +151,52 @@ pub fn overlay() -> egui::Frame {
             spread: 0,
             color: Color32::from_black_alpha(90),
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Where a text box's text sits in it, `[left, above, below]`, in a menu or not.
+    fn padding(in_menu: bool, text_box: impl Fn(&mut String) -> egui::TextEdit<'_>) -> [f32; 3] {
+        let ctx = egui::Context::default();
+        apply(&ctx);
+        let mut padding = [0.0; 3];
+        let mut text = "Filter saves".to_string();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            if in_menu {
+                egui::containers::menu::menu_style(ui.style_mut());
+            }
+            let output = text_box(&mut text).show(ui);
+            let rect = output.response.rect;
+            let text_rect = egui::Rect::from_min_size(output.galley_pos, output.galley.size());
+            padding = [
+                text_rect.left() - rect.left(),
+                text_rect.top() - rect.top(),
+                rect.bottom() - text_rect.bottom(),
+            ];
+        });
+        // The font atlas made on the first frame, which nothing here uploads.
+        output.textures_delta.clear();
+        padding
+    }
+
+    #[test]
+    fn a_text_box_in_a_menu_is_padded_as_in_a_panel() {
+        let panel = padding(false, |t| egui::TextEdit::singleline(t));
+        for in_menu in [false, true] {
+            let ours = padding(in_menu, |t| text_box(t));
+            for (ours, panel) in ours.into_iter().zip(panel) {
+                assert!((ours - panel).abs() <= 1.0, "{ours:?} against {panel:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn egui_s_text_box_in_a_menu_is_not() {
+        // What `text_box` is for: if this starts failing, egui pads a menu's text box itself.
+        let [left, above, _] = padding(true, |t| egui::TextEdit::singleline(t));
+        let [panel_left, panel_above, _] = padding(false, |t| egui::TextEdit::singleline(t));
+        assert!(left < panel_left - 1.0 && above < panel_above - 1.0);
+    }
 }

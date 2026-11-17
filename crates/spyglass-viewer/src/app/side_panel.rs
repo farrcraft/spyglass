@@ -591,7 +591,7 @@ impl App {
         ui.horizontal(|ui| {
             ui.label("Ring those holding");
             let edit = ui.add(
-                egui::TextEdit::singleline(&mut self.settings.loot)
+                style::text_box(&mut self.settings.loot)
                     .hint_text("minecraft:diamond")
                     .desired_width(150.0),
             );
@@ -797,7 +797,7 @@ impl App {
             biomes.sort_unstable();
             ui.menu_button("+ Highlight a biome", |ui| {
                 ui.add(
-                    egui::TextEdit::singleline(&mut self.biome_filter)
+                    style::text_box(&mut self.biome_filter)
                         .hint_text("Filter biomes")
                         .desired_width(200.0),
                 )
@@ -848,7 +848,7 @@ impl App {
             style::hint(ui, "Structures don't generate in this save.");
         }
         ui.add(
-            egui::TextEdit::singleline(&mut self.structure_filter)
+            style::text_box(&mut self.structure_filter)
                 .hint_text("Filter structures")
                 .desired_width(f32::INFINITY),
         );

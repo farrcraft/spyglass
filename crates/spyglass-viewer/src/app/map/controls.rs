@@ -43,7 +43,7 @@ impl App {
                     .show(ui, |ui| {
                         let edit = ui
                             .add(
-                                egui::TextEdit::singleline(&mut self.goto)
+                                style::text_box(&mut self.goto)
                                     .font(egui::TextStyle::Monospace)
                                     .hint_text("Go to x z  or  x y z")
                                     // The field's padding is its frame's, so an empty frame

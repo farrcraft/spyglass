@@ -1,8 +1,8 @@
 # 32. Viewer polish
 
-- Status: Not started
-- Depends on: [13](completed/13-viewer-redesign.md), [14](completed/14-viewer-performance.md)
-- Plans: none yet
+- Status: In progress
+- Depends on: [13](completed/13-viewer-redesign.md), [14](completed/14-viewer-performance.md), [31](completed/31-save-inspector.md)
+- Plans: [m32-viewer-polish](../plans/m32-viewer-polish.md)
 
 ## Goal
 
@@ -18,9 +18,10 @@ The viewer says plainly what the current zoom can show, stops work the view no l
   - _Further out than a layer's limit_: points already computed can be drawn past the limit, where they were computed, with the area that's covered shaded so an empty place isn't mistaken for one with nothing. Nothing new is computed there. The plan decides whether this is clear enough to ship, or confusing.
 - **Memory.** The caches stay bounded. The plan measures what the reuse costs and sets limits from it.
 - **The side panel.**
-  - Clearer tabs: the selected tab unmistakable, and each tab's count (search hits, markers) where it's useful.
+  - Clearer tabs: all five (Layers, Search, Locate, Markers, and the World tab [31](completed/31-save-inspector.md) added while a save is shown), the selected tab unmistakable, and each tab's count (search hits, locate hits, markers, the save's warnings) where it's useful.
   - Clearer sections: top-level sections set apart from the controls inside them, with consistent spacing.
-  - Folding: each section can be collapsed and expanded, and the viewer remembers which ones. A collapsed section's header still says what in it is on ("2 on", "paused: zoom in"), so a hidden layer isn't a surprise on the map.
+  - Folding: each section can be collapsed and expanded, the World tab's included, and the viewer remembers which ones. A collapsed section's header still says what in it is on ("2 on", "paused: zoom in"), or in the World tab its warnings, so a hidden layer or warning isn't a surprise.
+- **Text boxes.** Every single-line text box is padded the same, in a menu or not. Today the boxes in menus (**Filter saves**, **Filter biomes**, the shared view) have their text against the box's top-left corner.
 - **Checked by eye and by tests.** Screenshots before and after for the guide. Tests for the zoom rule, stopping and reuse. [Viewer timing](completed/14-viewer-performance.md) scenarios for zooming in and out show the reuse paying, and no scenario gets slower.
 
 Not in scope:
@@ -35,4 +36,5 @@ Not in scope:
 - [ ] Zooming in from 1:2 to 1:1 with features on places no chunk twice, and the viewer-timing scenarios for zooming are faster than before, with none slower.
 - [ ] Tiles built from cached ones are identical to tiles computed directly (a test per layer that reuses).
 - [ ] The side panel's sections fold, remember their state across a restart, and say what's on when folded.
+- [x] Every single-line text box is padded the same, in a menu or not.
 - [ ] The user guide's [viewer](../guide/src/viewer.md) page shows the new panel and describes zoom limits and folding.

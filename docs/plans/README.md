@@ -7,5 +7,6 @@ Code must not reference plans. Anything durable a plan produces belongs in a spe
 ## Active
 
 - [m22-user-guide](m22-user-guide.md): the user guide on GitHub Pages, for milestone [22](../roadmap/22-user-guide.md).
+- [m32-viewer-polish](m32-viewer-polish.md): zoom limits, stopped and reused work, and a foldable side panel, for milestone [32](../roadmap/32-viewer-polish.md).
 
 The follow-ups of milestones 08 and 11 ([roadmap](../roadmap/README.md#follow-ups)) need no plan of their own.

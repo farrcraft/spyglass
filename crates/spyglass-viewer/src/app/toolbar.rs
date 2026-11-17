@@ -48,7 +48,7 @@ impl App {
     fn seed_field(&mut self, ui: &mut egui::Ui) {
         ui.label(egui::RichText::new("Seed").color(style::MUTED));
         let edit = ui.add(
-            egui::TextEdit::singleline(&mut self.settings.seed)
+            style::text_box(&mut self.settings.seed)
                 .font(egui::TextStyle::Monospace)
                 .desired_width(180.0)
                 .hint_text("a number or text"),
@@ -150,7 +150,7 @@ impl App {
                 ui.weak("No saves in the launchers' folders.");
             } else {
                 ui.add(
-                    egui::TextEdit::singleline(&mut self.save_filter)
+                    style::text_box(&mut self.save_filter)
                         .hint_text("Filter saves")
                         .desired_width(220.0),
                 )

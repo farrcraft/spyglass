@@ -37,7 +37,7 @@ The milestones build toward the goals in the [README](../../README.md#goals): co
 | 29  | [Flower fields](completed/29-flower-fields.md)                                        | Which flower bone meal grows at any block and height; fields to search.   | Completed   |
 | 30  | [Nether portal linking](completed/30-portal-linking.md)                               | Where a portal leads, where to build one so it links, and a save's links. | Completed   |
 | 31  | [What spyglass read from a save](completed/31-save-inspector.md)                      | A save's settings, packs and holdings, and how answers used them.         | Completed   |
-| 32  | [Viewer polish](32-viewer-polish.md)                                                  | Clear zoom limits, stopped and reused work on zoom, a foldable panel.     | Not started |
+| 32  | [Viewer polish](32-viewer-polish.md)                                                  | Clear zoom limits, stopped and reused work on zoom, a foldable panel.     | In progress |
 
 ## Follow-ups
 

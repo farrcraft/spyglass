@@ -316,7 +316,7 @@ impl App {
             .default_width(260.0)
             .show(ctx, |ui| {
                 let edit = ui.add(
-                    egui::TextEdit::singleline(&mut marker.name)
+                    style::text_box(&mut marker.name)
                         .hint_text("Name")
                         .char_limit(200)
                         .desired_width(f32::INFINITY),
@@ -413,7 +413,7 @@ impl App {
         let name = &mut self.world_name.1;
         let edit = ui
             .add(
-                egui::TextEdit::singleline(name)
+                style::text_box(name)
                     .id_salt("world name")
                     .hint_text("Name it to keep it in Worlds")
                     .char_limit(200)
@@ -626,7 +626,7 @@ impl App {
             ui.separator();
             ui.label("Open a view text");
             let edit = ui.add(
-                egui::TextEdit::singleline(&mut self.share_text)
+                style::text_box(&mut self.share_text)
                     .hint_text("spyglass:1;s=…")
                     .desired_width(280.0),
             );

@@ -149,7 +149,7 @@ impl App {
                 ui.end_row();
                 ui.label("Seed limit");
                 ui.add(
-                    egui::TextEdit::singleline(&mut search_settings.seeds)
+                    style::text_box(&mut search_settings.seeds)
                         .hint_text("none")
                         .desired_width(90.0),
                 );
@@ -172,15 +172,9 @@ impl App {
                     );
                 if search_settings.range {
                     ui.horizontal(|ui| {
-                        ui.add(
-                            egui::TextEdit::singleline(&mut search_settings.first)
-                                .desired_width(100.0),
-                        );
+                        ui.add(style::text_box(&mut search_settings.first).desired_width(100.0));
                         ui.label("to");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut search_settings.last)
-                                .desired_width(100.0),
-                        );
+                        ui.add(style::text_box(&mut search_settings.last).desired_width(100.0));
                     });
                 }
                 ui.horizontal(|ui| {

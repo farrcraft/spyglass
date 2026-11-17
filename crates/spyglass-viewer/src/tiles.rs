@@ -24,7 +24,7 @@ use std::time::Instant;
 use eframe::egui;
 use spyglass::{
     BiomeMap, CarvingMap, FeatureQuery, FlowerCount, FlowerMap, FoundContainer, FoundFeature,
-    GeneratedChunk, HeightMap, ItemQuery, Layers, MapFeatures, Session, Stop, Stopping,
+    GeneratedChunk, HeightMap, ItemQuery, Known, Layers, MapFeatures, Session, Stop, Stopping,
     StructureLayout, StructureQuery, StructureStart, UndergroundMap,
 };
 
@@ -212,6 +212,9 @@ pub struct Job {
     pub loot: Option<ItemQuery>,
     /// For loot: every container, not only those the item's in.
     pub all_containers: bool,
+    /// For biomes: tiles at another scale whose pixels this one shares, so it computes only
+    /// the rest (`spyglass::Known`, `docs/specs/render.md#reuse-across-scales`).
+    pub from: Vec<Arc<TileData>>,
 }
 
 /// What a job computed, by the kind of job.
@@ -408,6 +411,20 @@ fn work(
     }
 }
 
+/// The pixels `maps` (an iterator of references) know of `area`, if any do, as a
+/// `spyglass::Known`; maps of another kind than the first are passed over. A macro, since the
+/// library's `Known` is generic over a trait it doesn't name.
+macro_rules! known {
+    ($area:expr, $maps:expr) => {{
+        let mut known = Known::new($area)?;
+        let mut any = false;
+        for map in $maps {
+            any |= known.add(map).is_ok();
+        }
+        any.then_some(known)
+    }};
+}
+
 /// Computes one job with the library, timing each part, through `stop`: the job gives up
 /// with [`JobError::Stopped`] soon after it's raised.
 fn compute(job: &Job, carvings: &Carvings, stop: &Stop) -> Result<Output, JobError> {
@@ -457,35 +474,61 @@ fn compute(job: &Job, carvings: &Carvings, stop: &Stop) -> Result<Output, JobErr
     let features = |layers: Layers| session.map_features(&area, &layers);
     match job.key {
         JobKey::Biomes(key) => {
+            // What the tiles the job names already know, layer by layer.
+            let from = &job.from;
             let heights = if key.heights {
-                Some(timing::job(timing_name("heights"), || {
-                    session.height_map(&area)
+                let known = known!(&area, from.iter().filter_map(|d| d.heights.as_ref()));
+                Some(timing::job(timing_name("heights"), || match &known {
+                    Some(known) => session.height_map_with(&area, known),
+                    None => session.height_map(&area),
                 })?)
             } else {
                 None
             };
-            let biomes = timing::job(timing_name("biomes"), || match &heights {
-                Some(heights) if key.surface => session.surface_biome_map(heights),
-                _ => session.biome_map(&area),
+            let known = known!(&area, from.iter().map(|d| &d.biomes));
+            let biomes = timing::job(timing_name("biomes"), || match (&heights, &known) {
+                (Some(heights), Some(known)) if key.surface => {
+                    session.surface_biome_map_with(heights, known)
+                }
+                (Some(heights), None) if key.surface => session.surface_biome_map(heights),
+                (_, Some(known)) => session.biome_map_with(&area, known),
+                (_, None) => session.biome_map(&area),
             })?;
             let underground = if key.underground.any() {
-                let carved = if key.underground.carvers {
-                    Some(carving_map(job, &session, carvings, key.tile, &area)?)
-                } else {
-                    None
-                };
-                let map = timing::job(timing_name("underground"), || {
-                    session.underground_map(&area, &key.underground.layers(), carved.as_deref())
+                let known = known!(&area, from.iter().filter_map(|d| d.underground.as_deref()));
+                // Carvings only for pixels the tiles don't know, but kept whole when carved,
+                // for other heights.
+                let carved =
+                    if key.underground.carvers && known.as_ref().is_none_or(|k| !k.is_complete()) {
+                        Some(carving_map(job, &session, carvings, key.tile, &area)?)
+                    } else {
+                        None
+                    };
+                let layers = key.underground.layers();
+                let map = timing::job(timing_name("underground"), || match &known {
+                    Some(known) => {
+                        session.underground_map_with(&area, &layers, carved.as_deref(), known)
+                    }
+                    None => session.underground_map(&area, &layers, carved.as_deref()),
                 });
                 Some(Box::new(map?))
             } else {
                 None
             };
+            let known = known!(
+                &area,
+                from.iter().filter_map(|d| match &d.flowers {
+                    Some(Ok(flowers)) => Some(&flowers.map),
+                    _ => None,
+                })
+            );
             // A tile whose flowers fail keeps its biomes and says why, unless it was stopped.
-            let flowers = match key
-                .flowers
-                .then(|| timing::job(timing_name("flowers"), || session.flower_map(&area)))
-            {
+            let flowers = match key.flowers.then(|| {
+                timing::job(timing_name("flowers"), || match &known {
+                    Some(known) => session.flower_map_with(&area, known),
+                    None => session.flower_map(&area),
+                })
+            }) {
                 None => None,
                 Some(Err(spyglass::Error::Stopped)) => return Err(JobError::Stopped),
                 Some(Ok(map)) => Some(Ok(TileFlowers {
@@ -623,9 +666,23 @@ fn carving_map(
             return Ok(map.clone());
         }
     }
+    // The carvings of the tiles under this one, where the workers kept them: a tile they
+    // cover whole is carved from them alone.
+    let finer: Vec<Arc<CarvingMap>> = {
+        let kept = carvings.lock().unwrap_or_else(PoisonError::into_inner);
+        tile.children()
+            .into_iter()
+            .flatten()
+            .filter_map(|child| kept.peek(&(key.0, child)).cloned())
+            .collect()
+    };
+    let known = known!(area, finer.iter().map(|map| &**map));
     let map = timing::job(
         || format!("carvers 1:{}", tile.scale),
-        || session.carving_map(area),
+        || match &known {
+            Some(known) => session.carving_map_with(area, known),
+            None => session.carving_map(area),
+        },
     )?;
     let map = Arc::new(map);
     carvings
@@ -657,14 +714,14 @@ pub struct Style {
 
 /// A computed tile and its texture in some style.
 pub struct Entry {
-    /// The tile, or why it failed.
-    pub data: Result<TileData, String>,
+    /// The tile, or why it failed; shared with jobs that take its pixels.
+    pub data: Result<Arc<TileData>, String>,
     /// The texture last made, and the style it was made in: another style makes it again.
     pub texture: Option<(Style, egui::TextureHandle)>,
 }
 
 impl Entry {
-    pub fn new(data: Result<TileData, String>) -> Self {
+    pub fn new(data: Result<Arc<TileData>, String>) -> Self {
         Entry {
             data,
             texture: None,
@@ -714,6 +771,11 @@ impl<K: Copy + Eq + Hash, V> Cache<K, V> {
                 self.entries.remove(&key);
             }
         }
+    }
+
+    /// A value, without marking it used: for what another value is made from.
+    pub fn peek(&self, key: &K) -> Option<&V> {
+        self.entries.get(key).map(|(value, _)| value)
     }
 
     /// A value, marked as used this frame.
@@ -813,6 +875,7 @@ mod tests {
             features: Arc::from(Vec::new()),
             loot: None,
             all_containers: false,
+            from: Vec::new(),
         }
     }
 
@@ -1146,6 +1209,7 @@ mod tests {
             features,
             loot: None,
             all_containers: false,
+            from: Vec::new(),
         }]);
         thread::sleep(std::time::Duration::from_millis(300));
         assert_eq!(pool.pending(), 1, "the job is still running");
@@ -1196,6 +1260,7 @@ mod tests {
             features: features.clone(),
             loot: None,
             all_containers: false,
+            from: Vec::new(),
         };
         let never = Stop::new();
         let stopping = session.stopping(&never);
@@ -1237,5 +1302,78 @@ mod tests {
         cache.insert(2, ());
         assert!(cache.contains(&0) && cache.contains(&2));
         assert!(!cache.contains(&1));
+    }
+
+    /// A tile made from finer ones cached, all of them or a few, is the tile computed directly,
+    /// biomes at y and at the surface, heights with their edge row.
+    #[test]
+    fn a_tile_from_finer_tiles_is_the_tile_computed() {
+        let session = session();
+        let carvings: Carvings = Mutex::new(Cache::new(16));
+        let never = Stop::new();
+        for surface in [false, true] {
+            let key = |tile| TileKey {
+                source: 1,
+                y: 64,
+                heights: true,
+                surface,
+                underground: Underground::default(),
+                flowers: false,
+                tile,
+            };
+            let computed = |tile, from| {
+                let job = Job {
+                    from,
+                    ..job(&session, JobKey::Biomes(key(tile)))
+                };
+                match compute(&job, &carvings, &never) {
+                    Ok(Output::Biomes(data)) => Arc::<TileData>::from(data),
+                    _ => panic!("a biome tile"),
+                }
+            };
+            // A 1:2 tile in the plains, and the 1:1 tiles under it and west and north of it.
+            let tile = Tile {
+                scale: 2,
+                x: -1,
+                z: 0,
+            };
+            let direct = computed(tile, Vec::new());
+            let finer: Vec<Arc<TileData>> = (-1..=1)
+                .flat_map(|z| (-3..=-1).map(move |x| Tile { scale: 1, x, z }))
+                .map(|t| computed(t, Vec::new()))
+                .collect();
+            let same = |made: &TileData, what: &str| {
+                assert!(made.biomes == direct.biomes, "{what}: biomes");
+                assert!(made.heights == direct.heights, "{what}: heights");
+                assert_eq!(
+                    made.slime_chunks, direct.slime_chunks,
+                    "{what}: slime chunks"
+                );
+            };
+            same(&computed(tile, finer.clone()), "from every finer tile");
+            same(&computed(tile, finer[4..6].to_vec()), "from two");
+        }
+    }
+
+    /// A tile's carvings from the four under it, as the workers keep them, are the tile's own.
+    #[test]
+    fn carvings_from_finer_tiles_are_the_tile_s() {
+        let session = session();
+        let carvings: Carvings = Mutex::new(Cache::new(16));
+        let never = Stop::new();
+        let stopping = session.stopping(&never);
+        let job = job(&session, JobKey::Biomes(key(0)));
+        let tile = Tile {
+            scale: 4,
+            x: -1,
+            z: 1,
+        };
+        for child in tile.children().unwrap() {
+            let area = child.area(0).unwrap();
+            carving_map(&job, &stopping, &carvings, child, &area).unwrap();
+        }
+        let area = tile.area(0).unwrap();
+        let made = carving_map(&job, &stopping, &carvings, tile, &area).unwrap();
+        assert!(*made == session.carving_map(&area).unwrap());
     }
 }

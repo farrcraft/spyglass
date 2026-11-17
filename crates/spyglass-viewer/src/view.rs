@@ -104,6 +104,19 @@ impl Tile {
         })
     }
 
+    /// The four tiles at half the scale that make this one, west to east then north to
+    /// south, or `None` at scale 1.
+    pub fn children(self) -> Option<[Tile; 4]> {
+        (self.scale > 1).then(|| {
+            let at = |dx: i32, dz: i32| Tile {
+                scale: self.scale / 2,
+                x: self.x.saturating_mul(2).saturating_add(dx),
+                z: self.z.saturating_mul(2).saturating_add(dz),
+            };
+            [at(0, 0), at(1, 0), at(0, 1), at(1, 1)]
+        })
+    }
+
     /// Whether this tile has terrain layers (relief, surface biomes) in a view at
     /// `view_scale`: always as one of the view's own tiles, and as a stand-in only up to
     /// `MAX_COARSE_TERRAIN_SCALE`.

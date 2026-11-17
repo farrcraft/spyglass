@@ -8,7 +8,8 @@ use spyglass_blocks::carver;
 use spyglass_blocks::material::VeinPart as BlockVeinPart;
 use spyglass_terrain::Block;
 
-use super::{Image, Layers, MapArea, chunk_bands, invalid};
+use super::known::{Known, known_at, sealed::Pixels};
+use super::{Image, Layers, MapArea, chunk_bands, invalid, missing_runs, pick};
 use crate::{Error, Halt, Result, Session};
 
 /// The largest scale the underground layers are drawn at: each pixel needs its column down to
@@ -82,7 +83,31 @@ pub struct CarvingMap {
     /// Each pixel's first run in `runs`, and one past the last pixel's last.
     offsets: Vec<u32>,
     /// Runs of positions one kind carved, `(min_y, max_y, kind)`, pixel by pixel, bottom up.
-    runs: Vec<(i32, i32, CarverKind)>,
+    runs: Vec<Run>,
+}
+
+/// Positions one kind of carver carved in a column: `(min_y, max_y, kind)`.
+type Run = (i32, i32, CarverKind);
+
+impl Pixels for CarvingMap {
+    type Pixel = Vec<Run>;
+    type Kind = ();
+    const EDGE: u32 = 0;
+
+    fn world(&self) -> u64 {
+        self.world
+    }
+
+    fn map_area(&self) -> &MapArea {
+        &self.area
+    }
+
+    fn kind(&self) {}
+
+    fn pixel_at(&self, [i, j]: [i64; 2]) -> Vec<Run> {
+        let pixel = j as usize * self.area.size[0] as usize + i as usize;
+        self.runs[self.offsets[pixel] as usize..self.offsets[pixel + 1] as usize].to_vec()
+    }
 }
 
 impl CarvingMap {
@@ -133,6 +158,37 @@ pub struct UndergroundMap {
     cells: Vec<Cell>,
     /// The ore blocks naming the veins found, in order of first appearance.
     ores: Vec<String>,
+    /// The layers asked for: veins, noise caves and carvers.
+    layers: [bool; 3],
+}
+
+impl Pixels for UndergroundMap {
+    /// The vein's ore block and part, whether it's a noise cave, and the carver.
+    type Pixel = (Option<(String, VeinPart)>, bool, Option<CarverKind>);
+    /// The height, and the layers asked for.
+    type Kind = (i32, [bool; 3]);
+    const EDGE: u32 = 0;
+
+    fn world(&self) -> u64 {
+        self.world
+    }
+
+    fn map_area(&self) -> &MapArea {
+        &self.area
+    }
+
+    fn kind(&self) -> (i32, [bool; 3]) {
+        (self.area.y, self.layers)
+    }
+
+    fn pixel_at(&self, [i, j]: [i64; 2]) -> Self::Pixel {
+        let pixel = [i as u32, j as u32];
+        (
+            self.vein(pixel).map(|v| (v.ore.to_string(), v.part)),
+            self.is_noise_cave(pixel),
+            self.carver(pixel),
+        )
+    }
 }
 
 impl UndergroundMap {
@@ -200,14 +256,44 @@ impl Session<'_> {
     /// The positions carvers carve under each pixel of `area`, at every height
     /// (`docs/specs/render.md#underground`). Scales up to [`MAX_UNDERGROUND_SCALE`].
     pub fn carving_map(&self, area: &MapArea) -> Result<CarvingMap> {
-        self.carving_map_halting(area, Halt::NEVER)
+        self.carving_map_halting(area, None, Halt::NEVER)
     }
 
-    /// [`carving_map`](Self::carving_map), checking `halt` before each chunk it carves.
-    pub(crate) fn carving_map_halting(&self, area: &MapArea, halt: Halt<'_>) -> Result<CarvingMap> {
+    /// [`carving_map`](Self::carving_map), carving only the chunks under pixels `known` lacks
+    /// (`docs/specs/render.md#reuse-across-scales`): it must be for `area`, at any height.
+    pub fn carving_map_with(
+        &self,
+        area: &MapArea,
+        known: &Known<CarvingMap>,
+    ) -> Result<CarvingMap> {
+        self.carving_map_halting(area, Some(known), Halt::NEVER)
+    }
+
+    /// [`carving_map_with`](Self::carving_map_with), checking `halt` before each chunk it
+    /// carves.
+    pub(crate) fn carving_map_halting(
+        &self,
+        area: &MapArea,
+        known: Option<&Known<CarvingMap>>,
+        halt: Halt<'_>,
+    ) -> Result<CarvingMap> {
         area.check()?;
         check_scale(area)?;
-        let generator = self.chunks()?;
+        if let Some(known) = known {
+            known.check_for(self.world.id, area, ())?;
+        }
+        self.carve(area, |pixel| known_at(known, pixel).cloned(), halt)
+    }
+
+    /// The carving map of `area`, with each pixel's runs from `known` where it gives them,
+    /// carving the chunks under the rest, and checking `halt` before each.
+    fn carve(
+        &self,
+        area: &MapArea,
+        known: impl Fn([u32; 2]) -> Option<Vec<Run>>,
+        halt: Halt<'_>,
+    ) -> Result<CarvingMap> {
+        let mut generator = None;
         let [w, h] = area.size;
         let mut offsets = Vec::with_capacity(w as usize * h as usize + 1);
         let mut runs = Vec::new();
@@ -215,6 +301,11 @@ impl Session<'_> {
         let mut row: Option<(i32, HashMap<i32, carver::Carvings>)> = None;
         for j in 0..h {
             for i in 0..w {
+                offsets.push(runs.len() as u32);
+                if let Some(given) = known([i, j]) {
+                    runs.extend(given);
+                    continue;
+                }
                 let [x, z] = area.block([i, j]);
                 let (cx, cz) = (x >> 4, z >> 4);
                 if row.as_ref().is_none_or(|(at, _)| *at != cz) {
@@ -226,10 +317,13 @@ impl Session<'_> {
                     Entry::Vacant(new) => {
                         // Carving a chunk is the slow part: tens of milliseconds.
                         halt.check()?;
+                        let generator = match generator {
+                            Some(generator) => generator,
+                            None => *generator.insert(self.chunks()?),
+                        };
                         new.insert(generator.carvings(cx, cz))
                     }
                 };
-                offsets.push(runs.len() as u32);
                 runs.extend(
                     carvings
                         .column_runs(x & 15, z & 15)
@@ -257,63 +351,112 @@ impl Session<'_> {
         layers: &Layers,
         carvings: Option<&CarvingMap>,
     ) -> Result<UndergroundMap> {
-        self.underground_map_halting(area, layers, carvings, Halt::NEVER)
+        self.underground_map_halting(area, layers, carvings, None, Halt::NEVER)
     }
 
-    /// [`underground_map`](Self::underground_map), checking `halt` between bands of rows,
-    /// each the rows in one row of chunks, and while carving. Each block is probed on its own,
-    /// so a band at a time gives the same blocks (ADR 0078).
+    /// [`underground_map`](Self::underground_map), computing only the pixels `known` lacks
+    /// (`docs/specs/render.md#reuse-across-scales`): it must be for `area`, from underground
+    /// maps of the same layers at its height.
+    pub fn underground_map_with(
+        &self,
+        area: &MapArea,
+        layers: &Layers,
+        carvings: Option<&CarvingMap>,
+        known: &Known<UndergroundMap>,
+    ) -> Result<UndergroundMap> {
+        self.underground_map_halting(area, layers, carvings, Some(known), Halt::NEVER)
+    }
+
+    /// [`underground_map_with`](Self::underground_map_with), checking `halt` before each band
+    /// of rows with a pixel to probe, the rows in one row of chunks, and while carving. Each
+    /// block is probed on its own, so a band at a time, and only the pixels missing, give the
+    /// same blocks (ADR 0078).
     pub(crate) fn underground_map_halting(
         &self,
         area: &MapArea,
         layers: &Layers,
         carvings: Option<&CarvingMap>,
+        known: Option<&Known<UndergroundMap>>,
         halt: Halt<'_>,
     ) -> Result<UndergroundMap> {
         area.check()?;
         check_scale(area)?;
         layers.check(self.world)?;
+        let asked = [layers.veins, layers.noise_caves, layers.carvers];
+        if let Some(known) = known {
+            known.check_for(self.world.id, area, (area.y, asked))?;
+        }
         let [w, h] = area.size;
-        let mut cells = vec![Cell::default(); w as usize * h as usize];
+        let width = w as usize;
+        let mut cells = vec![Cell::default(); width * h as usize];
+        // The ore blocks of the veins in `cells`, in the order they're met; put in pixel order
+        // at the end.
         let mut ores: Vec<String> = Vec::new();
-        if layers.veins || layers.noise_caves {
+        let ore_index = |ore: &str, ores: &mut Vec<String>| match ores.iter().position(|o| o == ore)
+        {
+            Some(i) => i as u16,
+            None => {
+                ores.push(ore.to_string());
+                (ores.len() - 1) as u16
+            }
+        };
+        let mut missing = vec![true; cells.len()];
+        for j in 0..h {
+            for i in 0..w {
+                if let Some((vein, noise_cave, carver)) = known_at(known, [i, j]) {
+                    let pixel = j as usize * width + i as usize;
+                    missing[pixel] = false;
+                    cells[pixel] = Cell {
+                        vein: vein
+                            .as_ref()
+                            .map(|(ore, part)| (ore_index(ore, &mut ores), *part)),
+                        noise_cave: *noise_cave,
+                        carver: *carver,
+                    };
+                }
+            }
+        }
+        if (layers.veins || layers.noise_caves) && missing.contains(&true) {
             let generator = self.chunks()?;
             let palette = self.world.block_settings()?.palette();
             let xs: Vec<i32> = (0..w).map(|i| area.block([i, 0])[0]).collect();
             let zs: Vec<i32> = (0..h).map(|j| area.block([0, j])[1]).collect();
-            let mut probes = Vec::with_capacity(xs.len() * zs.len());
             for band in chunk_bands(&zs) {
-                halt.check()?;
-                probes.extend(generator.probes_on(&xs, &zs[band], area.y));
-            }
-            for (pixel, probe) in probes.iter().enumerate() {
-                let cell = &mut cells[pixel];
-                if layers.noise_caves {
-                    let open = matches!(probe.block, Block::Air | Block::Water | Block::Lava);
-                    cell.noise_cave = open && probe.covered;
+                let runs = missing_runs(band, width, |i, j| missing[j * width + i]);
+                if runs.is_empty() {
+                    continue;
                 }
-                if layers.veins {
-                    let pos = [xs[pixel % w as usize], area.y, zs[pixel / w as usize]];
-                    if let Some(vein) = generator.vein_at(pos, probe.block) {
-                        let ore = palette.name(vein.ore);
-                        let index = match ores.iter().position(|o| o == ore) {
-                            Some(i) => i,
-                            None => {
-                                ores.push(ore.to_string());
-                                ores.len() - 1
+                halt.check()?;
+                for (columns, rows) in runs {
+                    let probes =
+                        generator.probes_on(&pick(&columns, &xs), &pick(&rows, &zs), area.y);
+                    for (b, &j) in rows.iter().enumerate() {
+                        for (a, &i) in columns.iter().enumerate() {
+                            let probe = &probes[b * columns.len() + a];
+                            let cell = &mut cells[j * width + i];
+                            if layers.noise_caves {
+                                let open =
+                                    matches!(probe.block, Block::Air | Block::Water | Block::Lava);
+                                cell.noise_cave = open && probe.covered;
                             }
-                        };
-                        let part = match vein.part {
-                            BlockVeinPart::Ore => VeinPart::Ore,
-                            BlockVeinPart::RawOre => VeinPart::RawOre,
-                            BlockVeinPart::Filler => VeinPart::Filler,
-                        };
-                        cell.vein = Some((index as u16, part));
+                            if layers.veins {
+                                let pos = [xs[i], area.y, zs[j]];
+                                if let Some(vein) = generator.vein_at(pos, probe.block) {
+                                    let part = match vein.part {
+                                        BlockVeinPart::Ore => VeinPart::Ore,
+                                        BlockVeinPart::RawOre => VeinPart::RawOre,
+                                        BlockVeinPart::Filler => VeinPart::Filler,
+                                    };
+                                    let ore = ore_index(palette.name(vein.ore), &mut ores);
+                                    cell.vein = Some((ore, part));
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
-        if layers.carvers {
+        if layers.carvers && missing.contains(&true) {
             let made;
             let carvings = match carvings {
                 Some(given) => {
@@ -326,22 +469,43 @@ impl Session<'_> {
                     given
                 }
                 None => {
-                    made = self.carving_map_halting(area, halt)?;
+                    // Only the chunks under pixels still to compute are carved.
+                    made = self.carve(
+                        area,
+                        |[i, j]| (!missing[j as usize * width + i as usize]).then(Vec::new),
+                        halt,
+                    )?;
                     &made
                 }
             };
             for j in 0..h {
                 for i in 0..w {
-                    cells[j as usize * w as usize + i as usize].carver =
-                        carvings.carver([i, j], area.y);
+                    let pixel = j as usize * width + i as usize;
+                    if missing[pixel] {
+                        cells[pixel].carver = carvings.carver([i, j], area.y);
+                    }
                 }
+            }
+        }
+        // The veins' ores in order of first appearance, pixel by pixel, however they were
+        // found.
+        let mut ordered: Vec<String> = Vec::new();
+        let mut renumbered: Vec<Option<u16>> = vec![None; ores.len()];
+        for cell in &mut cells {
+            if let Some((ore, _)) = &mut cell.vein {
+                let new = *renumbered[usize::from(*ore)].get_or_insert_with(|| {
+                    ordered.push(ores[usize::from(*ore)].clone());
+                    (ordered.len() - 1) as u16
+                });
+                *ore = new;
             }
         }
         Ok(UndergroundMap {
             world: self.world.id,
             area: *area,
             cells,
-            ores,
+            ores: ordered,
+            layers: asked,
         })
     }
 }

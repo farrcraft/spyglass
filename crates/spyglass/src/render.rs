@@ -3,6 +3,7 @@
 //! `spyglass render` both draw through here, so they make the same image.
 
 mod flowers;
+mod known;
 mod palette;
 mod underground;
 
@@ -12,6 +13,8 @@ use std::io;
 use spyglass_biome::{BiomeId, Lookup};
 
 pub use flowers::{FlowerCount, FlowerMap, FlowerPixel, FlowerShare, flower_colour};
+pub use known::Known;
+use known::{known_at, sealed::Pixels};
 pub use palette::{biome_colour, display_name, feature_colour, structure_colour};
 pub use underground::{
     CarverKind, CarvingMap, MAX_UNDERGROUND_SCALE, UndergroundMap, Vein, VeinPart, vein_colour,
@@ -394,9 +397,71 @@ pub struct BiomeMap {
     cells: Vec<BiomeId>,
     /// Tied cells' sets, by cell index.
     ties: BTreeMap<usize, Box<[BiomeId]>>,
+    /// The height sampled, or `None` for biomes at the surface.
+    sampled_at: Option<i32>,
+}
+
+impl Pixels for BiomeMap {
+    type Pixel = Lookup;
+    type Kind = Option<i32>;
+    const EDGE: u32 = 0;
+
+    fn world(&self) -> u64 {
+        self.world
+    }
+
+    fn map_area(&self) -> &MapArea {
+        &self.area
+    }
+
+    fn kind(&self) -> Option<i32> {
+        self.sampled_at
+    }
+
+    fn pixel_at(&self, [i, j]: [i64; 2]) -> Lookup {
+        match self.cell([i as u32, j as u32]) {
+            [one] => Lookup::Unique(*one),
+            tie => Lookup::Tied(tie.into()),
+        }
+    }
 }
 
 impl BiomeMap {
+    /// The map of `lookups`, one per grid cell, x fastest: a tied cell's first biome in
+    /// `cells`, and its set in `ties`.
+    fn from_lookups(
+        world: u64,
+        area: MapArea,
+        [columns, rows]: [Vec<u32>; 2],
+        grid_width: usize,
+        lookups: Vec<Lookup>,
+        sampled_at: Option<i32>,
+    ) -> BiomeMap {
+        let mut ties = BTreeMap::new();
+        let cells = lookups
+            .into_iter()
+            .enumerate()
+            .map(|(i, lookup)| match lookup {
+                Lookup::Unique(b) => b,
+                Lookup::Tied(set) => {
+                    let first = set[0];
+                    ties.insert(i, set);
+                    first
+                }
+            })
+            .collect();
+        BiomeMap {
+            world,
+            area,
+            columns,
+            rows,
+            grid_width,
+            cells,
+            ties,
+            sampled_at,
+        }
+    }
+
     /// The area.
     pub fn area(&self) -> &MapArea {
         &self.area
@@ -480,6 +545,26 @@ pub struct HeightMap {
     heights: Vec<i32>,
     /// The level's lowest y and its height, for the grey base.
     level: [i32; 2],
+}
+
+impl Pixels for HeightMap {
+    type Pixel = i32;
+    type Kind = ();
+    const EDGE: u32 = 1;
+
+    fn world(&self) -> u64 {
+        self.world
+    }
+
+    fn map_area(&self) -> &MapArea {
+        &self.area
+    }
+
+    fn kind(&self) {}
+
+    fn pixel_at(&self, [i, j]: [i64; 2]) -> i32 {
+        self.around(i, j)
+    }
 }
 
 impl HeightMap {
@@ -762,6 +847,33 @@ fn chunk_bands(coordinates: &[i32]) -> Vec<std::ops::Range<usize>> {
     bands
 }
 
+/// The pixels of `band`'s rows that `missing(column, row)` says are still to compute, as runs a
+/// lower crate fills a grid at a time: rows lacking the same columns go together, each run's
+/// columns and rows ascending. With nothing known, the band's every column and row, one run.
+fn missing_runs(
+    band: std::ops::Range<usize>,
+    width: usize,
+    missing: impl Fn(usize, usize) -> bool,
+) -> Vec<(Vec<usize>, Vec<usize>)> {
+    let mut runs: Vec<(Vec<usize>, Vec<usize>)> = Vec::new();
+    for j in band {
+        let columns: Vec<usize> = (0..width).filter(|&i| missing(i, j)).collect();
+        if columns.is_empty() {
+            continue;
+        }
+        match runs.iter_mut().find(|(c, _)| *c == columns) {
+            Some((_, rows)) => rows.push(j),
+            None => runs.push((columns, vec![j])),
+        }
+    }
+    runs
+}
+
+/// The values of `of` at the indices `at`.
+fn pick(at: &[usize], of: &[i32]) -> Vec<i32> {
+    at.iter().map(|&k| of[k]).collect()
+}
+
 /// `i64` to `i32`, saturating.
 fn saturate(v: i64) -> i32 {
     v.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
@@ -770,14 +882,28 @@ fn saturate(v: i64) -> i32 {
 impl Session<'_> {
     /// The biome under each pixel of `area` (`docs/specs/render.md#biomes`).
     pub fn biome_map(&self, area: &MapArea) -> Result<BiomeMap> {
-        self.biome_map_halting(area, Halt::NEVER)
+        self.biome_map_halting(area, None, Halt::NEVER)
     }
 
-    /// [`biome_map`](Self::biome_map), checking `halt` before it starts: a tile takes well
-    /// under a tenth of a second, so it isn't checked again (ADR 0078).
-    pub(crate) fn biome_map_halting(&self, area: &MapArea, halt: Halt<'_>) -> Result<BiomeMap> {
+    /// [`biome_map`](Self::biome_map), looking up only the pixels `known` lacks
+    /// (`docs/specs/render.md#reuse-across-scales`): it must be for `area`, from biome maps
+    /// sampled at its height.
+    pub fn biome_map_with(&self, area: &MapArea, known: &Known<BiomeMap>) -> Result<BiomeMap> {
+        self.biome_map_halting(area, Some(known), Halt::NEVER)
+    }
+
+    /// [`biome_map_with`](Self::biome_map_with), checking `halt` before the first lookup: a
+    /// tile takes well under a tenth of a second, so it isn't checked again (ADR 0078).
+    pub(crate) fn biome_map_halting(
+        &self,
+        area: &MapArea,
+        known: Option<&Known<BiomeMap>>,
+        halt: Halt<'_>,
+    ) -> Result<BiomeMap> {
         area.check()?;
-        halt.check()?;
+        if let Some(known) = known {
+            known.check_for(self.world.id, area, Some(area.y))?;
+        }
         // Each pixel samples the quart holding its corner block. The corner is a multiple of
         // the scale, so a grid of quarts `step` apart from it is aligned to the world: every
         // area samples the same quarts at the same blocks, and tiles drawn apart meet without
@@ -796,45 +922,76 @@ impl Session<'_> {
         };
         let (columns, rows) = (axis(0), axis(1));
         let grid = [columns[columns.len() - 1] + 1, rows[rows.len() - 1] + 1];
-        let lookups = self
-            .biomes
-            .biome_grid(origin, area.y >> 2, step as i32, grid);
-        let mut ties = BTreeMap::new();
-        let cells = lookups
-            .into_iter()
-            .enumerate()
-            .map(|(i, lookup)| match lookup {
-                Lookup::Unique(b) => b,
-                Lookup::Tied(set) => {
-                    let first = set[0];
-                    ties.insert(i, set);
-                    first
+        let width = grid[0] as usize;
+        // A cell is known if any pixel sampling it is.
+        let mut cells: Vec<Option<Lookup>> = vec![None; width * grid[1] as usize];
+        if known.is_some() {
+            for (j, &row) in rows.iter().enumerate() {
+                for (i, &column) in columns.iter().enumerate() {
+                    if let Some(lookup) = known_at(known, [i as u32, j as u32]) {
+                        cells[row as usize * width + column as usize]
+                            .get_or_insert_with(|| lookup.clone());
+                    }
                 }
-            })
-            .collect();
-        Ok(BiomeMap {
-            world: self.world.id,
-            area: *area,
-            columns,
-            rows,
-            grid_width: grid[0] as usize,
-            cells,
-            ties,
-        })
+            }
+        }
+        let qy = area.y >> 2;
+        let step = step as i32;
+        let mut checked = false;
+        let mut lookups = Vec::with_capacity(cells.len());
+        for (index, cell) in cells.into_iter().enumerate() {
+            let lookup = match cell {
+                Some(lookup) => lookup,
+                None => {
+                    if !checked {
+                        halt.check()?;
+                        checked = true;
+                    }
+                    let (x, z) = ((index % width) as i32, (index / width) as i32);
+                    let qx = origin[0].wrapping_add(step.wrapping_mul(x));
+                    let qz = origin[1].wrapping_add(step.wrapping_mul(z));
+                    self.biomes.biome_at(qx, qy, qz)
+                }
+            };
+            lookups.push(lookup);
+        }
+        Ok(BiomeMap::from_lookups(
+            self.world.id,
+            *area,
+            [columns, rows],
+            width,
+            lookups,
+            Some(area.y),
+        ))
     }
 
     /// The terrain height at each pixel of `area`, and one pixel beyond its west and north
     /// edges (`docs/specs/render.md#heights`). Binds the seed's terrain. Slow at every scale,
     /// and slower as pixels spread out, until each is in a chunk of its own.
     pub fn height_map(&self, area: &MapArea) -> Result<HeightMap> {
-        self.height_map_halting(area, Halt::NEVER)
+        self.height_map_halting(area, None, Halt::NEVER)
     }
 
-    /// [`height_map`](Self::height_map), checking `halt` between bands of rows, each the rows
-    /// in one row of chunks. The terrain samples each chunk's columns together, whatever else
-    /// it's asked for, so a band at a time gives the same heights (ADR 0078).
-    pub(crate) fn height_map_halting(&self, area: &MapArea, halt: Halt<'_>) -> Result<HeightMap> {
+    /// [`height_map`](Self::height_map), computing only the heights `known` lacks, the edge
+    /// row's included (`docs/specs/render.md#reuse-across-scales`): it must be for `area`.
+    pub fn height_map_with(&self, area: &MapArea, known: &Known<HeightMap>) -> Result<HeightMap> {
+        self.height_map_halting(area, Some(known), Halt::NEVER)
+    }
+
+    /// [`height_map_with`](Self::height_map_with), checking `halt` before each band of rows
+    /// with a height to compute, the rows in one row of chunks. The terrain samples each
+    /// chunk's columns together, whatever else it's asked for, so a band at a time, and only
+    /// the columns missing, give the same heights (ADR 0078).
+    pub(crate) fn height_map_halting(
+        &self,
+        area: &MapArea,
+        known: Option<&Known<HeightMap>>,
+        halt: Halt<'_>,
+    ) -> Result<HeightMap> {
         area.check()?;
+        if let Some(known) = known {
+            known.check_for(self.world.id, area, ())?;
+        }
         let blocks_per_pixel = i64::from(area.scale);
         // From one pixel before the area, which saturates at the edge of the coordinates: the
         // relief shade compares each pixel with its west and north neighbours, so a tile's
@@ -845,17 +1002,43 @@ impl Session<'_> {
                 .collect()
         };
         let (xs, zs) = (axis(0), axis(1));
+        let width = xs.len();
+        let mut heights: Vec<Option<i32>> = vec![None; width * zs.len()];
+        if let Some(known) = known {
+            for (j, row) in heights.chunks_mut(width).enumerate() {
+                for (i, height) in row.iter_mut().enumerate() {
+                    *height = known.get([i as i64 - 1, j as i64 - 1]).copied();
+                }
+            }
+        }
         let terrain = self.terrain();
-        let mut heights = Vec::with_capacity(xs.len() * zs.len());
         for band in chunk_bands(&zs) {
+            let runs = missing_runs(band, width, |i, j| heights[j * width + i].is_none());
+            if runs.is_empty() {
+                continue;
+            }
             halt.check()?;
-            heights.extend(terrain.base_heights_on(&xs, &zs[band], Heightmap::WorldSurfaceWg));
+            for (columns, rows) in runs {
+                let found = terrain.base_heights_on(
+                    &pick(&columns, &xs),
+                    &pick(&rows, &zs),
+                    Heightmap::WorldSurfaceWg,
+                );
+                for (b, &j) in rows.iter().enumerate() {
+                    for (a, &i) in columns.iter().enumerate() {
+                        heights[j * width + i] = Some(found[b * columns.len() + a]);
+                    }
+                }
+            }
         }
         let level = self.world.sets.heights();
         Ok(HeightMap {
             world: self.world.id,
             area: *area,
-            heights,
+            heights: heights
+                .into_iter()
+                .map(|h| h.expect("every height computed"))
+                .collect(),
             level: [level.level_min_y, level.level_height],
         })
     }
@@ -864,48 +1047,64 @@ impl Session<'_> {
     /// pixel's corner block at its height, kept below the top of the level
     /// (`docs/specs/render.md#biomes`).
     pub fn surface_biome_map(&self, heights: &HeightMap) -> Result<BiomeMap> {
-        self.surface_biome_map_halting(heights, Halt::NEVER)
+        self.surface_biome_map_halting(heights, None, Halt::NEVER)
     }
 
-    /// [`surface_biome_map`](Self::surface_biome_map), checking `halt` before each row.
+    /// [`surface_biome_map`](Self::surface_biome_map), looking up only the pixels `known`
+    /// lacks (`docs/specs/render.md#reuse-across-scales`): it must be for `heights`' area,
+    /// from surface biome maps.
+    pub fn surface_biome_map_with(
+        &self,
+        heights: &HeightMap,
+        known: &Known<BiomeMap>,
+    ) -> Result<BiomeMap> {
+        self.surface_biome_map_halting(heights, Some(known), Halt::NEVER)
+    }
+
+    /// [`surface_biome_map_with`](Self::surface_biome_map_with), checking `halt` before each
+    /// row with a pixel to look up.
     pub(crate) fn surface_biome_map_halting(
         &self,
         heights: &HeightMap,
+        known: Option<&Known<BiomeMap>>,
         halt: Halt<'_>,
     ) -> Result<BiomeMap> {
         if heights.world != self.world.id {
             return Err(Error::OtherWorld("a height map".to_string()));
         }
         let area = heights.area;
+        if let Some(known) = known {
+            known.check_for(self.world.id, &area, None)?;
+        }
         let top = self.level_top();
         let [w, h] = area.size;
-        let mut ties = BTreeMap::new();
-        let mut cells = Vec::with_capacity(w as usize * h as usize);
+        let mut lookups = Vec::with_capacity(w as usize * h as usize);
         for j in 0..h {
-            halt.check()?;
+            let mut checked = false;
             for i in 0..w {
-                let [x, z] = area.block([i, j]);
-                let y = heights.height([i, j]).min(top);
-                let cell = match self.biomes.biome_at(x >> 2, y >> 2, z >> 2) {
-                    Lookup::Unique(b) => b,
-                    Lookup::Tied(set) => {
-                        let first = set[0];
-                        ties.insert(cells.len(), set);
-                        first
+                let lookup = match known_at(known, [i, j]) {
+                    Some(lookup) => lookup.clone(),
+                    None => {
+                        if !checked {
+                            halt.check()?;
+                            checked = true;
+                        }
+                        let [x, z] = area.block([i, j]);
+                        let y = heights.height([i, j]).min(top);
+                        self.biomes.biome_at(x >> 2, y >> 2, z >> 2)
                     }
                 };
-                cells.push(cell);
+                lookups.push(lookup);
             }
         }
-        Ok(BiomeMap {
-            world: self.world.id,
+        Ok(BiomeMap::from_lookups(
+            self.world.id,
             area,
-            columns: (0..w).collect(),
-            rows: (0..h).collect(),
-            grid_width: w as usize,
-            cells,
-            ties,
-        })
+            [(0..w).collect(), (0..h).collect()],
+            w as usize,
+            lookups,
+            None,
+        ))
     }
 
     /// The level's top block's y.

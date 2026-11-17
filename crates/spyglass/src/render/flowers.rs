@@ -7,6 +7,7 @@ use spyglass_biome::Lookup;
 use spyglass_blocks::zoom::BiomeZoom;
 use spyglass_feature::flowers::{Chance, FlowerOdds, Flowers};
 
+use super::known::{Known, known_at, sealed::Pixels};
 use super::palette::hashed;
 use super::{Image, MapArea, dimmed};
 use crate::flowers::block_id;
@@ -75,12 +76,37 @@ impl FlowerPixel {
 /// What bone meal grows at each pixel of an area, from [`Session::flower_map`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlowerMap {
+    /// The world it was made in.
+    world: u64,
     /// The area.
     area: MapArea,
     /// The answers the pixels have, each once.
     answers: Vec<FlowerPixel>,
     /// Each pixel's answer, rows top to bottom.
     cells: Vec<u32>,
+}
+
+impl Pixels for FlowerMap {
+    type Pixel = FlowerPixel;
+    /// The height.
+    type Kind = i32;
+    const EDGE: u32 = 0;
+
+    fn world(&self) -> u64 {
+        self.world
+    }
+
+    fn map_area(&self) -> &MapArea {
+        &self.area
+    }
+
+    fn kind(&self) -> i32 {
+        self.area.y
+    }
+
+    fn pixel_at(&self, [i, j]: [i64; 2]) -> FlowerPixel {
+        self.at([i as u32, j as u32]).clone()
+    }
 }
 
 impl FlowerMap {
@@ -196,12 +222,28 @@ impl Session<'_> {
     /// block above the grass (`docs/specs/render.md#flowers`). Each pixel is that block's
     /// answer alone, as [`Session::flower_at`] gives it, so a view equals its tiles.
     pub fn flower_map(&self, area: &MapArea) -> Result<FlowerMap> {
-        self.flower_map_halting(area, Halt::NEVER)
+        self.flower_map_halting(area, None, Halt::NEVER)
     }
 
-    /// [`flower_map`](Self::flower_map), checking `halt` before each row.
-    pub(crate) fn flower_map_halting(&self, area: &MapArea, halt: Halt<'_>) -> Result<FlowerMap> {
+    /// [`flower_map`](Self::flower_map), working out only the pixels `known` lacks
+    /// (`docs/specs/render.md#reuse-across-scales`): it must be for `area`, from flower maps at
+    /// its height.
+    pub fn flower_map_with(&self, area: &MapArea, known: &Known<FlowerMap>) -> Result<FlowerMap> {
+        self.flower_map_halting(area, Some(known), Halt::NEVER)
+    }
+
+    /// [`flower_map_with`](Self::flower_map_with), checking `halt` before each row with a
+    /// pixel to work out.
+    pub(crate) fn flower_map_halting(
+        &self,
+        area: &MapArea,
+        known: Option<&Known<FlowerMap>>,
+        halt: Halt<'_>,
+    ) -> Result<FlowerMap> {
         area.check()?;
+        if let Some(known) = known {
+            known.check_for(self.world.id, area, area.y)?;
+        }
         let flowers = self.world.flowers()?;
         let zoom = BiomeZoom::new(self.seed);
         let mut quarts: HashMap<[i32; 3], Lookup> = HashMap::new();
@@ -210,15 +252,24 @@ impl Session<'_> {
         let [width, height] = area.size;
         let mut cells = Vec::with_capacity(width as usize * height as usize);
         for j in 0..height {
-            halt.check()?;
+            let mut checked = false;
             for i in 0..width {
-                let [x, z] = area.block([i, j]);
-                let pos = [x, area.y, z];
-                let quart = self.block_quart(&zoom, pos);
-                let lookup = quarts
-                    .entry(quart)
-                    .or_insert_with(|| self.biomes.biome_at(quart[0], quart[1], quart[2]));
-                let pixel = pixel_answer(flowers, lookup, pos)?;
+                let pixel = match known_at(known, [i, j]) {
+                    Some(pixel) => pixel.clone(),
+                    None => {
+                        if !checked {
+                            halt.check()?;
+                            checked = true;
+                        }
+                        let [x, z] = area.block([i, j]);
+                        let pos = [x, area.y, z];
+                        let quart = self.block_quart(&zoom, pos);
+                        let lookup = quarts
+                            .entry(quart)
+                            .or_insert_with(|| self.biomes.biome_at(quart[0], quart[1], quart[2]));
+                        pixel_answer(flowers, lookup, pos)?
+                    }
+                };
                 let next = u32::try_from(answers.len()).expect("fewer answers than pixels");
                 let cell = *index.entry(pixel.clone()).or_insert_with(|| {
                     answers.push(pixel);
@@ -228,6 +279,7 @@ impl Session<'_> {
             }
         }
         Ok(FlowerMap {
+            world: self.world.id,
             area: *area,
             answers,
             cells,

@@ -4,7 +4,7 @@
 
 use crate::{
     BiomeMap, CarvingMap, Error, FeatureOptions, FeatureQuery, FlowerMap, FoundContainer,
-    FoundFeature, HeightMap, ItemQuery, Layers, MapArea, MapFeatures, Result, Session, Stop,
+    FoundFeature, HeightMap, ItemQuery, Known, Layers, MapArea, MapFeatures, Result, Session, Stop,
     StructureQuery, StructureStart, UndergroundMap,
 };
 
@@ -56,22 +56,54 @@ impl<'w> Stopping<'_, 'w> {
 
     /// [`Session::biome_map`], stopped when the stop is raised.
     pub fn biome_map(&self, area: &MapArea) -> Result<BiomeMap> {
-        self.session.biome_map_halting(area, self.halt)
+        self.session.biome_map_halting(area, None, self.halt)
+    }
+
+    /// [`Session::biome_map_with`], stopped when the stop is raised.
+    pub fn biome_map_with(&self, area: &MapArea, known: &Known<BiomeMap>) -> Result<BiomeMap> {
+        self.session.biome_map_halting(area, Some(known), self.halt)
     }
 
     /// [`Session::height_map`], stopped when the stop is raised.
     pub fn height_map(&self, area: &MapArea) -> Result<HeightMap> {
-        self.session.height_map_halting(area, self.halt)
+        self.session.height_map_halting(area, None, self.halt)
+    }
+
+    /// [`Session::height_map_with`], stopped when the stop is raised.
+    pub fn height_map_with(&self, area: &MapArea, known: &Known<HeightMap>) -> Result<HeightMap> {
+        self.session
+            .height_map_halting(area, Some(known), self.halt)
     }
 
     /// [`Session::surface_biome_map`], stopped when the stop is raised.
     pub fn surface_biome_map(&self, heights: &HeightMap) -> Result<BiomeMap> {
-        self.session.surface_biome_map_halting(heights, self.halt)
+        self.session
+            .surface_biome_map_halting(heights, None, self.halt)
+    }
+
+    /// [`Session::surface_biome_map_with`], stopped when the stop is raised.
+    pub fn surface_biome_map_with(
+        &self,
+        heights: &HeightMap,
+        known: &Known<BiomeMap>,
+    ) -> Result<BiomeMap> {
+        self.session
+            .surface_biome_map_halting(heights, Some(known), self.halt)
     }
 
     /// [`Session::carving_map`], stopped when the stop is raised.
     pub fn carving_map(&self, area: &MapArea) -> Result<CarvingMap> {
-        self.session.carving_map_halting(area, self.halt)
+        self.session.carving_map_halting(area, None, self.halt)
+    }
+
+    /// [`Session::carving_map_with`], stopped when the stop is raised.
+    pub fn carving_map_with(
+        &self,
+        area: &MapArea,
+        known: &Known<CarvingMap>,
+    ) -> Result<CarvingMap> {
+        self.session
+            .carving_map_halting(area, Some(known), self.halt)
     }
 
     /// [`Session::underground_map`], stopped when the stop is raised.
@@ -82,12 +114,30 @@ impl<'w> Stopping<'_, 'w> {
         carvings: Option<&CarvingMap>,
     ) -> Result<UndergroundMap> {
         self.session
-            .underground_map_halting(area, layers, carvings, self.halt)
+            .underground_map_halting(area, layers, carvings, None, self.halt)
+    }
+
+    /// [`Session::underground_map_with`], stopped when the stop is raised.
+    pub fn underground_map_with(
+        &self,
+        area: &MapArea,
+        layers: &Layers,
+        carvings: Option<&CarvingMap>,
+        known: &Known<UndergroundMap>,
+    ) -> Result<UndergroundMap> {
+        self.session
+            .underground_map_halting(area, layers, carvings, Some(known), self.halt)
     }
 
     /// [`Session::flower_map`], stopped when the stop is raised.
     pub fn flower_map(&self, area: &MapArea) -> Result<FlowerMap> {
-        self.session.flower_map_halting(area, self.halt)
+        self.session.flower_map_halting(area, None, self.halt)
+    }
+
+    /// [`Session::flower_map_with`], stopped when the stop is raised.
+    pub fn flower_map_with(&self, area: &MapArea, known: &Known<FlowerMap>) -> Result<FlowerMap> {
+        self.session
+            .flower_map_halting(area, Some(known), self.halt)
     }
 
     /// [`Session::map_features`], stopped when the stop is raised.

@@ -571,7 +571,11 @@ impl App {
             let mut on = placed
                 .iter()
                 .all(|p| self.settings.features.iter().any(|f| f == p));
-            if zoom::checkbox(ui, &mut on, name, zoom::FEATURES, scale, None).changed() {
+            let mut response = zoom::checkbox(ui, &mut on, name, zoom::FEATURES, scale, None);
+            if let Some(note) = zoom::found_note(zoom::FEATURES, scale) {
+                response = response.on_disabled_hover_text(note);
+            }
+            if response.changed() {
                 self.settings
                     .features
                     .retain(|f| !placed.contains(&f.as_str()));
@@ -591,7 +595,12 @@ impl App {
                 ui,
                 "Certain ones filled, likely ones outlined. Slow to draw: each chunk is placed.",
             ),
-            zoom::LayerState::Paused => zoom::paused_hint(ui, zoom::FEATURES),
+            zoom::LayerState::Paused => {
+                zoom::paused_hint(ui, zoom::FEATURES);
+                if let Some(note) = zoom::found_note(zoom::FEATURES, scale) {
+                    style::hint(ui, note);
+                }
+            }
             zoom::LayerState::Off => {}
         }
     }
@@ -600,7 +609,7 @@ impl App {
     fn loot_section(&mut self, ui: &mut egui::Ui) {
         style::heading(ui, "Loot");
         let scale = self.settings.view.scale;
-        let mut changed = zoom::checkbox(
+        let mut containers = zoom::checkbox(
             ui,
             &mut self.settings.containers,
             "Containers",
@@ -610,8 +619,11 @@ impl App {
         )
         .on_hover_text(
             "Every chest, barrel and other loot container structures and dungeons place.",
-        )
-        .changed();
+        );
+        if let Some(note) = zoom::found_note(zoom::LOOT, scale) {
+            containers = containers.on_disabled_hover_text(note);
+        }
+        let mut changed = containers.changed();
         let near = zoom::LOOT.shows(scale);
         ui.add_enabled_ui(near, |ui| {
             ui.horizontal(|ui| {
@@ -641,7 +653,12 @@ impl App {
                 "Gold rings: a full one where it certainly holds the item, a thin one where it \
                  might. Click a container for its contents. Slow to draw: each chunk is placed.",
             ),
-            zoom::LayerState::Paused => zoom::paused_hint(ui, zoom::LOOT),
+            zoom::LayerState::Paused => {
+                zoom::paused_hint(ui, zoom::LOOT);
+                if let Some(note) = zoom::found_note(zoom::LOOT, scale) {
+                    style::hint(ui, note);
+                }
+            }
             zoom::LayerState::Off => {}
         }
     }

@@ -175,7 +175,7 @@ impl App {
             }
         }
         let mut found_features: Vec<FoundFeature> = Vec::new();
-        if frame.featuring {
+        if frame.featuring || frame.features_found {
             for &region in &frame.regions {
                 if let Some(Ok(found)) = self.feature_markers.get(&frame.feature_key(region)) {
                     found_features.extend(found.iter().cloned());
@@ -183,7 +183,7 @@ impl App {
             }
         }
         let mut loot_marks: Vec<LootMark> = Vec::new();
-        if frame.looting {
+        if frame.looting || frame.loot_found {
             for &region in &frame.regions {
                 if let Some(Ok(marks)) = self.loot_markers.get(&frame.feature_key(region)) {
                     loot_marks.extend(marks.iter().cloned());

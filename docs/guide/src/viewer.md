@@ -30,6 +30,8 @@ Some layers appear only when you zoom in, since they cost more to draw:
 - **Underground**, at 4 blocks per pixel or closer: ore veins (copper orange, iron blue, filler stone fainter), noise caves (darkened), and the caves and ravines carvers cut (yellow and magenta), at the height shown. Moving the height keeps the carvers already worked out.
 - **Features**, at 2 blocks per pixel or closer: dungeons, amethyst geodes, desert wells, fossils and lava lakes, as diamonds, filled when certain and outlined when likely. Each chunk is placed as the game decorates it, so they fill in slowly.
 
+Past its zoom limit a layer's checkbox is greyed and says **paused**; it stays on, and draws again when you zoom back in. Features and loot containers go one step further: at 4 blocks per pixel the map still shows those found closer in, with nothing new worked out. The area looked at is outlined and the rest is hatched, so an empty outlined patch means there's none there, and a hatched one that it wasn't looked at.
+
 Up close, with **Relief** and **Biomes at the surface** on, and the bounds of a plains village drawn:
 
 ![A close-up at 1 block per pixel: shaded terrain, rivers, and a village's outline](images/viewer-relief.png)

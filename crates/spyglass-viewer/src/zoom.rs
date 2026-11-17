@@ -26,6 +26,18 @@ pub const GENERATED: Limit = Limit(spyglass::MAX_SLIME_SCALE);
 /// a structure out at any scale, but each one shown is a job and their outlines crowd the map.
 pub const BOUNDS: Limit = Limit(4);
 
+/// Whether features and loot containers found earlier are drawn past their limit, from the
+/// regions already cached, up to [`FOUND_REACH`] times it. Each region drawn is outlined where
+/// it meets one not looked at, and those are hatched, so an empty region reads as "nothing
+/// here" and a hatched one as "not looked at". Nothing new is computed past the limit
+/// (`docs/specs/render.md#reuse-across-scales`).
+pub const DRAW_FOUND: bool = true;
+
+/// How many times its limit's scale a layer's points found earlier are drawn out to: 1:4 for
+/// features and loot, one step out. At 1:8 dungeons, as dense as features get, pile into one
+/// blob, and the hatch covers most of the map.
+pub const FOUND_REACH: u32 = 2;
+
 /// What a layer with a limit is doing at a scale.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LayerState {
@@ -50,6 +62,12 @@ impl Limit {
             (true, true) => LayerState::Shown,
             (true, false) => LayerState::Paused,
         }
+    }
+
+    /// Whether points found earlier are drawn at `scale`, past the limit: for the layers whose
+    /// points are kept by region, features and loot.
+    pub fn draws_found(self, scale: u32) -> bool {
+        DRAW_FOUND && !self.shows(scale) && scale <= self.0.saturating_mul(FOUND_REACH)
     }
 
     /// How far to zoom in: "Zoom to 1:4 or closer".
@@ -93,6 +111,15 @@ pub fn paused_hint(ui: &mut egui::Ui, limit: Limit) {
     style::hint(ui, &format!("Paused: {}.", limit.hint().to_lowercase()));
 }
 
+/// What's drawn of a layer paused by `limit` at `scale`, when points found earlier are: for
+/// the hover text and the line under its section.
+pub fn found_note(limit: Limit, scale: u32) -> Option<&'static str> {
+    limit.draws_found(scale).then_some(
+        "What's drawn was found earlier, closer in: outlined where it was looked for, \
+         hatched where it wasn't.",
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -109,6 +136,17 @@ mod tests {
             assert_eq!(limit.state(false, at * 2), LayerState::Off);
             assert_eq!(limit.state(false, at), LayerState::Off);
         }
+    }
+
+    #[test]
+    fn points_found_earlier_are_drawn_to_twice_the_limit() {
+        assert!(!FEATURES.draws_found(1));
+        assert!(!FEATURES.draws_found(2), "drawn as usual");
+        assert_eq!(FEATURES.draws_found(4), DRAW_FOUND);
+        assert_eq!(LOOT.draws_found(4), DRAW_FOUND);
+        assert!(!LOOT.draws_found(8));
+        assert_eq!(found_note(FEATURES, 4).is_some(), DRAW_FOUND);
+        assert!(found_note(FEATURES, 2).is_none());
     }
 
     #[test]

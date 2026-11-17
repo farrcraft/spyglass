@@ -92,6 +92,7 @@ impl App {
             centre,
         };
         let (portals, portal_hover) = self.draw_portal_layer(ui, &canvas, &frame, world);
+        self.draw_found_regions(&canvas, &frame);
         let pointed = self.draw_marker_layer(ui, &canvas, &frame, world, &session, &spawn);
         if pointed.target.is_none()
             && let Some(hover) = &portal_hover
@@ -210,10 +211,13 @@ impl App {
         // only where heights are cheap, so the stand-ins fill in quickly.
         let terrain_here = self.terrain_allowed();
         let tiles = view.tiles([rect.width(), rect.height()]);
-        let featuring = !self.selection.features.is_empty() && zoom::FEATURES.shows(view.scale);
-        let looting = (self.settings.containers || self.selection.loot.is_some())
-            && zoom::LOOT.shows(view.scale);
-        let regions = if featuring || looting {
+        let features_on = !self.selection.features.is_empty();
+        let loot_on = self.settings.containers || self.selection.loot.is_some();
+        let featuring = features_on && zoom::FEATURES.shows(view.scale);
+        let looting = loot_on && zoom::LOOT.shows(view.scale);
+        let features_found = features_on && zoom::FEATURES.draws_found(view.scale);
+        let loot_found = loot_on && zoom::LOOT.draws_found(view.scale);
+        let regions = if featuring || looting || features_found || loot_found {
             view.regions(&tiles, FEATURE_REGION)
         } else {
             Vec::new()
@@ -244,6 +248,8 @@ impl App {
             featuring,
             // Loot containers too, every one or those of the Loot item.
             looting,
+            features_found,
+            loot_found,
         }
     }
 
@@ -425,6 +431,10 @@ struct Frame {
     marking: bool,
     featuring: bool,
     looting: bool,
+    /// Past their limit, whether the features and loot containers found earlier are drawn,
+    /// from the regions cached, with nothing new asked for (`zoom::DRAW_FOUND`).
+    features_found: bool,
+    loot_found: bool,
 }
 
 impl Frame {
@@ -530,6 +540,90 @@ fn draw_hatch(painter: &egui::Painter, rect: Rect) {
             egui::Stroke::new(1.0, HATCH),
         );
         x += HATCH_GAP;
+    }
+}
+
+/// Where regions drawn past their limit were looked for: an outline where one meets a region
+/// not looked at.
+const FOUND_OUTLINE: Color32 = Color32::from_rgba_premultiplied(0xd0, 0xd0, 0xd0, 0xc0);
+/// Over regions not looked at past the limit: a faint hatch, darker than the empty map's.
+const NOT_LOOKED: Color32 = Color32::from_rgba_premultiplied(0, 0, 0, 0x60);
+
+impl App {
+    /// Past the features' or loot's limit, the regions looked for and those not
+    /// (`zoom::DRAW_FOUND`): each region not cached for every layer drawn is hatched, and the
+    /// edges between the two are outlined, so an empty region reads as "nothing here".
+    fn draw_found_regions(&self, canvas: &Canvas<'_>, frame: &Frame) {
+        if !frame.features_found && !frame.loot_found {
+            return;
+        }
+        let looked = |region: Region| {
+            let key = frame.feature_key(region);
+            let has = |found: bool, ok: bool| !found || ok;
+            has(
+                frame.features_found,
+                matches!(self.feature_markers.peek(&key), Some(Ok(_))),
+            ) && has(
+                frame.loot_found,
+                matches!(self.loot_markers.peek(&key), Some(Ok(_))),
+            )
+        };
+        let view = frame.view;
+        let origin = view.origin();
+        let scale = f64::from(view.scale);
+        // A region's square on screen.
+        let square = |region: Region| {
+            let side = f64::from(region.size) * 16.0;
+            let at = |i: i32, axis: usize| (f64::from(i) * side / scale + origin[axis]) as f32;
+            let min = canvas.centre + egui::vec2(at(region.x, 0), at(region.z, 1));
+            let max = canvas.centre + egui::vec2(at(region.x + 1, 0), at(region.z + 1, 1));
+            Rect::from_min_max(min, max)
+        };
+        let painter = canvas.painter.with_clip_rect(canvas.rect);
+        let stroke = egui::Stroke::new(1.5, FOUND_OUTLINE);
+        let hatch = egui::Stroke::new(1.0, NOT_LOOKED);
+        let map = canvas.rect;
+        for &region in &frame.regions {
+            let rect = square(region);
+            if !rect.intersects(map) {
+                continue;
+            }
+            if looked(region) {
+                let beside = |dx: i32, dz: i32| {
+                    looked(Region {
+                        x: region.x.saturating_add(dx),
+                        z: region.z.saturating_add(dz),
+                        ..region
+                    })
+                };
+                let sides = [
+                    (beside(0, -1), [rect.left_top(), rect.right_top()]),
+                    (beside(0, 1), [rect.left_bottom(), rect.right_bottom()]),
+                    (beside(-1, 0), [rect.left_top(), rect.left_bottom()]),
+                    (beside(1, 0), [rect.right_top(), rect.right_bottom()]),
+                ];
+                for (_, side) in sides.iter().filter(|(next, _)| !next) {
+                    painter.line_segment(*side, stroke);
+                }
+            } else {
+                // The map's diagonals that cross the square, phased to the map so they run on
+                // from one square to the next.
+                let clipped = painter.with_clip_rect(rect.intersect(map));
+                let along = |p: Pos2| p.x + p.y - map.left() - map.bottom();
+                let first = (along(rect.left_top()) / HATCH_GAP).floor() * HATCH_GAP;
+                let mut x = first;
+                while x <= along(rect.right_bottom()) {
+                    clipped.line_segment(
+                        [
+                            Pos2::new(map.left() + x, map.bottom()),
+                            Pos2::new(map.left() + x + map.height(), map.top()),
+                        ],
+                        hatch,
+                    );
+                    x += HATCH_GAP;
+                }
+            }
+        }
     }
 }
 

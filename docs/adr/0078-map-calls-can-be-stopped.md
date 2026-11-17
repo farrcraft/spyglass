@@ -5,7 +5,7 @@
 
 ## Context
 
-The viewer computes its map in tiles on a pool of worker threads, one tile per job, through the `spyglass` crate's map calls: `biome_map`, `height_map`, `surface_biome_map`, `carving_map`, `underground_map`, `flower_map`, `map_features` (structures, features and loot), `containers_in` and `containers_holding`. Some jobs take seconds:
+The viewer computes its map in tiles on a pool of worker threads, one tile per job, through the `spyglass` crate's map calls: `biome_map`, `height_map`, `surface_biome_map`, `carving_map`, `underground_map`, `flower_map`, `map_features` (structures, features and loot), `containers_in` and `containers_holding`; and, as the viewer came to keep points by the chunks that place them, `structures_in` and `features_in`. Some jobs take seconds:
 
 - a features or loot tile at 1:2 places hundreds of chunks, about 30 ms each;
 - a height tile at 1:64 takes about 20 s ([render.md](../specs/render.md#heights));

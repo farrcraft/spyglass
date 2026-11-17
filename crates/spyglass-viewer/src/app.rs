@@ -59,8 +59,10 @@ const SCROLL_PER_STEP: f32 = 50.0;
 const KEY_PAN: f32 = 64.0;
 /// What the map shows where there's no tile yet.
 const EMPTY: Color32 = Color32::from_rgb(0x20, 0x20, 0x20);
-/// Tiles' structure markers kept.
-const CACHE_MARKERS: usize = 512;
+/// Regions of structure starts, features or loot containers kept, each kind: more than a 4K
+/// view's regions at its scale, ring included (about 600 at 1:2 for features, or at 1:4 for
+/// starts), so drawing the view never evicts what it's drawing.
+const CACHE_MARKERS: usize = 1024;
 /// The most structure markers drawn at once; more is a zoom level too far out to read.
 const MAX_MARKERS: usize = 2_000;
 /// Structure layouts kept.

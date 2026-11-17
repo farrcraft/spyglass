@@ -934,6 +934,27 @@ impl StructureQuery {
     pub fn argument(&self) -> &str {
         &self.argument
     }
+
+    /// A query for every structure this one or `other` names, as one: a start where either's
+    /// structures may start lists them all, and is certain if one of them certainly starts
+    /// there, which asking each query alone can't tell. Its argument is both, comma-separated.
+    /// [`Error::OtherWorld`] if the two were resolved in different worlds.
+    pub fn with(&self, other: &StructureQuery) -> Result<StructureQuery> {
+        if other.world != self.world {
+            return Err(Error::OtherWorld(other.argument.clone()));
+        }
+        let mut targets = self.targets.clone();
+        for &target in &other.targets {
+            if !targets.contains(&target) {
+                targets.push(target);
+            }
+        }
+        Ok(StructureQuery {
+            world: self.world,
+            argument: format!("{}, {}", self.argument, other.argument),
+            targets,
+        })
+    }
 }
 
 /// A biome resolved by [`World::biome_query`].
@@ -1386,8 +1407,20 @@ impl<'w> Session<'w> {
         max: [i32; 2],
         confirm: bool,
     ) -> Result<Vec<StructureStart>> {
+        self.structures_in_halting(query, min, max, confirm, Halt::NEVER)
+    }
+
+    /// [`structures_in`](Self::structures_in), checking `halt` before each candidate chunk.
+    pub(crate) fn structures_in_halting(
+        &self,
+        query: &StructureQuery,
+        min: [i32; 2],
+        max: [i32; 2],
+        confirm: bool,
+        halt: Halt<'_>,
+    ) -> Result<Vec<StructureStart>> {
         self.check_world(query.world, &query.argument)?;
-        Ok(self.starts_by_set(&query.targets, |_| (min, max), confirm))
+        self.starts_by_set_halting(&query.targets, |_| (min, max), confirm, halt)
     }
 
     /// Every chunk in each set's `chunks(locate offset)` range (inclusive) where one of

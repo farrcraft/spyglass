@@ -47,6 +47,22 @@ fn each_call(session: &Session, area: &MapArea, layers: &Layers, stop: &Stop, ex
         features.as_ref().ok() == Some(&session.map_features(area, layers).unwrap()),
         features.as_ref().is_err_and(stopped),
     );
+    // 33 chunks a side around the area's corner: some of each set's cells, 8 chunks apart.
+    let corner = area.min.map(|m| m >> 4);
+    let (min, max) = (corner.map(|c| c - 16), corner.map(|c| c + 16));
+    for query in &layers.structures {
+        let ours = stopping.structures_in(query, min, max, layers.confirm);
+        check(
+            "structures_in",
+            ours.as_ref().ok()
+                == Some(
+                    &session
+                        .structures_in(query, min, max, layers.confirm)
+                        .unwrap(),
+                ),
+            ours.as_ref().is_err_and(stopped),
+        );
+    }
     if area.scale <= spyglass::MAX_UNDERGROUND_SCALE
         && let Ok(carvings) = session.carving_map(area)
     {

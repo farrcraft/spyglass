@@ -5,7 +5,7 @@
 use crate::{
     BiomeMap, CarvingMap, Error, FeatureOptions, FeatureQuery, FlowerMap, FoundContainer,
     FoundFeature, HeightMap, ItemQuery, Layers, MapArea, MapFeatures, Result, Session, Stop,
-    UndergroundMap,
+    StructureQuery, StructureStart, UndergroundMap,
 };
 
 /// Whether a map call should give up: the stop it was made with, if any. Checked between
@@ -93,6 +93,18 @@ impl<'w> Stopping<'_, 'w> {
     /// [`Session::map_features`], stopped when the stop is raised.
     pub fn map_features(&self, area: &MapArea, layers: &Layers) -> Result<MapFeatures> {
         self.session.map_features_halting(area, layers, self.halt)
+    }
+
+    /// [`Session::structures_in`], stopped when the stop is raised.
+    pub fn structures_in(
+        &self,
+        query: &StructureQuery,
+        min: [i32; 2],
+        max: [i32; 2],
+        confirm: bool,
+    ) -> Result<Vec<StructureStart>> {
+        self.session
+            .structures_in_halting(query, min, max, confirm, self.halt)
     }
 
     /// [`Session::features_in`], stopped when the stop is raised.

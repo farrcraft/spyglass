@@ -173,6 +173,38 @@ fn biome_locates_cross_the_gradient() {
 }
 
 #[test]
+fn two_queries_together_are_the_tag_naming_both() {
+    let fixture = fixtures::structured_overworld(false);
+    let world = World::open(fixture.path()).unwrap();
+    let towers = world.structure_query("minecraft:tower").unwrap();
+    let huts = world.structure_query("minecraft:hut").unwrap();
+    let both = towers.with(&huts).unwrap();
+    assert_eq!(both.argument(), "minecraft:tower, minecraft:hut");
+    assert_eq!(
+        world.query_structures(&both).unwrap(),
+        ["minecraft:tower", "minecraft:hut"]
+    );
+    // Naming one twice names it once.
+    assert_eq!(
+        world
+            .query_structures(&towers.with(&towers).unwrap())
+            .unwrap(),
+        ["minecraft:tower"]
+    );
+    let tag = world.structure_query("#minecraft:towers_too").unwrap();
+    let session = world.session(3).unwrap();
+    let (min, max) = ([-60, -60], [60, 60]);
+    let found = session.structures_in(&both, min, max, false).unwrap();
+    assert!(!found.is_empty());
+    assert_eq!(found, session.structures_in(&tag, min, max, false).unwrap());
+    // Queries from two worlds don't go together.
+    let other = fixtures::structured_overworld(false);
+    let other = World::open(other.path()).unwrap();
+    let theirs = other.structure_query("minecraft:hut").unwrap();
+    assert!(matches!(towers.with(&theirs), Err(Error::OtherWorld(_))));
+}
+
+#[test]
 fn queries_belong_to_their_world() {
     let (a, b) = (
         fixtures::structured_overworld(false),

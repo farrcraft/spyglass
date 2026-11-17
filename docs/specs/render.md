@@ -121,6 +121,7 @@ A front end that computes the map in the background can stop a call it no longer
 | `carving_map`                         | before each chunk it carves                                               |
 | `underground_map`                     | before each band of rows, and as `carving_map` when it carves             |
 | `map_features`                        | before each candidate structure start, and as below for features and loot |
+| `structures_in`                       | before each candidate structure start                                     |
 | `features_in`                         | before each chunk it places, and before each neighbour that chunk carves  |
 | `containers_in`, `containers_holding` | before each chunk it places, and before each neighbour that chunk carves  |
 

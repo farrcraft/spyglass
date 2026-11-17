@@ -95,17 +95,18 @@ impl App {
             .collect();
         if frame.marking {
             jobs.extend(
-                tiles
+                frame
+                    .start_regions
                     .iter()
-                    .map(|&t| frame.marker_key(t))
+                    .map(|&r| frame.marker_key(r))
                     .filter(|k| !self.markers.contains(k))
                     .map(|k| job(JobKey::Markers(k))),
             );
         }
         let mut layout_keys: Vec<(LayoutKey, String)> = Vec::new();
         if frame.marking && frame.confirm && zoom::BOUNDS.shows(frame.view.scale) {
-            for &tile in tiles {
-                let Some(Ok(found)) = self.markers.get(&frame.marker_key(tile)) else {
+            for &region in &frame.start_regions {
+                let Some(Ok(found)) = self.markers.get(&frame.marker_key(region)) else {
                     continue;
                 };
                 for start in found.iter() {
@@ -278,9 +279,10 @@ impl App {
     ) {
         let tiles = &frame.tiles;
         let marked = !frame.marking
-            || tiles
+            || frame
+                .start_regions
                 .iter()
-                .all(|&t| self.markers.contains(&frame.marker_key(t)));
+                .all(|&r| self.markers.contains(&frame.marker_key(r)));
         let laid_out = layout_keys.iter().all(|(k, _)| self.layouts.contains(k));
         let view = frame.view;
         let shown = (

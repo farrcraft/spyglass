@@ -23,13 +23,13 @@ use std::time::Instant;
 
 use eframe::egui;
 use spyglass::{
-    BiomeMap, CarvingMap, DEFAULT_MAP_Y, FeatureQuery, FlowerCount, FlowerMap, FoundContainer,
-    FoundFeature, GeneratedChunk, HeightMap, ItemQuery, Layers, MapFeatures, Session, Stop,
-    Stopping, StructureLayout, StructureQuery, StructureStart, UndergroundMap,
+    BiomeMap, CarvingMap, FeatureQuery, FlowerCount, FlowerMap, FoundContainer, FoundFeature,
+    GeneratedChunk, HeightMap, ItemQuery, Layers, MapFeatures, Session, Stop, Stopping,
+    StructureLayout, StructureQuery, StructureStart, UndergroundMap,
 };
 
 use crate::timing;
-use crate::view::{Region, TILE, Tile};
+use crate::view::{Region, Tile};
 use crate::zoom;
 
 /// A tile's biomes: the world and seed, the height, what terrain it needs, and its place.
@@ -85,8 +85,8 @@ const CARVING_TILES: usize = 256;
 /// The carving maps kept, shared by the workers.
 type Carvings = Mutex<Cache<(u64, Tile), Arc<CarvingMap>>>;
 
-/// A tile's structure markers: the world and seed, the structures chosen, whether terrain
-/// decides them, and its place.
+/// A region's structure starts: the world and seed, the structures chosen, whether terrain
+/// decides them, and the region (`View::start_regions`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MarkerKey {
     /// The app's number for the world and seed shown.
@@ -95,8 +95,8 @@ pub struct MarkerKey {
     pub selection: u64,
     /// Decide starts with the seed's terrain (`Layers::confirm`).
     pub confirm: bool,
-    /// Where the tile is, and its scale.
-    pub tile: Tile,
+    /// The chunks whose starts these are.
+    pub region: Region,
 }
 
 /// A region's features or loot containers: the world and seed, what's chosen, and the region,
@@ -177,7 +177,7 @@ impl JobKey {
     fn kind(&self) -> String {
         let (what, tile) = match self {
             JobKey::Biomes(k) => ("biomes", k.tile),
-            JobKey::Markers(k) => ("markers", k.tile),
+            JobKey::Markers(_) => return "markers".to_string(),
             JobKey::Features(_) => return "features".to_string(),
             JobKey::Loot(_) => return "loot".to_string(),
             JobKey::Layout(_) => return "layout".to_string(),
@@ -218,7 +218,7 @@ pub struct Job {
 pub enum Output {
     /// A tile's biomes and the layers drawn with them.
     Biomes(Box<TileData>),
-    /// The structure starts whose marker centre is on the tile, in drawing order.
+    /// The structure starts in the region's chunks, in drawing order.
     Markers(Vec<StructureStart>),
     /// The features the region's chunks place, in drawing order.
     Features(Vec<FoundFeature>),
@@ -414,7 +414,13 @@ fn compute(job: &Job, carvings: &Carvings, stop: &Stop) -> Result<Output, JobErr
     let session = job.session.stopping(stop);
     let (tile, y) = match job.key {
         JobKey::Biomes(key) => (key.tile, key.y),
-        JobKey::Markers(key) => (key.tile, DEFAULT_MAP_Y),
+        JobKey::Markers(key) => {
+            let starts = timing::job(
+                || "markers".to_string(),
+                || region_starts(job, &session, key),
+            )?;
+            return Ok(Output::Markers(starts));
+        }
         JobKey::Features(key) => {
             let found = timing::job(
                 || "features".to_string(),
@@ -520,26 +526,32 @@ fn compute(job: &Job, carvings: &Carvings, stop: &Stop) -> Result<Output, JobErr
                 generated,
             })))
         }
-        JobKey::Markers(key) => {
-            let layers = Layers {
-                biomes: false,
-                structures: job.structures.to_vec(),
-                confirm: key.confirm,
-                ..Layers::default()
-            };
-            let mut starts = timing::job(timing_name("markers"), || features(layers))?.structures;
-            // Each marker belongs to the tile its centre is on, so it's drawn once.
-            let inside = 0..i64::from(TILE);
-            starts.retain(|s| {
-                let [x, z] = area.pixel([s.position[0], s.position[2]]);
-                inside.contains(&x) && inside.contains(&z)
-            });
-            Ok(Output::Markers(starts))
-        }
-        JobKey::Features(_) | JobKey::Loot(_) | JobKey::Layout(_) => {
+        JobKey::Markers(_) | JobKey::Features(_) | JobKey::Loot(_) | JobKey::Layout(_) => {
             unreachable!("computed above")
         }
     }
+}
+
+/// The starts of the job's structures in `key`'s region (`Session::structures_in`), confirmed
+/// if the key says so, in drawing order: by set, then chunk z, then chunk x. The queries are
+/// asked as one, as `map_features` asks them, so a start two of them name is listed once. Each
+/// belongs to the region of its chunk, so regions never share one.
+fn region_starts(
+    job: &Job,
+    session: &Stopping<'_, '_>,
+    key: MarkerKey,
+) -> spyglass::Result<Vec<StructureStart>> {
+    let Some((first, rest)) = job.structures.split_first() else {
+        return Ok(Vec::new());
+    };
+    let mut query = first.clone();
+    for other in rest {
+        query = query.with(other)?;
+    }
+    let (min, max) = key.region.chunks();
+    let mut starts = session.structures_in(&query, min, max, key.confirm)?;
+    starts.sort_by(|a, b| (&a.set, a.chunk[1], a.chunk[0]).cmp(&(&b.set, b.chunk[1], b.chunk[0])));
+    Ok(starts)
 }
 
 /// The features the job names that `region`'s chunks place (`Session::features_in`), each once,
@@ -863,7 +875,7 @@ mod tests {
                 assert_eq!(data.biomes, session.biome_map(&area).unwrap());
                 assert_eq!(data.heights, None);
             }
-            let side = (TILE * key.tile.scale) as i32;
+            let side = (crate::view::TILE * key.tile.scale) as i32;
             assert_eq!(
                 data.slime_chunks,
                 session.slime_chunks(
@@ -1004,50 +1016,68 @@ mod tests {
         assert_eq!(data.biomes, session.biome_map(&area).unwrap());
     }
 
+    /// Starts by region, at a scale kept in regions of 32 chunks and at one kept by tile: no
+    /// start in two regions, and every one each tile drew before (`map_features`, the starts
+    /// whose centre is on the tile) among them.
     #[test]
-    fn each_marker_is_on_one_tile() {
+    fn each_start_is_in_one_region_and_every_tile_s_start_is_in_one() {
         let session = session();
         let (wake, woken) = channel();
         let pool = Pool::with_threads(2, move || {
             let _ = wake.send(());
         });
-        // A 3 × 2 block of tiles west of x = 0, where the plains are.
-        let tiles: Vec<Tile> = (-3..0)
-            .flat_map(|x| (0..2).map(move |z| Tile { scale: 2, x, z }))
-            .collect();
-        let marker = |tile| MarkerKey {
-            source: 1,
-            selection: 1,
-            confirm: false,
-            tile,
-        };
-        pool.want(
-            tiles
-                .iter()
-                .map(|&t| job(&session, JobKey::Markers(marker(t))))
-                .collect(),
-        );
-        let mut found: Vec<StructureStart> = run(&pool, &woken, tiles.len())
-            .into_iter()
-            .flat_map(|(_, result)| match result {
-                Ok(Output::Markers(starts)) => starts,
-                _ => panic!("markers"),
-            })
-            .collect();
-        // Together, exactly the starts in the blocks the tiles cover.
-        let side = (TILE * 2) as i32;
-        let query = session.world().structure_query("minecraft:tower").unwrap();
-        let mut expected = session
-            .structures_in(&query, [-200, -10], [10, 200], false)
-            .unwrap();
-        expected.retain(|s| {
-            (-3 * side..0).contains(&s.position[0]) && (0..2 * side).contains(&s.position[2])
-        });
-        let order = |s: &StructureStart| (s.chunk[1], s.chunk[0]);
-        found.sort_by_key(order);
-        expected.sort_by_key(order);
-        assert!(!expected.is_empty());
-        assert_eq!(found, expected);
+        for scale in [2, 32] {
+            // West of x = 0, where the plains are.
+            let view = crate::view::View {
+                centre: [-300.0 * f64::from(scale), 100.0],
+                scale,
+                y: 64,
+            };
+            let tiles = view.tiles([300.0, 200.0]);
+            let regions = view.start_regions(&tiles);
+            let marker = |region| MarkerKey {
+                source: 1,
+                selection: 1,
+                confirm: false,
+                region,
+            };
+            pool.want(
+                regions
+                    .iter()
+                    .map(|&r| job(&session, JobKey::Markers(marker(r))))
+                    .collect(),
+            );
+            let found: Vec<StructureStart> = run(&pool, &woken, regions.len())
+                .into_iter()
+                .flat_map(|(_, result)| match result {
+                    Ok(Output::Markers(starts)) => starts,
+                    _ => panic!("markers"),
+                })
+                .collect();
+            for (i, start) in found.iter().enumerate() {
+                assert!(!found[i + 1..].contains(start), "{start:?} in two regions");
+            }
+            let layers = Layers {
+                biomes: false,
+                structures: job(&session, JobKey::Markers(marker(regions[0])))
+                    .structures
+                    .to_vec(),
+                ..Layers::default()
+            };
+            let mut drawn = 0;
+            for tile in &tiles {
+                let area = tile.area(64).unwrap();
+                let inside = 0..i64::from(crate::view::TILE);
+                for start in session.map_features(&area, &layers).unwrap().structures {
+                    let [x, z] = area.pixel([start.position[0], start.position[2]]);
+                    if inside.contains(&x) && inside.contains(&z) {
+                        assert!(found.contains(&start), "1:{scale}: {start:?} in no region");
+                        drawn += 1;
+                    }
+                }
+            }
+            assert!(drawn > 0, "1:{scale}: the tiles draw some starts");
+        }
     }
 
     #[test]

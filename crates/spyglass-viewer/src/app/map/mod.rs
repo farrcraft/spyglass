@@ -218,11 +218,18 @@ impl App {
         } else {
             Vec::new()
         };
+        let marking = !self.selection.queries.is_empty() && self.structures_generate();
+        let start_regions = if marking {
+            view.start_regions(&tiles)
+        } else {
+            Vec::new()
+        };
         Frame {
             source,
             view,
             tiles,
             regions,
+            start_regions,
             selection: self.selection.id,
             confirm: self.settings.confirm,
             relief: self.settings.relief && terrain_here,
@@ -232,7 +239,7 @@ impl App {
             underground: self.underground(),
             // Flowers cost about twice what biomes do, cheap enough for the stand-ins too.
             flowers: self.settings.flowers,
-            marking: !self.selection.queries.is_empty() && self.structures_generate(),
+            marking,
             // Features only up close: each chunk they could be in is placed.
             featuring,
             // Loot containers too, every one or those of the Loot item.
@@ -400,6 +407,9 @@ struct Frame {
     /// The feature and loot regions under them, and one more all round, nearest the centre
     /// first: empty unless features or loot are drawn.
     regions: Vec<Region>,
+    /// The structure starts regions for the view's tiles, nearest the centre first
+    /// (`View::start_regions`): empty unless structures are marked.
+    start_regions: Vec<Region>,
     /// The marker selection's number.
     selection: u64,
     /// Whether starts are confirmed by terrain.
@@ -437,12 +447,12 @@ impl Frame {
         }
     }
 
-    fn marker_key(&self, tile: Tile) -> MarkerKey {
+    fn marker_key(&self, region: Region) -> MarkerKey {
         MarkerKey {
             source: self.source,
             selection: self.selection,
             confirm: self.confirm,
-            tile,
+            region,
         }
     }
 

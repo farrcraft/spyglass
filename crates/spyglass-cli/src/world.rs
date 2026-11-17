@@ -135,6 +135,7 @@ fn info(report: &SaveReport, as_json: bool) -> Result<()> {
                 }
             }
             PackUse::NotApplied => "not applied".to_string(),
+            other => other.kind().replace('_', " "),
         };
         out!("  {:<28} {used}", pack.name);
         for (registry, changes) in pack.changes.iter().flat_map(|c| &c.registries) {

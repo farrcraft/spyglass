@@ -15,7 +15,7 @@ fn saved_spawns_are_near_the_spawn_origin() {
         let Ok(quick) = spyglass::inspect_save(&found.dir, &bundles, Scan::Quick) else {
             continue;
         };
-        if !quick.answerable_in(spyglass::Dimension::Overworld) {
+        if !quick.answerable_in(spyglass::Dimension::Overworld) || !quick.pack_errors().is_empty() {
             continue;
         }
         let report = spyglass::inspect_save(&found.dir, &bundles, Scan::Chunks).unwrap();
@@ -73,7 +73,8 @@ fn saved_structure_starts_are_the_predicted_ones() {
         let Ok(quick) = spyglass::inspect_save(&found.dir, &bundles, Scan::Quick) else {
             continue;
         };
-        if !quick.answerable_in(Dimension::Overworld) {
+        // A save whose packs can't be opened is blocked too, which only `pack_errors` finds.
+        if !quick.answerable_in(Dimension::Overworld) || !quick.pack_errors().is_empty() {
             continue;
         }
         let report = spyglass::inspect_save(&found.dir, &bundles, Scan::Chunks).unwrap();
@@ -176,7 +177,8 @@ fn saved_containers_have_the_predicted_seeds() {
                 }
             )
         });
-        if !report.answerable_in(Dimension::Overworld) || older {
+        if !report.answerable_in(Dimension::Overworld) || older || !report.pack_errors().is_empty()
+        {
             continue;
         }
         let world = report.open_world(Dimension::Overworld).unwrap();
@@ -263,7 +265,7 @@ fn reports_build_and_the_scan_counts_what_chunks_hold() {
         );
         reports += 1;
         let current = quick.save.version_name.as_deref() == Some("26.3");
-        if !current || !quick.answerable_in(Dimension::Overworld) {
+        if !current || !details.answerable_in(Dimension::Overworld) {
             continue;
         }
         let report = inspector.inspect(&found.dir, Scan::Chunks).unwrap();

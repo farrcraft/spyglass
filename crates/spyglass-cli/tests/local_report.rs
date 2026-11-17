@@ -122,24 +122,17 @@ fn same(json: &Value, details: &SaveDetails) {
         assert_eq!(j["kind"], w.kind());
         assert_eq!(j["message"], w.to_string());
         let about = &j["about"];
-        match w.subject() {
-            SaveSubject::Setting(s) => {
-                assert_eq!(about["kind"], "setting");
-                assert_eq!(about["setting"], s.kind());
-            }
-            SaveSubject::Pack(p) => {
-                assert_eq!(about["kind"], "pack");
-                assert_eq!(about["pack"], p.as_str());
-            }
-            SaveSubject::Dimension(d) => {
-                assert_eq!(about["kind"], "dimension");
-                assert_eq!(about["dimension"], d.id());
-            }
-            SaveSubject::Holdings(d) => {
-                assert_eq!(about["kind"], "holdings");
-                assert_eq!(about["dimension"], d.id());
-            }
-        }
+        let subject = w.subject();
+        assert_eq!(about["kind"], subject.kind());
+        assert_eq!(
+            about["setting"].as_str(),
+            subject.setting().map(|s| s.kind())
+        );
+        assert_eq!(about["pack"].as_str(), subject.pack());
+        assert_eq!(
+            about["dimension"].as_str(),
+            subject.dimension().map(|d| d.id())
+        );
     }
 }
 

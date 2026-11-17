@@ -84,6 +84,7 @@ impl App {
                                 format!("applied; changes {}", names.join(", "))
                             }
                         }
+                        other => other.kind().replace('_', " "),
                     };
                     ui.horizontal_wrapped(|ui| {
                         ui.label(style::mono(&pack.name));

@@ -90,31 +90,12 @@ pub struct About {
 }
 
 impl About {
-    fn new(subject: SaveSubject) -> Self {
-        let about = |kind| About {
-            kind,
-            setting: None,
-            dimension: None,
-            pack: None,
-        };
-        match subject {
-            SaveSubject::Setting(setting) => About {
-                setting: Some(setting.kind()),
-                dimension: setting.dimension().map(Dimension::id),
-                ..about("setting")
-            },
-            SaveSubject::Pack(pack) => About {
-                pack: Some(pack),
-                ..about("pack")
-            },
-            SaveSubject::Dimension(d) => About {
-                dimension: Some(d.id()),
-                ..about("dimension")
-            },
-            SaveSubject::Holdings(d) => About {
-                dimension: Some(d.id()),
-                ..about("holdings")
-            },
+    fn new(subject: &SaveSubject) -> Self {
+        About {
+            kind: subject.kind(),
+            setting: subject.setting().map(spyglass::Setting::kind),
+            dimension: subject.dimension().map(Dimension::id),
+            pack: subject.pack().map(str::to_string),
         }
     }
 }
@@ -129,7 +110,7 @@ impl Warning {
                 _ => None,
             },
             dimension: w.dimension().map(Dimension::id),
-            about: Some(About::new(w.subject())),
+            about: Some(About::new(&w.subject())),
         }
     }
 }

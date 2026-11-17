@@ -118,7 +118,7 @@ The library maps each registry to the answers it feeds, with a fixed table in `s
 - [x] Ignored tests on the machine's saves: every launcher save's `details()` builds. In every answerable 26.3 save no older version touched, the start counts match what `SaveChunks` reads for the chunks within 48 of the spawn origin.
 - [x] The exit criterion's two real saves: one 26.3 save with a data pack (Terralith or the fixture pack) and one with chunks from an older version. `world info --json` and the panel's `SaveDetails` are compared field for field in an ignored test.
 - [x] Guide: [your-worlds.md](../guide/src/your-worlds.md), [viewer.md](../guide/src/viewer.md), [data-packs.md](../guide/src/data-packs.md). The changelog notes the new `SaveWarning` variants and the deprecated `applied_packs`.
-- [ ] Update the milestone: reword the scope's opened-containers item ([above](#what-the-save-holds)) and tick the exit criteria.
+- [x] Update the milestone: reword the scope's opened-containers item ([above](#what-the-save-holds)) and tick the exit criteria.
 
 ## Verification
 
@@ -134,13 +134,14 @@ The library maps each registry to the answers it feeds, with a fixed table in `s
 - [x] [world-saves.md](../specs/world-saves.md): the report, the settings' sources, the holdings and their counting, the warnings' subjects, `PackError` and `MovingBorder`.
 - [x] [data-packs.md](../specs/data-packs.md): what a pack changes, and the registry-to-answers table.
 - [x] [cli-json.md](../specs/cli-json.md): `world info`'s new fields, and `applied_packs` deprecated.
-- [ ] An ADR if the counts need their own scan level, or if `SaveWarning` is made `#[non_exhaustive]` to stop the next variant from breaking callers.
+- [x] An ADR if the counts need their own scan level, or if `SaveWarning` is made `#[non_exhaustive]` to stop the next variant from breaking callers.
 - [x] The user guide's [your-worlds.md](../guide/src/your-worlds.md), [viewer.md](../guide/src/viewer.md) and [data-packs.md](../guide/src/data-packs.md).
 
 ## Notes
 
 Newest first.
 
+- 2026-11-16: [ADR 0077](../adr/0077-open-ended-public-enums-are-non-exhaustive.md): open-ended public enums are `#[non_exhaustive]`. Applied to `SaveWarning`, `PackConcern`, `SaveSubject`, `Setting` and `PackUse`; `Answer` stays exhaustive. The scan counts needed no level of their own (14% slower), so no ADR for that. `SaveSubject` gained `kind`, `setting`, `pack` and `dimension`, which the CLI's JSON uses instead of a `match`.
 - 2026-11-16: The exit criterion's pack save: "Terralith Test", generated in 26.3 with Terralith, in the Modrinth App's Fabric profile, so it's also modded and enables `fabric-convention-tags-v2`. `local_report.rs` now compares on it instead of the copy, expecting those two warnings besides Terralith's three `pack_error`s, and Terralith's own saved starts (`terralith:underground/mining_outpost`) count as answered from the save, not dropped. In the viewer, a save blocked in every dimension wasn't shown at all, so its World tab never appeared; now the report is kept (`unshown_save`), the error has **What spyglass read**, and the tab shows it without **Go** buttons. Checked by eye on this save. The panel now marks registries spyglass doesn't read, as the CLI does.
 - 2026-11-16: The World tab checked by eye with the `run-viewer` skill on "Modrinth Latest upgraded": the notice row reads "Showing the save Modrinth Latest, made in Minecraft 26.3: 3 warnings." with **What spyglass read**, which opens the World (3) tab. Settings show their sources; the three warnings sit under modded, the mod's pack and the Overworld's holdings in the warning colour; the spawn's **Go** moved the map to 0, 0. With mineshafts, ocean ruins and ruined portals drawn, the tally read 113 chunks read, 80 starts from the save and 33 chunks with none. The panel's font draws `--from` with an en dash.
 - 2026-11-16: The two real saves. "Modrinth Latest upgraded" (26.3, 19,761 of 21,636 Overworld chunks from data version 4790) and a copy of "Portal Link Test" with Terralith put in `datapacks/` and enabled in `level.dat` give the same report from `world info --json` and `details()`, field for field (`spyglass-cli/tests/local_report.rs`). The copy stands in for a world generated with a pack: none of the machine's saves has one. Terralith showed `layer_changes` counting its 18 `.json.disabled` structure files, which the game doesn't list; a file now counts only with its registry's extension. It also showed the spec's Terralith counts were wrong (39, 95, 29 and 183, not 40, 97, 50 and 300; 173 old templates, not 290). Its three `pack_error`s land under the pack, naming `data/terralith/structure/mage/tower.nbt`. The local-saves test: 193 reports build, and the scan's starts match the whole-chunk reader's in 29,720 chunks of five saves.

@@ -115,7 +115,7 @@ The counts are made in the chunk scan's one pass, read without building any tree
 | `moving_border`         | that dimension's border setting                                                                                                                                               |
 | `pack_error`            | the pack whose file the error names, by its `data/...` path or by an id one of the packs has a file for (most loaders' errors name the resource by id), or else the dimension |
 
-`pack_error` comes from opening each answerable dimension with the packs, so only the report raises it; `SaveReport::warnings` doesn't have it, and `pack_errors()` gives the same errors without the report. The other warnings are the same in both.
+`SaveWarning`, `PackConcern`, `SaveSubject` and `Setting` are `#[non_exhaustive]`, since spyglass may learn of more ([ADR 0077](../adr/0077-open-ended-public-enums-are-non-exhaustive.md)); `SaveSubject`'s `kind`, `setting`, `pack` and `dimension` read one without a `match`. `pack_error` comes from opening each answerable dimension with the packs, so only the report raises it; `SaveReport::warnings` doesn't have it, and `pack_errors()` gives the same errors without the report. The other warnings are the same in both.
 
 ## Region files
 

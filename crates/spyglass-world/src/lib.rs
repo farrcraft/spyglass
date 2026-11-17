@@ -367,7 +367,7 @@ impl Save {
             },
         };
 
-        let (player, player_source) = Self::player(&dir, &level, &level_fields)?;
+        let (player, player_source) = Self::read_player(&dir, &level, &level_fields)?;
         let sources = SaveSources {
             name: in_level("Data.LevelName"),
             data_version: in_level("Data.DataVersion"),
@@ -550,7 +550,7 @@ impl Save {
 
     /// The single player, and where it's read from: `Data.Player` before 26.x; in 26.x,
     /// `players/data/<uuid>.dat` for `Data.singleplayer_uuid`. `None` for server saves.
-    fn player(
+    fn read_player(
         dir: &Path,
         level: &Tag,
         level_fields: &Fields<'_>,

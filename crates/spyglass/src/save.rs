@@ -66,6 +66,7 @@ pub struct SaveInfo {
 
 /// Why spyglass can't apply an enabled data pack as the game does, or applies it with a caveat.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum PackConcern {
     /// Its zip or folder is missing from `datapacks/`. The game drops it too, but the world may
     /// have been generated with it.
@@ -116,6 +117,7 @@ impl PackConcern {
 
 /// Something that makes spyglass's answers for a save inexact, or impossible.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SaveWarning {
     /// No bundle has the save's data version. Blocks answers.
     NoBundle {
@@ -184,6 +186,7 @@ pub enum SaveWarning {
 
 /// What a [`SaveWarning`] is about: the item of [`SaveDetails`] it's shown beside.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum SaveSubject {
     /// A setting.
     Setting(Setting),
@@ -195,8 +198,46 @@ pub enum SaveSubject {
     Holdings(Dimension),
 }
 
+impl SaveSubject {
+    /// A short machine-readable kind: `setting`, `pack`, `dimension` or `holdings`.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            SaveSubject::Setting(_) => "setting",
+            SaveSubject::Pack(_) => "pack",
+            SaveSubject::Dimension(_) => "dimension",
+            SaveSubject::Holdings(_) => "holdings",
+        }
+    }
+
+    /// The setting, for a setting.
+    pub fn setting(&self) -> Option<Setting> {
+        match self {
+            SaveSubject::Setting(setting) => Some(*setting),
+            _ => None,
+        }
+    }
+
+    /// The pack's name, for a pack.
+    pub fn pack(&self) -> Option<&str> {
+        match self {
+            SaveSubject::Pack(name) => Some(name),
+            _ => None,
+        }
+    }
+
+    /// The dimension it's in: a dimension's, its holdings', or a per-dimension setting's.
+    pub fn dimension(&self) -> Option<Dimension> {
+        match self {
+            SaveSubject::Setting(setting) => setting.dimension(),
+            SaveSubject::Dimension(d) | SaveSubject::Holdings(d) => Some(*d),
+            SaveSubject::Pack(_) => None,
+        }
+    }
+}
+
 /// One of the values spyglass reads from a save, as [`SaveDetails::settings`] lists them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Setting {
     /// `Data.Version.Name`.
     Version,

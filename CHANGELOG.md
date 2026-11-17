@@ -13,7 +13,7 @@ Changes go under **Unreleased** as they're made. `cargo xtask release` turns tha
 
 ### Changed
 
-- **`SaveWarning` has two new variants,** `MovingBorder` and `PackError`, so a `match` on it outside the crate needs them. A dimension the packs can't be opened in is a `pack_error` warning in `world info`'s `warnings`, as well as in `pack_errors`.
+- **`SaveWarning` has two new variants,** `MovingBorder` and `PackError`, and from now on it, `PackConcern` and the new `SaveSubject`, `Setting` and `PackUse` are `#[non_exhaustive]`: a `match` on them outside the crate needs a `_` arm, and later variants won't break it ([ADR 0077](docs/adr/0077-open-ended-public-enums-are-non-exhaustive.md)). A dimension the packs can't be opened in is a `pack_error` warning in `world info`'s `warnings`, as well as in `pack_errors`.
 - **`world info`'s `applied_packs` is deprecated,** for removal in the release after next: `packs` lists every pack, applied or not.
 
 ### Fixed

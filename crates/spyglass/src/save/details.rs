@@ -66,6 +66,7 @@ impl SaveSetting {
 
 /// What spyglass did with an enabled pack.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum PackUse {
     /// `vanilla`: the bundle itself.
     Bundle,

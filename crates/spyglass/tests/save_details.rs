@@ -178,6 +178,7 @@ fn the_warning<'d>(details: &'d SaveDetails, kind: &str, subject: &SaveSubject) 
             .dimensions
             .iter()
             .any(|x| x.dimension == *d && x.holdings.is_some()),
+        other => panic!("a subject the test doesn't know: {other:?}"),
     };
     assert!(present, "{kind}: {subject:?} isn't in the report");
     found[0]

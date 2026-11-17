@@ -14,8 +14,8 @@ use serde::{Deserialize, Serialize};
 use spyglass::{
     BiomeQuery, BundleInfo, Dimension, Evaluation, FeatureQuery, FindOutcome, FoundContainer,
     FoundFeature, Game, Heightmap, Image, ItemQuery, LauncherSave, Layers, MAX_UNDERGROUND_SCALE,
-    Pack, SaveReport, Scan, SearchOutcome, SearchQuery, Session, SpawnOrigin, StructureLayout,
-    StructureQuery, StructureStart, World,
+    Pack, SaveDetails, SaveReport, Scan, SearchOutcome, SearchQuery, Session, SpawnOrigin,
+    StructureLayout, StructureQuery, StructureStart, World,
 };
 
 use crate::export::{Export, Source, visible_area};
@@ -40,6 +40,7 @@ mod saves;
 mod search_panel;
 mod side_panel;
 mod toolbar;
+mod world_panel;
 
 use markers_panel::MenuTarget;
 use search_panel::Opened;
@@ -345,9 +346,12 @@ pub struct App {
     /// Saves in the launchers' folders, listed when first wanted.
     saves: Option<Vec<LauncherSave>>,
     /// A save being read.
-    inspecting: Option<Pending<Result<SaveReport, String>>>,
+    inspecting: Option<Pending<Result<(SaveReport, SaveDetails), String>>>,
     /// The save on the map, if it came from one.
     save: Option<SaveReport>,
+    /// The report of what spyglass read from the last save shown, for the World tab while
+    /// [`save`](Self::save) is that save.
+    save_details: Option<SaveDetails>,
     /// Why the last save couldn't be opened or shown.
     save_error: Option<String>,
     /// The saves list's filter, as typed.
@@ -510,6 +514,7 @@ impl App {
             found: None,
             saves: None,
             inspecting: None,
+            save_details: None,
             save: None,
             save_error: None,
             save_filter: String::new(),
@@ -644,10 +649,10 @@ impl App {
 
     /// Switches the map to `dimension`, loading it in the background.
     fn switch_dimension(&mut self, ctx: &egui::Context, dimension: Dimension) {
-        if let Some(report) = &self.save
-            && !report.answerable_in(dimension)
+        if let (Some(report), Some(details)) = (&self.save, &self.save_details)
+            && !details.answerable_in(dimension)
         {
-            let reasons: Vec<String> = report
+            let reasons: Vec<String> = details
                 .warnings
                 .iter()
                 .filter(|w| w.blocks(dimension))
@@ -745,7 +750,7 @@ impl App {
         if let Some(result) = self.inspecting.as_ref().and_then(Pending::poll) {
             self.inspecting = None;
             match result.unwrap_or_else(|()| Err("reading the save failed".to_string())) {
-                Ok(report) => self.show_save(ctx, report),
+                Ok((report, details)) => self.show_save(ctx, report, details),
                 Err(e) => self.save_error = Some(e),
             }
         }

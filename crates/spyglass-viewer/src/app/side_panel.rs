@@ -16,6 +16,8 @@ pub(super) enum Tab {
     Locate,
     /// The user's markers and done places.
     Markers,
+    /// What spyglass read from the save shown, while one is.
+    World,
 }
 
 impl App {
@@ -78,7 +80,19 @@ impl App {
                 "Markers".to_string()
             };
             tab(ui, &mut self.tab, Tab::Markers, label);
+            if let Some(details) = self.save.as_ref().and(self.save_details.as_ref()) {
+                let warnings = details.warnings.iter().filter(|w| !w.is_note()).count();
+                let label = if warnings > 0 {
+                    format!("World ({warnings})")
+                } else {
+                    "World".to_string()
+                };
+                tab(ui, &mut self.tab, Tab::World, label);
+            }
         });
+        if self.tab == Tab::World && self.save.is_none() {
+            self.tab = Tab::Layers;
+        }
         ui.add_space(4.0);
         ui.separator();
         egui::ScrollArea::vertical()
@@ -90,6 +104,7 @@ impl App {
                     Tab::Search => self.search_section(ui),
                     Tab::Locate => self.locate_section(ui),
                     Tab::Markers => self.markers_tab(ui),
+                    Tab::World => self.world_tab(ui),
                 }
                 ui.add_space(8.0);
             });

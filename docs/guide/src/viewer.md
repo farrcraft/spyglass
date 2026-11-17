@@ -10,7 +10,8 @@ Drag to pan, and scroll to zoom around the pointer, or use the arrow keys and `+
 
 ## Seeds, saves and dimensions
 
-- **Seed or save:** type a seed and press Enter, or open a save from the launchers' list or any folder. A save opens on its player, in the player's dimension, with its [data packs](data-packs.md) applied and named above the map, and anything that makes its answers inexact listed (see [your own worlds](your-worlds.md)).
+- **Seed or save:** type a seed and press Enter, or open a save from the launchers' list or any folder. A save opens on its player, in the player's dimension, with its [data packs](data-packs.md) applied and named above the map, with how many warnings spyglass has about it.
+- **World tab:** while a save is shown, the side panel's **World** tab has [what spyglass read from it](your-worlds.md#what-spyglass-read): its settings and where each came from, its data packs and what they change, and what each dimension holds, each warning under what it's about. **Go** beside the spawn, the player or a dimension moves the map there. **This map so far** counts what the map has taken from the save: chunks read, structures answered from the save, and containers found unopened, opened or gone. **What spyglass read** above the map opens the tab.
 - **Dimension:** switch between the Overworld, the Nether and the End. Each keeps its own view. Slime chunks and the spawn are the Overworld's, and terrain layers aren't drawn in the Nether, whose surface is its ceiling.
 - **Game version:** **Version** in the toolbar picks one of the bundles you have, and **Add a game version** in **Settings** extracts another.
 

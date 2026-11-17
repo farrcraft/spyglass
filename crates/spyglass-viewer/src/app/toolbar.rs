@@ -255,30 +255,30 @@ impl App {
         if let Some(e) = &self.save_error {
             lines.push((style::ERROR, e.clone()));
         }
-        if let Some(report) = &self.save {
+        // The save shown, in one line; the World tab has the rest.
+        let mut world_details = false;
+        if let (Some(report), Some(details)) = (&self.save, &self.save_details) {
+            let warnings = details.warnings.iter().filter(|w| !w.is_note()).count();
+            let packs = if report.packs.is_empty() {
+                String::new()
+            } else {
+                let names: Vec<&str> = report.packs.iter().map(Pack::name).collect();
+                format!(", with {}", names.join(", "))
+            };
+            let (colour, said) = match warnings {
+                0 => (style::MUTED, String::new()),
+                1 => (style::WARN, ": 1 warning".to_string()),
+                n => (style::WARN, format!(": {n} warnings")),
+            };
             lines.push((
-                style::MUTED,
+                colour,
                 format!(
-                    "Showing the save {}, made in Minecraft {}.",
+                    "Showing the save {}, made in Minecraft {}{packs}{said}.",
                     report.save.name,
                     report.save.version_name.as_deref().unwrap_or("?")
                 ),
             ));
-            if !report.packs.is_empty() {
-                let names: Vec<&str> = report.packs.iter().map(Pack::name).collect();
-                lines.push((
-                    style::MUTED,
-                    format!("Data packs applied: {}.", names.join(", ")),
-                ));
-            }
-            for warning in &report.warnings {
-                let colour = if warning.is_note() {
-                    style::MUTED
-                } else {
-                    style::WARN
-                };
-                lines.push((colour, warning.to_string()));
-            }
+            world_details = true;
         }
         if self.exporting.is_some() {
             lines.push((style::MUTED, "Drawing the image…".to_string()));
@@ -296,6 +296,14 @@ impl App {
         ui.horizontal_wrapped(|ui| {
             for (colour, text) in lines {
                 ui.colored_label(colour, text);
+            }
+            if world_details
+                && ui
+                    .small_button("What spyglass read")
+                    .on_hover_text("Open the World tab")
+                    .clicked()
+            {
+                self.tab = Tab::World;
             }
             if data_problems {
                 ui.small_button("Details").on_hover_ui(|ui| {

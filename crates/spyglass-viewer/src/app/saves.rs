@@ -4,18 +4,27 @@
 use super::*;
 
 impl App {
-    /// Reads a save in the background, then shows it.
+    /// Reads a save in the background, and the report of what spyglass read from it, which
+    /// opens its packs in every dimension, then shows it.
     pub(super) fn open_save(&mut self, ctx: &egui::Context, dir: PathBuf) {
         let bundles = self.settings.bundles.clone();
         self.save_error = None;
         self.inspecting = Some(Pending::spawn(ctx, move || {
-            spyglass::inspect_save(&dir, &bundles, Scan::Chunks).map_err(|e| e.to_string())
+            let report =
+                spyglass::inspect_save(&dir, &bundles, Scan::Chunks).map_err(|e| e.to_string())?;
+            let details = report.details();
+            Ok((report, details))
         }));
     }
 
     /// Shows an inspected save: its world and seed, in its player's dimension if spyglass
     /// answers there (otherwise the Overworld), centred on its player or else its spawn.
-    pub(super) fn show_save(&mut self, ctx: &egui::Context, report: SaveReport) {
+    pub(super) fn show_save(
+        &mut self,
+        ctx: &egui::Context,
+        report: SaveReport,
+        details: SaveDetails,
+    ) {
         let save = &report.save;
         let dimension = save
             .player
@@ -23,10 +32,10 @@ impl App {
             .and_then(spyglass::SaveLocation::dimension_kind)
             .filter(|&d| report.answerable_in(d))
             .unwrap_or(Dimension::Overworld);
-        let bundle = match (&report.bundle, report.answerable_in(dimension)) {
+        let bundle = match (&report.bundle, details.answerable_in(dimension)) {
             (Some(bundle), true) => bundle.clone(),
             _ => {
-                let reasons: Vec<String> = report
+                let reasons: Vec<String> = details
                     .warnings
                     .iter()
                     .filter(|w| w.blocks(dimension))
@@ -58,6 +67,7 @@ impl App {
         }
         self.settings.seed = save.seed.to_string();
         self.save = Some(report);
+        self.save_details = Some(details);
         self.found = None;
         self.open(ctx, &bundle);
         // If that world is already loaded, the load finishes at once and applies the seed.

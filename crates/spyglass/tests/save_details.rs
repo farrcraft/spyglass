@@ -119,6 +119,11 @@ fn save(dir: &Path, spec: Spec<'_>) {
 
 /// Writes region `r.0.0.mca` in `dir` with each chunk uncompressed at its header index.
 fn write_region(dir: &Path, chunks: &[(usize, Tag)]) {
+    write_region_at(dir, [0, 0], chunks);
+}
+
+/// Writes region `r.<x>.<z>.mca` in `dir` with each chunk uncompressed at its header index.
+fn write_region_at(dir: &Path, [x, z]: [i32; 2], chunks: &[(usize, Tag)]) {
     std::fs::create_dir_all(dir).unwrap();
     let mut file = vec![0_u8; 8192];
     for (index, tag) in chunks {
@@ -133,7 +138,7 @@ fn write_region(dir: &Path, chunks: &[(usize, Tag)]) {
         let entry = ((sector as u32) << 8) | sectors as u32;
         file[index * 4..index * 4 + 4].copy_from_slice(&entry.to_be_bytes());
     }
-    std::fs::write(dir.join("r.0.0.mca"), &file).unwrap();
+    std::fs::write(dir.join(format!("r.{x}.{z}.mca")), &file).unwrap();
 }
 
 fn overworld_region(dir: &Path) -> std::path::PathBuf {
@@ -514,4 +519,86 @@ fn settings_say_where_they_came_from() {
     );
     assert!(!get(Setting::Seed).decides().is_empty());
     assert!(details.warnings.is_empty(), "{:#?}", details.warnings);
+}
+
+#[test]
+fn answers_from_a_save_are_tallied() {
+    let bundle = fixtures::structured_overworld(false);
+    let dir = tempfile::tempdir().unwrap();
+    save(dir.path(), Spec::default());
+    // Two chunks the seed starts towers in: the save keeps one and has none in the other.
+    let world = spyglass::World::open(bundle.path()).unwrap();
+    let query = world.structure_query("minecraft:tower").unwrap();
+    let predicted = world
+        .session(42)
+        .unwrap()
+        .structures_in(&query, [-64, -64], [63, 63], true)
+        .unwrap();
+    // Two in one region file.
+    let region_of = |[x, z]: [i32; 2]| [x >> 5, z >> 5];
+    let region = predicted
+        .iter()
+        .map(|s| region_of(s.chunk))
+        .find(|r| {
+            predicted
+                .iter()
+                .filter(|s| region_of(s.chunk) == *r)
+                .count()
+                >= 2
+        })
+        .expect("two towers in a region");
+    let towers: Vec<[i32; 2]> = predicted
+        .iter()
+        .map(|s| s.chunk)
+        .filter(|c| region_of(*c) == region)
+        .collect();
+    let (min, max) = (
+        [region[0] * 32, region[1] * 32],
+        [region[0] * 32 + 31, region[1] * 32 + 31],
+    );
+    let header = |[x, z]: [i32; 2]| ((x & 31) + (z & 31) * 32) as usize;
+    let start = c([
+        ("id", s("minecraft:tower")),
+        ("ChunkX", Tag::Int(towers[0][0])),
+    ]);
+    let with_starts = |starts: Tag| {
+        c([
+            ("DataVersion", Tag::Int(5023)),
+            ("Status", s("minecraft:full")),
+            ("structures", c([("starts", starts)])),
+        ])
+    };
+    write_region_at(
+        &overworld_region(dir.path()),
+        region,
+        &[
+            (
+                header(towers[0]),
+                with_starts(c([("minecraft:tower", start)])),
+            ),
+            (header(towers[1]), with_starts(c([]))),
+        ],
+    );
+    let report = SaveInspector::new(bundle.bundles())
+        .unwrap()
+        .inspect(dir.path(), Scan::Chunks)
+        .unwrap();
+    let chunks = std::sync::Arc::new(report.chunks(Dimension::Overworld));
+    assert_eq!(chunks.usage(), spyglass::SaveUsage::default());
+    let session = world
+        .session(42)
+        .unwrap()
+        .with_save(std::sync::Arc::clone(&chunks))
+        .unwrap();
+    for _ in 0..2 {
+        let answered = session.structures_in(&query, min, max, true).unwrap();
+        assert!(answered.iter().any(|s| s.chunk == towers[0] && s.from_save));
+        assert!(!answered.iter().any(|s| s.chunk == towers[1]));
+    }
+    // Asked twice, counted once.
+    let usage = chunks.usage();
+    assert_eq!(usage.chunks_with_starts, 1);
+    assert_eq!(usage.starts_from_save, 1);
+    assert_eq!(usage.chunks_without_starts, 1);
+    assert_eq!(usage.chunks_read, 2);
 }

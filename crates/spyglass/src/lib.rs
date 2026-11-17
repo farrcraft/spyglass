@@ -81,7 +81,7 @@ pub use save::{
     launcher_saves,
 };
 pub use save_portals::{PortalFlag, PortalNote, SavePortal, SavePortalLink, SavePortals};
-pub use saved::{GeneratedChunk, SaveChunks};
+pub use saved::{GeneratedChunk, SaveChunks, SaveUsage};
 pub use search::{
     ConstraintResult, Evaluation, Feature, FindMatch, FindOptions, FindOutcome, FindProgress,
     MAX_FIND_TARGETS, Outcome, RankedSeed, SearchHit, SearchOptions, SearchOutcome, SearchProgress,

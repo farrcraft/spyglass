@@ -9,7 +9,8 @@
 //! structure markers and bounds itself.
 //!
 //! Each frame, the map lists every job it would like, most wanted first, and the list replaces
-//! the queue: a tile scrolled away before a worker took it is never computed. Finished jobs come
+//! the queue: a tile scrolled away before a worker took it is never computed, and one a worker is
+//! computing is stopped (`Session::stopping`, ADR 0078) and never cached. Finished jobs come
 //! back over a channel, and the map keeps them in a [`Cache`] that drops the tiles least
 //! recently drawn.
 
@@ -18,12 +19,13 @@ use std::hash::Hash;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread;
+use std::time::Instant;
 
 use eframe::egui;
 use spyglass::{
     BiomeMap, CarvingMap, DEFAULT_MAP_Y, FeatureQuery, FlowerCount, FlowerMap, FoundContainer,
     FoundFeature, GeneratedChunk, HeightMap, ItemQuery, Layers, MAX_SLIME_SCALE, MapFeatures,
-    Session, StructureLayout, StructureQuery, StructureStart, UndergroundMap,
+    Session, Stop, Stopping, StructureLayout, StructureQuery, StructureStart, UndergroundMap,
 };
 
 use crate::timing;
@@ -169,6 +171,20 @@ pub enum JobKey {
     Layout(LayoutKey),
 }
 
+impl JobKey {
+    /// The kind of job, for timing lines: `biomes 1:4`, `features 1:2`, `layout`.
+    fn kind(&self) -> String {
+        let (what, tile) = match self {
+            JobKey::Biomes(k) => ("biomes", k.tile),
+            JobKey::Markers(k) => ("markers", k.tile),
+            JobKey::Features(k) => ("features", k.tile),
+            JobKey::Loot(k) => ("loot", k.tile),
+            JobKey::Layout(_) => return "layout".to_string(),
+        };
+        format!("{what} 1:{}", tile.scale)
+    }
+}
+
 impl Job {
     /// The app's number for the job's world and seed.
     fn session_id(&self) -> u64 {
@@ -220,7 +236,39 @@ struct Queue {
     /// Waiting, most wanted first.
     waiting: Vec<Job>,
     /// Taken by a worker and not yet done, so a new list doesn't queue them again.
-    running: HashSet<JobKey>,
+    running: HashMap<JobKey, Running>,
+}
+
+/// A job a worker is computing.
+struct Running {
+    /// Raised when no list wants the job any more.
+    stop: Stop,
+    /// When it was raised, for timing how long the job takes to stop.
+    stopped_at: Option<Instant>,
+}
+
+/// Why a job gave no result.
+#[derive(Debug)]
+enum JobError {
+    /// Its stop was raised: nothing wanted it any more. Not cached.
+    Stopped,
+    /// The library failed on it, as the tile then says.
+    Failed(String),
+}
+
+impl From<spyglass::Error> for JobError {
+    fn from(e: spyglass::Error) -> Self {
+        match e {
+            spyglass::Error::Stopped => JobError::Stopped,
+            e => JobError::Failed(e.to_string()),
+        }
+    }
+}
+
+impl From<&str> for JobError {
+    fn from(message: &str) -> Self {
+        JobError::Failed(message.to_string())
+    }
 }
 
 /// Worker threads computing tiles, most wanted first. Jobs no longer wanted are dropped before
@@ -258,14 +306,25 @@ impl Pool {
     }
 
     /// Replaces the waiting jobs with `jobs`, most wanted first. Jobs already running are
-    /// skipped.
+    /// skipped, and those running that `jobs` doesn't list are stopped.
     pub fn want(&self, jobs: Vec<Job>) {
         let (lock, wake) = &*self.queue;
         let mut queue = lock.lock().unwrap_or_else(PoisonError::into_inner);
+        let wanted: HashSet<JobKey> = jobs.iter().map(|j| j.key).collect();
+        #[expect(
+            clippy::iter_over_hash_type,
+            reason = "each job is stopped on its own, in any order"
+        )]
+        for (key, running) in &mut queue.running {
+            if !wanted.contains(key) && running.stopped_at.is_none() {
+                running.stop.stop();
+                running.stopped_at = Some(Instant::now());
+            }
+        }
         let running = &queue.running;
         let jobs: Vec<Job> = jobs
             .into_iter()
-            .filter(|j| !running.contains(&j.key))
+            .filter(|j| !running.contains_key(&j.key))
             .collect();
         queue.waiting = jobs;
         wake.notify_all();
@@ -290,8 +349,9 @@ impl Pool {
     }
 }
 
-/// A worker's loop: take the most wanted job, compute it outside the lock, and send it back.
-/// It sleeps while nothing waits, and ends when the pool's receiver is dropped.
+/// A worker's loop: take the most wanted job, compute it outside the lock, and send it back,
+/// unless it was stopped. It sleeps while nothing waits, and ends when the pool's receiver is
+/// dropped.
 fn work(
     queue: &(Mutex<Queue>, Condvar),
     send: &Sender<Done>,
@@ -306,18 +366,40 @@ fn work(
                 queue = signal.wait(queue).unwrap_or_else(PoisonError::into_inner);
             }
             let job = queue.waiting.remove(0);
-            queue.running.insert(job.key);
-            job
+            let stop = Stop::new();
+            queue.running.insert(
+                job.key,
+                Running {
+                    stop: stop.clone(),
+                    stopped_at: None,
+                },
+            );
+            (job, stop)
         };
+        let (job, stop) = job;
         // A panic in the library is a bug, but it fails one tile: the worker lives on, and the
         // job leaves `running`, so the tile isn't waited on forever.
-        let result =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compute(&job, carvings)))
-                .unwrap_or_else(|_| Err("spyglass failed on this tile".to_string()));
-        lock.lock()
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            compute(&job, carvings, &stop)
+        }))
+        .unwrap_or_else(|_| Err("spyglass failed on this tile".into()));
+        let running = lock
+            .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .running
             .remove(&job.key);
+        let result = match result {
+            Ok(output) => Ok(output),
+            Err(JobError::Failed(message)) => Err(message),
+            Err(JobError::Stopped) => {
+                if let Some(at) = running.and_then(|r| r.stopped_at) {
+                    timing::stopped(job.key.kind(), at.elapsed());
+                }
+                // Nothing to keep, but the count of jobs left changed.
+                wake();
+                continue;
+            }
+        };
         if send.send((job.key, result)).is_err() {
             return;
         }
@@ -325,8 +407,10 @@ fn work(
     }
 }
 
-/// Computes one job with the library, timing each part.
-fn compute(job: &Job, carvings: &Carvings) -> Result<Output, String> {
+/// Computes one job with the library, timing each part, through `stop`: the job gives up
+/// with [`JobError::Stopped`] soon after it's raised.
+fn compute(job: &Job, carvings: &Carvings, stop: &Stop) -> Result<Output, JobError> {
+    let session = job.session.stopping(stop);
     let (tile, y) = match job.key {
         JobKey::Biomes(key) => (key.tile, key.y),
         JobKey::Markers(key) => (key.tile, DEFAULT_MAP_Y),
@@ -338,12 +422,11 @@ fn compute(job: &Job, carvings: &Carvings) -> Result<Output, String> {
                 .structures()
                 .nth(key.structure)
                 .ok_or("no such structure")?;
-            return timing::job(
+            // A layout takes milliseconds, so it isn't stopped.
+            return Ok(Output::Layout(timing::job(
                 || "layout".to_string(),
                 || job.session.structure_layout(structure, key.chunk),
-            )
-            .map(Output::Layout)
-            .map_err(|e| e.to_string());
+            )?));
         }
     };
     let area = tile
@@ -351,46 +434,46 @@ fn compute(job: &Job, carvings: &Carvings) -> Result<Output, String> {
         .ok_or("the tile is outside block coordinates")?;
     // The name a part is timed under, such as "biomes 1:4".
     let timing_name = |what: &'static str| move || format!("{what} 1:{}", tile.scale);
-    let features = |layers: Layers| {
-        job.session
-            .map_features(&area, &layers)
-            .map_err(|e| e.to_string())
-    };
+    let features = |layers: Layers| session.map_features(&area, &layers);
     match job.key {
         JobKey::Biomes(key) => {
             let heights = if key.heights {
-                let heights = timing::job(timing_name("heights"), || job.session.height_map(&area));
-                Some(heights.map_err(|e| e.to_string())?)
+                Some(timing::job(timing_name("heights"), || {
+                    session.height_map(&area)
+                })?)
             } else {
                 None
             };
             let biomes = timing::job(timing_name("biomes"), || match &heights {
-                Some(heights) if key.surface => job.session.surface_biome_map(heights),
-                _ => job.session.biome_map(&area),
-            })
-            .map_err(|e| e.to_string())?;
+                Some(heights) if key.surface => session.surface_biome_map(heights),
+                _ => session.biome_map(&area),
+            })?;
             let underground = if key.underground.any() {
                 let carved = if key.underground.carvers {
-                    Some(carving_map(job, carvings, key.tile, &area)?)
+                    Some(carving_map(job, &session, carvings, key.tile, &area)?)
                 } else {
                     None
                 };
                 let map = timing::job(timing_name("underground"), || {
-                    job.session
-                        .underground_map(&area, &key.underground.layers(), carved.as_deref())
+                    session.underground_map(&area, &key.underground.layers(), carved.as_deref())
                 });
-                Some(Box::new(map.map_err(|e| e.to_string())?))
+                Some(Box::new(map?))
             } else {
                 None
             };
-            let flowers = key.flowers.then(|| {
-                timing::job(timing_name("flowers"), || job.session.flower_map(&area))
-                    .map(|map| TileFlowers {
-                        key: map.key(),
-                        map,
-                    })
-                    .map_err(|e| e.to_string())
-            });
+            // A tile whose flowers fail keeps its biomes and says why, unless it was stopped.
+            let flowers = match key
+                .flowers
+                .then(|| timing::job(timing_name("flowers"), || session.flower_map(&area)))
+            {
+                None => None,
+                Some(Err(spyglass::Error::Stopped)) => return Err(JobError::Stopped),
+                Some(Ok(map)) => Some(Ok(TileFlowers {
+                    key: map.key(),
+                    map,
+                })),
+                Some(Err(e)) => Some(Err(e.to_string())),
+            };
             let slime = Layers {
                 biomes: false,
                 slime_chunks: true,
@@ -454,8 +537,7 @@ fn compute(job: &Job, carvings: &Carvings) -> Result<Output, String> {
             Ok(Output::Features(found))
         }
         JobKey::Loot(_) => {
-            let marks = timing::job(timing_name("loot"), || loot_marks(job, &area))
-                .map_err(|e| e.to_string())?;
+            let marks = timing::job(timing_name("loot"), || loot_marks(job, &session, &area))?;
             Ok(Output::Loot(marks))
         }
         JobKey::Layout(_) => unreachable!("layouts are computed above"),
@@ -465,8 +547,11 @@ fn compute(job: &Job, carvings: &Carvings) -> Result<Output, String> {
 /// The loot containers on `area`'s tile: every one with the job's `all_containers`, those
 /// holding its item otherwise (`Session::containers_holding`), each ringed if it holds the item
 /// or might.
-fn loot_marks(job: &Job, area: &spyglass::MapArea) -> spyglass::Result<Vec<LootMark>> {
-    let session = &job.session;
+fn loot_marks(
+    job: &Job,
+    session: &Stopping<'_, '_>,
+    area: &spyglass::MapArea,
+) -> spyglass::Result<Vec<LootMark>> {
     // The tile's chunks and one more on every side: a dungeon's or a ruined portal's chest can
     // be beside the chunk that places it.
     let last = |d: usize| {
@@ -480,7 +565,7 @@ fn loot_marks(job: &Job, area: &spyglass::MapArea) -> spyglass::Result<Vec<LootM
         (_, true) => session.containers_in(min, max)?,
         (None, false) => Vec::new(),
     };
-    let world = session.world();
+    let world = job.session.world();
     let mut marks = Vec::new();
     for container in found {
         // Each marker belongs to the tile its centre is on, so it's drawn once.
@@ -503,10 +588,11 @@ fn loot_marks(job: &Job, area: &spyglass::MapArea) -> spyglass::Result<Vec<LootM
 /// layers' cost.
 fn carving_map(
     job: &Job,
+    session: &Stopping<'_, '_>,
     carvings: &Carvings,
     tile: Tile,
     area: &spyglass::MapArea,
-) -> Result<Arc<CarvingMap>, String> {
+) -> Result<Arc<CarvingMap>, JobError> {
     let key = (job.session_id(), tile);
     {
         let mut kept = carvings.lock().unwrap_or_else(PoisonError::into_inner);
@@ -517,9 +603,8 @@ fn carving_map(
     }
     let map = timing::job(
         || format!("carvers 1:{}", tile.scale),
-        || job.session.carving_map(area),
-    )
-    .map_err(|e| e.to_string())?;
+        || session.carving_map(area),
+    )?;
     let map = Arc::new(map);
     carvings
         .lock()
@@ -953,6 +1038,86 @@ mod tests {
         expected.sort_by_key(order);
         assert!(!expected.is_empty());
         assert_eq!(found, expected);
+    }
+
+    #[test]
+    fn running_jobs_no_longer_wanted_are_stopped() {
+        let session = session();
+        let pool = Pool::with_threads(0, || ());
+        // As a worker leaves them: taken, with a stop of their own.
+        let running = |x| {
+            (
+                JobKey::Biomes(key(x)),
+                Running {
+                    stop: Stop::new(),
+                    stopped_at: None,
+                },
+            )
+        };
+        let stops = {
+            let mut queue = pool.queue.0.lock().unwrap();
+            queue.running.extend([running(0), running(1)]);
+            [0, 1].map(|x| queue.running[&JobKey::Biomes(key(x))].stop.clone())
+        };
+        // Still wanted, so not queued again and not stopped; no longer wanted, so stopped.
+        pool.want(vec![job(&session, JobKey::Biomes(key(1)))]);
+        assert!(stops[0].is_stopped());
+        assert!(!stops[1].is_stopped());
+        assert!(pool.waiting().is_empty());
+        let queue = pool.queue.0.lock().unwrap();
+        assert!(queue.running[&JobKey::Biomes(key(0))].stopped_at.is_some());
+    }
+
+    /// A worker on a features tile at 1:2, seconds of work, is free again soon after nothing
+    /// wants the tile, and leaves nothing to cache.
+    #[test]
+    #[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
+    fn a_running_job_stops_within_half_a_second() {
+        let world: &'static spyglass::World = Box::leak(Box::new(
+            spyglass::World::open(spyglass_oracle::bundle_dir()).expect("a bundle"),
+        ));
+        let session = Arc::new(world.session(-4_893_098_694_207_956_070).unwrap());
+        let features: Arc<[FeatureQuery]> = Arc::from(vec![
+            world.feature_query("minecraft:monster_room").unwrap(),
+            world.feature_query("minecraft:amethyst_geode").unwrap(),
+        ]);
+        // The template pools load once per world, and aren't stopped: load them first.
+        session
+            .features_in(&features[0], [40, 40], [43, 43], Default::default())
+            .unwrap();
+        let (wake, woken) = channel();
+        let pool = Pool::with_threads(1, move || {
+            let _ = wake.send(());
+        });
+        let tile = FeatureKey {
+            source: 1,
+            selection: 1,
+            tile: Tile {
+                scale: 2,
+                x: 0,
+                z: 0,
+            },
+        };
+        pool.want(vec![Job {
+            key: JobKey::Features(tile),
+            session: session.clone(),
+            structures: Arc::from(Vec::new()),
+            features,
+            loot: None,
+            all_containers: false,
+        }]);
+        thread::sleep(std::time::Duration::from_millis(300));
+        assert_eq!(pool.pending(), 1, "the job is still running");
+        let unwanted = Instant::now();
+        pool.want(Vec::new());
+        while pool.pending() > 0 {
+            woken
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .expect("the worker to finish");
+        }
+        let took = unwanted.elapsed();
+        assert!(took.as_millis() < 500, "stopped after {took:?}");
+        assert!(pool.finished().is_empty(), "a stopped job sends nothing");
     }
 
     #[test]

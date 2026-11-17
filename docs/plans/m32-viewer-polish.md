@@ -240,7 +240,7 @@ Scenarios 1 to 5 are run before the change and after it, three times each. Neith
   - The milestone's scope is reworded: relief and surface biomes do reuse, and the side panel names its five tabs.
 - [x] ADR: map calls take a stop signal (`Session::stopping`, `spyglass::Stop`, `Error::Stopped`, `SearchStop` deprecated). Use the `adr` skill.
 - [x] Library: `Stopping` and the stop checks in every call listed, with a test per call that a stop raised before the call returns `Stopped` at once, and one raised mid-call (from another thread, after 50 ms) returns it within 500 ms on a 1:64 heights tile, a 1:4 all-underground tile and a 1:2 features tile.
-- [ ] Viewer pool: running jobs' stops, `want` raising them, `Stopped` never cached, and the `stopped` timing line. A test with a real session: a 1:2 features job, then `want(vec![])`, and the job comes back stopped within 500 ms.
+- [x] Viewer pool: running jobs' stops, `want` raising them, `Stopped` never cached, and the `stopped` timing line. A test with a real session: a 1:2 features job, then `want(vec![])`, and the job comes back stopped within 500 ms.
 - [ ] The zoom rule: `zoom.rs`, `ZOOM_LIMITS`, `LayerState`, `zoom::checkbox`, every limited control through it, and `Frame` and `compute` reading it. Unit tests: each layer at its limit, one step past, and back; a paused layer keeps its setting; the hint text from each constant. `MAX_GENERATED_SCALE` in the library if generated chunks get their own.
 - [x] Check `containers_in` and `containers_holding`: whether each container comes under the chunk that placed it. Add a by-placing-chunk form if they go by position, with a test that a region's containers are the same as today's tiles' with the edges removed.
 - [ ] Point regions: `Region` keys for features, loot and starts, region jobs nearest the centre first, drawing from the regions under the view plus a ring, and per-tile starts past 1:16. Tests:
@@ -298,6 +298,7 @@ Scenarios 1 to 5 are run before the change and after it, three times each. Neith
 
 Newest first.
 
+- 2026-11-16: The pool stops running jobs. `Pool::want` raises the stop of every running job its list leaves out, so zooming past a limit, panning away, a layer switched off and a new seed all stop work the same way. A stopped job sends nothing, so nothing caches it, and logs `timing: stopped <kind> after <ms> ms`. Jobs compute through `Session::stopping`; layouts don't stop. On 26.3 a features job at 1:2 freed its worker well within 500 ms of being unwanted, three runs (ignored test `a_running_job_stops_within_half_a_second`).
 - 2026-11-16: The library stops ([ADR 0078](../adr/0078-map-calls-can-be-stopped.md), proposed; [render.md](../specs/render.md#stopping)).
   - `Session::stopping(&Stop) -> Stopping`, `Error::Stopped`, and `SearchStop` renamed `Stop` with a deprecated alias. Calls on `Session` pass `Halt::NEVER` and are unchanged.
   - Heights and underground probes are computed a band of rows (one chunk row) at a time. The terrain crate already splits rows into the same runs, so answers are identical; the real-world tiling test passes.

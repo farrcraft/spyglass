@@ -35,6 +35,17 @@ pub fn job<T>(kind: impl FnOnce() -> String, f: impl FnOnce() -> T) -> T {
     out
 }
 
+/// A job of `kind` that stopped `after` its stop was raised, if timings are wanted: how long a
+/// worker stayed busy with a tile nothing wanted any more.
+pub fn stopped(kind: String, after: Duration) {
+    if enabled() {
+        eprintln!(
+            "timing: stopped {kind} after {:.1} ms",
+            after.as_secs_f64() * 1000.0
+        );
+    }
+}
+
 /// How long the window takes to fill, from when what it shows last changed: the world, seed,
 /// view or layers.
 #[derive(Default)]

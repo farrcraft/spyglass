@@ -16,7 +16,7 @@ This plan covers all seven of the milestone's exit criteria:
 - no chunk placed twice zooming from 1:2 to 1:1 with features on, and the zoom timing scenarios faster, none slower;
 - tiles built from cached ones identical to tiles computed directly, a test per layer that reuses;
 - side panel sections that fold, remember it across a restart, and say what's on when folded;
-- every single-line text box padded the same, in a menu or not;
+- every single-line text box padded the same, in a menu or not, and checkboxes in menus drawn as in a panel;
 - the guide's [viewer](../guide/src/viewer.md) page showing the new panel, zoom limits and folding.
 
 It changes no worldgen. The new library code reorders no arithmetic and no random draws: stopping only ends a loop early, and reuse copies pixels the spec already says are equal. So no oracle comparison is needed beyond `cargo xtask check`. Each reuse rule gets a test against direct computation instead.
@@ -213,6 +213,8 @@ When **What spyglass read** in the notice row opens the World tab, it unfolds th
 
 One helper, `style::text_box(&mut String) -> TextEdit`, builds a single-line box with the theme's padding (`BUTTON_PADDING`, the one `style::apply` sets) and its text centered vertically, and all twelve single-line boxes go through it, so a box looks the same wherever it is. The two multi-line boxes (the query and the find) are in panels and unchanged.
 
+**Checkboxes in menus.** The same menu style takes away widgets' resting fill and outline, so a menu's rows don't read as buttons, and that leaves an unchecked checkbox almost invisible: in **Highlight a biome** and the **Export** menu's **Include markers**. `style::menu_checkbox` draws a checkbox in a menu with the panel's widget fills and outlines, and both go through it.
+
 ### Measurements and the guide
 
 **Viewer timing** gets four zoom scenarios. Each is a cold start, run until the window is full, then a zoom set by `SPYGLASS_VIEWER_TIMING_ZOOM=<scale>`, read once after the first `window full`. Timing then reports the zoom's own `window covered` and `window full`.
@@ -258,6 +260,7 @@ Scenarios 1 to 5 are run before the change and after it, three times each. Neith
   - each Layers summary for on, paused and off;
   - a World section with a warning says so folded.
 - [x] Text boxes: `style::text_box`, and all twelve single-line boxes through it. A test that its padding in a menu is egui's in a panel, within a pixel, and one that egui's own box in a menu isn't. Checked by eye in **Filter saves** and **Filter biomes**.
+- [x] Checkboxes in menus: `style::menu_checkbox` for **Highlight a biome** and **Include markers**, with a test that it restores every widget state's fill and outline. Checked by eye in **Highlight a biome**.
 - [ ] Viewer timing: `SPYGLASS_VIEWER_TIMING_ZOOM` and scenarios 6 to 9. Run 1 to 9 three times before the change and after, on the same machine and seed, and record the times.
 - [ ] Check by eye with the `run-viewer` skill:
   - each limited layer greyed and paused past its limit, and back;
@@ -295,7 +298,8 @@ Scenarios 1 to 5 are run before the change and after it, three times each. Neith
 
 Newest first.
 
-- 2026-11-16: Text boxes done. The first guess at the cause (the theme's taller controls with a top-aligned `TextEdit`) was wrong: a test showed egui's box in a panel already centered, 4 px above and 5 below. A screenshot of **Filter saves** showed the text against the box's top and left edges, which is egui's menu style shrinking `button_padding`, so only boxes in menus were affected. Before and after checked by eye with the `run-viewer` skill. The same screenshots show the **Highlight a biome** menu's unchecked checkboxes almost invisible, since the menu style also drops the inactive fill and stroke; not fixed here.
+- 2026-11-16: Checkboxes in menus done: unchecked boxes in **Highlight a biome** now show their outline, checked by eye.
+- 2026-11-16: Text boxes done. The first guess at the cause (the theme's taller controls with a top-aligned `TextEdit`) was wrong: a test showed egui's box in a panel already centered, 4 px above and 5 below. A screenshot of **Filter saves** showed the text against the box's top and left edges, which is egui's menu style shrinking `button_padding`, so only boxes in menus were affected. Before and after checked by eye with the `run-viewer` skill. The same screenshots showed the **Highlight a biome** menu's unchecked checkboxes almost invisible, since the menu style also drops the resting fill and outline; added as its own task.
 - 2026-11-16: Added the text boxes' alignment, reported in **Filter saves**.
 - 2026-11-16: Drafted.
   - The milestone predates m31's **World** tab. The plan brings it into the tab bar's new look (warnings as a badge) and into the folding sections, its four `CollapsingHeader`s becoming `style::section`s. A folded World section names its warnings.

@@ -812,7 +812,7 @@ impl App {
                                 continue;
                             }
                             let mut on = self.settings.highlight.iter().any(|h| h == id);
-                            if ui.checkbox(&mut on, name).changed() {
+                            if style::menu_checkbox(ui, &mut on, name).changed() {
                                 if on {
                                     self.settings.highlight.push(id.to_string());
                                     self.settings.highlight.sort();

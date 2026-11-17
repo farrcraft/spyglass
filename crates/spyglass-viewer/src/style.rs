@@ -133,6 +133,37 @@ pub fn text_box(text: &mut dyn egui::TextBuffer) -> egui::TextEdit<'_> {
         .align(egui::Align2::LEFT_CENTER)
 }
 
+/// A checkbox in a menu, its box drawn as in a panel. A menu takes away its widgets' resting
+/// fill and outline (`menu_style`), so its rows don't read as buttons, which leaves an
+/// unchecked box almost invisible.
+pub fn menu_checkbox(
+    ui: &mut egui::Ui,
+    checked: &mut bool,
+    text: impl Into<egui::WidgetText>,
+) -> egui::Response {
+    let panel = ui.ctx().global_style();
+    ui.scope(|ui| {
+        framed_as(ui.style_mut(), &panel);
+        ui.checkbox(checked, text)
+    })
+    .inner
+}
+
+/// `style`'s widgets with `panel`'s fills and outlines, as they are outside a menu.
+fn framed_as(style: &mut egui::Style, panel: &egui::Style) {
+    let (widgets, panel) = (&mut style.visuals.widgets, &panel.visuals.widgets);
+    for (widget, panel) in [
+        (&mut widgets.inactive, &panel.inactive),
+        (&mut widgets.hovered, &panel.hovered),
+        (&mut widgets.active, &panel.active),
+        (&mut widgets.open, &panel.open),
+    ] {
+        widget.bg_fill = panel.bg_fill;
+        widget.weak_bg_fill = panel.weak_bg_fill;
+        widget.bg_stroke = panel.bg_stroke;
+    }
+}
+
 /// Numbers: coordinates, seeds, scores.
 pub fn mono(text: impl Into<String>) -> RichText {
     RichText::new(text).font(FontId::monospace(12.5))
@@ -190,6 +221,18 @@ mod tests {
                 assert!((ours - panel).abs() <= 1.0, "{ours:?} against {panel:?}");
             }
         }
+    }
+
+    #[test]
+    fn a_menu_s_checkbox_is_framed_as_in_a_panel() {
+        let ctx = egui::Context::default();
+        apply(&ctx);
+        let panel = ctx.global_style();
+        let mut menu = (*panel).clone();
+        egui::containers::menu::menu_style(&mut menu);
+        assert_eq!(menu.visuals.widgets.inactive.bg_stroke, Stroke::NONE);
+        framed_as(&mut menu, &panel);
+        assert_eq!(menu.visuals.widgets, panel.visuals.widgets);
     }
 
     #[test]

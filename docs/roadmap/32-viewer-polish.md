@@ -21,7 +21,7 @@ The viewer says plainly what the current zoom can show, stops work the view no l
   - Clearer tabs: all five (Layers, Search, Locate, Markers, and the World tab [31](completed/31-save-inspector.md) added while a save is shown), the selected tab unmistakable, and each tab's count (search hits, locate hits, markers, the save's warnings) where it's useful.
   - Clearer sections: top-level sections set apart from the controls inside them, with consistent spacing.
   - Folding: each section can be collapsed and expanded, the World tab's included, and the viewer remembers which ones. A collapsed section's header still says what in it is on ("2 on", "paused: zoom in"), or in the World tab its warnings, so a hidden layer or warning isn't a surprise.
-- **Text boxes.** Every single-line text box is padded the same, in a menu or not. Today the boxes in menus (**Filter saves**, **Filter biomes**, the shared view) have their text against the box's top-left corner.
+- **Text boxes.** Every single-line text box is padded the same, in a menu or not. Today the boxes in menus (**Filter saves**, **Filter biomes**, the shared view) have their text against the box's top-left corner. Checkboxes in menus have a visible box, as they do in the panel.
 - **Checked by eye and by tests.** Screenshots before and after for the guide. Tests for the zoom rule, stopping and reuse. [Viewer timing](completed/14-viewer-performance.md) scenarios for zooming in and out show the reuse paying, and no scenario gets slower.
 
 Not in scope:
@@ -36,5 +36,5 @@ Not in scope:
 - [ ] Zooming in from 1:2 to 1:1 with features on places no chunk twice, and the viewer-timing scenarios for zooming are faster than before, with none slower.
 - [ ] Tiles built from cached ones are identical to tiles computed directly (a test per layer that reuses).
 - [ ] The side panel's sections fold, remember their state across a restart, and say what's on when folded.
-- [x] Every single-line text box is padded the same, in a menu or not.
+- [x] Every single-line text box is padded the same, in a menu or not, and checkboxes in menus have a visible box.
 - [ ] The user guide's [viewer](../guide/src/viewer.md) page shows the new panel and describes zoom limits and folding.

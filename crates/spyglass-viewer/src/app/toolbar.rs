@@ -217,7 +217,7 @@ impl App {
                         self.start_export(ui.ctx(), export.clone(), path);
                     }
                 }
-                ui.checkbox(&mut self.settings.export_markers, "Include markers")
+                style::menu_checkbox(ui, &mut self.settings.export_markers, "Include markers")
                     .on_hover_text("Your markers in view, as pins in the image");
                 if ui
                     .button("Copy the command that draws it")

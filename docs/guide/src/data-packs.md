@@ -9,19 +9,21 @@ With `--world`, and in the viewer, spyglass applies the packs your world has ena
 - packs in the world's `datapacks/` folder, zips and folders alike;
 - the game's built-in packs, such as `trade_rebalance`, which you turn on under **Experiments** when you create a world.
 
-`spyglass world info` lists the packs it applied, and warns about any it couldn't:
+`spyglass world info` lists every pack the world enables, whether it applied each, and what an applied pack changes, by kind of file, and which of spyglass's answers that touches ([what spyglass read](your-worlds.md#what-spyglass-read)):
 
 ```text
-My World (C:\Users\me\AppData\Roaming\.minecraft\saves\My World)
-  version  26.3 (data version 5023)
-  seed     -4893098694207956070
-  packs    vanilla, file/terralith.zip, file/my-tweaks
-  applied  file/terralith.zip (1203 worldgen files), file/my-tweaks (2 worldgen files)
-  bundle   C:\Users\me\AppData\Local\spyglass\bundles\26.3
-  answers  Overworld, Nether, End
+Data packs
+  vanilla                      the bundle's own data
+  file/my-tweaks               applied from datapacks/: changes biomes, terrain and portals
+                                 worldgen/noise_settings: 1 replaced
+                                 recipe: 3 added (not read by spyglass)
+  file/old-pack.zip            not applied
+    warning: data pack file/old-pack.zip is enabled but missing from datapacks/, so spyglass can't apply it
 ```
 
-What it may say:
+A file is **replaced** when a pack below it (or the game's own data) has it too, and **added** when none does. A tag is **merged** with the tags below it, unless it says to replace them. A pack's filter **hides** files of the packs below it. A file a higher pack replaces or hides is **shadowed**: it never takes effect.
+
+What it may warn about, under the pack:
 
 - **Missing:** the world enables a pack that isn't in `datapacks/` any more. The world may have been generated with it, so answers can differ.
 - **From a mod:** spyglass can't apply a mod's packs, or mods.

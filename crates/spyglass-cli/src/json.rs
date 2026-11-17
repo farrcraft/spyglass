@@ -7,8 +7,8 @@ use std::path::Path;
 use anyhow::Result;
 use serde::Serialize;
 use spyglass::{
-    Dimension, SaveLocation, SaveReport, SaveWarning, SpawnOrigin, StructureLayout,
-    UncheckedVersion,
+    Dimension, SaveDetails, SaveHoldings, SaveLocation, SaveReport, SaveSubject, SaveWarning,
+    SpawnOrigin, StructureLayout, UncheckedVersion,
 };
 
 /// The `--json` format version.
@@ -71,13 +71,57 @@ pub struct Warning {
     /// For a warning about one dimension.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dimension: Option<&'static str>,
+    /// For a save's warning, the item of `world info`'s report it's about.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub about: Option<About>,
 }
 
-pub fn warnings(report: &SaveReport) -> Vec<Warning> {
-    report
-        .warnings
-        .iter()
-        .map(|w| Warning {
+/// What a save's warning is about (`SaveWarning::subject`).
+#[derive(Serialize)]
+pub struct About {
+    /// `setting`, `pack`, `dimension` or `holdings`.
+    pub kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub setting: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dimension: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pack: Option<String>,
+}
+
+impl About {
+    fn new(subject: SaveSubject) -> Self {
+        let about = |kind| About {
+            kind,
+            setting: None,
+            dimension: None,
+            pack: None,
+        };
+        match subject {
+            SaveSubject::Setting(setting) => About {
+                setting: Some(setting.kind()),
+                dimension: setting.dimension().map(Dimension::id),
+                ..about("setting")
+            },
+            SaveSubject::Pack(pack) => About {
+                pack: Some(pack),
+                ..about("pack")
+            },
+            SaveSubject::Dimension(d) => About {
+                dimension: Some(d.id()),
+                ..about("dimension")
+            },
+            SaveSubject::Holdings(d) => About {
+                dimension: Some(d.id()),
+                ..about("holdings")
+            },
+        }
+    }
+}
+
+impl Warning {
+    pub fn new(w: &SaveWarning) -> Self {
+        Warning {
             kind: w.kind(),
             message: w.to_string(),
             concern: match w {
@@ -85,8 +129,13 @@ pub fn warnings(report: &SaveReport) -> Vec<Warning> {
                 _ => None,
             },
             dimension: w.dimension().map(Dimension::id),
-        })
-        .collect()
+            about: Some(About::new(w.subject())),
+        }
+    }
+}
+
+pub fn warnings(report: &SaveReport) -> Vec<Warning> {
+    report.warnings.iter().map(Warning::new).collect()
 }
 
 /// The save's warnings with `--world`, and the bundle's if its version wasn't checked. `None`
@@ -102,6 +151,7 @@ pub fn all_warnings(
             message: unchecked.to_string(),
             concern: None,
             dimension: None,
+            about: None,
         });
     }
     all
@@ -428,6 +478,7 @@ pub struct Save<'a> {
     pub seed: i64,
     pub generate_structures: bool,
     pub data_packs: &'a [String],
+    /// Deprecated: `world info`'s `packs` has each pack, applied or not.
     pub applied_packs: Vec<AppliedPack<'a>>,
     pub spawn: Option<Location<'a>>,
     pub player: Option<Location<'a>>,
@@ -490,16 +541,182 @@ impl<'a> Save<'a> {
     }
 }
 
-/// `world info`.
+/// `world info`: the save's summary, and the report of what spyglass read from it
+/// (`SaveReport::details`).
 #[derive(Serialize)]
 pub struct WorldInfo<'a> {
     pub format: u32,
     pub command: &'static str,
     #[serde(flatten)]
     pub save: Save<'a>,
-    /// Dimensions the save's packs can't be applied in, and why.
+    /// Dimensions the save's packs can't be applied in, and why: the `pack_error` warnings.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub pack_errors: Vec<PackError>,
+    pub settings: Vec<Setting<'a>>,
+    pub packs: Vec<SavePack<'a>>,
+    pub dimensions: Vec<SaveDimension<'a>>,
+}
+
+impl<'a> WorldInfo<'a> {
+    pub fn new(report: &'a SaveReport, details: &'a SaveDetails) -> Self {
+        let mut save = Save::new(report);
+        save.warnings = details.warnings.iter().map(Warning::new).collect();
+        WorldInfo {
+            format: FORMAT,
+            command: "world info",
+            save,
+            pack_errors: details
+                .warnings
+                .iter()
+                .filter_map(|w| match w {
+                    SaveWarning::PackError {
+                        dimension, message, ..
+                    } => Some(PackError {
+                        dimension: dimension.id(),
+                        message: message.clone(),
+                    }),
+                    _ => None,
+                })
+                .collect(),
+            settings: details
+                .settings
+                .iter()
+                .map(|s| Setting {
+                    setting: s.setting.kind(),
+                    dimension: s.setting.dimension().map(Dimension::id),
+                    value: &s.value,
+                    file: &s.source.file,
+                    field: &s.source.field,
+                    present: s.source.present,
+                    decides: s.decides(),
+                })
+                .collect(),
+            packs: details
+                .packs
+                .iter()
+                .map(|p| {
+                    let applied = report.packs.iter().find(|a| a.name() == p.name);
+                    SavePack {
+                        name: &p.name,
+                        used: p.used.kind(),
+                        hash: applied.map(spyglass::Pack::hash),
+                        answers: p.answers.iter().map(|a| a.name()).collect(),
+                        changes: p.changes.as_ref().map(|c| &c.registries),
+                    }
+                })
+                .collect(),
+            dimensions: details
+                .dimensions
+                .iter()
+                .map(|d| SaveDimension {
+                    dimension: d.dimension.id(),
+                    region: path(&d.region),
+                    answerable: d.answerable,
+                    holdings: d.holdings.as_ref().map(Holdings::new),
+                })
+                .collect(),
+        }
+    }
+}
+
+/// A value `world info` read from the save.
+#[derive(Serialize)]
+pub struct Setting<'a> {
+    pub setting: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dimension: Option<&'static str>,
+    pub value: &'a str,
+    pub file: &'a str,
+    pub field: &'a str,
+    pub present: bool,
+    pub decides: &'static str,
+}
+
+/// An enabled pack in `world info`.
+#[derive(Serialize)]
+pub struct SavePack<'a> {
+    pub name: &'a str,
+    /// `bundle`, `applied`, `feature` or `not_applied`.
+    pub used: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hash: Option<&'a str>,
+    pub answers: Vec<&'static str>,
+    /// For an applied pack, by registry: `replaced`, `added`, `merged`, `hidden`, `shadowed`
+    /// and `unreadable` ids.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub changes: Option<&'a BTreeMap<String, spyglass::RegistryChanges>>,
+}
+
+/// A dimension in `world info`.
+#[derive(Serialize)]
+pub struct SaveDimension<'a> {
+    pub dimension: &'static str,
+    pub region: String,
+    pub answerable: bool,
+    /// `null` with `--quick`.
+    pub holdings: Option<Holdings<'a>>,
+}
+
+/// What a dimension's region files hold.
+#[derive(Serialize)]
+pub struct Holdings<'a> {
+    pub chunks: usize,
+    pub full: usize,
+    pub proto: usize,
+    pub unreadable: usize,
+    pub unreadable_files: usize,
+    pub versions: Vec<VersionCount<'a>>,
+    pub inhabited_ticks: i64,
+    pub bounds: Option<[[i32; 2]; 2]>,
+    pub starts: Vec<Count<'a>>,
+    pub dropped_starts: Vec<Count<'a>>,
+    pub older_starts: Vec<Count<'a>>,
+    pub sealed_containers: Vec<Count<'a>>,
+}
+
+impl<'a> Holdings<'a> {
+    fn new(h: &'a SaveHoldings) -> Self {
+        let counts = |c: &'a [(String, usize)]| {
+            c.iter()
+                .map(|(id, count)| Count { id, count: *count })
+                .collect()
+        };
+        Holdings {
+            chunks: h.chunks,
+            full: h.full,
+            proto: h.proto,
+            unreadable: h.unreadable,
+            unreadable_files: h.unreadable_files,
+            versions: h
+                .versions
+                .iter()
+                .map(|v| VersionCount {
+                    data_version: v.data_version,
+                    version: v.version.as_deref(),
+                    chunks: v.chunks,
+                })
+                .collect(),
+            inhabited_ticks: h.inhabited_ticks,
+            bounds: h.bounds,
+            starts: counts(&h.starts),
+            dropped_starts: counts(&h.dropped_starts),
+            older_starts: counts(&h.older_starts),
+            sealed_containers: counts(&h.sealed_containers),
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct VersionCount<'a> {
+    pub data_version: Option<i32>,
+    pub version: Option<&'a str>,
+    pub chunks: usize,
+}
+
+#[derive(Serialize)]
+pub struct Count<'a> {
+    pub id: &'a str,
+    pub count: usize,
 }
 
 /// A dimension the save's data packs can't be applied in.

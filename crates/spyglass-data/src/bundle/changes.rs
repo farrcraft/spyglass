@@ -25,7 +25,7 @@ impl LayerChanges {
 }
 
 /// What a pack does to one registry, each a sorted list of ids (`namespace:path`).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
 pub struct RegistryChanges {
     /// Files a layer below, the bundle included, also has, still in view: the pack's replace
     /// them. For a tag, those with `"replace": true`.

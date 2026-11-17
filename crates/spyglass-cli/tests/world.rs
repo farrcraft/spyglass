@@ -165,6 +165,36 @@ fn a_default_world() {
     assert_eq!(info["answerable"], true);
     assert!(kinds(&info).is_empty(), "{info}");
     assert_eq!(info["player"]["position"][0], 100.7);
+    // The report: every setting with its source, the packs, and what each dimension holds.
+    let seed = info["settings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["setting"] == "seed")
+        .unwrap();
+    assert_eq!(seed["value"], "12345");
+    assert_eq!(seed["file"], "data/minecraft/world_gen_settings.dat");
+    assert_eq!(seed["field"], "data.seed");
+    assert_eq!(seed["present"], true);
+    assert_eq!(seed["decides"], "every prediction");
+    assert_eq!(info["settings"].as_array().unwrap().len(), 13);
+    assert_eq!(info["packs"][0]["name"], "vanilla");
+    assert_eq!(info["packs"][0]["used"], "bundle");
+    assert_eq!(info["dimensions"].as_array().unwrap().len(), 3);
+    assert_eq!(info["dimensions"][0]["dimension"], "minecraft:overworld");
+    assert_eq!(info["dimensions"][0]["answerable"], true);
+    assert_eq!(info["dimensions"][0]["holdings"]["chunks"], 0);
+    let quick = json(&["world", "info", path, "--quick"]);
+    assert!(quick["dimensions"][0]["holdings"].is_null(), "{quick}");
+    let text = String::from_utf8_lossy(&spyglass(&["world", "info", path]).stdout).to_string();
+    for section in ["Settings", "Data packs", "Dimensions"] {
+        assert!(text.lines().any(|l| l == section), "{text}");
+    }
+    assert!(text.contains("from data/minecraft/world_gen_settings.dat data.seed"));
+    assert!(text.contains("exact where they say so"), "{text}");
+    let text =
+        String::from_utf8_lossy(&spyglass(&["world", "info", path, "--quick"]).stdout).to_string();
+    assert!(text.contains("not scanned (--quick)"), "{text}");
 
     let spawn = json(&["locate", "spawn", "--world", path]);
     assert_eq!(spawn["seed"], 12345);
@@ -337,6 +367,22 @@ fn worlds_spyglass_cant_predict() {
     let info = json(&["world", "info", path, "--quick"]);
     assert_eq!(info["answerable"], false);
     assert_eq!(kinds(&info), ["unsupported_generator"]);
+    assert_eq!(
+        info["warnings"][0]["about"],
+        serde_json::json!({"kind": "setting", "setting": "generator",
+            "dimension": "minecraft:overworld"})
+    );
+    assert_eq!(info["dimensions"][0]["answerable"], false);
+    // In text, the warning is under the setting it's about.
+    let text =
+        String::from_utf8_lossy(&spyglass(&["world", "info", path, "--quick"]).stdout).to_string();
+    let lines: Vec<&str> = text.lines().collect();
+    let at = lines
+        .iter()
+        .position(|l| l.starts_with("  generator, the Overworld"))
+        .unwrap();
+    assert!(lines[at + 1].contains("decides"), "{text}");
+    assert!(lines[at + 2].starts_with("    error: "), "{text}");
     let out = spyglass(&["locate", "spawn", "--world", path]);
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("Default preset"));
@@ -407,6 +453,36 @@ fn worlds_spyglass_cant_predict() {
     assert_eq!(info["applied_packs"][0]["name"], "file/terrain");
     assert_eq!(info["applied_packs"][0]["worldgen_files"], 2);
     assert!(info.get("pack_errors").is_none(), "{info:#}");
+    // Each pack in load order, and what an applied one changes.
+    let used: Vec<(&str, &str)> = info["packs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| (p["name"].as_str().unwrap(), p["used"].as_str().unwrap()))
+        .collect();
+    assert_eq!(
+        used,
+        [
+            ("vanilla", "bundle"),
+            ("file/terrain", "applied"),
+            ("file/functions", "not_applied"),
+            ("file/gone.zip", "not_applied"),
+            ("some_mod", "not_applied"),
+        ]
+    );
+    let terrain = &info["packs"][1];
+    assert_eq!(
+        terrain["changes"]["worldgen/biome"]["added"],
+        serde_json::json!(["mine:a"])
+    );
+    assert_eq!(
+        terrain["answers"],
+        serde_json::json!(["biomes", "terrain", "structures", "features", "flowers"])
+    );
+    assert_eq!(
+        info["warnings"][1]["about"],
+        serde_json::json!({"kind": "pack", "pack": "file/gone.zip"})
+    );
 }
 
 /// JSON as the game would store it in NBT: integers as ints, other numbers as doubles,

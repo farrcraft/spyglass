@@ -6,6 +6,20 @@ Changes go under **Unreleased** as they're made. `cargo xtask release` turns tha
 
 ## [Unreleased]
 
+### Added
+
+- **`spyglass world info` explains what spyglass read from your world:** every setting, the file and field it came from and what it decides; every enabled data pack, whether it was applied, what it changes and which answers that touches; and for each dimension, how many chunks it holds, which versions generated them, the structures answered from the save and the loot containers not yet opened. Each warning is printed under what it's about. In JSON, `settings`, `packs` and `dimensions`, and each warning's `about` ([cli-json.md](docs/specs/cli-json.md#world-info)). In the API, `SaveReport::details`, `spyglass_world::Save::sources`, `Bundle::layer_changes`, `answers_fed_by` and `SaveChunks::usage` ([world-saves.md](docs/specs/world-saves.md#the-report)).
+- **A world border that's still moving** is a note (`moving_border`): spyglass answers with the size it ends at.
+
+### Changed
+
+- **`SaveWarning` has two new variants,** `MovingBorder` and `PackError`, so a `match` on it outside the crate needs them. A dimension the packs can't be opened in is a `pack_error` warning in `world info`'s `warnings`, as well as in `pack_errors`.
+- **`world info`'s `applied_packs` is deprecated,** for removal in the release after next: `packs` lists every pack, applied or not.
+
+### Fixed
+
+- **Chunks saved before 1.18** are read for their status and inhabited time, which they keep under `Level`: `render --generated` and `--inhabited` showed them all as generated partway and never visited.
+
 ## [0.4.0] - 2026-11-14
 
 ### Game versions

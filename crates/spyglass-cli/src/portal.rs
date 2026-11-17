@@ -109,6 +109,7 @@ fn warnings(
                 message: note.to_string(),
                 concern: None,
                 dimension: Some(note.dimension().id()),
+                about: None,
             })
             .collect::<Vec<_>>()
     });
@@ -118,6 +119,7 @@ fn warnings(
             message: unchecked.to_string(),
             concern: None,
             dimension: None,
+            about: None,
         });
     }
     all

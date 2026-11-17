@@ -113,7 +113,7 @@ The library maps each registry to the answers it feeds, with a fixed table in `s
 - [x] `SaveWarning::PackError` and `SaveWarning::MovingBorder`, and `SaveWarning::subject`. `pack_errors` is kept as a thin wrapper over the new warning until the front ends move.
 - [x] `SaveReport::details() -> SaveDetails`, with a test per warning kind (all nine) that it appears once, beside its subject, on saves built in the test.
 - [x] `SaveChunks::usage`, counted where `StoredStarts` and the container lookup already answer, with a test that a locate and a loot query move the right counts.
-- [ ] CLI: `world info`'s text and `--json`. [cli-json.md](../specs/cli-json.md) gets `settings`, `packs`, `dimensions` and `about`, and the CLI tests cover each section and `--quick`.
+- [x] CLI: `world info`'s text and `--json`. [cli-json.md](../specs/cli-json.md) gets `settings`, `packs`, `dimensions` and `about`, and the CLI tests cover each section and `--quick`.
 - [ ] Viewer: the World panel, the shorter notice, moving the view from the panel, and the session's usage. Checked by eye with the `run-viewer` skill.
 - [ ] Ignored tests on the machine's saves: every launcher save's `details()` builds. In every answerable 26.3 save no older version touched, the start counts match what `SaveChunks` reads for the chunks within 48 of the spawn origin.
 - [ ] The exit criterion's two real saves: one 26.3 save with a data pack (Terralith or the fixture pack) and one with chunks from an older version. `world info --json` and the panel's `SaveDetails` are compared field for field in an ignored test.

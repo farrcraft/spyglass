@@ -30,7 +30,7 @@ use crate::tiles::{
     TileData, TileKey, Underground, chunk_features,
 };
 use crate::userdata::{Marker, Store, WorldKey};
-use crate::view::{TILE, Tile, View};
+use crate::view::{FEATURE_REGION, Region, TILE, Tile, View};
 use crate::zoom;
 
 mod container;

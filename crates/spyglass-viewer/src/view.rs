@@ -22,6 +22,34 @@ pub struct Tile {
     pub z: i32,
 }
 
+/// A square of chunks, `size` on a side, numbered from the world origin: what features and loot
+/// containers are kept by, whatever the view's scale, so zooming in or out draws from what's
+/// known. Each feature or container belongs to the region of the chunk that placed it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Region {
+    /// Chunks on a side.
+    pub size: i32,
+    /// The region's column, east of the origin: its west chunk is `x * size`.
+    pub x: i32,
+    /// The region's row, south of the origin: its north chunk is `z * size`.
+    pub z: i32,
+}
+
+/// Chunks on a side of a features or loot region: a 1:2 tile's, so a 1:1 tile is a quarter of
+/// one. Each region's job carves the chunks around its own, so smaller regions cost more in
+/// all: over a 1:2 view of 80 tiles on 26.3, dungeons took 357 s of work in regions of 16,
+/// 672 s in regions of 8, and 401 s by tile.
+pub const FEATURE_REGION: i32 = 16;
+
+impl Region {
+    /// The region's first and last chunk, inclusive.
+    pub fn chunks(self) -> ([i32; 2], [i32; 2]) {
+        let first = |i: i32| i.saturating_mul(self.size);
+        let min = [first(self.x), first(self.z)];
+        (min, min.map(|m| m.saturating_add(self.size - 1)))
+    }
+}
+
 impl Tile {
     /// The tile's map area at height `y`, or `None` if it falls outside block coordinates.
     pub fn area(self, y: i32) -> Option<MapArea> {
@@ -166,6 +194,39 @@ impl View {
         });
     }
 
+    /// The regions of `size` chunks under `tiles`, and one more all round for what's placed
+    /// beside its chunk or reaches in from outside, nearest the view's centre first.
+    pub fn regions(&self, tiles: &[Tile], size: i32) -> Vec<Region> {
+        let Some(first) = tiles.first() else {
+            return Vec::new();
+        };
+        // The tiles' blocks, then their chunks, then their regions.
+        let side = i64::from(TILE) * i64::from(first.scale);
+        let (mut lo, mut hi) = ([i64::MAX; 2], [i64::MIN; 2]);
+        for tile in tiles {
+            for (axis, i) in [tile.x, tile.z].into_iter().enumerate() {
+                lo[axis] = lo[axis].min(i64::from(i) * side);
+                hi[axis] = hi[axis].max((i64::from(i) + 1) * side - 1);
+            }
+        }
+        let region = |block: i64| (block >> 4).div_euclid(i64::from(size));
+        let range = |axis: usize| {
+            let clamp = |r: i64| r.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
+            clamp(region(lo[axis]) - 1)..=clamp(region(hi[axis]) + 1)
+        };
+        let mut regions: Vec<Region> = range(1)
+            .flat_map(|z| range(0).map(move |x| Region { size, x, z }))
+            .collect();
+        let blocks = f64::from(size) * 16.0;
+        let distance = |r: &Region| {
+            let off = |i: i32, centre: f64| (f64::from(i) + 0.5) * blocks - centre;
+            let (dx, dz) = (off(r.x, self.centre[0]), off(r.z, self.centre[1]));
+            dx * dx + dz * dz
+        };
+        regions.sort_by(|a, b| distance(a).total_cmp(&distance(b)));
+        regions
+    }
+
     /// The tiles covering a map of `size` points, nearest the centre first.
     pub fn tiles(&self, size: [f32; 2]) -> Vec<Tile> {
         let side = f64::from(TILE);
@@ -208,6 +269,53 @@ impl View {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn zooming_in_from_1_2_needs_no_new_regions() {
+        for centre in [[0.0, 0.0], [1000.5, -77.0], [-3333.0, 4096.0]] {
+            let view = |scale| View {
+                centre,
+                scale,
+                y: 64,
+            };
+            let size = [1100.0, 810.0];
+            let near = view(1);
+            let far = view(2);
+            let regions = |v: &View| v.regions(&v.tiles(size), FEATURE_REGION);
+            let known = regions(&far);
+            for region in regions(&near) {
+                assert!(known.contains(&region), "{region:?} at {centre:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn regions_cover_the_tiles_chunks_and_a_ring() {
+        let view = View {
+            centre: [0.0, 0.0],
+            scale: 2,
+            y: 64,
+        };
+        let tiles = view.tiles([256.0, 256.0]);
+        let regions = view.regions(&tiles, FEATURE_REGION);
+        // 512 blocks are 32 chunks, 2 regions a side, and a ring: 4 a side, each once.
+        assert_eq!(regions.len(), 16);
+        let mut unique = regions.clone();
+        unique.sort_by_key(|r| (r.z, r.x));
+        unique.dedup();
+        assert_eq!(unique.len(), 16);
+        // Nearest the centre first.
+        assert!([-1, 0].contains(&regions[0].x) && [-1, 0].contains(&regions[0].z));
+        assert_eq!(
+            Region {
+                size: 8,
+                x: -1,
+                z: 2
+            }
+            .chunks(),
+            ([-8, 16], [-1, 23])
+        );
+    }
 
     #[test]
     fn blocks_and_offsets_round_trip() {

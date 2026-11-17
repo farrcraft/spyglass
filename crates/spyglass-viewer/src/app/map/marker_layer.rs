@@ -159,7 +159,8 @@ impl App {
         }
     }
 
-    /// The structure starts, features and loot containers the caches hold for `tiles`. Past
+    /// The structure starts the caches hold for the view's tiles, and the features and loot
+    /// containers they hold for its regions. Past
     /// [`MAX_MARKERS`] starts, none are drawn, and the map says so.
     pub(super) fn markers_in_view(
         &mut self,
@@ -176,16 +177,16 @@ impl App {
         }
         let mut found_features: Vec<FoundFeature> = Vec::new();
         if frame.featuring {
-            for &tile in tiles {
-                if let Some(Ok(found)) = self.feature_markers.get(&frame.feature_key(tile)) {
+            for &region in &frame.regions {
+                if let Some(Ok(found)) = self.feature_markers.get(&frame.feature_key(region)) {
                     found_features.extend(found.iter().cloned());
                 }
             }
         }
         let mut loot_marks: Vec<LootMark> = Vec::new();
         if frame.looting {
-            for &tile in tiles {
-                if let Some(Ok(marks)) = self.loot_markers.get(&frame.feature_key(tile)) {
+            for &region in &frame.regions {
+                if let Some(Ok(marks)) = self.loot_markers.get(&frame.feature_key(region)) {
                     loot_marks.extend(marks.iter().cloned());
                 }
             }

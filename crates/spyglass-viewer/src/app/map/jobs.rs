@@ -131,18 +131,20 @@ impl App {
         }
         if frame.featuring {
             jobs.extend(
-                tiles
+                frame
+                    .regions
                     .iter()
-                    .map(|&t| frame.feature_key(t))
+                    .map(|&r| frame.feature_key(r))
                     .filter(|k| !self.feature_markers.contains(k))
                     .map(|k| job(JobKey::Features(k))),
             );
         }
         if frame.looting {
             jobs.extend(
-                tiles
+                frame
+                    .regions
                     .iter()
-                    .map(|&t| frame.feature_key(t))
+                    .map(|&r| frame.feature_key(r))
                     .filter(|k| !self.loot_markers.contains(k))
                     .map(|k| job(JobKey::Loot(k))),
             );

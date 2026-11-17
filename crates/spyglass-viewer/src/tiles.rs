@@ -29,7 +29,7 @@ use spyglass::{
 };
 
 use crate::timing;
-use crate::view::{TILE, Tile};
+use crate::view::{Region, TILE, Tile};
 use crate::zoom;
 
 /// A tile's biomes: the world and seed, the height, what terrain it needs, and its place.
@@ -99,16 +99,16 @@ pub struct MarkerKey {
     pub tile: Tile,
 }
 
-/// A tile's feature markers: the world and seed, the features chosen, and its place, at a scale
-/// they're drawn at (`spyglass::MAX_FEATURE_SCALE`).
+/// A region's features or loot containers: the world and seed, what's chosen, and the region,
+/// whatever the scale they're drawn at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FeatureKey {
     /// The app's number for the world and seed shown.
     pub source: u64,
     /// The app's number for the features chosen.
     pub selection: u64,
-    /// Where the tile is, and its scale.
-    pub tile: Tile,
+    /// The chunks whose features or containers these are.
+    pub region: Region,
 }
 
 /// A loot container on the map, and whether it's ringed: it holds the Loot item, or might.
@@ -164,9 +164,9 @@ pub enum JobKey {
     Biomes(TileKey),
     /// A tile's structure starts.
     Markers(MarkerKey),
-    /// A tile's features.
+    /// A region's features.
     Features(FeatureKey),
-    /// A tile's loot containers, up close.
+    /// A region's loot containers.
     Loot(FeatureKey),
     /// A structure's layout, for its bounds.
     Layout(LayoutKey),
@@ -178,8 +178,8 @@ impl JobKey {
         let (what, tile) = match self {
             JobKey::Biomes(k) => ("biomes", k.tile),
             JobKey::Markers(k) => ("markers", k.tile),
-            JobKey::Features(k) => ("features", k.tile),
-            JobKey::Loot(k) => ("loot", k.tile),
+            JobKey::Features(_) => return "features".to_string(),
+            JobKey::Loot(_) => return "loot".to_string(),
             JobKey::Layout(_) => return "layout".to_string(),
         };
         format!("{what} 1:{}", tile.scale)
@@ -220,9 +220,9 @@ pub enum Output {
     Biomes(Box<TileData>),
     /// The structure starts whose marker centre is on the tile, in drawing order.
     Markers(Vec<StructureStart>),
-    /// The features whose marker centre is on the tile, in drawing order.
+    /// The features the region's chunks place, in drawing order.
     Features(Vec<FoundFeature>),
-    /// The loot containers on the tile, in drawing order.
+    /// The loot containers the region's chunks place, in drawing order.
     Loot(Vec<LootMark>),
     /// `None` if the structure is neither a jigsaw nor a mineshaft.
     Layout(Option<StructureLayout>),
@@ -415,7 +415,20 @@ fn compute(job: &Job, carvings: &Carvings, stop: &Stop) -> Result<Output, JobErr
     let (tile, y) = match job.key {
         JobKey::Biomes(key) => (key.tile, key.y),
         JobKey::Markers(key) => (key.tile, DEFAULT_MAP_Y),
-        JobKey::Features(key) | JobKey::Loot(key) => (key.tile, DEFAULT_MAP_Y),
+        JobKey::Features(key) => {
+            let found = timing::job(
+                || "features".to_string(),
+                || region_features(job, &session, key.region),
+            )?;
+            return Ok(Output::Features(found));
+        }
+        JobKey::Loot(key) => {
+            let marks = timing::job(
+                || "loot".to_string(),
+                || loot_marks(job, &session, key.region),
+            )?;
+            return Ok(Output::Loot(marks));
+        }
         JobKey::Layout(key) => {
             let structure = job
                 .session
@@ -523,45 +536,46 @@ fn compute(job: &Job, carvings: &Carvings, stop: &Stop) -> Result<Output, JobErr
             });
             Ok(Output::Markers(starts))
         }
-        JobKey::Features(_) => {
-            let layers = Layers {
-                biomes: false,
-                features: job.features.to_vec(),
-                ..Layers::default()
-            };
-            let mut found = timing::job(timing_name("features"), || features(layers))?.features;
-            // Each marker belongs to the tile its centre is on, so it's drawn once.
-            let inside = 0..i64::from(TILE);
-            found.retain(|f| {
-                let [x, z] = area.pixel([f.position[0], f.position[2]]);
-                inside.contains(&x) && inside.contains(&z)
-            });
-            Ok(Output::Features(found))
+        JobKey::Features(_) | JobKey::Loot(_) | JobKey::Layout(_) => {
+            unreachable!("computed above")
         }
-        JobKey::Loot(_) => {
-            let marks = timing::job(timing_name("loot"), || loot_marks(job, &session, &area))?;
-            Ok(Output::Loot(marks))
-        }
-        JobKey::Layout(_) => unreachable!("layouts are computed above"),
     }
 }
 
-/// The loot containers on `area`'s tile: every one with the job's `all_containers`, those
-/// holding its item otherwise (`Session::containers_holding`), each ringed if it holds the item
-/// or might.
+/// The features the job names that `region`'s chunks place (`Session::features_in`), each once,
+/// in drawing order: north to south, then west to east. Each belongs to the region of the
+/// chunk that placed it, so regions never share one.
+fn region_features(
+    job: &Job,
+    session: &Stopping<'_, '_>,
+    region: Region,
+) -> spyglass::Result<Vec<FoundFeature>> {
+    let (min, max) = region.chunks();
+    let mut found: Vec<FoundFeature> = Vec::new();
+    for query in job.features.iter() {
+        for feature in session.features_in(query, min, max, Default::default())? {
+            if !found.contains(&feature) {
+                found.push(feature);
+            }
+        }
+    }
+    found.sort_by(|a, b| {
+        let key = |f: &FoundFeature| (f.position[2], f.position[0], f.position[1]);
+        key(a).cmp(&key(b)).then_with(|| a.feature.cmp(&b.feature))
+    });
+    Ok(found)
+}
+
+/// The loot containers `region`'s chunks place: every one with the job's `all_containers`,
+/// those holding its item otherwise (`Session::containers_holding`), each ringed if it holds
+/// the item or might. Each belongs to the region of the chunk that placed it, even where it's
+/// beside that chunk (a dungeon's or a ruined portal's chest), so regions never share one.
 fn loot_marks(
     job: &Job,
     session: &Stopping<'_, '_>,
-    area: &spyglass::MapArea,
+    region: Region,
 ) -> spyglass::Result<Vec<LootMark>> {
-    // The tile's chunks and one more on every side: a dungeon's or a ruined portal's chest can
-    // be beside the chunk that places it.
-    let last = |d: usize| {
-        let end = i64::from(area.min[d]) + i64::from(area.size[d]) * i64::from(area.scale);
-        ((end - 1) >> 4) as i32 + 1
-    };
-    let min = area.min.map(|m| (m >> 4) - 1);
-    let max = [last(0), last(1)];
+    let (min, max) = region.chunks();
     let found = match (&job.loot, job.all_containers) {
         (Some(query), false) => session.containers_holding(query, min, max)?,
         (_, true) => session.containers_in(min, max)?,
@@ -570,12 +584,6 @@ fn loot_marks(
     let world = job.session.world();
     let mut marks = Vec::new();
     for container in found {
-        // Each marker belongs to the tile its centre is on, so it's drawn once.
-        let [x, z] = area.pixel([container.position[0], container.position[2]]);
-        let inside = 0..i64::from(TILE);
-        if !inside.contains(&x) || !inside.contains(&z) {
-            continue;
-        }
         let ringed = match &job.loot {
             None => false,
             Some(query) if container.contents.is_some() => container.holds(query),
@@ -1070,8 +1078,8 @@ mod tests {
         assert!(queue.running[&JobKey::Biomes(key(0))].stopped_at.is_some());
     }
 
-    /// A worker on a features tile at 1:2, seconds of work, is free again soon after nothing
-    /// wants the tile, and leaves nothing to cache.
+    /// A worker on a features job, seconds of work, is free again soon after nothing wants it,
+    /// and leaves nothing to cache.
     #[test]
     #[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
     fn a_running_job_stops_within_half_a_second() {
@@ -1094,8 +1102,9 @@ mod tests {
         let tile = FeatureKey {
             source: 1,
             selection: 1,
-            tile: Tile {
-                scale: 2,
+            // A region's worth, still running when it's unwanted.
+            region: Region {
+                size: crate::view::FEATURE_REGION,
                 x: 0,
                 z: 0,
             },
@@ -1120,6 +1129,70 @@ mod tests {
         let took = unwanted.elapsed();
         assert!(took.as_millis() < 500, "stopped after {took:?}");
         assert!(pool.finished().is_empty(), "a stopped job sends nothing");
+    }
+
+    /// Every feature the library draws for an area is in the regions under it, and no two
+    /// regions share one, so drawing by region shows what drawing by tile did, each once.
+    #[test]
+    #[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
+    fn regions_hold_every_feature_the_area_draws_once() {
+        let world: &'static spyglass::World = Box::leak(Box::new(
+            spyglass::World::open(spyglass_oracle::bundle_dir()).expect("a bundle"),
+        ));
+        let session = Arc::new(world.session(-4_893_098_694_207_956_070).unwrap());
+        let features: Arc<[FeatureQuery]> = Arc::from(vec![
+            world.feature_query("minecraft:monster_room").unwrap(),
+            world.feature_query("minecraft:monster_room_deep").unwrap(),
+            world.feature_query("minecraft:amethyst_geode").unwrap(),
+        ]);
+        let view = crate::view::View {
+            centre: [300.0, -200.0],
+            scale: 2,
+            y: 64,
+        };
+        let tiles = view.tiles([256.0, 256.0]);
+        let job = Job {
+            key: JobKey::Features(FeatureKey {
+                source: 1,
+                selection: 1,
+                region: Region {
+                    size: 1,
+                    x: 0,
+                    z: 0,
+                },
+            }),
+            session: session.clone(),
+            structures: Arc::from(Vec::new()),
+            features: features.clone(),
+            loot: None,
+            all_containers: false,
+        };
+        let never = Stop::new();
+        let stopping = session.stopping(&never);
+        let mut by_region: Vec<FoundFeature> = Vec::new();
+        for region in view.regions(&tiles, crate::view::FEATURE_REGION) {
+            by_region.extend(region_features(&job, &stopping, region).unwrap());
+        }
+        let layers = Layers {
+            biomes: false,
+            features: features.to_vec(),
+            ..Layers::default()
+        };
+        let mut drawn = 0;
+        for tile in &tiles {
+            let area = tile.area(64).unwrap();
+            for feature in session.map_features(&area, &layers).unwrap().features {
+                assert!(by_region.contains(&feature), "{feature:?} in no region");
+                drawn += 1;
+            }
+        }
+        assert!(drawn > 0, "the area draws some features");
+        for (i, feature) in by_region.iter().enumerate() {
+            assert!(
+                !by_region[i + 1..].contains(feature),
+                "{feature:?} in two regions"
+            );
+        }
     }
 
     #[test]

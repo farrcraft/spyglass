@@ -209,10 +209,20 @@ impl App {
         // Terrain layers on the view's own tiles, and on the coarser ones shown while they load
         // only where heights are cheap, so the stand-ins fill in quickly.
         let terrain_here = self.terrain_allowed();
+        let tiles = view.tiles([rect.width(), rect.height()]);
+        let featuring = !self.selection.features.is_empty() && zoom::FEATURES.shows(view.scale);
+        let looting = (self.settings.containers || self.selection.loot.is_some())
+            && zoom::LOOT.shows(view.scale);
+        let regions = if featuring || looting {
+            view.regions(&tiles, FEATURE_REGION)
+        } else {
+            Vec::new()
+        };
         Frame {
             source,
             view,
-            tiles: view.tiles([rect.width(), rect.height()]),
+            tiles,
+            regions,
             selection: self.selection.id,
             confirm: self.settings.confirm,
             relief: self.settings.relief && terrain_here,
@@ -224,10 +234,9 @@ impl App {
             flowers: self.settings.flowers,
             marking: !self.selection.queries.is_empty() && self.structures_generate(),
             // Features only up close: each chunk they could be in is placed.
-            featuring: !self.selection.features.is_empty() && zoom::FEATURES.shows(view.scale),
+            featuring,
             // Loot containers too, every one or those of the Loot item.
-            looting: (self.settings.containers || self.selection.loot.is_some())
-                && zoom::LOOT.shows(view.scale),
+            looting,
         }
     }
 
@@ -388,6 +397,9 @@ struct Frame {
     view: View,
     /// The tiles the view covers, nearest the centre first.
     tiles: Vec<Tile>,
+    /// The feature and loot regions under them, and one more all round, nearest the centre
+    /// first: empty unless features or loot are drawn.
+    regions: Vec<Region>,
     /// The marker selection's number.
     selection: u64,
     /// Whether starts are confirmed by terrain.
@@ -434,11 +446,11 @@ impl Frame {
         }
     }
 
-    fn feature_key(&self, tile: Tile) -> FeatureKey {
+    fn feature_key(&self, region: Region) -> FeatureKey {
         FeatureKey {
             source: self.source,
             selection: self.selection,
-            tile,
+            region,
         }
     }
 }

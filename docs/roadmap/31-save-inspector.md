@@ -23,6 +23,6 @@ Not in scope:
 
 ## Exit criteria
 
-- [ ] `spyglass world info` and the viewer's panel give the same report for a real 26.3 save, one with data packs and one with chunks from an older version.
+- [x] `spyglass world info` and the viewer's panel give the same report for a real 26.3 save, one with data packs and one with chunks from an older version.
 - [x] Every warning a save can raise appears in the report, beside what it's about (a test per warning).
 - [x] The user guide's [your own worlds](../guide/src/your-worlds.md) page describes the report.

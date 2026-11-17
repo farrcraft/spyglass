@@ -349,9 +349,11 @@ pub struct App {
     inspecting: Option<Pending<Result<(SaveReport, SaveDetails), String>>>,
     /// The save on the map, if it came from one.
     save: Option<SaveReport>,
-    /// The report of what spyglass read from the last save shown, for the World tab while
-    /// [`save`](Self::save) is that save.
+    /// The report of what spyglass read from the last save opened, for the World tab while
+    /// [`save`](Self::save) or [`unshown_save`](Self::unshown_save) is that save.
     save_details: Option<SaveDetails>,
+    /// The last save opened, if spyglass couldn't show it: the World tab says why.
+    unshown_save: Option<SaveReport>,
     /// Why the last save couldn't be opened or shown.
     save_error: Option<String>,
     /// The saves list's filter, as typed.
@@ -515,6 +517,7 @@ impl App {
             saves: None,
             inspecting: None,
             save_details: None,
+            unshown_save: None,
             save: None,
             save_error: None,
             save_filter: String::new(),

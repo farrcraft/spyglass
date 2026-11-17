@@ -80,7 +80,7 @@ impl App {
                 "Markers".to_string()
             };
             tab(ui, &mut self.tab, Tab::Markers, label);
-            if let Some(details) = self.save.as_ref().and(self.save_details.as_ref()) {
+            if let Some(details) = self.save_report().and(self.save_details.as_ref()) {
                 let warnings = details.warnings.iter().filter(|w| !w.is_note()).count();
                 let label = if warnings > 0 {
                     format!("World ({warnings})")
@@ -90,7 +90,7 @@ impl App {
                 tab(ui, &mut self.tab, Tab::World, label);
             }
         });
-        if self.tab == Tab::World && self.save.is_none() {
+        if self.tab == Tab::World && self.save_report().is_none() {
             self.tab = Tab::Layers;
         }
         ui.add_space(4.0);

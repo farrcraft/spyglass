@@ -252,11 +252,12 @@ impl App {
         if self.inspecting.is_some() {
             lines.push((style::MUTED, "Reading the save…".to_string()));
         }
+        // A save that couldn't be shown still has its report in the World tab.
+        let mut world_details = self.save_error.is_some() && self.unshown_save.is_some();
         if let Some(e) = &self.save_error {
             lines.push((style::ERROR, e.clone()));
         }
         // The save shown, in one line; the World tab has the rest.
-        let mut world_details = false;
         if let (Some(report), Some(details)) = (&self.save, &self.save_details) {
             let warnings = details.warnings.iter().filter(|w| !w.is_note()).count();
             let packs = if report.packs.is_empty() {
@@ -323,6 +324,7 @@ impl App {
             {
                 self.export_note = None;
                 self.save_error = None;
+                self.unshown_save = None;
                 self.data_note = None;
                 self.data_problems_seen = true;
             }

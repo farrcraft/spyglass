@@ -1,6 +1,6 @@
 //! `world info --json` against the library's report (`SaveReport::details`, which the viewer's
 //! World tab shows), field by field, on real saves on this machine: one with chunks from an
-//! older version, and one with a data pack. Ignored by default; run with
+//! older version, and one generated with a data pack (Terralith). Ignored by default; run with
 //! `cargo test --release -p spyglass-cli --test local_report -- --ignored --nocapture`.
 
 use std::path::{Path, PathBuf};
@@ -8,7 +8,6 @@ use std::process::Command;
 
 use serde_json::Value;
 use spyglass::{SaveDetails, SaveReport, SaveSubject, Scan};
-use spyglass_data::nbt::{self, Tag};
 
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -152,18 +151,6 @@ fn launcher_save(name: &str) -> Option<PathBuf> {
         .find(|d| d.file_name().is_some_and(|n| n == name))
 }
 
-fn copy_dir(from: &Path, to: &Path) {
-    std::fs::create_dir_all(to).unwrap();
-    for entry in std::fs::read_dir(from).unwrap().flatten() {
-        let target = to.join(entry.file_name());
-        if entry.file_type().unwrap().is_dir() {
-            copy_dir(&entry.path(), &target);
-        } else {
-            std::fs::copy(entry.path(), &target).unwrap();
-        }
-    }
-}
-
 #[test]
 #[ignore = "reads the saves on this machine"]
 fn the_command_and_the_library_give_the_same_report() {
@@ -176,33 +163,51 @@ fn the_command_and_the_library_give_the_same_report() {
     assert!(details.warnings.iter().any(|w| w.kind() == "older_chunks"));
     println!("{}: the same", older.display());
 
-    // A 26.3 save with a data pack: a copy of one, with Terralith enabled.
-    let pack = root().join("packs/Terralith_v2.6.5+26.3.zip");
-    assert!(pack.is_file(), "put Terralith in packs/");
-    let original = launcher_save("Portal Link Test").expect("the save");
-    let tmp = tempfile::tempdir().unwrap();
-    let copy = tmp.path().join("with-pack");
-    copy_dir(&original, &copy);
-    std::fs::create_dir_all(copy.join("datapacks")).unwrap();
-    std::fs::copy(&pack, copy.join("datapacks/terralith.zip")).unwrap();
-    let level = copy.join("level.dat");
-    let (name, mut root_tag) = nbt::read_compressed(&std::fs::read(&level).unwrap()).unwrap();
-    if let Tag::Compound(root) = &mut root_tag
-        && let Some(Tag::Compound(data)) = root.get_mut("Data")
-        && let Some(Tag::Compound(packs)) = data.get_mut("DataPacks")
-        && let Some(Tag::List(enabled)) = packs.get_mut("Enabled")
-    {
-        enabled.push(Tag::String("file/terralith.zip".into()));
-    } else {
-        panic!("no Data.DataPacks.Enabled");
-    }
-    std::fs::write(&level, nbt::write_compressed(&name, &root_tag)).unwrap();
-    let (json, report, details) = both(&copy);
+    // A 26.3 world generated with Terralith, in the Modrinth App's Fabric profile. Fabric marks
+    // it modded and enables its own pack; both are warnings that don't block answers.
+    let generated = launcher_save("Terralith Test").expect("the save");
+    let (json, report, details) = both(&generated);
     same(&json, &details);
+    let mut kinds: Vec<(&str, String)> = details
+        .warnings
+        .iter()
+        .map(|w| (w.kind(), format!("{:?}", w.subject())))
+        .collect();
+    kinds.sort();
+    let pack = r#"Pack("file/Terralith_v2.6.5+26.3.zip")"#;
+    assert_eq!(
+        kinds,
+        [
+            (
+                "data_pack",
+                r#"Pack("fabric-convention-tags-v2")"#.to_string()
+            ),
+            ("modded", "Setting(Modded)".to_string()),
+            ("pack_error", pack.to_string()),
+            ("pack_error", pack.to_string()),
+            ("pack_error", pack.to_string()),
+        ]
+    );
+    // Its own structures in the save are answered from it, not dropped: the bundle with the
+    // pack has them.
+    let overworld = details.dimensions[0].holdings.as_ref().unwrap();
+    assert!(
+        overworld
+            .starts
+            .iter()
+            .any(|(id, _)| id.starts_with("terralith:")),
+        "{:?}",
+        overworld.starts
+    );
+    assert!(
+        overworld.dropped_starts.is_empty(),
+        "{:?}",
+        overworld.dropped_starts
+    );
     let terralith = details
         .packs
         .iter()
-        .find(|p| p.name == "file/terralith.zip")
+        .find(|p| p.name == "file/Terralith_v2.6.5+26.3.zip")
         .unwrap();
     let biomes = &terralith.changes.as_ref().unwrap().registries["worldgen/biome"];
     // What the zip holds, counted from its entries: 39 vanilla biomes and 95 of its own, 29
@@ -224,7 +229,7 @@ fn the_command_and_the_library_give_the_same_report() {
     for error in errors {
         assert_eq!(
             error.subject(),
-            SaveSubject::Pack("file/terralith.zip".into())
+            SaveSubject::Pack("file/Terralith_v2.6.5+26.3.zip".into())
         );
         assert!(
             matches!(error, spyglass::SaveWarning::PackError { file: Some(f), .. }
@@ -233,8 +238,8 @@ fn the_command_and_the_library_give_the_same_report() {
         );
     }
     println!(
-        "{} with Terralith: the same; {} packs applied; warnings: {:#?}",
-        original.display(),
+        "{}: the same; {} packs applied; warnings: {:#?}",
+        generated.display(),
         report.packs.len(),
         details
             .warnings

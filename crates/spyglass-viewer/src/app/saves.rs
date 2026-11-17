@@ -9,6 +9,7 @@ impl App {
     pub(super) fn open_save(&mut self, ctx: &egui::Context, dir: PathBuf) {
         let bundles = self.settings.bundles.clone();
         self.save_error = None;
+        self.unshown_save = None;
         self.inspecting = Some(Pending::spawn(ctx, move || {
             let report =
                 spyglass::inspect_save(&dir, &bundles, Scan::Chunks).map_err(|e| e.to_string())?;
@@ -30,11 +31,12 @@ impl App {
             .player
             .as_ref()
             .and_then(spyglass::SaveLocation::dimension_kind)
-            .filter(|&d| report.answerable_in(d))
+            .filter(|&d| details.answerable_in(d))
             .unwrap_or(Dimension::Overworld);
-        let bundle = match (&report.bundle, details.answerable_in(dimension)) {
-            (Some(bundle), true) => bundle.clone(),
-            _ => {
+        let answerable = details.answerable_in(dimension);
+        let bundle = match report.bundle.clone().filter(|_| answerable) {
+            Some(bundle) => bundle,
+            None => {
                 let reasons: Vec<String> = details
                     .warnings
                     .iter()
@@ -46,6 +48,9 @@ impl App {
                     report.save.name,
                     reasons.join("; ")
                 ));
+                // The World tab still says what spyglass read, and why it can't answer.
+                self.unshown_save = Some(report);
+                self.save_details = Some(details);
                 return;
             }
         };
@@ -68,6 +73,7 @@ impl App {
         self.settings.seed = save.seed.to_string();
         self.save = Some(report);
         self.save_details = Some(details);
+        self.unshown_save = None;
         self.found = None;
         self.open(ctx, &bundle);
         // If that world is already loaded, the load finishes at once and applies the seed.

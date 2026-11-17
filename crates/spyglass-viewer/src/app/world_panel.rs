@@ -8,8 +8,16 @@ use super::*;
 use crate::style;
 
 impl App {
+    /// The save the World tab is about: the one shown, or else the last one opened that
+    /// couldn't be.
+    pub(super) fn save_report(&self) -> Option<&SaveReport> {
+        self.save.as_ref().or(self.unshown_save.as_ref())
+    }
+
     pub(super) fn world_tab(&mut self, ui: &mut egui::Ui) {
-        let (Some(report), Some(details)) = (&self.save, &self.save_details) else {
+        // Moving the map makes sense only for the save it shows.
+        let shown = self.save.is_some();
+        let (Some(report), Some(details)) = (self.save_report(), &self.save_details) else {
             ui.label(egui::RichText::new("No save is shown.").color(style::MUTED));
             return;
         };
@@ -34,7 +42,8 @@ impl App {
                     ui.horizontal_wrapped(|ui| {
                         ui.label(egui::RichText::new(label).color(style::MUTED));
                         ui.label(style::mono(&setting.value));
-                        if let Some(place) = place
+                        if shown
+                            && let Some(place) = place
                             && let Some(dimension) = place.dimension_kind()
                             && ui
                                 .small_button("Go")
@@ -94,7 +103,12 @@ impl App {
                                 parts.push(format!("{} {what}", list.len()));
                             }
                         }
-                        style::hint(ui, &format!("{registry}: {}", parts.join(", ")));
+                        let read = if spyglass::answers_fed_by(registry).is_empty() {
+                            " (not read by spyglass)"
+                        } else {
+                            ""
+                        };
+                        style::hint(ui, &format!("{registry}: {}{read}", parts.join(", ")));
                     }
                     warnings_about(ui, details, &SaveSubject::Pack(pack.name.clone()));
                 }
@@ -113,7 +127,8 @@ impl App {
                             ("not answered", style::ERROR)
                         };
                         ui.label(egui::RichText::new(text).color(colour));
-                        if let Some(holdings) = &dimension.holdings
+                        if shown
+                            && let Some(holdings) = &dimension.holdings
                             && let Some([min, max]) = holdings.bounds
                             && dimension.answerable
                             && ui

@@ -441,7 +441,7 @@ fn plan(depths: &[Depth]) -> Result<Vec<Job>> {
     Ok(jobs)
 }
 
-/// A job's name in the checks list: `oracle 26.2 1/4: heights Ã—3, features Ã—2`.
+/// A job's name in the checks list: `oracle 26.2 1/4: heights ×3, features ×2`.
 fn name(job: &Job, index: usize, of: usize) -> String {
     let mut parts = Vec::new();
     for kind in Kind::ALL {
@@ -449,7 +449,7 @@ fn name(job: &Job, index: usize, of: usize) -> String {
         match (n, kind.seeds()) {
             (0, _) => {}
             (_, None) => parts.push(kind.name().to_string()),
-            (n, Some(_)) => parts.push(format!("{} Ã—{n}", kind.name())),
+            (n, Some(_)) => parts.push(format!("{} ×{n}", kind.name())),
         }
     }
     let mut name = format!("oracle {}", job.version);
@@ -524,6 +524,24 @@ mod tests {
         }
         assert!(Unit::parse("features:56").is_ok());
         assert!(Unit::parse("blocks:56").is_err());
+    }
+
+    /// A job's name in the checks list, `×` and all: the workflow shows it as it's written.
+    #[test]
+    fn a_job_is_named_by_its_version_and_units() {
+        let units: Vec<Unit> = Unit::all()
+            .into_iter()
+            .filter(|u| u.kind == Kind::Heights)
+            .take(3)
+            .chain(Unit::all().into_iter().filter(|u| u.kind == Kind::Bundle))
+            .collect();
+        let job = Job {
+            version: "26.3",
+            units,
+            minutes: 0.0,
+        };
+        assert_eq!(name(&job, 1, 4), "oracle 26.3 1/4: heights ×3, bundle");
+        assert_eq!(name(&job, 1, 1), "oracle 26.3: heights ×3, bundle");
     }
 
     #[test]

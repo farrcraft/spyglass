@@ -21,6 +21,7 @@ mod tiles;
 mod timing;
 mod userdata;
 mod view;
+mod zoom;
 
 // Tile workers and threaded queries allocate from many threads at once (ADR 0064).
 #[global_allocator]

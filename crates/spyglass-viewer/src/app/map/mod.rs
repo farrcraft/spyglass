@@ -224,11 +224,10 @@ impl App {
             flowers: self.settings.flowers,
             marking: !self.selection.queries.is_empty() && self.structures_generate(),
             // Features only up close: each chunk they could be in is placed.
-            featuring: !self.selection.features.is_empty()
-                && view.scale <= spyglass::MAX_FEATURE_SCALE,
+            featuring: !self.selection.features.is_empty() && zoom::FEATURES.shows(view.scale),
             // Loot containers too, every one or those of the Loot item.
             looting: (self.settings.containers || self.selection.loot.is_some())
-                && view.scale <= spyglass::MAX_FEATURE_SCALE,
+                && zoom::LOOT.shows(view.scale),
         }
     }
 
@@ -410,7 +409,7 @@ impl Frame {
     /// The key a tile's biomes are kept under, with the layers that tile can have.
     fn key(&self, tile: Tile) -> TileKey {
         let terrain = tile.has_terrain(self.view.scale);
-        let deep = tile.scale == self.view.scale && tile.scale <= MAX_UNDERGROUND_SCALE;
+        let deep = tile.scale == self.view.scale && zoom::UNDERGROUND.shows(tile.scale);
         TileKey {
             source: self.source,
             y: self.view.y,

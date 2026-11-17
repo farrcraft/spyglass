@@ -354,26 +354,44 @@ impl App {
     /// The underground layers: ore veins, noise caves and carvers at the view's height.
     fn underground_section(&mut self, ui: &mut egui::Ui) {
         style::heading(ui, "Underground");
-        let close = self.settings.view.scale <= MAX_UNDERGROUND_SCALE;
+        let scale = self.settings.view.scale;
         let veins_here = self.veins_allowed();
-        ui.add_enabled(
-            veins_here,
-            egui::Checkbox::new(&mut self.settings.veins, "Ore veins"),
+        zoom::checkbox(
+            ui,
+            &mut self.settings.veins,
+            "Ore veins",
+            zoom::UNDERGROUND,
+            scale,
+            (!veins_here).then_some("Only where the dimension has ore veins."),
         )
         .on_hover_text("Copper and iron veins: bright where ore is, faint where filler is.");
-        if !veins_here {
-            style::hint(ui, "Only where the dimension has ore veins.");
-        }
-        ui.checkbox(&mut self.settings.noise_caves, "Noise caves")
-            .on_hover_text("Caves in the terrain itself: air and fluid with ground above.");
-        ui.checkbox(&mut self.settings.carvers, "Carver caves and ravines")
-            .on_hover_text("What carvers cut: caves in yellow, ravines in magenta.");
-        if self.underground().any() {
-            if close {
-                style::hint(ui, "At the height above. Slow to draw.");
-            } else {
-                style::hint(ui, "Zoom to 1:4 or closer to see them.");
-            }
+        zoom::checkbox(
+            ui,
+            &mut self.settings.noise_caves,
+            "Noise caves",
+            zoom::UNDERGROUND,
+            scale,
+            None,
+        )
+        .on_hover_text("Caves in the terrain itself: air and fluid with ground above.");
+        zoom::checkbox(
+            ui,
+            &mut self.settings.carvers,
+            "Carver caves and ravines",
+            zoom::UNDERGROUND,
+            scale,
+            None,
+        )
+        .on_hover_text("What carvers cut: caves in yellow, ravines in magenta.");
+        let on = Underground {
+            veins: self.settings.veins && veins_here,
+            noise_caves: self.settings.noise_caves,
+            carvers: self.settings.carvers,
+        };
+        match zoom::UNDERGROUND.state(on.any(), scale) {
+            zoom::LayerState::Shown => style::hint(ui, "At the height above. Slow to draw."),
+            zoom::LayerState::Paused => zoom::paused_hint(ui, zoom::UNDERGROUND),
+            zoom::LayerState::Off => {}
         }
     }
 
@@ -548,11 +566,12 @@ impl App {
     fn features_section(&mut self, ui: &mut egui::Ui) {
         style::heading(ui, "Features");
         let mut changed = false;
+        let scale = self.settings.view.scale;
         for (name, placed) in icons::FEATURE_KINDS {
             let mut on = placed
                 .iter()
                 .all(|p| self.settings.features.iter().any(|f| f == p));
-            if ui.checkbox(&mut on, *name).changed() {
+            if zoom::checkbox(ui, &mut on, name, zoom::FEATURES, scale, None).changed() {
                 self.settings
                     .features
                     .retain(|f| !placed.contains(&f.as_str()));
@@ -567,54 +586,63 @@ impl App {
         if changed {
             self.select();
         }
-        if !self.settings.features.is_empty() {
-            if self.settings.view.scale <= spyglass::MAX_FEATURE_SCALE {
-                style::hint(
-                    ui,
-                    "Certain ones filled, likely ones outlined. Slow to draw: each chunk is placed.",
-                );
-            } else {
-                style::hint(ui, "Zoom to 1:2 or closer to see them.");
-            }
+        match zoom::FEATURES.state(!self.settings.features.is_empty(), scale) {
+            zoom::LayerState::Shown => style::hint(
+                ui,
+                "Certain ones filled, likely ones outlined. Slow to draw: each chunk is placed.",
+            ),
+            zoom::LayerState::Paused => zoom::paused_hint(ui, zoom::FEATURES),
+            zoom::LayerState::Off => {}
         }
     }
 
     /// Loot containers, up close: every one, and rings around those holding an item.
     fn loot_section(&mut self, ui: &mut egui::Ui) {
         style::heading(ui, "Loot");
-        let mut changed = ui
-            .checkbox(&mut self.settings.containers, "Containers")
-            .on_hover_text(
-                "Every chest, barrel and other loot container structures and dungeons place.",
-            )
-            .changed();
-        ui.horizontal(|ui| {
-            ui.label("Ring those holding");
-            let edit = ui.add(
-                style::text_box(&mut self.settings.loot)
-                    .hint_text("minecraft:diamond")
-                    .desired_width(150.0),
-            );
-            if edit.lost_focus() || (edit.changed() && self.settings.loot.is_empty()) {
-                changed = true;
-            }
-        });
+        let scale = self.settings.view.scale;
+        let mut changed = zoom::checkbox(
+            ui,
+            &mut self.settings.containers,
+            "Containers",
+            zoom::LOOT,
+            scale,
+            None,
+        )
+        .on_hover_text(
+            "Every chest, barrel and other loot container structures and dungeons place.",
+        )
+        .changed();
+        let near = zoom::LOOT.shows(scale);
+        ui.add_enabled_ui(near, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Ring those holding");
+                let edit = ui.add(
+                    style::text_box(&mut self.settings.loot)
+                        .hint_text("minecraft:diamond")
+                        .desired_width(150.0),
+                );
+                if edit.lost_focus() || (edit.changed() && self.settings.loot.is_empty()) {
+                    changed = true;
+                }
+            });
+        })
+        .response
+        .on_disabled_hover_text(format!("{} to see them.", zoom::LOOT.hint()));
         if changed {
             self.select();
         }
         if let Some(error) = &self.selection.loot_error {
             ui.colored_label(style::ERROR, error);
         }
-        if self.settings.containers || self.selection.loot.is_some() {
-            if self.settings.view.scale <= spyglass::MAX_FEATURE_SCALE {
-                style::hint(
-                    ui,
-                    "Gold rings: a full one where it certainly holds the item, a thin one where it \
-                     might. Click a container for its contents. Slow to draw: each chunk is placed.",
-                );
-            } else {
-                style::hint(ui, "Zoom to 1:2 or closer to see them.");
-            }
+        let on = self.settings.containers || self.selection.loot.is_some();
+        match zoom::LOOT.state(on, scale) {
+            zoom::LayerState::Shown => style::hint(
+                ui,
+                "Gold rings: a full one where it certainly holds the item, a thin one where it \
+                 might. Click a container for its contents. Slow to draw: each chunk is placed.",
+            ),
+            zoom::LayerState::Paused => zoom::paused_hint(ui, zoom::LOOT),
+            zoom::LayerState::Off => {}
         }
     }
 
@@ -646,10 +674,20 @@ impl App {
         ui.checkbox(&mut self.settings.confirm, "Confirm with terrain");
         style::hint(
             ui,
-            "Decides structure starts and locates with the seed's terrain, as the game does. Off, \
-             most surface structures are candidates. Jigsaw and mineshaft bounds are drawn when \
-             confirmed, at 1:4 or closer.",
+            &format!(
+                "Decides structure starts and locates with the seed's terrain, as the game does. \
+                 Off, most surface structures are candidates. Jigsaw and mineshaft bounds are \
+                 drawn when confirmed, at 1:{} or closer.",
+                zoom::BOUNDS.0
+            ),
         );
+        let bounds = self.settings.confirm && !self.settings.structures.is_empty();
+        if zoom::BOUNDS.state(bounds, self.settings.view.scale) == zoom::LayerState::Paused {
+            style::hint(
+                ui,
+                &format!("Bounds paused: {}.", zoom::BOUNDS.hint().to_lowercase()),
+            );
+        }
     }
 
     /// The Biomes section: the height, biomes at the surface, the End's void, tied cells and
@@ -710,40 +748,63 @@ impl App {
         if !spawn_here {
             style::hint(ui, overworld_only);
         }
+        let scale = self.settings.view.scale;
         let slime_here = self.slime_allowed();
-        let slime_visible = self.settings.view.scale <= spyglass::MAX_SLIME_SCALE;
-        ui.add_enabled(
-            slime_here && slime_visible,
-            egui::Checkbox::new(&mut self.settings.slime_chunks, "Slime chunks"),
+        zoom::checkbox(
+            ui,
+            &mut self.settings.slime_chunks,
+            "Slime chunks",
+            zoom::SLIME_CHUNKS,
+            scale,
+            (!slime_here).then_some(overworld_only),
         );
-        if !slime_here {
-            style::hint(ui, overworld_only);
-        } else if !slime_visible {
-            style::hint(ui, "Zoom to 1:16 or closer to see them.");
-        }
         let generated_here = self.generated_allowed();
-        ui.add_enabled(
-            generated_here && slime_visible,
-            egui::Checkbox::new(&mut self.settings.generated, "Generated chunks"),
+        let open_a_world = "Open a world to see its chunks.";
+        zoom::checkbox(
+            ui,
+            &mut self.settings.generated,
+            "Generated chunks",
+            zoom::GENERATED,
+            scale,
+            (!generated_here).then_some(open_a_world),
         )
         .on_hover_text(
             "The chunks your world has generated: magenta, fainter where generated partway, \
              amber where an older version generated them.",
         );
         ui.indent("inhabited", |ui| {
-            ui.add_enabled(
-                generated_here && slime_visible && self.settings.generated,
-                egui::Checkbox::new(&mut self.settings.inhabited, "By time played"),
+            let unavailable = if !generated_here {
+                Some(open_a_world)
+            } else if !self.settings.generated {
+                Some("Shades the generated chunks: turn them on.")
+            } else {
+                None
+            };
+            zoom::checkbox(
+                ui,
+                &mut self.settings.inhabited,
+                "By time played",
+                zoom::GENERATED,
+                scale,
+                unavailable,
             )
             .on_hover_text(
                 "Shade each chunk by the time players spent near it: faint where they passed \
                  through, strong where they lived.",
             );
         });
+        if !slime_here {
+            style::hint(ui, overworld_only);
+        }
         if !generated_here {
-            style::hint(ui, "Open a world to see its chunks.");
-        } else if !slime_visible {
-            style::hint(ui, "Zoom to 1:16 or closer to see them.");
+            style::hint(ui, open_a_world);
+        }
+        let paused = zoom::SLIME_CHUNKS.state(self.settings.slime_chunks && slime_here, scale)
+            == zoom::LayerState::Paused
+            || zoom::GENERATED.state(self.settings.generated && generated_here, scale)
+                == zoom::LayerState::Paused;
+        if paused {
+            zoom::paused_hint(ui, zoom::SLIME_CHUNKS);
         }
         ui.checkbox(&mut self.settings.show_done, "Done things")
             .on_hover_text("Structures, pins and markers you've marked done, dimmed.");

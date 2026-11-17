@@ -103,7 +103,7 @@ impl App {
             );
         }
         let mut layout_keys: Vec<(LayoutKey, String)> = Vec::new();
-        if frame.marking && frame.confirm && frame.view.scale <= MAX_BOUNDS_SCALE {
+        if frame.marking && frame.confirm && zoom::BOUNDS.shows(frame.view.scale) {
             for &tile in tiles {
                 let Some(Ok(found)) = self.markers.get(&frame.marker_key(tile)) else {
                     continue;

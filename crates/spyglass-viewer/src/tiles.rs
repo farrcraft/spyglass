@@ -24,12 +24,13 @@ use std::time::Instant;
 use eframe::egui;
 use spyglass::{
     BiomeMap, CarvingMap, DEFAULT_MAP_Y, FeatureQuery, FlowerCount, FlowerMap, FoundContainer,
-    FoundFeature, GeneratedChunk, HeightMap, ItemQuery, Layers, MAX_SLIME_SCALE, MapFeatures,
-    Session, Stop, Stopping, StructureLayout, StructureQuery, StructureStart, UndergroundMap,
+    FoundFeature, GeneratedChunk, HeightMap, ItemQuery, Layers, MapFeatures, Session, Stop,
+    Stopping, StructureLayout, StructureQuery, StructureStart, UndergroundMap,
 };
 
 use crate::timing;
 use crate::view::{TILE, Tile};
+use crate::zoom;
 
 /// A tile's biomes: the world and seed, the height, what terrain it needs, and its place.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -480,13 +481,14 @@ fn compute(job: &Job, carvings: &Carvings, stop: &Stop) -> Result<Output, JobErr
                 ..Layers::default()
             };
             // Only where the dimension has them (the Overworld).
-            let slime_chunks =
-                if area.scale <= MAX_SLIME_SCALE && slime.check(job.session.world()).is_ok() {
-                    features(slime)?.slime_chunks
-                } else {
-                    Vec::new()
-                };
-            let generated = if area.scale <= MAX_SLIME_SCALE && job.session.save().is_some() {
+            let slime_chunks = if zoom::SLIME_CHUNKS.shows(area.scale)
+                && slime.check(job.session.world()).is_ok()
+            {
+                features(slime)?.slime_chunks
+            } else {
+                Vec::new()
+            };
+            let generated = if zoom::GENERATED.shows(area.scale) && job.session.save().is_some() {
                 features(Layers {
                     biomes: false,
                     generated: true,

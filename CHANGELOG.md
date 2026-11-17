@@ -6,6 +6,12 @@ Changes go under **Unreleased** as they're made. `cargo xtask release` turns tha
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-17
+
+### Game versions
+
+Checked against the game for 26.2, 26.3, 26.4-snapshot-5, 26.4-snapshot-6, 26.4-snapshot-7, 26.4-snapshot-8.
+
 ### Added
 
 - **`spyglass world info` explains what spyglass read from your world:** every setting, the file and field it came from and what it decides; every enabled data pack, whether it was applied, what it changes and which answers that touches; and for each dimension, how many chunks it holds, which versions generated them, the structures answered from the save and the loot containers not yet opened. Each warning is printed under what it's about. In JSON, `settings`, `packs` and `dimensions`, and each warning's `about` ([cli-json.md](docs/specs/cli-json.md#world-info)). In the API, `SaveReport::details`, `spyglass_world::Save::sources`, `Bundle::layer_changes`, `answers_fed_by` and `SaveChunks::usage` ([world-saves.md](docs/specs/world-saves.md#the-report)).
@@ -162,7 +168,8 @@ The first release.
 - A warning for a game version this build wasn't checked against. Its answers may differ from the game's ([bundle-format.md](docs/specs/bundle-format.md#checked-versions)).
 - `--version` names the build and the game versions it was checked against.
 
-[Unreleased]: https://github.com/farrcraft/spyglass/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/farrcraft/spyglass/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/farrcraft/spyglass/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/farrcraft/spyglass/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/farrcraft/spyglass/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/farrcraft/spyglass/compare/v0.2.0...v0.3.0

@@ -1086,7 +1086,7 @@ mod tests {
 
     #[test]
     fn registries_are_named_as_the_game_names_them() {
-        let split = |path| changes::registry_and_id(path).unwrap();
+        let split = |path| registry_and_id(path).unwrap();
         assert_eq!(
             split("data/minecraft/worldgen/density_function/overworld/continents.json"),
             (
@@ -1106,7 +1106,7 @@ mod tests {
             split("data/mod/structure/igloo/top.nbt"),
             ("structure".into(), "mod:igloo/top".into())
         );
-        assert_eq!(changes::registry_and_id("data/mod/worldgen/biome"), None);
+        assert_eq!(registry_and_id("data/mod/worldgen/biome"), None);
     }
 
     #[test]

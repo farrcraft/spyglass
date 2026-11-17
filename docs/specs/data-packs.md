@@ -131,15 +131,17 @@ Its `filter` **hides** the files of the packs below it that it matches, counted 
 
 `spyglass::answers_fed_by(registry)` names the answers a registry feeds, so a pack's changes say which answers they touch:
 
-| Answers    | Registries                                                                                                                                                                                             |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| biomes     | `worldgen/biome`, `worldgen/multi_noise_biome_source_parameter_list`, `worldgen/density_function`, `worldgen/noise`, `worldgen/noise_settings`, `dimension`, `dimension_type`, `worldgen/world_preset` |
-| terrain    | `worldgen/noise_settings`, `worldgen/density_function`, `worldgen/noise`, `worldgen/configured_carver`, `dimension`, `dimension_type`                                                                  |
-| structures | `worldgen/structure`, `worldgen/structure_set`, `worldgen/template_pool`, `worldgen/processor_list`, `structure`, `tags/worldgen/biome`, `tags/worldgen/structure`                                     |
-| features   | `worldgen/configured_feature`, `worldgen/placed_feature`, `worldgen/biome`, `tags/block`, `tags/worldgen/biome`                                                                                        |
-| loot       | `loot_table`, `tags/item`, `enchantment`, `tags/enchantment`                                                                                                                                           |
-| flowers    | `worldgen/biome`, `worldgen/configured_feature`, `worldgen/placed_feature`                                                                                                                             |
-| portals    | `dimension`, `dimension_type`, `worldgen/noise_settings`, `tags/block`                                                                                                                                 |
+| Answers    | Registries                                                                                                                                                                                                                                                              |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| biomes     | `worldgen/biome`, `worldgen/multi_noise_biome_source_parameter_list`, `worldgen/density_function`, `worldgen/noise`, `worldgen/noise_settings`, `worldgen/world_preset`, `dimension`, `dimension_type`                                                                  |
+| terrain    | the biomes' registries except `worldgen/multi_noise_biome_source_parameter_list`, and `worldgen/material_rule`, `worldgen/material_condition`, `worldgen/carver`, `worldgen/configured_carver`, `tags/worldgen/carver`, `tags/worldgen/configured_carver`, `tags/block` |
+| structures | `worldgen/structure`, `worldgen/structure_set`, `worldgen/template_pool`, `worldgen/processor_list`, `structure` (templates), `tags/worldgen/biome`, `tags/worldgen/structure`                                                                                          |
+| features   | `worldgen/biome`, `worldgen/configured_feature`, `worldgen/placed_feature`, `worldgen/feature`, `worldgen/block_state_provider`, `tags/worldgen/feature`, `tags/worldgen/configured_feature`, `tags/worldgen/placed_feature`, `tags/block`                              |
+| loot       | `loot_table`, `enchantment`, `tags/item`, `tags/instrument`, `tags/enchantment`                                                                                                                                                                                         |
+| flowers    | the features' registries, except `tags/worldgen/placed_feature` and `tags/block`                                                                                                                                                                                        |
+| portals    | `worldgen/noise_settings`, `dimension`, `dimension_type`, `tags/block`                                                                                                                                                                                                  |
+
+A test reads the library crates' sources for every registry name a loader uses and checks each feeds an answer.
 
 Any other registry, such as `recipe`, `advancement` or `function`, is counted as not read by spyglass, so a pack of recipes only changes no answers.
 

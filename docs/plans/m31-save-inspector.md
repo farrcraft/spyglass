@@ -109,9 +109,9 @@ The library maps each registry to the answers it feeds, with a fixed table in `s
 - [x] The scan's counts: a skipping visitor in `spyglass_data::nbt` for `structures.starts` and `block_entities`, `ChunkFields`' new fields, and unit tests on chunks built in the test (`INVALID`, missing `id`, pre-2970 chunks, empty `starts`, containers with and without `LootTable`, proto chunks). Fuzz it through the existing `region` target.
 - [x] Time the scan on the largest local save, before and after. Decide between keeping the counts in `Scan::Chunks` and adding `Scan::Holdings`, and record the times in the spec.
 - [x] `Bundle::layer_changes`, with tests on layered bundles: a replacement, an addition, a filter, a tag merged and replaced, a file shadowed by a higher pack, a pack of recipes only.
-- [ ] `answers_fed_by`, the registry-to-answers table, with a test that every registry a loader reads has an entry.
-- [ ] `SaveWarning::PackError` and `SaveWarning::MovingBorder`, and `SaveWarning::subject`. `pack_errors` is kept as a thin wrapper over the new warning until the front ends move.
-- [ ] `SaveReport::details() -> SaveDetails`, with a test per warning kind (all nine) that it appears once, beside its subject, on saves built in the test.
+- [x] `answers_fed_by`, the registry-to-answers table, with a test that every registry a loader reads has an entry.
+- [x] `SaveWarning::PackError` and `SaveWarning::MovingBorder`, and `SaveWarning::subject`. `pack_errors` is kept as a thin wrapper over the new warning until the front ends move.
+- [x] `SaveReport::details() -> SaveDetails`, with a test per warning kind (all nine) that it appears once, beside its subject, on saves built in the test.
 - [ ] `SaveChunks::usage`, counted where `StoredStarts` and the container lookup already answer, with a test that a locate and a loot query move the right counts.
 - [ ] CLI: `world info`'s text and `--json`. [cli-json.md](../specs/cli-json.md) gets `settings`, `packs`, `dimensions` and `about`, and the CLI tests cover each section and `--quick`.
 - [ ] Viewer: the World panel, the shorter notice, moving the view from the panel, and the session's usage. Checked by eye with the `run-viewer` skill.
@@ -141,5 +141,6 @@ The library maps each registry to the answers it feeds, with a fixed table in `s
 
 Newest first.
 
+- 2026-11-16: A pack error rarely names a file: the density function loader's names the resource by id (`minecraft:zero: type: unsupported density function type`). So the report finds the pack by a `data/` path in the message, else by an id one of the packs has a file for, else by a namespace only packs have. The registry test found two registries the draft table missed, `worldgen/carver` and `tags/instrument`. `MovingBorder` is raised by `inspect_save` (the borders are three small files), `PackError` only by `details()`.
 - 2026-11-16: The counts are read by a new tree-free walker, `nbt::walk`, which `read_root_fields` now uses too. On hermitcraftvanilla-s5 (4.5 GB) `world info --json` went from 6.3 to 7.1 s to 7.1 to 7.9 s, three runs each, twice: about 14%, so the counts stay in `Scan::Chunks` and no ADR is needed. Reading `Level` for pre-1.18 chunks also gives them their `Status` and `InhabitedTime`, which the scan missed before. 120 s of `cargo xtask fuzz region` found nothing.
 - 2026-11-16: Drafted. Counting opened containers for the whole save would mean predicting every container in every generated chunk, so the report counts sealed containers from the save, and answers count the opened ones as they're made (`SaveChunks::usage`). The milestone's scope needs rewording to match.

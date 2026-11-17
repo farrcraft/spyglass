@@ -13,7 +13,7 @@ const MAX_CHUNK_TREE: u64 = 256 << 20;
 /// before it (1.18.0 and 1.18.1 among them) key starts by structure feature (`minecraft:village`,
 /// `minecraft:ocean_ruin`), which that fix renames by the chunk's biomes. A fixed historical
 /// version, the same for every game version.
-const CONFIGURED_STRUCTURES: i32 = 2970;
+pub const CONFIGURED_STRUCTURES: i32 = 2970;
 
 /// The data version from which suspicious sand's block entity is `minecraft:brushable_block`:
 /// the schema of `DataFixers`' "Rename Suspicious Sand to Brushable Block"

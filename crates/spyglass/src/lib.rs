@@ -75,8 +75,10 @@ pub use render::{
     vein_colour,
 };
 pub use save::{
-    LauncherSave, PackConcern, SaveInfo, SaveInspector, SaveLocation, SaveReport, SaveWarning,
-    Scan, find_save, inspect_save, launcher_saves,
+    Answer, DimensionDetails, LauncherSave, PackConcern, PackUse, SaveDetails, SaveHoldings,
+    SaveInfo, SaveInspector, SaveLocation, SavePack, SaveReport, SaveSetting, SaveSubject,
+    SaveWarning, Scan, Setting, VersionCount, answers_fed_by, find_save, inspect_save,
+    launcher_saves,
 };
 pub use save_portals::{PortalFlag, PortalNote, SavePortal, SavePortalLink, SavePortals};
 pub use saved::{GeneratedChunk, SaveChunks};
@@ -89,6 +91,7 @@ pub use spyglass_data::build;
 pub use spyglass_data::bundle::{
     BUNDLES_ENV, Kind, app_bundles_dir, default_bundles_dir, user_bundles_dir,
 };
+pub use spyglass_data::bundle::{LayerChanges, RegistryChanges};
 pub use spyglass_data::dimension::Dimension;
 pub use spyglass_data::pack::{FormatRange, Pack, PackError, PackFormat, PackMeta};
 pub use spyglass_data::versions::{CHECKED, Checked};
@@ -98,7 +101,7 @@ pub use spyglass_terrain::Heightmap;
 /// Coarse timing of terrain, for finding where the time goes; not a stable interface.
 #[cfg(feature = "timing")]
 pub use spyglass_terrain::timing;
-pub use spyglass_world::open_pack;
+pub use spyglass_world::{SaveSource, open_pack};
 
 /// A search query's syntax tree, from [`SearchQuery::query`] (`docs/specs/search.md`).
 pub mod query {

@@ -306,7 +306,8 @@ impl App {
             {
                 self.tab = Tab::World;
                 // The user asked to see what's wrong: unfold it.
-                if let Some(details) = &self.save_details {
+                if let Some((_, details)) = self.world_report() {
+                    let details = details.clone();
                     for part in world_panel::WorldSection::ALL {
                         if world_panel::warnings_in(&details.warnings, part) > 0 {
                             style::set_folded(&mut self.settings.folded, part.id(), false, false);

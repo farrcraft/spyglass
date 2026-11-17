@@ -49,8 +49,7 @@ impl App {
                     reasons.join("; ")
                 ));
                 // The World tab still says what spyglass read, and why it can't answer.
-                self.unshown_save = Some(report);
-                self.save_details = Some(details);
+                self.unshown_save = Some((report, details));
                 return;
             }
         };

@@ -1,6 +1,6 @@
 # 0078. Map calls can be stopped
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-16
 
 ## Context

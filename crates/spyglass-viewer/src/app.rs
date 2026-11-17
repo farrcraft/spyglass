@@ -353,11 +353,12 @@ pub struct App {
     inspecting: Option<Pending<Result<(SaveReport, SaveDetails), String>>>,
     /// The save on the map, if it came from one.
     save: Option<SaveReport>,
-    /// The report of what spyglass read from the last save opened, for the World tab while
-    /// [`save`](Self::save) or [`unshown_save`](Self::unshown_save) is that save.
+    /// What spyglass read from the save on the map ([`save`](Self::save)), for the World tab
+    /// and the notice above the map.
     save_details: Option<SaveDetails>,
-    /// The last save opened, if spyglass couldn't show it: the World tab says why.
-    unshown_save: Option<SaveReport>,
+    /// The last save opened, if spyglass couldn't show it, and what it read from it: the World
+    /// tab says why, until the error is dismissed. The save on the map, if any, stays.
+    unshown_save: Option<(SaveReport, SaveDetails)>,
     /// Why the last save couldn't be opened or shown.
     save_error: Option<String>,
     /// The saves list's filter, as typed.

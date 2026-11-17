@@ -8,18 +8,22 @@ use super::*;
 use crate::style::{self, Section, Summary};
 
 impl App {
-    /// The save the World tab is about: the one shown, or else the last one opened that
-    /// couldn't be.
-    pub(super) fn save_report(&self) -> Option<&SaveReport> {
-        self.save.as_ref().or(self.unshown_save.as_ref())
+    /// The save the World tab is about, and its details: the last one opened that couldn't be
+    /// shown, until its error is dismissed, or else the one shown.
+    pub(super) fn world_report(&self) -> Option<(&SaveReport, &SaveDetails)> {
+        match (&self.unshown_save, &self.save, &self.save_details) {
+            (Some((report, details)), _, _) => Some((report, details)),
+            (None, Some(report), Some(details)) => Some((report, details)),
+            _ => None,
+        }
     }
 
     pub(super) fn world_tab(&mut self, ui: &mut egui::Ui) {
         // Moving the map makes sense only for the save it shows.
-        let shown = self.save.is_some();
+        let shown = self.unshown_save.is_none() && self.save.is_some();
         // Out of the settings while the report is borrowed, and back at the end.
         let mut folded = std::mem::take(&mut self.settings.folded);
-        let (Some(report), Some(details)) = (self.save_report(), &self.save_details) else {
+        let Some((report, details)) = self.world_report() else {
             ui.label(egui::RichText::new("No save is shown.").color(style::MUTED));
             self.settings.folded = folded;
             return;

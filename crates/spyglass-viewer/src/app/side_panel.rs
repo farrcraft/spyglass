@@ -185,13 +185,13 @@ impl App {
             (Tab::Locate, "Locate", locate),
             (Tab::Markers, "Markers", Badge::Count(markers)),
         ];
-        if let Some(details) = self.save_report().and(self.save_details.as_ref()) {
+        if let Some((_, details)) = self.world_report() {
             let warnings = details.warnings.iter().filter(|w| !w.is_note()).count();
             tabs.push((Tab::World, "World", Badge::Warnings(warnings)));
         }
         ui.add_space(2.0);
         tab_row(ui, &mut self.tab, &tabs);
-        if self.tab == Tab::World && self.save_report().is_none() {
+        if self.tab == Tab::World && self.world_report().is_none() {
             self.tab = Tab::Layers;
         }
         ui.add_space(4.0);

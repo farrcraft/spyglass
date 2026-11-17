@@ -2,7 +2,7 @@
 
 Start `spyglass-viewer`. It opens the newest release in the bundles folder (or the newest snapshot, if there's no release) and shows seed 0. With no bundles yet, it offers to [extract some](game-data.md#from-the-viewer). Settings are kept between runs.
 
-![The viewer's side panel and a biome map of seed 8675309 at 8 blocks per pixel, with villages, outposts, swamp huts, temples, mansions and monuments marked](images/viewer-overworld.png)
+![The viewer's side panel in sections, Underground and Flowers folded, and a biome map of seed 8675309 at 8 blocks per pixel, with villages, outposts, swamp huts, temples, mansions and monuments marked](images/viewer-overworld.png)
 
 ## Moving around
 
@@ -31,12 +31,28 @@ Each tab is in sections. Click a section's title or its arrow to fold it away; f
 - **Flowers**: what bone meal grows on grass at each block, at the height shown, with a key of the flowers in view. Click a flower in the key to show only it, and **Best height** lists the heights where it covers most of the view ([flower farms](flower-farms.md#in-the-viewer)).
 - **Confirm with terrain** (on by default) decides structure markers and locates with the seed's terrain, as the game does, and up close draws the bounds of villages, other jigsaw structures and mineshafts.
 
-Some layers appear only when you zoom in, since they cost more to draw:
+### Zoom limits
 
-- **Underground**, at 4 blocks per pixel or closer: ore veins (copper orange, iron blue, filler stone fainter), noise caves (darkened), and the caves and ravines carvers cut (yellow and magenta), at the height shown. Moving the height keeps the carvers already worked out.
-- **Features**, at 2 blocks per pixel or closer: dungeons, amethyst geodes, desert wells, fossils and lava lakes, as diamonds, filled when certain and outlined when likely. Each chunk is placed as the game decorates it, so they fill in slowly.
+Some layers are drawn only when you zoom in, since they cost more to draw:
 
-Past its zoom limit a layer's checkbox is greyed and says **paused**; it stays on, and draws again when you zoom back in. Features and loot containers go one step further: at 4 blocks per pixel the map still shows those found closer in, with nothing new worked out. The area looked at is outlined and the rest is hatched, so an empty outlined patch means there's none there, and a hatched one that it wasn't looked at.
+| Layer                                                  | Drawn at                      |
+| ------------------------------------------------------ | ----------------------------- |
+| Ore veins, noise caves, carver caves                   | 4 blocks per pixel or closer  |
+| Features (dungeons, geodes, wells, …)                  | 2 blocks per pixel or closer  |
+| Loot containers, and rings round those holding an item | 2 blocks per pixel or closer  |
+| Slime chunks, a world's generated chunks               | 16 blocks per pixel or closer |
+| The bounds of villages and other jigsaw structures     | 4 blocks per pixel or closer  |
+
+- **Underground**: ore veins (copper orange, iron blue, filler stone fainter), noise caves (darkened), and the caves and ravines carvers cut (yellow and magenta), at the height shown. Moving the height keeps the carvers already worked out.
+- **Features**: dungeons, amethyst geodes, desert wells, fossils and lava lakes, as diamonds, filled when certain and outlined when likely. Each chunk is placed as the game decorates it, so they fill in slowly.
+
+Past its limit a layer's checkbox is greyed, says **paused**, and its hover text says how far to zoom in. It stays on, and draws again when you zoom back in; zooming out also stops the work it was doing, so the rest of the view fills in sooner. Features and loot containers go one step further: at 4 blocks per pixel the map still shows those found closer in, with nothing new worked out. The area looked at is outlined and the rest is hatched, so an empty outlined patch means there's none there, and a hatched one that it wasn't looked at.
+
+Dungeons found at 2 blocks per pixel, still shown at 4 with their layer paused: the area looked at is outlined, and the rest hatched.
+
+![The viewer at 4 blocks per pixel with Dungeons paused: the dungeons found closer in are drawn inside an outlined area, the rest of the map is hatched, and the Features section says how far to zoom in](images/viewer-zoom.png)
+
+Zooming in or out reuses what's been worked out: zoom in from 2 blocks per pixel to 1 with features on and they're all there at once, and zoom out over tiles already drawn and they're copied, not worked out again.
 
 Up close, with **Relief** and **Biomes at the surface** on, and the bounds of a plains village drawn:
 

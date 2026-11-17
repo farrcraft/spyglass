@@ -21,7 +21,7 @@ use spyglass_feature::{
 use spyglass_loot::{Loot, MapRequest, Stack};
 use spyglass_structure::Starts;
 
-use crate::{Error, Result, Session, World};
+use crate::{Error, Halt, Result, Session, World};
 
 /// The block a dungeon's chests are.
 const CHEST: &str = "minecraft:chest";
@@ -588,6 +588,8 @@ struct Cache<'s> {
     biomes: Mutex<HashMap<[i32; 2], Vec<BiomeId>>>,
     /// Each table's possible items.
     possible: Mutex<HashMap<String, Arc<BTreeSet<String>>>>,
+    /// Whether the call should give up, checked before each chunk carved (ADR 0078).
+    halt: Halt<'s>,
 }
 
 impl Cache<'_> {
@@ -605,14 +607,17 @@ impl Cache<'_> {
         biomes.retain(|c, _| c[1] >= cz);
     }
 
-    /// Chunk `chunk` carved.
-    fn carved(&self, generator: &ChunkGenerator<'_>, chunk: [i32; 2]) -> Chunk {
+    /// Chunk `chunk` carved, or `Error::Stopped` once the call's halt is raised. Carving takes
+    /// tens of milliseconds, and the first chunks a call places carve all their neighbours.
+    fn carved(&self, generator: &ChunkGenerator<'_>, chunk: [i32; 2]) -> Result<Chunk> {
+        self.halt.check()?;
         let cell = {
             let mut carved = self.carved.lock().unwrap_or_else(PoisonError::into_inner);
             carved.entry(chunk).or_default().clone()
         };
-        cell.get_or_init(|| generator.carved_chunk(chunk[0], chunk[1]))
-            .clone()
+        Ok(cell
+            .get_or_init(|| generator.carved_chunk(chunk[0], chunk[1]))
+            .clone())
     }
 
     /// Chunk `chunk`'s stored biomes.
@@ -690,7 +695,7 @@ impl<'w> Session<'w> {
     /// structure's pieces or a dungeon's tries reach, which takes a while each
     /// (`docs/specs/locate.md#loot`).
     pub fn containers_in(&self, min: [i32; 2], max: [i32; 2]) -> Result<Vec<FoundContainer>> {
-        self.containers_where(min, max, None)
+        self.containers_where(min, max, None, Halt::NEVER)
     }
 
     /// The containers in chunks `min..=max` that hold an item `query` names, or might, as
@@ -704,8 +709,20 @@ impl<'w> Session<'w> {
         min: [i32; 2],
         max: [i32; 2],
     ) -> Result<Vec<FoundContainer>> {
+        self.containers_holding_halting(query, min, max, Halt::NEVER)
+    }
+
+    /// [`containers_holding`](Self::containers_holding), checking `halt` before each chunk it
+    /// places.
+    pub(crate) fn containers_holding_halting(
+        &self,
+        query: &ItemQuery,
+        min: [i32; 2],
+        max: [i32; 2],
+        halt: Halt<'_>,
+    ) -> Result<Vec<FoundContainer>> {
         self.check_world(query.world, &query.argument)?;
-        self.containers_where(min, max, Some(query))
+        self.containers_where(min, max, Some(query), halt)
     }
 
     /// [`containers_holding`](Self::containers_holding) over the chunks `wanted` keeps, each
@@ -734,7 +751,7 @@ impl<'w> Session<'w> {
                 .collect();
             if !todo.is_empty() {
                 if cache.is_none() {
-                    cache = Some(self.loot_cache()?);
+                    cache = Some(self.loot_cache(Halt::NEVER)?);
                 }
                 let shared = cache.as_ref().expect("made above");
                 // The row's chunks placed at once, then visited in order below. A visit that
@@ -760,21 +777,26 @@ impl<'w> Session<'w> {
         Ok(())
     }
 
-    /// The containers in chunks `min..=max`, all of them or those holding `query`'s item.
-    fn containers_where(
+    /// The containers in chunks `min..=max`, all of them or those holding `query`'s item,
+    /// checking `halt` before each chunk.
+    pub(crate) fn containers_where(
         &self,
         min: [i32; 2],
         max: [i32; 2],
         query: Option<&ItemQuery>,
+        halt: Halt<'_>,
     ) -> Result<Vec<FoundContainer>> {
         let loot = self.world.loot_world()?;
-        let mut cache = self.loot_cache()?;
+        let mut cache = self.loot_cache(halt)?;
         let mut out = Vec::new();
         for cz in min[1]..=max[1] {
             // The rows before this one's neighbours aren't read again.
             cache.keep_rows_from(cz - 1);
             // The row's chunks placed at once, then kept in order.
-            let place = |&cx: &i32| self.chunk_holding(loot, [cx, cz], &cache, query);
+            let place = |&cx: &i32| {
+                halt.check()?;
+                self.chunk_holding(loot, [cx, cz], &cache, query)
+            };
             let row: Vec<i32> = (min[0]..=max[0]).collect();
             let placed: Vec<Vec<FoundContainer>> = if self.parallel {
                 row.par_iter().map(place).collect::<Result<_>>()?
@@ -830,7 +852,7 @@ impl<'w> Session<'w> {
     ) -> Result<ContainerLocate> {
         self.check_world(query.world, &query.argument)?;
         let loot = self.world.loot_world()?;
-        let cache = self.loot_cache()?;
+        let cache = self.loot_cache(Halt::NEVER)?;
         let centre = [from[0] >> 4, from[2] >> 4];
         let distance_sqr = |p: [i32; 3]| {
             let (dx, dz) = (i64::from(p[0] - from[0]), i64::from(p[2] - from[2]));
@@ -881,8 +903,9 @@ impl<'w> Session<'w> {
         })
     }
 
-    fn loot_cache(&self) -> Result<Cache<'_>> {
+    fn loot_cache<'s>(&'s self, halt: Halt<'s>) -> Result<Cache<'s>> {
         Ok(Cache {
+            halt,
             starts: self.starts(true).with_pools(self.world.pools()?),
             layouts: LayoutCache::default(),
             carved: Mutex::default(),
@@ -1068,7 +1091,7 @@ impl<'w> Session<'w> {
         let mut chunks = Vec::with_capacity(9);
         for dz in -1..=1 {
             for dx in -1..=1 {
-                chunks.push(cache.carved(generator, [chunk[0] + dx, chunk[1] + dz]));
+                chunks.push(cache.carved(generator, [chunk[0] + dx, chunk[1] + dz])?);
             }
         }
         let region = Region::new(&loot.blocks, chunk, chunks);

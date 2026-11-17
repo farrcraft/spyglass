@@ -17,8 +17,7 @@ use evaluate::Sessions;
 pub use evaluate::{ConstraintResult, Evaluation, Feature, Outcome};
 pub use find::{FindMatch, FindOptions, FindOutcome, FindProgress, MAX_FIND_TARGETS};
 pub use spyglass_search::{
-    Hit as RankedSeed, Progress as SearchProgress, SeedSource, Stop as SearchStop,
-    Throttle as SearchThrottle,
+    Hit as RankedSeed, Progress as SearchProgress, SeedSource, Stop, Throttle as SearchThrottle,
 };
 
 use crate::{
@@ -689,9 +688,9 @@ pub struct SearchOptions {
     /// Decide structure starts with each seed's terrain, as the game does. Slower: terrain is
     /// checked last, for the seeds that pass everything else.
     pub confirm: bool,
-    /// Stops the search from another thread, before its next seed. [`SearchStop::stop`] still
-    /// evaluates the best seeds found; [`SearchStop::stop_now`] cuts that short too.
-    pub stop: SearchStop,
+    /// Stops the search from another thread, before its next seed. [`Stop::stop`] still
+    /// evaluates the best seeds found; [`Stop::stop_now`] cuts that short too.
+    pub stop: Stop,
     /// Limits how many of its threads work at once, from another thread while it runs, to lend
     /// its cores to other work: [`SearchThrottle::set`]. The seeds found don't depend on it.
     pub throttle: SearchThrottle,
@@ -709,7 +708,7 @@ impl Default for SearchOptions {
             threads: None,
             certain: false,
             confirm: false,
-            stop: SearchStop::new(),
+            stop: Stop::new(),
             throttle: SearchThrottle::new(),
         }
     }
@@ -737,7 +736,7 @@ pub struct SearchOutcome {
     pub progress: SearchProgress,
     /// The ranked seeds, best first, with their evaluations.
     pub hits: Vec<SearchHit>,
-    /// Whether [`SearchStop::stop_now`] cut evaluating the ranked seeds short: then `hits` has
+    /// Whether [`Stop::stop_now`] cut evaluating the ranked seeds short: then `hits` has
     /// only the best of `progress.top`, in rank order.
     pub partial: bool,
 }

@@ -7,7 +7,7 @@
 use std::ops::ControlFlow;
 
 use spyglass::{
-    Error, Feature, Outcome, SearchOptions, SearchOutcome, SearchStop, SeedSource, Session,
+    Error, Feature, Outcome, SearchOptions, SearchOutcome, SeedSource, Session, Stop,
     StructureStart, World,
 };
 use spyglass_oracle::fixtures;
@@ -643,7 +643,7 @@ fn a_stop_still_evaluates_the_best_unless_asked_again() {
     let fixture = fixtures::structured_overworld(false);
     let world = World::open(fixture.path()).unwrap();
     let query = world.search_query(RANKED).unwrap();
-    let options = |stop: SearchStop| SearchOptions {
+    let options = |stop: Stop| SearchOptions {
         source: SeedSource::Range {
             first: 0,
             last: 1_000_000,
@@ -654,7 +654,7 @@ fn a_stop_still_evaluates_the_best_unless_asked_again() {
         ..SearchOptions::default()
     };
     // Stopped once, from another thread mid-search: the best seeds so far are evaluated.
-    let stop = SearchStop::new();
+    let stop = Stop::new();
     let outcome = world
         .search(&query, &options(stop.clone()), |p| {
             if p.reported >= 3 {
@@ -667,7 +667,7 @@ fn a_stop_still_evaluates_the_best_unless_asked_again() {
     assert!(!outcome.partial);
     assert_eq!(outcome.hits.len(), outcome.progress.top.len());
     // Stopped twice: what's left of the evaluation is skipped, and the outcome says so.
-    let stop = SearchStop::new();
+    let stop = Stop::new();
     let outcome = world
         .search(&query, &options(stop.clone()), |p| {
             if p.reported >= 3 {

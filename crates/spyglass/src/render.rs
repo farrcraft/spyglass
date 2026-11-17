@@ -19,7 +19,7 @@ pub use underground::{
 
 use crate::{
     BiomeAt, BiomeQuery, Dimension, Error, FeatureOptions, FeatureQuery, FoundContainer,
-    FoundFeature, GeneratedChunk, Heightmap, ItemQuery, Result, Session, SpawnOrigin,
+    FoundFeature, GeneratedChunk, Halt, Heightmap, ItemQuery, Result, Session, SpawnOrigin,
     StructureQuery, StructureStart, World,
 };
 
@@ -748,6 +748,20 @@ fn pin_marker(colour: [u8; 3]) -> impl Fn(i64, i64) -> Option<[u8; 3]> {
     }
 }
 
+/// The runs of `coordinates` (ascending) in one chunk along their axis, as indices: the bands
+/// of rows a halting map call computes one at a time.
+fn chunk_bands(coordinates: &[i32]) -> Vec<std::ops::Range<usize>> {
+    let mut bands = Vec::new();
+    let mut first = 0;
+    for i in 1..=coordinates.len() {
+        if i == coordinates.len() || coordinates[i] >> 4 != coordinates[first] >> 4 {
+            bands.push(first..i);
+            first = i;
+        }
+    }
+    bands
+}
+
 /// `i64` to `i32`, saturating.
 fn saturate(v: i64) -> i32 {
     v.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
@@ -756,7 +770,14 @@ fn saturate(v: i64) -> i32 {
 impl Session<'_> {
     /// The biome under each pixel of `area` (`docs/specs/render.md#biomes`).
     pub fn biome_map(&self, area: &MapArea) -> Result<BiomeMap> {
+        self.biome_map_halting(area, Halt::NEVER)
+    }
+
+    /// [`biome_map`](Self::biome_map), checking `halt` before it starts: a tile takes well
+    /// under a tenth of a second, so it isn't checked again (ADR 0078).
+    pub(crate) fn biome_map_halting(&self, area: &MapArea, halt: Halt<'_>) -> Result<BiomeMap> {
         area.check()?;
+        halt.check()?;
         // Each pixel samples the quart holding its corner block. The corner is a multiple of
         // the scale, so a grid of quarts `step` apart from it is aligned to the world: every
         // area samples the same quarts at the same blocks, and tiles drawn apart meet without
@@ -806,6 +827,13 @@ impl Session<'_> {
     /// edges (`docs/specs/render.md#heights`). Binds the seed's terrain. Slow at every scale,
     /// and slower as pixels spread out, until each is in a chunk of its own.
     pub fn height_map(&self, area: &MapArea) -> Result<HeightMap> {
+        self.height_map_halting(area, Halt::NEVER)
+    }
+
+    /// [`height_map`](Self::height_map), checking `halt` between bands of rows, each the rows
+    /// in one row of chunks. The terrain samples each chunk's columns together, whatever else
+    /// it's asked for, so a band at a time gives the same heights (ADR 0078).
+    pub(crate) fn height_map_halting(&self, area: &MapArea, halt: Halt<'_>) -> Result<HeightMap> {
         area.check()?;
         let blocks_per_pixel = i64::from(area.scale);
         // From one pixel before the area, which saturates at the edge of the coordinates: the
@@ -817,9 +845,12 @@ impl Session<'_> {
                 .collect()
         };
         let (xs, zs) = (axis(0), axis(1));
-        let heights = self
-            .terrain()
-            .base_heights_on(&xs, &zs, Heightmap::WorldSurfaceWg);
+        let terrain = self.terrain();
+        let mut heights = Vec::with_capacity(xs.len() * zs.len());
+        for band in chunk_bands(&zs) {
+            halt.check()?;
+            heights.extend(terrain.base_heights_on(&xs, &zs[band], Heightmap::WorldSurfaceWg));
+        }
         let level = self.world.sets.heights();
         Ok(HeightMap {
             world: self.world.id,
@@ -833,6 +864,15 @@ impl Session<'_> {
     /// pixel's corner block at its height, kept below the top of the level
     /// (`docs/specs/render.md#biomes`).
     pub fn surface_biome_map(&self, heights: &HeightMap) -> Result<BiomeMap> {
+        self.surface_biome_map_halting(heights, Halt::NEVER)
+    }
+
+    /// [`surface_biome_map`](Self::surface_biome_map), checking `halt` before each row.
+    pub(crate) fn surface_biome_map_halting(
+        &self,
+        heights: &HeightMap,
+        halt: Halt<'_>,
+    ) -> Result<BiomeMap> {
         if heights.world != self.world.id {
             return Err(Error::OtherWorld("a height map".to_string()));
         }
@@ -842,6 +882,7 @@ impl Session<'_> {
         let mut ties = BTreeMap::new();
         let mut cells = Vec::with_capacity(w as usize * h as usize);
         for j in 0..h {
+            halt.check()?;
             for i in 0..w {
                 let [x, z] = area.block([i, j]);
                 let y = heights.height([i, j]).min(top);
@@ -891,17 +932,30 @@ impl Session<'_> {
     /// marker reaches the area, and slime chunks that overlap it. Features place every chunk
     /// their markers could come from, which takes a while ([`Session::features_in`]).
     pub fn map_features(&self, area: &MapArea, layers: &Layers) -> Result<MapFeatures> {
+        self.map_features_halting(area, layers, Halt::NEVER)
+    }
+
+    /// [`map_features`](Self::map_features), checking `halt` between structure starts and
+    /// between chunks placed.
+    pub(crate) fn map_features_halting(
+        &self,
+        area: &MapArea,
+        layers: &Layers,
+        halt: Halt<'_>,
+    ) -> Result<MapFeatures> {
         area.check()?;
         layers.check(self.world)?;
+        halt.check()?;
         let mut features = MapFeatures::default();
         if !layers.structures.is_empty() {
-            features.structures = self.map_structures(area, &layers.structures, layers.confirm)?;
+            features.structures =
+                self.map_structures(area, &layers.structures, layers.confirm, halt)?;
         }
         if !layers.features.is_empty() {
-            features.features = self.map_feature_layer(area, &layers.features)?;
+            features.features = self.map_feature_layer(area, &layers.features, halt)?;
         }
         if let Some(query) = &layers.loot {
-            features.containers = self.map_containers(area, query)?;
+            features.containers = self.map_containers(area, query, halt)?;
         }
         if layers.slime_chunks {
             check_layer_scale(area, MAX_SLIME_SCALE, "slime chunks are")?;
@@ -938,6 +992,7 @@ impl Session<'_> {
         area: &MapArea,
         queries: &[StructureQuery],
         confirm: bool,
+        halt: Halt<'_>,
     ) -> Result<Vec<StructureStart>> {
         let mut targets = Vec::new();
         for query in queries {
@@ -952,7 +1007,7 @@ impl Session<'_> {
         // of it, then kept if their marker reaches it: a marker cut by a tile's edge is drawn
         // in both tiles.
         let [[x0, x1], [z0, z1]] = area.reach_blocks();
-        let mut starts = self.starts_by_set(
+        let mut starts = self.starts_by_set_halting(
             &targets,
             |offset| {
                 // The chunks whose position, chunk·16 + offset, is in reach.
@@ -964,7 +1019,8 @@ impl Session<'_> {
                 )
             },
             confirm,
-        );
+            halt,
+        )?;
         starts.retain(|s| area.reaches([s.position[0], s.position[2]]));
         starts.sort_by(|a, b| {
             (&a.set, a.chunk[1], a.chunk[0]).cmp(&(&b.set, b.chunk[1], b.chunk[0]))
@@ -977,12 +1033,15 @@ impl Session<'_> {
         &self,
         area: &MapArea,
         queries: &[FeatureQuery],
+        halt: Halt<'_>,
     ) -> Result<Vec<FoundFeature>> {
         check_layer_scale(area, MAX_FEATURE_SCALE, "features are")?;
         let (min, max) = reach_chunks(area);
         let mut found_all: Vec<FoundFeature> = Vec::new();
         for query in queries {
-            for found in self.features_in(query, min, max, FeatureOptions::default())? {
+            for found in
+                self.features_in_halting(query, min, max, FeatureOptions::default(), halt)?
+            {
                 if area.reaches([found.position[0], found.position[2]])
                     && !found_all.contains(&found)
                 {
@@ -999,10 +1058,15 @@ impl Session<'_> {
 
     /// The containers holding `query`'s items whose marker reaches `area`, by position, one per
     /// position and certainty.
-    fn map_containers(&self, area: &MapArea, query: &ItemQuery) -> Result<Vec<FoundContainer>> {
+    fn map_containers(
+        &self,
+        area: &MapArea,
+        query: &ItemQuery,
+        halt: Halt<'_>,
+    ) -> Result<Vec<FoundContainer>> {
         check_layer_scale(area, MAX_FEATURE_SCALE, "loot is")?;
         let (min, max) = reach_chunks(area);
-        let mut found = self.containers_holding(query, min, max)?;
+        let mut found = self.containers_holding_halting(query, min, max, halt)?;
         found.retain(|c| area.reaches([c.position[0], c.position[2]]));
         found.sort_by_key(|c| (c.position[2], c.position[0], c.position[1]));
         found.dedup_by(|a, b| {

@@ -38,6 +38,7 @@ mod save;
 mod save_portals;
 mod saved;
 mod search;
+mod stopping;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -85,9 +86,18 @@ pub use saved::{GeneratedChunk, SaveChunks, SaveUsage};
 pub use search::{
     ConstraintResult, Evaluation, Feature, FindMatch, FindOptions, FindOutcome, FindProgress,
     MAX_FIND_TARGETS, Outcome, RankedSeed, SearchHit, SearchOptions, SearchOutcome, SearchProgress,
-    SearchQuery, SearchStop, SearchThrottle, SeedSource,
+    SearchQuery, SearchThrottle, SeedSource, Stop,
 };
 pub use spyglass_data::build;
+pub(crate) use stopping::Halt;
+pub use stopping::Stopping;
+
+/// The old name of [`Stop`], from when only searches could be stopped.
+#[deprecated(
+    since = "0.5.0",
+    note = "use `Stop`, which map calls take too (ADR 0078)"
+)]
+pub type SearchStop = Stop;
 pub use spyglass_data::bundle::{
     BUNDLES_ENV, Kind, app_bundles_dir, default_bundles_dir, user_bundles_dir,
 };
@@ -204,6 +214,10 @@ pub enum Error {
     /// spyglass can't answer for a world save; the reasons are listed.
     #[error("spyglass can't answer for this world: {0}")]
     Unsupported(String),
+    /// A map call made through [`Session::stopping`] was stopped before it finished
+    /// (ADR 0078). It returns nothing, not a partial answer.
+    #[error("stopped")]
+    Stopped,
     /// A query was resolved against a different [`World`] than the session's.
     #[error("{0:?} was resolved against another world; resolve it with this session's world")]
     OtherWorld(String),
@@ -1384,6 +1398,19 @@ impl<'w> Session<'w> {
         chunks: impl Fn([i32; 3]) -> ([i32; 2], [i32; 2]),
         confirm: bool,
     ) -> Vec<StructureStart> {
+        self.starts_by_set_halting(targets, chunks, confirm, Halt::NEVER)
+            .expect("a call that never halts")
+    }
+
+    /// [`starts_by_set`](Self::starts_by_set), checking `halt` before each candidate chunk,
+    /// since confirming a start with terrain takes a while.
+    fn starts_by_set_halting(
+        &self,
+        targets: &[usize],
+        chunks: impl Fn([i32; 3]) -> ([i32; 2], [i32; 2]),
+        confirm: bool,
+        halt: Halt<'_>,
+    ) -> Result<Vec<StructureStart>> {
         let starts = self.starts(confirm);
         let sets = &self.world.sets;
         let mut out = Vec::new();
@@ -1393,6 +1420,7 @@ impl<'w> Session<'w> {
             }
             let (min, max) = chunks(set.placement.locate_offset);
             for chunk in self.placements.structure_chunks_in(i, min, max) {
+                halt.check()?;
                 if let Some((structures, certain)) = starts.targets_at(i, chunk, targets) {
                     let offset = set.placement.locate_offset;
                     let position = [
@@ -1404,7 +1432,7 @@ impl<'w> Session<'w> {
                 }
             }
         }
-        out
+        Ok(out)
     }
 
     /// The pieces of `structure` (an id, e.g. `minecraft:village_plains`) if it starts in

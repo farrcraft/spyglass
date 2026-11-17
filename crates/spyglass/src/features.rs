@@ -17,7 +17,7 @@ use spyglass_feature::{
     Wanted,
 };
 
-use crate::{Error, Result, Session, World};
+use crate::{Error, Halt, Result, Session, World};
 
 /// A world's features, seed-independent, loaded on first use.
 pub(crate) struct FeatureWorld {
@@ -252,11 +252,18 @@ struct Cache<'g> {
     /// The terrain in outline, for ruling chunks out: none when the unlikely candidates are
     /// asked for (then no chunk is ruled out), or where the outline can't be drawn.
     outline: Option<Outline<'g>>,
+    /// Whether the call should give up, checked before each chunk carved (ADR 0078).
+    halt: Halt<'g>,
 }
 
 impl<'g> Cache<'g> {
-    fn new(generator: &'g spyglass_blocks::ChunkGenerator<'g>, options: FeatureOptions) -> Self {
+    fn new(
+        generator: &'g spyglass_blocks::ChunkGenerator<'g>,
+        options: FeatureOptions,
+        halt: Halt<'g>,
+    ) -> Self {
         Cache {
+            halt,
             carved: Mutex::default(),
             biomes: Mutex::default(),
             outline: if options.unlikely {
@@ -275,14 +282,21 @@ impl<'g> Cache<'g> {
         biomes.retain(|c, _| c[1] >= cz);
     }
 
-    /// Chunk `chunk` carved.
-    fn carved(&self, generator: &spyglass_blocks::ChunkGenerator<'_>, chunk: [i32; 2]) -> Chunk {
+    /// Chunk `chunk` carved, or `Error::Stopped` once the call's halt is raised. Carving takes
+    /// tens of milliseconds, and the first chunks a call places carve all their neighbours.
+    fn carved(
+        &self,
+        generator: &spyglass_blocks::ChunkGenerator<'_>,
+        chunk: [i32; 2],
+    ) -> Result<Chunk> {
+        self.halt.check()?;
         let cell = {
             let mut carved = self.carved.lock().unwrap_or_else(|e| e.into_inner());
             carved.entry(chunk).or_default().clone()
         };
-        cell.get_or_init(|| generator.carved_chunk(chunk[0], chunk[1]))
-            .clone()
+        Ok(cell
+            .get_or_init(|| generator.carved_chunk(chunk[0], chunk[1]))
+            .clone())
     }
 
     /// Chunk `chunk`'s stored biomes.
@@ -313,6 +327,18 @@ impl<'w> Session<'w> {
         max: [i32; 2],
         options: FeatureOptions,
     ) -> Result<Vec<FoundFeature>> {
+        self.features_in_halting(query, min, max, options, Halt::NEVER)
+    }
+
+    /// [`features_in`](Self::features_in), checking `halt` before each chunk it places.
+    pub(crate) fn features_in_halting(
+        &self,
+        query: &FeatureQuery,
+        min: [i32; 2],
+        max: [i32; 2],
+        options: FeatureOptions,
+        halt: Halt<'_>,
+    ) -> Result<Vec<FoundFeature>> {
         let mut out = Vec::new();
         let placings = &mut Placings::default();
         self.each_feature(
@@ -322,6 +348,7 @@ impl<'w> Session<'w> {
             |_| true,
             options,
             placings,
+            halt,
             |f| {
                 out.push(f);
                 ControlFlow::Continue(())
@@ -332,10 +359,11 @@ impl<'w> Session<'w> {
 
     /// [`features_in`](Self::features_in) over the chunks `wanted` keeps, each feature handed
     /// to `visit` as it's found, until it breaks. Chunks already in `placings` aren't placed
-    /// again. Keeps the carved chunks of three rows at a time.
+    /// again. Keeps the carved chunks of three rows at a time. Gives up with `Error::Stopped`
+    /// before placing a chunk once `halt` is raised.
     #[expect(
         clippy::too_many_arguments,
-        reason = "the query and its area, the caller's filter and cache, and the visitor"
+        reason = "the query and its area, the caller's filter, cache and stop, and the visitor"
     )]
     pub(crate) fn each_feature(
         &self,
@@ -345,6 +373,7 @@ impl<'w> Session<'w> {
         wanted: impl Fn([i32; 2]) -> bool,
         options: FeatureOptions,
         placings: &mut Placings,
+        halt: Halt<'_>,
         mut visit: impl FnMut(FoundFeature) -> ControlFlow<()>,
     ) -> Result<()> {
         self.check_world(query.world, &query.argument)?;
@@ -363,12 +392,15 @@ impl<'w> Session<'w> {
                     .collect();
                 if !todo.is_empty() {
                     if cache.is_none() {
-                        cache = Some(Cache::new(self.chunks()?, options));
+                        cache = Some(Cache::new(self.chunks()?, options, halt));
                     }
                     let shared = cache.as_ref().expect("made above");
                     let placed: Vec<Vec<FoundFeature>> = todo
                         .par_iter()
-                        .map(|&cx| self.chunk_features(query, [cx, cz], options, shared))
+                        .map(|&cx| {
+                            halt.check()?;
+                            self.chunk_features(query, [cx, cz], options, shared)
+                        })
                         .collect::<Result<_>>()?;
                     for (cx, found) in todo.into_iter().zip(placed) {
                         placings.0.insert(key(cx), found);
@@ -381,9 +413,10 @@ impl<'w> Session<'w> {
                     Some(found) => found.clone(),
                     None => {
                         if cache.is_none() {
-                            cache = Some(Cache::new(self.chunks()?, options));
+                            cache = Some(Cache::new(self.chunks()?, options, halt));
                         }
                         let cache = cache.as_ref().expect("made above");
+                        halt.check()?;
                         let found = self.chunk_features(query, [cx, cz], options, cache)?;
                         placings.0.insert(key, found.clone());
                         found
@@ -409,7 +442,7 @@ impl<'w> Session<'w> {
         options: FeatureOptions,
     ) -> Result<FeatureLocate> {
         self.check_world(query.world, &query.argument)?;
-        let cache = Cache::new(self.chunks()?, options);
+        let cache = Cache::new(self.chunks()?, options, Halt::NEVER);
         let centre = [from[0] >> 4, from[2] >> 4];
         let distance_sqr = |p: [i32; 3]| {
             let (dx, dz) = (i64::from(p[0] - from[0]), i64::from(p[2] - from[2]));
@@ -560,7 +593,7 @@ impl<'w> Session<'w> {
         let mut chunks = Vec::with_capacity(9);
         for dz in -1..=1 {
             for dx in -1..=1 {
-                chunks.push(cache.carved(generator, [chunk[0] + dx, chunk[1] + dz]));
+                chunks.push(cache.carved(generator, [chunk[0] + dx, chunk[1] + dz])?);
             }
         }
         let mut region = Region::new(&features.blocks, chunk, chunks);

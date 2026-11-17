@@ -10,11 +10,13 @@ Changes go under **Unreleased** as they're made. `cargo xtask release` turns tha
 
 - **`spyglass world info` explains what spyglass read from your world:** every setting, the file and field it came from and what it decides; every enabled data pack, whether it was applied, what it changes and which answers that touches; and for each dimension, how many chunks it holds, which versions generated them, the structures answered from the save and the loot containers not yet opened. Each warning is printed under what it's about. In JSON, `settings`, `packs` and `dimensions`, and each warning's `about` ([cli-json.md](docs/specs/cli-json.md#world-info)). In the API, `SaveReport::details`, `spyglass_world::Save::sources`, `Bundle::layer_changes`, `answers_fed_by` and `SaveChunks::usage` ([world-saves.md](docs/specs/world-saves.md#the-report)).
 - **A world border that's still moving** is a note (`moving_border`): spyglass answers with the size it ends at.
+- **Map calls can be stopped:** `Session::stopping(&stop)` gives the session's map calls (`biome_map`, `height_map`, `surface_biome_map`, `carving_map`, `underground_map`, `flower_map`, `map_features`, `features_in`, `containers_in`, `containers_holding`), which return the new `Error::Stopped` soon after `stop` is raised from another thread. `Stop` is the search's stop handle under a name for both ([ADR 0078](docs/adr/0078-map-calls-can-be-stopped.md), [render.md](docs/specs/render.md#stopping)).
 
 ### Changed
 
 - **`SaveWarning` has two new variants,** `MovingBorder` and `PackError`, and from now on it, `PackConcern` and the new `SaveSubject`, `Setting` and `PackUse` are `#[non_exhaustive]`: a `match` on them outside the crate needs a `_` arm, and later variants won't break it ([ADR 0077](docs/adr/0077-open-ended-public-enums-are-non-exhaustive.md)). A dimension the packs can't be opened in is a `pack_error` warning in `world info`'s `warnings`, as well as in `pack_errors`.
 - **`world info`'s `applied_packs` is deprecated,** for removal in the release after next: `packs` lists every pack, applied or not.
+- **`SearchStop` is now `Stop`,** since map calls take it too. `SearchStop` is kept as a deprecated alias for one release.
 
 ### Fixed
 

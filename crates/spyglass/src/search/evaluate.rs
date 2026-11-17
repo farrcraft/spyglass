@@ -9,6 +9,7 @@ use spyglass_search::{
 };
 
 use super::{Resolved, SearchQuery, Target, convert, spawn_anchored};
+use crate::Halt;
 use crate::features::Placings;
 use crate::loot::LootPlacings;
 use crate::{
@@ -1181,6 +1182,7 @@ impl<'a, 'w> Judge<'a, 'w> {
             |chunk| area.touches_chunk(chunk),
             FeatureOptions::default(),
             &mut self.placings.borrow_mut(),
+            Halt::NEVER,
             |f| {
                 if area.distance([f.position[0], f.position[2]]).is_none()
                     || own.is_some_and(|(d, id, pos)| {

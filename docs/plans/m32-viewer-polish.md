@@ -238,11 +238,11 @@ Scenarios 1 to 5 are run before the change and after it, three times each. Neith
   - **Reuse across scales:** which maps reuse, the corner-block argument, the heights' edge row, and the 15% rule for finer-from-coarser;
   - **Stopping:** the stop handle, where each call checks it, and `Error::Stopped`.
   - The milestone's scope is reworded: relief and surface biomes do reuse, and the side panel names its five tabs.
-- [ ] ADR: map calls take a stop signal (`Session::stopping`, `spyglass::Stop`, `Error::Stopped`, `SearchStop` deprecated). Use the `adr` skill.
-- [ ] Library: `Stopping` and the stop checks in every call listed, with a test per call that a stop raised before the call returns `Stopped` at once, and one raised mid-call (from another thread, after 50 ms) returns it within 500 ms on a 1:64 heights tile, a 1:4 all-underground tile and a 1:2 features tile.
+- [x] ADR: map calls take a stop signal (`Session::stopping`, `spyglass::Stop`, `Error::Stopped`, `SearchStop` deprecated). Use the `adr` skill.
+- [x] Library: `Stopping` and the stop checks in every call listed, with a test per call that a stop raised before the call returns `Stopped` at once, and one raised mid-call (from another thread, after 50 ms) returns it within 500 ms on a 1:64 heights tile, a 1:4 all-underground tile and a 1:2 features tile.
 - [ ] Viewer pool: running jobs' stops, `want` raising them, `Stopped` never cached, and the `stopped` timing line. A test with a real session: a 1:2 features job, then `want(vec![])`, and the job comes back stopped within 500 ms.
 - [ ] The zoom rule: `zoom.rs`, `ZOOM_LIMITS`, `LayerState`, `zoom::checkbox`, every limited control through it, and `Frame` and `compute` reading it. Unit tests: each layer at its limit, one step past, and back; a paused layer keeps its setting; the hint text from each constant. `MAX_GENERATED_SCALE` in the library if generated chunks get their own.
-- [ ] Check `containers_in` and `containers_holding`: whether each container comes under the chunk that placed it. Add a by-placing-chunk form if they go by position, with a test that a region's containers are the same as today's tiles' with the edges removed.
+- [x] Check `containers_in` and `containers_holding`: whether each container comes under the chunk that placed it. Add a by-placing-chunk form if they go by position, with a test that a region's containers are the same as today's tiles' with the edges removed.
 - [ ] Point regions: `Region` keys for features, loot and starts, region jobs nearest the centre first, drawing from the regions under the view plus a ring, and per-tile starts past 1:16. Tests:
   - the markers drawn at 1:2 and 1:1 over one area are the same set as today's per-tile results;
   - zooming 1:2 → 1:1 queues no features or loot job;
@@ -298,6 +298,13 @@ Scenarios 1 to 5 are run before the change and after it, three times each. Neith
 
 Newest first.
 
+- 2026-11-16: The library stops ([ADR 0078](../adr/0078-map-calls-can-be-stopped.md), proposed; [render.md](../specs/render.md#stopping)).
+  - `Session::stopping(&Stop) -> Stopping`, `Error::Stopped`, and `SearchStop` renamed `Stop` with a deprecated alias. Calls on `Session` pass `Halt::NEVER` and are unchanged.
+  - Heights and underground probes are computed a band of rows (one chunk row) at a time. The terrain crate already splits rows into the same runs, so answers are identical; the real-world tiling test passes.
+  - Checking only before each chunk wasn't enough: features stopped 1.9 s late at first, because the first row's chunks all start in parallel and then carve their neighbours from a cold cache. The feature and loot caches now hold the halt and check before each neighbour they carve.
+  - Then 4.4 s late once: the first chunk to need structure pieces loads the world's jigsaw template pools, with every core waiting. That's once per world, so it isn't interrupted; the ADR and spec say so, and the test warms it up.
+  - Measured, release build, 26.3 Overworld, three runs: heights at 1:64 stopped 11–13 ms after the stop, every underground layer at 1:4 44–56 ms, features at 1:2 21–22 ms, containers in 17 × 17 chunks 16–31 ms.
+  - `containers_in` and `containers_holding` already give each container under the chunk that placed it (`chunk_holding`); the viewer's extra ring of chunks is only for markers that reach a tile. So point regions need no new library call.
 - 2026-11-16: Checkboxes in menus done: unchecked boxes in **Highlight a biome** now show their outline, checked by eye.
 - 2026-11-16: Text boxes done. The first guess at the cause (the theme's taller controls with a top-aligned `TextEdit`) was wrong: a test showed egui's box in a panel already centered, 4 px above and 5 below. A screenshot of **Filter saves** showed the text against the box's top and left edges, which is egui's menu style shrinking `button_padding`, so only boxes in menus were affected. Before and after checked by eye with the `run-viewer` skill. The same screenshots showed the **Highlight a biome** menu's unchecked checkboxes almost invisible, since the menu style also drops the resting fill and outline; added as its own task.
 - 2026-11-16: Added the text boxes' alignment, reported in **Filter saves**.

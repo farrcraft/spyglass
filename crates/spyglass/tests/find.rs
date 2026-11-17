@@ -5,7 +5,7 @@ use std::ops::ControlFlow;
 
 use serde_json::json;
 use spyglass::{
-    Error, Feature, FindOptions, FindOutcome, Heightmap, Outcome, SearchStop, Session, World,
+    Error, Feature, FindOptions, FindOutcome, Heightmap, Outcome, Session, Stop, World,
 };
 use spyglass_oracle::fixtures::{self, TestBundle, resource};
 
@@ -122,7 +122,7 @@ fn threads_and_stops_keep_the_order() {
     assert!(!cut.matches.is_empty());
     assert_eq!(cut.matches[..], one.matches[..cut.matches.len()]);
     // Stopped before it starts: nothing.
-    let stop = SearchStop::new();
+    let stop = Stop::new();
     stop.stop();
     let stopped = run(&session, &world, text, &FindOptions { stop, ..options() });
     assert!(!stopped.complete && stopped.matches.is_empty());

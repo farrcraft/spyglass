@@ -10,7 +10,7 @@ use spyglass_feature::flowers::{Chance, FlowerOdds, Flowers};
 use super::palette::hashed;
 use super::{Image, MapArea, dimmed};
 use crate::flowers::block_id;
-use crate::{Error, FlowerChance, Result, Session};
+use crate::{Error, FlowerChance, Halt, Result, Session};
 
 /// Flower colours by block id; any other block has the hashed colour of its id.
 const FLOWERS: &[(&str, [u8; 3])] = &[
@@ -196,6 +196,11 @@ impl Session<'_> {
     /// block above the grass (`docs/specs/render.md#flowers`). Each pixel is that block's
     /// answer alone, as [`Session::flower_at`] gives it, so a view equals its tiles.
     pub fn flower_map(&self, area: &MapArea) -> Result<FlowerMap> {
+        self.flower_map_halting(area, Halt::NEVER)
+    }
+
+    /// [`flower_map`](Self::flower_map), checking `halt` before each row.
+    pub(crate) fn flower_map_halting(&self, area: &MapArea, halt: Halt<'_>) -> Result<FlowerMap> {
         area.check()?;
         let flowers = self.world.flowers()?;
         let zoom = BiomeZoom::new(self.seed);
@@ -205,6 +210,7 @@ impl Session<'_> {
         let [width, height] = area.size;
         let mut cells = Vec::with_capacity(width as usize * height as usize);
         for j in 0..height {
+            halt.check()?;
             for i in 0..width {
                 let [x, z] = area.block([i, j]);
                 let pos = [x, area.y, z];

@@ -2,13 +2,14 @@
 //! carvers at the area's height, each pixel from its corner block alone.
 
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 
 use spyglass_blocks::carver;
 use spyglass_blocks::material::VeinPart as BlockVeinPart;
 use spyglass_terrain::Block;
 
-use super::{Image, Layers, MapArea, invalid};
-use crate::{Error, Result, Session};
+use super::{Image, Layers, MapArea, chunk_bands, invalid};
+use crate::{Error, Halt, Result, Session};
 
 /// The largest scale the underground layers are drawn at: each pixel needs its column down to
 /// the area's height, and carvers its chunk's carving.
@@ -199,6 +200,11 @@ impl Session<'_> {
     /// The positions carvers carve under each pixel of `area`, at every height
     /// (`docs/specs/render.md#underground`). Scales up to [`MAX_UNDERGROUND_SCALE`].
     pub fn carving_map(&self, area: &MapArea) -> Result<CarvingMap> {
+        self.carving_map_halting(area, Halt::NEVER)
+    }
+
+    /// [`carving_map`](Self::carving_map), checking `halt` before each chunk it carves.
+    pub(crate) fn carving_map_halting(&self, area: &MapArea, halt: Halt<'_>) -> Result<CarvingMap> {
         area.check()?;
         check_scale(area)?;
         let generator = self.chunks()?;
@@ -215,9 +221,14 @@ impl Session<'_> {
                     row = Some((cz, HashMap::new()));
                 }
                 let (_, chunks) = row.as_mut().expect("a row");
-                let carvings = chunks
-                    .entry(cx)
-                    .or_insert_with(|| generator.carvings(cx, cz));
+                let carvings = match chunks.entry(cx) {
+                    Entry::Occupied(carved) => carved.into_mut(),
+                    Entry::Vacant(new) => {
+                        // Carving a chunk is the slow part: tens of milliseconds.
+                        halt.check()?;
+                        new.insert(generator.carvings(cx, cz))
+                    }
+                };
                 offsets.push(runs.len() as u32);
                 runs.extend(
                     carvings
@@ -246,6 +257,19 @@ impl Session<'_> {
         layers: &Layers,
         carvings: Option<&CarvingMap>,
     ) -> Result<UndergroundMap> {
+        self.underground_map_halting(area, layers, carvings, Halt::NEVER)
+    }
+
+    /// [`underground_map`](Self::underground_map), checking `halt` between bands of rows,
+    /// each the rows in one row of chunks, and while carving. Each block is probed on its own,
+    /// so a band at a time gives the same blocks (ADR 0078).
+    pub(crate) fn underground_map_halting(
+        &self,
+        area: &MapArea,
+        layers: &Layers,
+        carvings: Option<&CarvingMap>,
+        halt: Halt<'_>,
+    ) -> Result<UndergroundMap> {
         area.check()?;
         check_scale(area)?;
         layers.check(self.world)?;
@@ -257,7 +281,11 @@ impl Session<'_> {
             let palette = self.world.block_settings()?.palette();
             let xs: Vec<i32> = (0..w).map(|i| area.block([i, 0])[0]).collect();
             let zs: Vec<i32> = (0..h).map(|j| area.block([0, j])[1]).collect();
-            let probes = generator.probes_on(&xs, &zs, area.y);
+            let mut probes = Vec::with_capacity(xs.len() * zs.len());
+            for band in chunk_bands(&zs) {
+                halt.check()?;
+                probes.extend(generator.probes_on(&xs, &zs[band], area.y));
+            }
             for (pixel, probe) in probes.iter().enumerate() {
                 let cell = &mut cells[pixel];
                 if layers.noise_caves {
@@ -298,7 +326,7 @@ impl Session<'_> {
                     given
                 }
                 None => {
-                    made = self.carving_map(area)?;
+                    made = self.carving_map_halting(area, halt)?;
                     &made
                 }
             };

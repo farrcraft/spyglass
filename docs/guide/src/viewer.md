@@ -8,6 +8,12 @@ Start `spyglass-viewer`. It opens the newest release in the bundles folder (or t
 
 Drag to pan, and scroll to zoom around the pointer, or use the arrow keys and `+` and `-`. **Go to** takes `x z` or `x y z`. The status bar shows the block, chunk, biome and terrain height under the pointer.
 
+## The side panel
+
+The side panel has five tabs: **Layers**, **Search**, **Locate**, **Markers**, and **World** while a save is shown. A tab's count shows beside its name: the places or seeds the last search found, locate's hits, your markers in this dimension, and the save's warnings in amber. A spinner shows there while a search or a locate runs.
+
+Each tab is in sections. Click a section's title or its arrow to fold it away; folded, it says in a word what's in it, such as **2 on**, **on, paused** or **3 warnings**, so a fold never hides a warning. Folds are kept between runs. **What spyglass read** above the map opens the World tab with the sections that hold a warning unfolded.
+
 ## Seeds, saves and dimensions
 
 - **Seed or save:** type a seed and press Enter, or open a save from the launchers' list or any folder. A save opens on its player, in the player's dimension, with its [data packs](data-packs.md) applied and named above the map, with how many warnings spyglass has about it.

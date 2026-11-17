@@ -5,7 +5,7 @@
 use super::map::portal_layer::PortalRef;
 use super::*;
 use crate::share::{Flags, SharedView};
-use crate::style;
+use crate::style::{self, Section, Summary};
 use crate::userdata::{COLOURS, Kind, MarkerKind, Place, WorldData, WorldKey};
 
 /// What the map's context menu was opened on, besides a block.
@@ -393,22 +393,13 @@ impl App {
         }
     }
 
-    /// The Markers tab: the world shown, its markers in this dimension, and what's done.
-    pub(super) fn markers_tab(&mut self, ui: &mut egui::Ui) {
-        let (Some(world), Some(here)) = (self.world, self.here().cloned()) else {
-            ui.label("Open a seed or a save to keep markers in it.");
-            return;
-        };
-        let dimension = world.dimension_kind().id();
-
-        style::heading(ui, "This world");
+    /// The This world section: the world's name, and forgetting it. Whether it was forgotten,
+    /// which leaves nothing more to show.
+    fn this_world(&mut self, ui: &mut egui::Ui, stored: &Option<String>, named: bool) -> bool {
         // Edited in a buffer of its own, so spaces typed at its end stay while the stored name is
         // trimmed; it's the stored name again whenever the world changes.
         if self.world_name.0 != self.world_key {
-            self.world_name = (
-                self.world_key.clone(),
-                here.name.clone().unwrap_or_default(),
-            );
+            self.world_name = (self.world_key.clone(), stored.clone().unwrap_or_default());
         }
         let name = &mut self.world_name.1;
         let edit = ui
@@ -426,7 +417,7 @@ impl App {
                 here.set_name(name);
             }
         }
-        if here.name.is_some()
+        if named
             && ui
                 .small_button("Forget this world")
                 .on_hover_text("Remove its name, markers and done places from your data")
@@ -439,65 +430,93 @@ impl App {
                 self.world_name = (None, String::new());
                 self.remember_world();
             }
+            return true;
+        }
+        false
+    }
+
+    /// The Markers tab: the world shown, its markers in this dimension, and what's done.
+    pub(super) fn markers_tab(&mut self, ui: &mut egui::Ui) {
+        let (Some(world), Some(here)) = (self.world, self.here().cloned()) else {
+            ui.label("Open a seed or a save to keep markers in it.");
+            return;
+        };
+        let dimension = world.dimension_kind().id();
+
+        let summary = Summary::new(here.name.clone().unwrap_or_else(|| "not named".to_string()));
+        let named = here.name.is_some();
+        if self.section(
+            ui,
+            Section::new("markers.world", "This world").summary(summary),
+        ) && style::section_body(ui, |ui| self.this_world(ui, &here.name, named))
+        {
             return;
         }
 
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            style::heading(ui, "Markers");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .small_button("Add at centre")
-                    .on_hover_text("Or right-click the map, or press M over it")
-                    .clicked()
-                {
-                    let centre = self.settings.view.centre.map(|c| c.floor() as i32);
-                    self.add_marker(centre);
-                }
-            });
-        });
         let markers: Vec<Marker> = here
             .live_markers()
             .filter(|m| m.dimension == dimension)
             .cloned()
             .collect();
-        if markers.is_empty() {
-            style::hint(
-                ui,
-                "No markers here. Right-click the map, or press M over it.",
-            );
+        let mut add = false;
+        let header = Section::new("markers.markers", "Markers")
+            .summary(Summary::new(format!("{} here", markers.len())));
+        let open = style::section(ui, &mut self.settings.folded, header, |ui| {
+            add = ui
+                .small_button("Add at centre")
+                .on_hover_text("Or right-click the map, or press M over it")
+                .clicked();
+        });
+        if add {
+            let centre = self.settings.view.centre.map(|c| c.floor() as i32);
+            self.add_marker(centre);
         }
         let mut go = None;
-        for marker in &markers {
-            ui.horizontal(|ui| {
-                let [r, g, b] = marker.colour;
-                let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), Sense::hover());
-                ui.painter()
-                    .circle_filled(rect.center(), 5.5, Color32::from_rgb(r, g, b));
-                let name = if marker.name.is_empty() {
-                    egui::RichText::new("Unnamed").italics().color(style::MUTED)
-                } else if marker.done {
-                    egui::RichText::new(&marker.name)
-                        .strikethrough()
-                        .color(style::MUTED)
-                } else {
-                    egui::RichText::new(&marker.name)
-                };
-                if ui
-                    .add(egui::Button::new(name).frame(false))
-                    .on_hover_text(format!("{}, {} · click to go there", marker.x, marker.z))
-                    .clicked()
-                {
-                    go = Some([marker.x, marker.z]);
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button("Edit").clicked() {
-                        self.editing = Some(marker.id.clone());
-                    }
-                    ui.label(
-                        style::mono(format!("{}, {}", marker.x, marker.z)).color(style::MUTED),
+        if open {
+            style::section_body(ui, |ui| {
+                if markers.is_empty() {
+                    style::hint(
+                        ui,
+                        "No markers here. Right-click the map, or press M over it.",
                     );
-                });
+                }
+                for marker in &markers {
+                    ui.horizontal(|ui| {
+                        let [r, g, b] = marker.colour;
+                        let (rect, _) =
+                            ui.allocate_exact_size(egui::vec2(12.0, 12.0), Sense::hover());
+                        ui.painter()
+                            .circle_filled(rect.center(), 5.5, Color32::from_rgb(r, g, b));
+                        let name = if marker.name.is_empty() {
+                            egui::RichText::new("Unnamed").italics().color(style::MUTED)
+                        } else if marker.done {
+                            egui::RichText::new(&marker.name)
+                                .strikethrough()
+                                .color(style::MUTED)
+                        } else {
+                            egui::RichText::new(&marker.name)
+                        };
+                        if ui
+                            .add(egui::Button::new(name).frame(false))
+                            .on_hover_text(format!(
+                                "{}, {} · click to go there",
+                                marker.x, marker.z
+                            ))
+                            .clicked()
+                        {
+                            go = Some([marker.x, marker.z]);
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.small_button("Edit").clicked() {
+                                self.editing = Some(marker.id.clone());
+                            }
+                            ui.label(
+                                style::mono(format!("{}, {}", marker.x, marker.z))
+                                    .color(style::MUTED),
+                            );
+                        });
+                    });
+                }
             });
         }
 
@@ -507,41 +526,45 @@ impl App {
             .filter(|d| d.done && d.dimension == dimension)
             .map(|d| d.place.clone())
             .collect();
-        ui.add_space(6.0);
-        style::heading(ui, "Done");
-        ui.checkbox(&mut self.settings.show_done, "Show done things on the map")
-            .on_hover_text("Done things are drawn dimmed; off, they're hidden.");
-        if done.is_empty() {
-            style::hint(
-                ui,
-                "Nothing done here. Right-click a structure, locate pin or search match to mark \
-                 it done.",
-            );
-        }
         let mut undo = None;
-        for place in &done {
-            ui.horizontal(|ui| {
-                let what = match place.kind {
-                    Kind::Structure => icons::family_name(&set_member(world, &place.id)),
-                    Kind::Biome => spyglass::display_name(&place.id),
-                    Kind::Place => "A place".to_string(),
-                };
-                if ui
-                    .add(egui::Button::new(what).frame(false))
-                    .on_hover_text(format!("{} · click to go there", place.id))
-                    .clicked()
-                {
-                    go = Some(place.at);
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button("Not done").clicked() {
-                        undo = Some(place.clone());
-                    }
-                    ui.label(
-                        style::mono(format!("{}, {}", place.at[0], place.at[1]))
-                            .color(style::MUTED),
+        let header = Section::new("markers.done", "Done")
+            .summary(Summary::new(format!("{} here", done.len())));
+        if self.section(ui, header) {
+            style::section_body(ui, |ui| {
+                ui.checkbox(&mut self.settings.show_done, "Show done things on the map")
+                    .on_hover_text("Done things are drawn dimmed; off, they're hidden.");
+                if done.is_empty() {
+                    style::hint(
+                        ui,
+                        "Nothing done here. Right-click a structure, locate pin or search match to mark \
+                 it done.",
                     );
-                });
+                }
+                for place in &done {
+                    ui.horizontal(|ui| {
+                        let what = match place.kind {
+                            Kind::Structure => icons::family_name(&set_member(world, &place.id)),
+                            Kind::Biome => spyglass::display_name(&place.id),
+                            Kind::Place => "A place".to_string(),
+                        };
+                        if ui
+                            .add(egui::Button::new(what).frame(false))
+                            .on_hover_text(format!("{} · click to go there", place.id))
+                            .clicked()
+                        {
+                            go = Some(place.at);
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.small_button("Not done").clicked() {
+                                undo = Some(place.clone());
+                            }
+                            ui.label(
+                                style::mono(format!("{}, {}", place.at[0], place.at[1]))
+                                    .color(style::MUTED),
+                            );
+                        });
+                    });
+                }
             });
         }
         if let Some(place) = undo {

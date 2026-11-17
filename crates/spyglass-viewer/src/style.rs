@@ -2,6 +2,8 @@
 //! widget shares, and the few small pieces (section headings, hints, overlay frames) the
 //! screens are built from. Screens use these names, never colours of their own.
 
+use std::collections::BTreeSet;
+
 use eframe::egui::{
     self, Color32, CornerRadius, FontId, Margin, RichText, Shadow, Stroke, Theme, Vec2,
 };
@@ -101,7 +103,174 @@ pub fn apply(ctx: &egui::Context) {
     });
 }
 
-/// A section's heading in a panel: small, spaced capitals in the muted colour.
+/// Space between a panel's sections, split around the rule above each.
+pub const SECTION_GAP: f32 = 12.0;
+/// How far a section's body is indented: past the fold chevron, under its title.
+pub const SECTION_INDENT: f32 = 16.0;
+
+/// What a section's header says after its title while it's folded: a count, what's on, or
+/// its warnings, which are drawn in the warning colour so a fold never hides one.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Summary {
+    /// The text; nothing is drawn if it's empty.
+    pub text: String,
+    /// Whether it's a warning.
+    pub warns: bool,
+}
+
+impl Summary {
+    /// A plain summary.
+    pub fn new(text: impl Into<String>) -> Self {
+        Summary {
+            text: text.into(),
+            warns: false,
+        }
+    }
+
+    /// A summary that warns.
+    pub fn warning(text: impl Into<String>) -> Self {
+        Summary {
+            text: text.into(),
+            warns: true,
+        }
+    }
+}
+
+/// A section of a panel, by its stable id (`layers.underground`), which its fold is kept under.
+pub struct Section<'a> {
+    /// The id the fold is kept under in the settings.
+    pub id: &'a str,
+    /// The title.
+    pub title: &'a str,
+    /// What the header says while folded.
+    pub summary: Summary,
+    /// Folded until the user opens it.
+    pub folded_by_default: bool,
+}
+
+impl<'a> Section<'a> {
+    /// An open section with nothing to say when folded.
+    pub fn new(id: &'a str, title: &'a str) -> Self {
+        Section {
+            id,
+            title,
+            summary: Summary::default(),
+            folded_by_default: false,
+        }
+    }
+
+    /// With `summary` shown while it's folded.
+    pub fn summary(self, summary: Summary) -> Self {
+        Section { summary, ..self }
+    }
+
+    /// Folded until the user opens it.
+    pub fn folded_by_default(self) -> Self {
+        Section {
+            folded_by_default: true,
+            ..self
+        }
+    }
+}
+
+/// Whether section `id` is folded, by `folded`, the ids whose fold isn't their default.
+pub fn is_folded(folded: &BTreeSet<String>, id: &str, by_default: bool) -> bool {
+    folded.contains(id) != by_default
+}
+
+/// Opens or folds section `id`, keeping in `folded` only the ids not in their default state.
+pub fn set_folded(folded: &mut BTreeSet<String>, id: &str, by_default: bool, fold: bool) {
+    if fold == by_default {
+        folded.remove(id);
+    } else {
+        folded.insert(id.to_string());
+    }
+}
+
+/// A section's header: a rule above it, a chevron and the title, which fold and open it,
+/// the summary while folded, and `right`'s controls at the right. Returns whether it's open;
+/// draw its body with [`section_body`] if it is.
+pub fn section(
+    ui: &mut egui::Ui,
+    folded: &mut BTreeSet<String>,
+    section: Section<'_>,
+    right: impl FnOnce(&mut egui::Ui),
+) -> bool {
+    let was_folded = is_folded(folded, section.id, section.folded_by_default);
+    // The first section in a panel has the panel's own line above it.
+    let first = ui.cursor().top() - ui.min_rect().top() < SECTION_GAP;
+    if first {
+        ui.add_space(SECTION_GAP / 2.0 - ui.spacing().item_spacing.y);
+    } else {
+        ui.add_space(SECTION_GAP / 2.0);
+        let (rule, _) =
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
+        ui.painter().rect_filled(rule, 0.0, BORDER);
+        ui.add_space(SECTION_GAP / 2.0 - ui.spacing().item_spacing.y);
+    }
+    let toggled = ui
+        .horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            let (icon, chevron) = ui
+                .allocate_exact_size(egui::vec2(SECTION_INDENT - 6.0, 14.0), egui::Sense::click());
+            let colour = if chevron.hovered() { TEXT } else { MUTED };
+            let c = icon.center();
+            let points = if was_folded {
+                vec![
+                    c + egui::vec2(-2.5, -4.5),
+                    c + egui::vec2(3.5, 0.0),
+                    c + egui::vec2(-2.5, 4.5),
+                ]
+            } else {
+                vec![
+                    c + egui::vec2(-4.5, -2.5),
+                    c + egui::vec2(4.5, -2.5),
+                    c + egui::vec2(0.0, 3.5),
+                ]
+            };
+            ui.painter()
+                .add(egui::Shape::convex_polygon(points, colour, Stroke::NONE));
+            let title = ui.add(
+                egui::Label::new(RichText::new(section.title).size(14.5).strong().color(TEXT))
+                    .sense(egui::Sense::click())
+                    .selectable(false),
+            );
+            if was_folded && !section.summary.text.is_empty() {
+                let colour = if section.summary.warns { WARN } else { MUTED };
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(&section.summary.text)
+                            .size(12.0)
+                            .color(colour),
+                    )
+                    .truncate(),
+                );
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), right);
+            let hover = if was_folded { "Show" } else { "Fold" };
+            let chevron = chevron.on_hover_text(hover);
+            let title = title.on_hover_text(hover);
+            chevron.clicked() || title.clicked()
+        })
+        .inner;
+    if toggled {
+        set_folded(folded, section.id, section.folded_by_default, !was_folded);
+    }
+    !is_folded(folded, section.id, section.folded_by_default)
+}
+
+/// A section's body, indented under its title.
+pub fn section_body<R>(ui: &mut egui::Ui, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    egui::Frame::new()
+        .inner_margin(Margin {
+            left: SECTION_INDENT as i8,
+            ..Margin::ZERO
+        })
+        .show(ui, body)
+        .inner
+}
+
+/// A heading within a section, such as a list's: small, spaced capitals in the muted colour.
 pub fn heading(ui: &mut egui::Ui, text: &str) {
     ui.add_space(4.0);
     ui.label(
@@ -233,6 +402,20 @@ mod tests {
         assert_eq!(menu.visuals.widgets.inactive.bg_stroke, Stroke::NONE);
         framed_as(&mut menu, &panel);
         assert_eq!(menu.visuals.widgets, panel.visuals.widgets);
+    }
+
+    #[test]
+    fn only_folds_away_from_the_default_are_kept() {
+        let mut folded = BTreeSet::new();
+        assert!(!is_folded(&folded, "layers.biomes", false));
+        assert!(is_folded(&folded, "search.range", true));
+        set_folded(&mut folded, "layers.biomes", false, true);
+        set_folded(&mut folded, "search.range", true, false);
+        assert!(is_folded(&folded, "layers.biomes", false));
+        assert!(!is_folded(&folded, "search.range", true));
+        set_folded(&mut folded, "layers.biomes", false, false);
+        set_folded(&mut folded, "search.range", true, true);
+        assert!(folded.is_empty());
     }
 
     #[test]

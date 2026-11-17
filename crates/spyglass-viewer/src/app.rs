@@ -3,7 +3,7 @@
 //! (`side_panel`, `search_panel`, `markers_panel`), the map with its controls and status bar
 //! (`map`), and the screen shown until there's a bundle (`saves`, `extract_panel`).
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -126,6 +126,9 @@ struct Settings {
     show_done: bool,
     /// Put the user's markers in exported images.
     export_markers: bool,
+    /// The side panel's sections not folded as they are by default, by id
+    /// (`layers.underground`, `world.packs`): see `style::is_folded`.
+    folded: BTreeSet<String>,
 }
 
 impl Default for Settings {
@@ -158,6 +161,7 @@ impl Default for Settings {
             search: SearchSettings::default(),
             show_done: true,
             export_markers: true,
+            folded: BTreeSet::new(),
         }
     }
 }
@@ -1012,5 +1016,29 @@ impl eframe::App for App {
         // Also on shutdown, so the last changes and views are kept.
         self.keep_views();
         self.store.flush(true);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn folds_are_kept_with_the_settings_and_old_settings_load() {
+        let mut settings = Settings::default();
+        style::set_folded(&mut settings.folded, "layers.underground", false, true);
+        style::set_folded(&mut settings.folded, "search.range", true, false);
+        let text = serde_json::to_string(&settings).unwrap();
+        let again: Settings = serde_json::from_str(&text).unwrap();
+        assert_eq!(again.folded, settings.folded);
+        assert!(style::is_folded(&again.folded, "layers.underground", false));
+        assert!(!style::is_folded(&again.folded, "search.range", true));
+        // Settings saved before folds load with every section as it is by default.
+        let mut old: serde_json::Value = serde_json::from_str(&text).unwrap();
+        old.as_object_mut().unwrap().remove("folded");
+        let old: Settings = serde_json::from_value(old).unwrap();
+        assert!(old.folded.is_empty());
+        assert!(!style::is_folded(&old.folded, "layers.biomes", false));
+        assert!(style::is_folded(&old.folded, "search.range", true));
     }
 }

@@ -106,6 +106,18 @@ pub fn checkbox(
     response.on_disabled_hover_text(why)
 }
 
+/// What a folded section of layers says: how many are on, and which are paused, `on` of them
+/// on and `paused` of those past `limit`. "off" with none on; "on, paused" when every one
+/// that's on is.
+pub fn summary(on: usize, paused: usize, limit: Limit) -> String {
+    match (on, paused) {
+        (0, _) => "off".to_string(),
+        (on, 0) => format!("{on} on"),
+        (on, paused) if paused >= on => "on, paused".to_string(),
+        (on, _) => format!("{on} on, paused: {}", limit.hint().to_lowercase()),
+    }
+}
+
 /// The line under a section with layers paused by `limit`: how far to zoom in.
 pub fn paused_hint(ui: &mut egui::Ui, limit: Limit) {
     style::hint(ui, &format!("Paused: {}.", limit.hint().to_lowercase()));
@@ -147,6 +159,17 @@ mod tests {
         assert!(!LOOT.draws_found(8));
         assert_eq!(found_note(FEATURES, 4).is_some(), DRAW_FOUND);
         assert!(found_note(FEATURES, 2).is_none());
+    }
+
+    #[test]
+    fn a_folded_section_says_what_s_on_and_paused() {
+        assert_eq!(summary(0, 0, UNDERGROUND), "off");
+        assert_eq!(summary(2, 0, UNDERGROUND), "2 on");
+        assert_eq!(summary(2, 2, UNDERGROUND), "on, paused");
+        assert_eq!(
+            summary(3, 1, SLIME_CHUNKS),
+            "3 on, paused: zoom to 1:16 or closer"
+        );
     }
 
     #[test]

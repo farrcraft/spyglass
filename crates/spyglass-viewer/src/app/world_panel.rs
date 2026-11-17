@@ -2,10 +2,10 @@
 //! (`SaveReport::details`, `docs/specs/world-saves.md`, "The report"). Each warning sits under
 //! what it's about.
 
-use spyglass::{PackUse, SaveDetails, SaveHoldings, SaveSubject, Setting};
+use spyglass::{PackUse, SaveDetails, SaveHoldings, SaveSubject, SaveWarning, Setting};
 
 use super::*;
-use crate::style;
+use crate::style::{self, Section, Summary};
 
 impl App {
     /// The save the World tab is about: the one shown, or else the last one opened that
@@ -17,18 +17,23 @@ impl App {
     pub(super) fn world_tab(&mut self, ui: &mut egui::Ui) {
         // Moving the map makes sense only for the save it shows.
         let shown = self.save.is_some();
+        // Out of the settings while the report is borrowed, and back at the end.
+        let mut folded = std::mem::take(&mut self.settings.folded);
         let (Some(report), Some(details)) = (self.save_report(), &self.save_details) else {
             ui.label(egui::RichText::new("No save is shown.").color(style::MUTED));
+            self.settings.folded = folded;
             return;
+        };
+        let section = |part: WorldSection| {
+            Section::new(part.id(), part.title()).summary(world_summary(details, part))
         };
         let mut go: Option<(Dimension, [i32; 2])> = None;
         ui.label(egui::RichText::new(&report.save.name).strong());
         style::hint(ui, &report.save.dir.display().to_string());
         ui.add_space(4.0);
 
-        egui::CollapsingHeader::new("Settings")
-            .default_open(true)
-            .show(ui, |ui| {
+        if style::section(ui, &mut folded, section(WorldSection::Settings), |_| {}) {
+            style::section_body(ui, |ui| {
                 for setting in &details.settings {
                     let label = match setting.setting.dimension() {
                         Some(d) => format!("{}, {}", setting.setting.label(), d.name()),
@@ -68,10 +73,10 @@ impl App {
                     warnings_about(ui, details, &SaveSubject::Setting(setting.setting));
                 }
             });
+        }
 
-        egui::CollapsingHeader::new("Data packs")
-            .default_open(true)
-            .show(ui, |ui| {
+        if style::section(ui, &mut folded, section(WorldSection::Packs), |_| {}) {
+            style::section_body(ui, |ui| {
                 for pack in &details.packs {
                     let used = match pack.used {
                         PackUse::Bundle => "the bundle's own data".to_string(),
@@ -114,10 +119,10 @@ impl App {
                     warnings_about(ui, details, &SaveSubject::Pack(pack.name.clone()));
                 }
             });
+        }
 
-        egui::CollapsingHeader::new("Dimensions")
-            .default_open(true)
-            .show(ui, |ui| {
+        if style::section(ui, &mut folded, section(WorldSection::Dimensions), |_| {}) {
+            style::section_body(ui, |ui| {
                 for dimension in &details.dimensions {
                     let d = dimension.dimension;
                     ui.horizontal_wrapped(|ui| {
@@ -149,6 +154,7 @@ impl App {
                     ui.add_space(2.0);
                 }
             });
+        }
 
         let usage = self
             .shown
@@ -156,9 +162,10 @@ impl App {
             .and_then(|s| s.session.save())
             .map(|chunks| (chunks.dimension(), chunks.usage()));
         if let Some((dimension, usage)) = usage {
-            egui::CollapsingHeader::new("This map so far")
-                .default_open(true)
-                .show(ui, |ui| {
+            let map = Section::new("world.map", "This map so far")
+                .summary(Summary::new(format!("{} chunks read", usage.chunks_read)));
+            if style::section(ui, &mut folded, map, |_| {}) {
+                style::section_body(ui, |ui| {
                     style::hint(
                         ui,
                         &format!(
@@ -189,7 +196,9 @@ impl App {
                     ui.ctx()
                         .request_repaint_after(std::time::Duration::from_secs(1));
                 });
+            }
         }
+        self.settings.folded = folded;
 
         if let Some((dimension, [x, z])) = go {
             if dimension != self.settings.dimension() {
@@ -199,6 +208,87 @@ impl App {
                 self.settings.view.centre = [f64::from(x) + 0.5, f64::from(z) + 0.5];
             }
         }
+    }
+}
+
+/// The World tab's sections that warnings are under.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum WorldSection {
+    /// The save's settings.
+    Settings,
+    /// Its data packs.
+    Packs,
+    /// Its dimensions, and what their region files hold.
+    Dimensions,
+}
+
+impl WorldSection {
+    pub(super) const ALL: [WorldSection; 3] = [
+        WorldSection::Settings,
+        WorldSection::Packs,
+        WorldSection::Dimensions,
+    ];
+
+    /// The id its fold is kept under: one for every save, since it names the section.
+    pub(super) fn id(self) -> &'static str {
+        match self {
+            WorldSection::Settings => "world.settings",
+            WorldSection::Packs => "world.packs",
+            WorldSection::Dimensions => "world.dimensions",
+        }
+    }
+
+    fn title(self) -> &'static str {
+        match self {
+            WorldSection::Settings => "Settings",
+            WorldSection::Packs => "Data packs",
+            WorldSection::Dimensions => "Dimensions",
+        }
+    }
+
+    /// Whether a warning about `subject` is shown in this section.
+    fn holds(self, subject: &SaveSubject) -> bool {
+        matches!(
+            (self, subject),
+            (WorldSection::Settings, SaveSubject::Setting(_))
+                | (WorldSection::Packs, SaveSubject::Pack(_))
+                | (
+                    WorldSection::Dimensions,
+                    SaveSubject::Dimension(_) | SaveSubject::Holdings(_)
+                )
+        )
+    }
+}
+
+/// How many of `warnings`, notes left out, `part` of the World tab holds.
+pub(super) fn warnings_in(warnings: &[SaveWarning], part: WorldSection) -> usize {
+    warnings
+        .iter()
+        .filter(|w| !w.is_note() && part.holds(&w.subject()))
+        .count()
+}
+
+/// What `part` of the World tab says folded.
+fn world_summary(details: &SaveDetails, part: WorldSection) -> Summary {
+    let listed = match part {
+        WorldSection::Settings => details.settings.len(),
+        WorldSection::Packs => details.packs.len(),
+        WorldSection::Dimensions => details.dimensions.len(),
+    };
+    section_summary(part, warnings_in(&details.warnings, part), listed)
+}
+
+/// What `part` says folded with `warnings` in it and `listed` things listed: its warnings, in
+/// the warning colour, so a fold never hides one, or else how many things it lists.
+fn section_summary(part: WorldSection, warnings: usize, listed: usize) -> Summary {
+    match warnings {
+        0 => Summary::new(match part {
+            WorldSection::Settings => format!("{listed} settings"),
+            WorldSection::Packs => format!("{listed} packs"),
+            WorldSection::Dimensions => format!("{listed} dimensions"),
+        }),
+        1 => Summary::warning("1 warning"),
+        n => Summary::warning(format!("{n} warnings")),
     }
 }
 
@@ -287,6 +377,29 @@ fn holdings_lines(ui: &mut egui::Ui, holdings: &SaveHoldings) {
                 total(&holdings.sealed_containers),
                 some(&holdings.sealed_containers)
             ),
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_folded_section_with_a_warning_says_so() {
+        let warnings = [SaveWarning::StructuresDisabled, SaveWarning::Modded];
+        assert_eq!(warnings_in(&warnings, WorldSection::Settings), 2);
+        assert_eq!(warnings_in(&warnings, WorldSection::Packs), 0);
+        let settings = section_summary(WorldSection::Settings, 2, 9);
+        assert_eq!(settings, Summary::warning("2 warnings"));
+        assert!(settings.warns);
+        assert_eq!(
+            section_summary(WorldSection::Packs, 0, 3),
+            Summary::new("3 packs")
+        );
+        assert_eq!(
+            section_summary(WorldSection::Dimensions, 1, 3),
+            Summary::warning("1 warning")
         );
     }
 }

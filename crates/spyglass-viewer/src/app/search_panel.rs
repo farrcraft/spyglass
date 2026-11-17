@@ -4,8 +4,8 @@
 use spyglass::Outcome;
 
 use super::*;
-use crate::search::{Area, Mode, PRESETS};
-use crate::style;
+use crate::search::{Area, Mode, PRESETS, SearchSettings};
+use crate::style::{self, Section, Summary};
 
 /// A search hit or `find` match on the map: its seed, what its constraints matched, and each
 /// constraint's line, outcome and area.
@@ -91,81 +91,105 @@ impl App {
     fn seeds_section(&mut self, ui: &mut egui::Ui, game: &'static Game) {
         let text = self.settings.search.query.clone();
         let parsed = self.parsed_query(ui.ctx(), game, &text);
+        let folded = &mut self.settings.folded;
         let search_settings = &mut self.settings.search;
-        style::heading(ui, "Query");
-        let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap: f32| {
-            let mut job = highlight(text.as_str(), 13.0);
-            job.wrap.max_width = wrap;
-            ui.fonts_mut(|f| f.layout_job(job))
-        };
-        ui.add(
-            egui::TextEdit::multiline(&mut search_settings.query)
-                .code_editor()
-                .desired_rows(4)
-                .desired_width(f32::INFINITY)
-                .hint_text("require 2 minecraft:swamp_hut within 600 of spawn")
-                .layouter(&mut layouter),
-        );
+        let query = Section::new("search.query", "Query").summary(query_summary(parsed.as_ref()));
+        let open = style::section(ui, folded, query, |_| {});
+        if open {
+            style::section_body(ui, |ui| {
+                let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap: f32| {
+                    let mut job = highlight(text.as_str(), 13.0);
+                    job.wrap.max_width = wrap;
+                    ui.fonts_mut(|f| f.layout_job(job))
+                };
+                ui.add(
+                    egui::TextEdit::multiline(&mut search_settings.query)
+                        .code_editor()
+                        .desired_rows(4)
+                        .desired_width(f32::INFINITY)
+                        .hint_text("require 2 minecraft:swamp_hut within 600 of spawn")
+                        .layouter(&mut layouter),
+                );
+            });
+        }
         // The text being typed is checked on the next frame.
         let parsed = parsed.filter(|_| search_settings.query == text);
         let parsed = parsed.as_ref();
-        match parsed {
-            Some(Ok(query)) if query.find_dimension().is_some() => {
-                ui.colored_label(
-                    style::ERROR,
-                    "A find query searches the seed shown: switch to This seed.",
-                );
-            }
-            Some(Err(e)) => {
-                ui.colored_label(style::ERROR, e);
-            }
-            None => {
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.weak("Checking the query…");
-                });
-            }
-            Some(Ok(query)) => {
-                let (required, preferred) = search::counts(query.query());
-                ui.colored_label(
-                    style::GOOD,
-                    format!("Valid: {required} required, {preferred} preferred"),
-                );
-            }
+        if open {
+            style::section_body(ui, |ui| match parsed {
+                Some(Ok(query)) if query.find_dimension().is_some() => {
+                    ui.colored_label(
+                        style::ERROR,
+                        "A find query searches the seed shown: switch to This seed.",
+                    );
+                }
+                Some(Err(e)) => {
+                    ui.colored_label(style::ERROR, e);
+                }
+                None => {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.weak("Checking the query…");
+                    });
+                }
+                Some(Ok(query)) => {
+                    let (required, preferred) = search::counts(query.query());
+                    ui.colored_label(
+                        style::GOOD,
+                        format!("Valid: {required} required, {preferred} preferred"),
+                    );
+                }
+            });
         }
 
-        ui.add_space(6.0);
-        style::heading(ui, "Options");
-        egui::Grid::new("search options")
-            .num_columns(2)
-            .spacing([12.0, 6.0])
-            .show(ui, |ui| {
-                ui.label("Keep the best");
-                ui.add(egui::DragValue::new(&mut search_settings.top).range(1..=1000));
-                ui.end_row();
-                ui.label("Time limit");
-                ui.add(egui::DragValue::new(&mut search_settings.seconds).suffix(" s"))
-                    .on_hover_text("0 for no time limit.");
-                ui.end_row();
-                ui.label("Seed limit");
-                ui.add(
-                    style::text_box(&mut search_settings.seeds)
-                        .hint_text("none")
-                        .desired_width(90.0),
-                );
-                ui.end_row();
+        let options = Section::new("search.options", "Options").summary(Summary::new(format!(
+            "best {}{}",
+            search_settings.top,
+            if search_settings.confirm {
+                ", confirmed"
+            } else {
+                ""
+            }
+        )));
+        if style::section(ui, folded, options, |_| {}) {
+            style::section_body(ui, |ui| {
+                egui::Grid::new("search options")
+                    .num_columns(2)
+                    .spacing([12.0, 6.0])
+                    .show(ui, |ui| {
+                        ui.label("Keep the best");
+                        ui.add(egui::DragValue::new(&mut search_settings.top).range(1..=1000));
+                        ui.end_row();
+                        ui.label("Time limit");
+                        ui.add(egui::DragValue::new(&mut search_settings.seconds).suffix(" s"))
+                            .on_hover_text("0 for no time limit.");
+                        ui.end_row();
+                        ui.label("Seed limit");
+                        ui.add(
+                            style::text_box(&mut search_settings.seeds)
+                                .hint_text("none")
+                                .desired_width(90.0),
+                        );
+                        ui.end_row();
+                    });
+                ui.checkbox(&mut search_settings.confirm, "Confirm with terrain")
+                    .on_hover_text(
+                        "Decide structure starts with each seed's terrain, as the game does. \
+                         Slower, but only ties and platform-dependent results stay uncertain.",
+                    );
+                ui.checkbox(&mut search_settings.certain, "Certain only")
+                    .on_hover_text(
+                        "Only seeds whose required constraints hold whatever is left undecided, \
+                         ranked by the worst case. Without confirming, most structures are \
+                         undecided.",
+                    );
             });
-        ui.checkbox(&mut search_settings.confirm, "Confirm with terrain").on_hover_text(
-            "Decide structure starts with each seed's terrain, as the game does. Slower, but only \
-             ties and platform-dependent results stay uncertain.",
-        );
-        ui.checkbox(&mut search_settings.certain, "Certain only").on_hover_text(
-            "Only seeds whose required constraints hold whatever is left undecided, ranked by the \
-             worst case. Without confirming, most structures are undecided.",
-        );
-        egui::CollapsingHeader::new("Seed range and start")
-            .default_open(search_settings.range || search_settings.from > 0)
-            .show(ui, |ui| {
+        }
+        let range = Section::new("search.range", "Seed range and start")
+            .summary(range_summary(search_settings))
+            .folded_by_default();
+        if style::section(ui, folded, range, |_| {}) {
+            style::section_body(ui, |ui| {
                 ui.checkbox(&mut search_settings.range, "Only seeds in a range")
                     .on_hover_text(
                         "Otherwise every 64-bit seed, with structure placement checked first.",
@@ -182,6 +206,7 @@ impl App {
                     ui.add(egui::DragValue::new(&mut search_settings.from));
                 });
             });
+        }
 
         let options = search_settings.options(search::threads());
         let limit = search_settings.seconds;
@@ -434,84 +459,101 @@ impl App {
     fn find_section(&mut self, ui: &mut egui::Ui, game: &'static Game) {
         let text = self.settings.search.find.clone();
         let parsed = self.parsed_query(ui.ctx(), game, &text);
+        let folded = &mut self.settings.folded;
         let search_settings = &mut self.settings.search;
-        ui.horizontal(|ui| {
-            style::heading(ui, "Query");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.menu_button("Presets", |ui| {
-                    for (name, preset) in PRESETS {
-                        if ui.button(*name).clicked() {
-                            search_settings.find = (*preset).to_string();
-                            ui.close();
-                        }
+        let header = Section::new("search.query", "Query").summary(query_summary(parsed.as_ref()));
+        let open = style::section(ui, folded, header, |ui| {
+            ui.menu_button("Presets", |ui| {
+                for (name, preset) in PRESETS {
+                    if ui.button(*name).clicked() {
+                        search_settings.find = (*preset).to_string();
+                        ui.close();
                     }
-                });
+                }
             });
         });
-        let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap: f32| {
-            let mut job = highlight(text.as_str(), 13.0);
-            job.wrap.max_width = wrap;
-            ui.fonts_mut(|f| f.layout_job(job))
-        };
-        ui.add(
-            egui::TextEdit::multiline(&mut search_settings.find)
-                .code_editor()
-                .desired_rows(4)
-                .desired_width(f32::INFINITY)
-                .hint_text("find minecraft:swamp_hut within 4096")
-                .layouter(&mut layouter),
-        );
+        if open {
+            style::section_body(ui, |ui| {
+                let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap: f32| {
+                    let mut job = highlight(text.as_str(), 13.0);
+                    job.wrap.max_width = wrap;
+                    ui.fonts_mut(|f| f.layout_job(job))
+                };
+                ui.add(
+                    egui::TextEdit::multiline(&mut search_settings.find)
+                        .code_editor()
+                        .desired_rows(4)
+                        .desired_width(f32::INFINITY)
+                        .hint_text("find minecraft:swamp_hut within 4096")
+                        .layouter(&mut layouter),
+                );
+            });
+        }
         let parsed = parsed.filter(|_| search_settings.find == text);
         let query = match &parsed {
-            None => {
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.weak("Checking the query…");
-                });
-                None
-            }
-            Some(Err(e)) => {
-                ui.colored_label(style::ERROR, e);
-                None
-            }
-            Some(Ok(query)) if query.find_dimension().is_none() => {
-                ui.colored_label(
-                    style::ERROR,
-                    "Start with a find line, such as `find minecraft:swamp_hut within 4096`, or \
-                     search seeds with Seeds.",
-                );
-                None
-            }
-            Some(Ok(query)) => {
-                let (required, preferred) = search::counts(query.query());
-                ui.colored_label(
-                    style::GOOD,
-                    format!("Valid: {required} required, {preferred} preferred"),
-                );
-                Some(query.clone())
-            }
+            Some(Ok(query)) if query.find_dimension().is_some() => Some(query.clone()),
+            _ => None,
         };
+        if open {
+            style::section_body(ui, |ui| match &parsed {
+                None => {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.weak("Checking the query…");
+                    });
+                }
+                Some(Err(e)) => {
+                    ui.colored_label(style::ERROR, e);
+                }
+                Some(Ok(query)) if query.find_dimension().is_none() => {
+                    ui.colored_label(
+                        style::ERROR,
+                        "Start with a find line, such as `find minecraft:swamp_hut within \
+                         4096`, or search seeds with Seeds.",
+                    );
+                }
+                Some(Ok(query)) => {
+                    let (required, preferred) = search::counts(query.query());
+                    ui.colored_label(
+                        style::GOOD,
+                        format!("Valid: {required} required, {preferred} preferred"),
+                    );
+                }
+            });
+        }
 
-        ui.add_space(6.0);
-        style::heading(ui, "Options");
-        ui.horizontal(|ui| {
-            ui.label("Find at most");
-            ui.add(egui::DragValue::new(&mut search_settings.find_top).range(1..=1000));
-        });
-        ui.checkbox(&mut search_settings.confirm, "Confirm with terrain").on_hover_text(
-            "Decide structure starts with the seed's terrain, as the game does. Slower, but only \
-             ties and platform-dependent results stay uncertain.",
-        );
-        ui.checkbox(&mut search_settings.certain, "Certain only")
-            .on_hover_text(
-                "Only places whose required constraints hold whatever is left undecided. Without \
-             confirming, most structures are undecided.",
-            );
-        ui.label(
-            egui::RichText::new("Searches around the view's centre, nearest first.")
-                .size(12.0)
-                .color(style::MUTED),
-        );
+        let options = Section::new("search.options", "Options").summary(Summary::new(format!(
+            "at most {}{}",
+            search_settings.find_top,
+            if search_settings.confirm {
+                ", confirmed"
+            } else {
+                ""
+            }
+        )));
+        if style::section(ui, folded, options, |_| {}) {
+            style::section_body(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Find at most");
+                    ui.add(egui::DragValue::new(&mut search_settings.find_top).range(1..=1000));
+                });
+                ui.checkbox(&mut search_settings.confirm, "Confirm with terrain")
+                    .on_hover_text(
+                        "Decide structure starts with the seed's terrain, as the game does. \
+                         Slower, but only ties and platform-dependent results stay uncertain.",
+                    );
+                ui.checkbox(&mut search_settings.certain, "Certain only")
+                    .on_hover_text(
+                        "Only places whose required constraints hold whatever is left \
+                         undecided. Without confirming, most structures are undecided.",
+                    );
+                ui.label(
+                    egui::RichText::new("Searches around the view's centre, nearest first.")
+                        .size(12.0)
+                        .color(style::MUTED),
+                );
+            });
+        }
 
         let running = self.find_run.as_ref().is_some_and(|r| r.running.is_some());
         let wide = egui::vec2(ui.available_width(), 30.0);
@@ -766,6 +808,31 @@ impl App {
 
 /// A query's text coloured by kind of word, in monospace of `size`: keywords, ids, numbers,
 /// the rest. The hit card on the map colours its constraints' lines the same way.
+/// What a folded Query section says: how many constraints it has, or that it isn't valid.
+fn query_summary(parsed: Option<&Result<SearchQuery, String>>) -> Summary {
+    match parsed {
+        Some(Ok(query)) => {
+            let (required, preferred) = search::counts(query.query());
+            Summary::new(format!("{required} required, {preferred} preferred"))
+        }
+        Some(Err(_)) => Summary::warning("not valid"),
+        None => Summary::default(),
+    }
+}
+
+/// What the folded Seed range and start section says: the range, and where it starts.
+fn range_summary(settings: &SearchSettings) -> Summary {
+    let mut text = if settings.range {
+        format!("{} to {}", settings.first.trim(), settings.last.trim())
+    } else {
+        "every seed".to_string()
+    };
+    if settings.from > 0 {
+        text.push_str(&format!(", from {}", settings.from));
+    }
+    Summary::new(text)
+}
+
 pub(super) fn highlight(text: &str, size: f32) -> egui::text::LayoutJob {
     let mut job = egui::text::LayoutJob::default();
     let font = egui::FontId::monospace(size);

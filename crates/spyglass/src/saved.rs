@@ -1,7 +1,7 @@
 //! What a save already holds, for a session's answers: its generated chunks, and the structure
 //! starts in them (ADR 0071; `docs/specs/world-saves.md`).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
@@ -71,6 +71,55 @@ pub struct SaveChunks {
     read: ReadChunks<ChunkContents>,
     /// Entity chunks read so far, their containers: `None` likewise.
     entities_read: ReadChunks<Vec<SavedContainer>>,
+    /// What answers have taken from the save so far.
+    usage: Mutex<Tally>,
+}
+
+/// What answers have taken from a save so far, from [`SaveChunks::usage`]. Each chunk and
+/// container counts once, however often it's asked about (`docs/specs/world-saves.md`,
+/// "Dimensions").
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct SaveUsage {
+    /// Chunks the save holds that were read whole, from region and entity files.
+    pub chunks_read: usize,
+    /// Chunks whose saved starts answered a structure question, so the seed wasn't asked.
+    pub chunks_with_starts: usize,
+    /// The starts those chunks held, which answers took as certain.
+    pub starts_from_save: usize,
+    /// Chunks whose save said no structure starts there, even if the seed would place one.
+    pub chunks_without_starts: usize,
+    /// Predicted containers the save holds unopened.
+    pub unopened: usize,
+    /// Predicted containers the save holds opened: filled from their loot table.
+    pub opened: usize,
+    /// Predicted containers the save doesn't hold: broken, replaced or overwritten.
+    pub gone: usize,
+}
+
+/// [`SaveUsage`], and what's been counted, so nothing counts twice.
+#[derive(Debug, Default)]
+struct Tally {
+    usage: SaveUsage,
+    /// Chunks whose starts have been counted.
+    start_chunks: HashSet<[i32; 2]>,
+    /// Containers counted, by position.
+    containers: HashSet<[i32; 3]>,
+}
+
+impl Tally {
+    /// How many chunks and containers it remembers before it starts over, so a long session
+    /// doesn't grow without bound: after that, one may count again.
+    const MAX_REMEMBERED: usize = 1 << 20;
+
+    fn forget_if_full(&mut self) {
+        if self.start_chunks.len() >= Self::MAX_REMEMBERED {
+            self.start_chunks.clear();
+        }
+        if self.containers.len() >= Self::MAX_REMEMBERED {
+            self.containers.clear();
+        }
+    }
 }
 
 /// A chunk a save has generated, for [`SaveChunks::generated_in`].
@@ -109,6 +158,7 @@ impl SaveReport {
             entities: folders.entities.clone(),
             read: ReadChunks::new(),
             entities_read: ReadChunks::new(),
+            usage: Mutex::default(),
         }
     }
 }
@@ -117,6 +167,43 @@ impl SaveChunks {
     /// Which dimension it is.
     pub fn dimension(&self) -> Dimension {
         self.dimension
+    }
+
+    /// What answers have taken from the save so far.
+    pub fn usage(&self) -> SaveUsage {
+        self.tally().usage
+    }
+
+    fn tally(&self) -> std::sync::MutexGuard<'_, Tally> {
+        // The tally is only ever left whole, so a panic elsewhere doesn't spoil it.
+        self.usage.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Counts chunk `chunk`'s saved starts, `starts` of them, as answering a structure question.
+    fn count_starts(&self, chunk: [i32; 2], starts: usize) {
+        let mut tally = self.tally();
+        tally.forget_if_full();
+        if tally.start_chunks.insert(chunk) {
+            if starts == 0 {
+                tally.usage.chunks_without_starts += 1;
+            } else {
+                tally.usage.chunks_with_starts += 1;
+                tally.usage.starts_from_save += starts;
+            }
+        }
+    }
+
+    /// Counts how the save holds the container predicted at `position`.
+    fn count_container(&self, position: [i32; 3], held: &InSave) {
+        let mut tally = self.tally();
+        tally.forget_if_full();
+        if tally.containers.insert(position) {
+            match held {
+                InSave::Unopened { .. } => tally.usage.unopened += 1,
+                InSave::Filled { .. } => tally.usage.opened += 1,
+                InSave::Gone => tally.usage.gone += 1,
+            }
+        }
     }
 
     /// The dimension's chunks, read now if no scan found them. A failure to read the folder
@@ -189,7 +276,9 @@ impl SaveChunks {
     /// Chunk `chunk` read whole, once: `None` if the save doesn't hold it, or it can't be read.
     pub(crate) fn contents(&self, chunk: [i32; 2]) -> Option<Arc<ChunkContents>> {
         self.read.get(chunk, || {
-            chunk::read(&region::read_chunk(&self.region, chunk)?).ok()
+            let raw = region::read_chunk(&self.region, chunk)?;
+            self.tally().usage.chunks_read += 1;
+            chunk::read(&raw).ok()
         })
     }
 
@@ -197,8 +286,9 @@ impl SaveChunks {
     /// there, or they can't be read.
     fn entity_containers(&self, chunk: [i32; 2]) -> Option<Arc<Vec<SavedContainer>>> {
         self.entities_read.get(chunk, || {
-            region::read_chunk(&self.entities, chunk)
-                .and_then(|raw| chunk::read_entities(&raw).ok())
+            let raw = region::read_chunk(&self.entities, chunk)?;
+            self.tally().usage.chunks_read += 1;
+            chunk::read_entities(&raw).ok()
         })
     }
 
@@ -248,7 +338,7 @@ impl SaveChunks {
                 .find(|c| c.position == position)
                 .filter(|c| block_entity.is_none_or(|expected| full_id(&c.id) == expected))
         };
-        Some(match found {
+        let held = match found {
             None => InSave::Gone,
             Some(saved) => match &saved.loot_table {
                 // A seed of 0 isn't saved: it's drawn when the container fills.
@@ -269,7 +359,9 @@ impl SaveChunks {
                         .collect(),
                 },
             },
-        })
+        };
+        self.count_container(position, &held);
+        Some(held)
     }
 
     /// The structures starting in `chunk`, each as its key and its `id`, if the save holds it
@@ -300,13 +392,13 @@ impl StoredStarts for SessionSave<'_> {
         // A key or id this world doesn't have is dropped, as the game drops one its registry
         // lacks.
         let saved = self.chunks.saved_starts(chunk)?;
-        Some(
-            saved
-                .iter()
-                .filter(|(_, id)| self.sets.structure_index(id).is_some())
-                .filter_map(|(key, _)| self.sets.structure_index(key))
-                .collect(),
-        )
+        let starts: Vec<usize> = saved
+            .iter()
+            .filter(|(_, id)| self.sets.structure_index(id).is_some())
+            .filter_map(|(key, _)| self.sets.structure_index(key))
+            .collect();
+        self.chunks.count_starts(chunk, starts.len());
+        Some(starts)
     }
 }
 
@@ -377,6 +469,7 @@ mod tests {
             entities: PathBuf::new(),
             read: ReadChunks::new(),
             entities_read: ReadChunks::new(),
+            usage: Mutex::default(),
         };
         save.read.get([0, 0], || {
             Some(ChunkContents {
@@ -401,6 +494,9 @@ mod tests {
         // A bundle whose block report doesn't say: any block entity there is taken.
         assert_eq!(at(2, None), unopened);
         assert_eq!(at(3, Some("minecraft:chest")), Some(InSave::Gone));
+        // Each container counts once, as it was first found.
+        let usage = save.usage();
+        assert_eq!((usage.unopened, usage.opened, usage.gone), (1, 0, 2));
     }
 
     #[test]

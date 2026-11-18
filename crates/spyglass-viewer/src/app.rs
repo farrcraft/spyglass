@@ -3,7 +3,7 @@
 //! (`side_panel`, `search_panel`, `markers_panel`), the map with its controls and status bar
 //! (`map`), and the screen shown until there's a bundle (`saves`, `extract_panel`).
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -14,8 +14,8 @@ use serde::{Deserialize, Serialize};
 use spyglass::{
     BiomeQuery, BundleInfo, Dimension, Evaluation, FeatureQuery, FindOutcome, FoundContainer,
     FoundFeature, Game, Heightmap, Image, ItemQuery, LauncherSave, Layers, MAX_UNDERGROUND_SCALE,
-    Pack, SaveReport, Scan, SearchOutcome, SearchQuery, Session, SpawnOrigin, StructureLayout,
-    StructureQuery, StructureStart, World,
+    Pack, SaveDetails, SaveReport, Scan, SearchOutcome, SearchQuery, Session, SpawnOrigin,
+    StructureLayout, StructureQuery, StructureStart, World,
 };
 
 use crate::export::{Export, Source, visible_area};
@@ -27,10 +27,11 @@ use crate::search::{self, FindRun, Match, Running, SearchSettings, SeedRun};
 use crate::style;
 use crate::tiles::{
     Cache, Entry, FeatureKey, Job, JobKey, LayoutKey, LootMark, MarkerKey, Output, Pool, Style,
-    TileKey, Underground, chunk_features,
+    TileData, TileKey, Underground, chunk_features,
 };
 use crate::userdata::{Marker, Store, WorldKey};
-use crate::view::{TILE, Tile, View};
+use crate::view::{FEATURE_REGION, Region, TILE, Tile, View};
+use crate::zoom;
 
 mod container;
 mod extract_panel;
@@ -40,6 +41,7 @@ mod saves;
 mod search_panel;
 mod side_panel;
 mod toolbar;
+mod world_panel;
 
 use markers_panel::MenuTarget;
 use search_panel::Opened;
@@ -57,13 +59,12 @@ const SCROLL_PER_STEP: f32 = 50.0;
 const KEY_PAN: f32 = 64.0;
 /// What the map shows where there's no tile yet.
 const EMPTY: Color32 = Color32::from_rgb(0x20, 0x20, 0x20);
-/// Tiles' structure markers kept.
-const CACHE_MARKERS: usize = 512;
+/// Regions of structure starts, features or loot containers kept, each kind: more than a 4K
+/// view's regions at its scale, ring included (about 600 at 1:2 for features, or at 1:4 for
+/// starts), so drawing the view never evicts what it's drawing.
+const CACHE_MARKERS: usize = 1024;
 /// The most structure markers drawn at once; more is a zoom level too far out to read.
 const MAX_MARKERS: usize = 2_000;
-/// The largest scale jigsaw structures' and mineshafts' bounds are drawn at: a village is then
-/// 30 pixels or more across, and few enough are in view to lay them all out.
-const MAX_BOUNDS_SCALE: u32 = 4;
 /// Structure layouts kept.
 const CACHE_LAYOUTS: usize = 512;
 
@@ -105,6 +106,10 @@ struct Settings {
     noise_caves: bool,
     /// Carvers' caves and ravines at the view's height, up close.
     carvers: bool,
+    /// The flower bone meal grows at each block, at the view's height.
+    flowers: bool,
+    /// The one flower shown, by block id; `None` shows each block's most likely flower.
+    flower: Option<String>,
     /// Structure ids to mark.
     structures: Vec<String>,
     /// Placed feature ids to mark, up close.
@@ -121,6 +126,9 @@ struct Settings {
     show_done: bool,
     /// Put the user's markers in exported images.
     export_markers: bool,
+    /// The side panel's sections not folded as they are by default, by id
+    /// (`layers.underground`, `world.packs`): see `style::is_folded`.
+    folded: BTreeSet<String>,
 }
 
 impl Default for Settings {
@@ -143,6 +151,8 @@ impl Default for Settings {
             veins: false,
             noise_caves: false,
             carvers: false,
+            flowers: false,
+            flower: None,
             structures: Vec::new(),
             features: Vec::new(),
             containers: false,
@@ -151,6 +161,7 @@ impl Default for Settings {
             search: SearchSettings::default(),
             show_done: true,
             export_markers: true,
+            folded: BTreeSet::new(),
         }
     }
 }
@@ -339,9 +350,15 @@ pub struct App {
     /// Saves in the launchers' folders, listed when first wanted.
     saves: Option<Vec<LauncherSave>>,
     /// A save being read.
-    inspecting: Option<Pending<Result<SaveReport, String>>>,
+    inspecting: Option<Pending<Result<(SaveReport, SaveDetails), String>>>,
     /// The save on the map, if it came from one.
     save: Option<SaveReport>,
+    /// What spyglass read from the save on the map ([`save`](Self::save)), for the World tab
+    /// and the notice above the map.
+    save_details: Option<SaveDetails>,
+    /// The last save opened, if spyglass couldn't show it, and what it read from it: the World
+    /// tab says why, until the error is dismissed. The save on the map, if any, stays.
+    unshown_save: Option<(SaveReport, SaveDetails)>,
     /// Why the last save couldn't be opened or shown.
     save_error: Option<String>,
     /// The saves list's filter, as typed.
@@ -396,6 +413,8 @@ pub struct App {
     expanded: std::collections::HashSet<String>,
     /// How long the map takes to fill the window, with `SPYGLASS_VIEWER_TIMING`.
     fill: crate::timing::Fill,
+    /// The zoom still to make while timing (`SPYGLASS_VIEWER_TIMING_ZOOM`).
+    timing_zoom: Option<crate::timing::Zoom>,
     /// The user's markers, done places and worlds (`docs/specs/user-data.md`).
     store: Store,
     /// The world shown, as the user data keys it.
@@ -404,6 +423,10 @@ pub struct App {
     editing: Option<String>,
     /// What the map's context menu was opened on, and whether it's done.
     menu_target: Option<(MenuTarget, bool)>,
+    /// The portal the map's context menu was opened on, if any.
+    menu_portal: Option<map::portal_layer::PortalRef>,
+    /// Portal markers' and the save's portals' links, and the link area.
+    portals: map::portal_layer::PortalState,
     /// A view text being typed into the Share menu.
     share_text: String,
     /// The last import's, export's or view text's outcome.
@@ -412,6 +435,25 @@ pub struct App {
     data_problems_seen: bool,
     /// The name being typed for a world, and which.
     world_name: (Option<WorldKey>, String),
+    /// Best height being worked out for a flower, and the answer last worked out.
+    flower_heights: Option<Pending<Result<side_panel::BestHeights, String>>>,
+    best_heights: Option<Result<side_panel::BestHeights, String>>,
+    /// The flowers the view's own tiles showed last frame, most pixels first, and how many
+    /// pixels those tiles have: the Layers tab's key.
+    flowers_in_view: Vec<InView>,
+    flowers_in_view_pixels: u64,
+    /// Why a tile's flowers couldn't be worked out, if one's couldn't.
+    flower_error: Option<String>,
+}
+
+/// A flower in the view's key.
+struct InView {
+    /// Its block id.
+    flower: String,
+    /// The pixels it can grow at.
+    possible: u64,
+    /// The pixels it certainly grows at.
+    certain: u64,
 }
 
 /// A search and its query.
@@ -481,6 +523,8 @@ impl App {
             found: None,
             saves: None,
             inspecting: None,
+            save_details: None,
+            unshown_save: None,
             save: None,
             save_error: None,
             save_filter: String::new(),
@@ -509,14 +553,22 @@ impl App {
             in_view: HashMap::new(),
             expanded: std::collections::HashSet::new(),
             fill: crate::timing::Fill::default(),
+            timing_zoom: crate::timing::zoom(),
             store: data_dir.map_or_else(Store::detached, |dir| Store::open(&dir)),
             world_key: None,
             editing: None,
             menu_target: None,
+            menu_portal: None,
+            portals: Default::default(),
             share_text: String::new(),
             data_note: None,
             data_problems_seen: false,
             world_name: (None, String::new()),
+            flower_heights: None,
+            best_heights: None,
+            flowers_in_view: Vec::new(),
+            flowers_in_view_pixels: 0,
+            flower_error: None,
         };
         app.scan(&cc.egui_ctx);
         // With nothing found on a first run, bundles go beside spyglass unless the user picks
@@ -608,10 +660,10 @@ impl App {
 
     /// Switches the map to `dimension`, loading it in the background.
     fn switch_dimension(&mut self, ctx: &egui::Context, dimension: Dimension) {
-        if let Some(report) = &self.save
-            && !report.answerable_in(dimension)
+        if let (Some(report), Some(details)) = (&self.save, &self.save_details)
+            && !details.answerable_in(dimension)
         {
-            let reasons: Vec<String> = report
+            let reasons: Vec<String> = details
                 .warnings
                 .iter()
                 .filter(|w| w.blocks(dimension))
@@ -664,6 +716,11 @@ impl App {
             self.locating = None;
             self.found = Some(result.unwrap_or_else(|()| Err("the search failed".to_string())));
         }
+        if let Some(result) = self.flower_heights.as_ref().and_then(Pending::poll) {
+            self.flower_heights = None;
+            self.best_heights =
+                Some(result.unwrap_or_else(|()| Err("working out heights failed".to_string())));
+        }
         if let Some(result) = self.exporting.as_ref().and_then(Pending::poll) {
             self.exporting = None;
             self.export_note = Some(
@@ -704,7 +761,7 @@ impl App {
         if let Some(result) = self.inspecting.as_ref().and_then(Pending::poll) {
             self.inspecting = None;
             match result.unwrap_or_else(|()| Err("reading the save failed".to_string())) {
-                Ok(report) => self.show_save(ctx, report),
+                Ok((report, details)) => self.show_save(ctx, report, details),
                 Err(e) => self.save_error = Some(e),
             }
         }
@@ -884,12 +941,13 @@ impl App {
             highlight: self.settings.highlight.clone(),
             slime_chunks: self.settings.slime_chunks
                 && self.slime_allowed()
-                && self.settings.view.scale <= spyglass::MAX_SLIME_SCALE,
+                && zoom::SLIME_CHUNKS.shows(self.settings.view.scale),
             relief: self.settings.relief && self.terrain_allowed(),
             generated: self.settings.generated
                 && self.generated_allowed()
-                && self.settings.view.scale <= spyglass::MAX_SLIME_SCALE,
+                && zoom::GENERATED.shows(self.settings.view.scale),
             inhabited: self.settings.inhabited,
+            flower: self.settings.flower.clone(),
         }
     }
 
@@ -959,5 +1017,29 @@ impl eframe::App for App {
         // Also on shutdown, so the last changes and views are kept.
         self.keep_views();
         self.store.flush(true);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn folds_are_kept_with_the_settings_and_old_settings_load() {
+        let mut settings = Settings::default();
+        style::set_folded(&mut settings.folded, "layers.underground", false, true);
+        style::set_folded(&mut settings.folded, "search.range", true, false);
+        let text = serde_json::to_string(&settings).unwrap();
+        let again: Settings = serde_json::from_str(&text).unwrap();
+        assert_eq!(again.folded, settings.folded);
+        assert!(style::is_folded(&again.folded, "layers.underground", false));
+        assert!(!style::is_folded(&again.folded, "search.range", true));
+        // Settings saved before folds load with every section as it is by default.
+        let mut old: serde_json::Value = serde_json::from_str(&text).unwrap();
+        old.as_object_mut().unwrap().remove("folded");
+        let old: Settings = serde_json::from_value(old).unwrap();
+        assert!(old.folded.is_empty());
+        assert!(!style::is_folded(&old.folded, "layers.biomes", false));
+        assert!(style::is_folded(&old.folded, "search.range", true));
     }
 }

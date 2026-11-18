@@ -34,6 +34,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "poi"
+path = "fuzz_targets/poi.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "region"
 path = "fuzz_targets/region.rs"
 test = false

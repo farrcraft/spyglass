@@ -17,6 +17,8 @@ pub struct Game {
     bundle: Bundle,
     /// Each dimension's `coordinate_scale`, if the preset has the dimension.
     scales: [Option<f64>; 3],
+    /// Each dimension's `min_y` and `height`, if the preset has the dimension.
+    builds: [Option<[i32; 2]>; 3],
     /// Each dimension's world, by [`Dimension::index`], once it's opened.
     worlds: [OnceLock<World>; 3],
     /// Held while a dimension's world loads, so threads asking at once load it once.
@@ -42,16 +44,23 @@ impl Game {
     /// in `blocked`.
     pub(crate) fn open_blocked(bundle: Bundle, blocked: [Option<String>; 3]) -> Result<Game> {
         let mut scales = [None; 3];
+        let mut builds = [None; 3];
         for dimension in Dimension::ALL {
-            scales[dimension.index()] = match dimension_type(&bundle, dimension.id()) {
-                Ok(id) => Some(DimensionType::load(&bundle, &id)?.coordinate_scale),
-                Err(Error::Unknown { .. }) => None,
+            let i = dimension.index();
+            match dimension_type(&bundle, dimension.id()) {
+                Ok(id) => {
+                    let loaded = DimensionType::load(&bundle, &id)?;
+                    scales[i] = Some(loaded.coordinate_scale);
+                    builds[i] = Some(loaded.build);
+                }
+                Err(Error::Unknown { .. }) => {}
                 Err(e) => return Err(e),
-            };
+            }
         }
         Ok(Game {
             bundle,
             scales,
+            builds,
             worlds: Default::default(),
             loading: Default::default(),
             blocked,
@@ -102,6 +111,15 @@ impl Game {
     /// `dimension`'s coordinate scale: 8 for the Nether, 1 for the others.
     pub fn coordinate_scale(&self, dimension: Dimension) -> Result<f64> {
         self.scales[dimension.index()].ok_or_else(|| Error::Unknown {
+            what: "dimension",
+            id: dimension.id().to_string(),
+        })
+    }
+
+    /// `dimension`'s build height: its lowest block's y and how many blocks high it is
+    /// (`min_y` and `height`), from its dimension type.
+    pub fn build_height(&self, dimension: Dimension) -> Result<[i32; 2]> {
+        self.builds[dimension.index()].ok_or_else(|| Error::Unknown {
             what: "dimension",
             id: dimension.id().to_string(),
         })

@@ -755,7 +755,7 @@ fn parse_gradient_coordinate(
 
 /// A noise, in either form (ADR 0026): 26.2's `{"firstOctave", "amplitudes"}` when it has
 /// `firstOctave` and no `base_octave`, else 26.3's (and 26.4's) `{"base_octave", ...}`.
-pub(crate) fn parse_noise(json: &Value, at: &At<'_>) -> LoadResult<NormalNoiseParameters> {
+pub fn parse_noise(json: &Value, at: &At<'_>) -> LoadResult<NormalNoiseParameters> {
     let obj = json
         .as_object()
         .ok_or_else(|| at.error(LoadErrorKind::Shape("a noise object")))?;

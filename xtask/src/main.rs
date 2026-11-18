@@ -27,7 +27,10 @@ mod locate;
 mod math_report;
 mod oracle;
 mod oracle_test;
+mod order;
+mod order_report;
 mod pgo;
+mod portals;
 mod profile;
 mod release;
 mod smoke;
@@ -128,6 +131,9 @@ enum Cmd {
     /// How often candidate implementations of Java's `Math` differ from the JDK's, from the
     /// files `cargo xtask oracle math` writes (docs/specs/java-math.md).
     MathReport(math_report::MathReport),
+    /// How stable the game's decoration order around the spawn is, and how many feature
+    /// answers it changes, from the files `oracle order` and `oracle replay` write.
+    OrderReport(order_report::OrderReport),
     /// Unpack a release archive outside the repo and run what's in it, as a user without Rust
     /// would; with `--extract`, also extract a game version and answer from it.
     Smoke(smoke::Smoke),
@@ -159,6 +165,7 @@ fn main() -> ExitCode {
         Cmd::LinuxCheck(args) => linux_check::run(&args),
         Cmd::Links => links::run(),
         Cmd::MathReport(args) => math_report::run(&args),
+        Cmd::OrderReport(args) => order_report::run(&args),
         Cmd::Msrv { print } => msrv(print),
         Cmd::Oracle { cmd } => oracle::run(cmd),
         Cmd::OracleTest { game_version } => oracle_test::run(game_version.as_deref()),

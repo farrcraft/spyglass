@@ -8,8 +8,8 @@ use flate2::Compression;
 use flate2::write::{GzEncoder, ZlibEncoder};
 use spyglass_data::nbt::{self, Compound, Tag};
 use spyglass_world::chunk::{self, SavedPiece, SavedStack, SavedStart, SavedStarts};
-use spyglass_world::region::{ChunkFields, ChunkRecord};
-use spyglass_world::{Layout, PackContents, Save, WorldError, region};
+use spyglass_world::region::{ChunkFields, ChunkRecord, ChunkStart};
+use spyglass_world::{Layout, PackContents, Save, SaveSource, WorldError, region};
 
 fn raw(root: &Tag) -> Vec<u8> {
     nbt::write("", root)
@@ -135,6 +135,50 @@ fn current_layout() {
     assert_eq!(save.disabled_packs, ["trade_rebalance"]);
     assert_eq!(save.spawn.as_ref().unwrap().pos, [-16.0, 61.0, 16.0]);
     assert_eq!(save.player.as_ref().unwrap().pos, [587.5, 121.0, 2339.75]);
+    let sources = &save.sources;
+    let settings = "data/minecraft/world_gen_settings.dat";
+    assert_eq!(sources.seed, source(settings, "data.seed", true));
+    assert_eq!(
+        sources.generate_structures,
+        source(settings, "data.generate_structures", true)
+    );
+    assert_eq!(
+        sources.generator("minecraft:overworld"),
+        source(
+            settings,
+            "data.dimensions.minecraft:overworld.generator",
+            true
+        )
+    );
+    assert_eq!(
+        sources.generator("minecraft:the_end"),
+        source(
+            settings,
+            "data.dimensions.minecraft:the_end.generator",
+            false
+        )
+    );
+    assert_eq!(
+        sources.data_version,
+        source("level.dat", "Data.DataVersion", true)
+    );
+    assert_eq!(
+        sources.version_name,
+        source("level.dat", "Data.Version.Name", true)
+    );
+    assert_eq!(sources.spawn, source("level.dat", "Data.spawn", true));
+    assert_eq!(
+        sources.was_modded,
+        source("level.dat", "Data.WasModded", true)
+    );
+    assert_eq!(
+        sources.player,
+        source(
+            "players/data/057a1bb7-1493-462e-b89a-e92cb3de0f42.dat",
+            "Pos",
+            true
+        )
+    );
     assert_eq!(
         save.region_dir("minecraft:the_nether").unwrap(),
         dir.path().join("dimensions/minecraft/the_nether/region")
@@ -200,6 +244,50 @@ fn legacy_layout() {
         save.region_dir("minecraft:the_end").unwrap(),
         dir.path().join("DIM1/region")
     );
+    let sources = &save.sources;
+    assert_eq!(
+        sources.seed,
+        source("level.dat", "Data.WorldGenSettings.seed", true)
+    );
+    // The name found, of the two the game reads.
+    assert_eq!(
+        sources.generate_structures,
+        source("level.dat", "Data.WorldGenSettings.generate_features", true)
+    );
+    assert_eq!(
+        sources.generator("minecraft:overworld"),
+        source(
+            "level.dat",
+            "Data.WorldGenSettings.dimensions.minecraft:overworld.generator",
+            true
+        )
+    );
+    assert_eq!(
+        sources.spawn,
+        source("level.dat", "Data.SpawnX, SpawnY, SpawnZ", true)
+    );
+    assert_eq!(sources.player, source("level.dat", "Data.Player.Pos", true));
+    assert_eq!(
+        sources.version_name,
+        source("level.dat", "Data.Version.Name", false)
+    );
+    assert_eq!(
+        sources.was_modded,
+        source("level.dat", "Data.WasModded", false)
+    );
+    let (_, border) = save
+        .world_border_with_source("minecraft:overworld")
+        .unwrap();
+    assert_eq!(border.file, "level.dat");
+    assert!(!border.present);
+}
+
+fn source(file: &str, field: &str, present: bool) -> SaveSource {
+    SaveSource {
+        file: file.into(),
+        field: field.into(),
+        present,
+    }
 }
 
 #[test]
@@ -240,6 +328,25 @@ fn before_1_16() {
     assert_eq!(
         save.region_dir("minecraft:overworld").unwrap(),
         dir.path().join("region")
+    );
+    let sources = &save.sources;
+    assert_eq!(sources.seed, source("level.dat", "Data.RandomSeed", true));
+    assert_eq!(
+        sources.generate_structures,
+        source("level.dat", "Data.MapFeatures", true)
+    );
+    assert_eq!(
+        sources.generator("minecraft:overworld"),
+        source("level.dat", "Data.generatorName, generatorOptions", true)
+    );
+    assert!(!sources.generator("minecraft:the_nether").present);
+    assert_eq!(
+        sources.data_version,
+        source("level.dat", "Data.DataVersion", false)
+    );
+    assert_eq!(
+        sources.spawn,
+        source("level.dat", "Data.SpawnX, SpawnY, SpawnZ", false)
     );
     // A data pack's dimension is under dimensions/, and an id that could lead out isn't one.
     assert_eq!(
@@ -431,6 +538,7 @@ fn region_chunk_versions() {
             data_version: Some(version),
             status: Some("full".to_string()),
             inhabited_time: None,
+            ..ChunkFields::default()
         })
     };
     assert_eq!(index.chunk([-32, 64]), Some(&full(5023)));
@@ -463,6 +571,135 @@ fn region_chunk_versions() {
             .total(),
         0
     );
+}
+
+/// Writes `r.0.0.mca` in `dir` with each chunk uncompressed at its header index.
+fn write_region(dir: &Path, chunks: &[(usize, Tag)]) {
+    let mut file = vec![0_u8; 8192];
+    for (index, tag) in chunks {
+        let data = raw(tag);
+        let sector = file.len() / 4096;
+        let mut body = ((data.len() + 1) as u32).to_be_bytes().to_vec();
+        body.push(3);
+        body.extend(data);
+        let sectors = body.len().div_ceil(4096);
+        body.resize(sectors * 4096, 0);
+        file.extend(body);
+        let entry = ((sector as u32) << 8) | sectors as u32;
+        file[index * 4..index * 4 + 4].copy_from_slice(&entry.to_be_bytes());
+    }
+    std::fs::write(dir.join("r.0.0.mca"), &file).unwrap();
+}
+
+#[test]
+fn the_scan_counts_starts_and_sealed_containers() {
+    let dir = tempfile::tempdir().unwrap();
+    let start = |id: Tag| c([("id", id), ("ChunkX", Tag::Int(0))]);
+    let block_entity = |id: &str, loot: Option<Tag>| {
+        let mut fields = Compound::from([("id".to_string(), s(id))]);
+        if let Some(loot) = loot {
+            fields.insert("LootTable".into(), loot);
+        }
+        Tag::Compound(fields)
+    };
+    let starts = c([
+        (
+            "minecraft:village_plains",
+            start(s("minecraft:village_plains")),
+        ),
+        ("minecraft:mineshaft", start(s("INVALID"))),
+        ("minecraft:igloo", c([("ChunkX", Tag::Int(0))])), // no id
+        ("minecraft:ruined_portal", start(Tag::Int(3))),   // not a string
+        ("pack:tower", start(s("pack:other"))),
+    ]);
+    write_region(
+        dir.path(),
+        &[
+            // A current chunk with starts and block entities.
+            (
+                0,
+                c([
+                    ("DataVersion", Tag::Int(5023)),
+                    ("Status", s("minecraft:full")),
+                    ("structures", c([("starts", starts)])),
+                    (
+                        "block_entities",
+                        Tag::List(vec![
+                            block_entity("minecraft:chest", Some(s("minecraft:chests/igloo"))),
+                            block_entity("minecraft:chest", None),
+                            block_entity("minecraft:barrel", Some(s("x:y"))),
+                            block_entity("minecraft:furnace", Some(Tag::Int(1))),
+                        ]),
+                    ),
+                ]),
+            ),
+            // An empty starts compound: none here.
+            (
+                1,
+                c([
+                    ("DataVersion", Tag::Int(5023)),
+                    ("Status", s("minecraft:structure_starts")),
+                    ("structures", c([("starts", c([]))])),
+                    ("block_entities", Tag::List(Vec::new())),
+                ]),
+            ),
+            // A proto chunk without a structures compound.
+            (
+                2,
+                c([
+                    ("DataVersion", Tag::Int(5023)),
+                    ("Status", s("minecraft:noise")),
+                ]),
+            ),
+            // Before 1.18: under Level, with the bare status.
+            (
+                3,
+                c([
+                    ("DataVersion", Tag::Int(2730)),
+                    (
+                        "Level",
+                        c([
+                            ("Status", s("full")),
+                            ("InhabitedTime", Tag::Long(40)),
+                            (
+                                "Structures",
+                                c([("Starts", c([("Village", start(s("Village")))]))]),
+                            ),
+                        ]),
+                    ),
+                ]),
+            ),
+        ],
+    );
+    let index = region::index(dir.path()).unwrap();
+    let fields = |x| match index.chunk([x, 0]) {
+        Some(ChunkRecord::Read(fields)) => fields.clone(),
+        other => panic!("{other:?}"),
+    };
+    let start_of = |structure: &str, id: &str| ChunkStart {
+        structure: structure.into(),
+        id: id.into(),
+    };
+    let current = fields(0);
+    assert_eq!(
+        current.starts,
+        Some(vec![
+            start_of("minecraft:village_plains", "minecraft:village_plains"),
+            start_of("pack:tower", "pack:other"),
+        ])
+    );
+    assert_eq!(
+        current.sealed_containers,
+        ["minecraft:chest", "minecraft:barrel"]
+    );
+    assert_eq!(fields(1).starts, Some(Vec::new()));
+    assert!(fields(1).sealed_containers.is_empty());
+    assert!(!fields(1).is_full());
+    assert_eq!(fields(2).starts, None);
+    let old = fields(3);
+    assert!(old.is_full());
+    assert_eq!(old.inhabited_time, Some(40));
+    assert_eq!(old.starts, Some(vec![start_of("Village", "Village")]));
 }
 
 #[test]

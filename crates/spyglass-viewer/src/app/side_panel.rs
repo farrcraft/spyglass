@@ -2,7 +2,7 @@
 //! Markers tab is `markers_panel`'s.
 
 use super::*;
-use crate::style;
+use crate::style::{self, Section, Summary};
 
 /// The side panel's tabs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -16,69 +16,184 @@ pub(super) enum Tab {
     Locate,
     /// The user's markers and done places.
     Markers,
+    /// What spyglass read from the save shown, while one is.
+    World,
 }
 
-impl App {
-    pub(super) fn side_panel(&mut self, ui: &mut egui::Ui) {
-        let hits = match &self.found {
-            Some(Ok(found)) => Some(found.hits.len()),
-            _ => None,
-        };
-        let searching = self
-            .search_run
-            .as_ref()
-            .is_some_and(|r| r.running.is_some());
-        ui.add_space(2.0);
-        ui.horizontal(|ui| {
-            let tab = |ui: &mut egui::Ui, current: &mut Tab, tab: Tab, text: String| {
-                let selected = *current == tab;
-                let text = egui::RichText::new(text).size(13.5);
+/// What a tab shows after its name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Badge {
+    /// Nothing.
+    None,
+    /// A count, shown when it isn't 0.
+    Count(usize),
+    /// Warnings, in the warning colour, shown when there are some.
+    Warnings(usize),
+    /// Something running: a spinner.
+    Busy,
+}
+
+/// How wide a tab is: its name, its badge, and the frame's margins.
+fn tab_width(ui: &egui::Ui, name: &str, badge: Badge) -> f32 {
+    let text = |text: String, size: f32| {
+        ui.fonts_mut(|f| {
+            f.layout_no_wrap(text, egui::FontId::proportional(size), style::TEXT)
+                .size()
+                .x
+        })
+    };
+    let badge = match badge {
+        Badge::Busy => 5.0 + 11.0,
+        Badge::Count(n) | Badge::Warnings(n) if n > 0 => 5.0 + 10.0 + text(n.to_string(), 11.0),
+        _ => 0.0,
+    };
+    // The margins, and a point for rounding.
+    text(name.to_string(), 13.5) + badge + 2.0 * 8.0 + 1.0
+}
+
+/// The side panel's tabs, each its name and badge, wrapping onto another line when the panel is
+/// narrower than the row. The selected one has a raised fill and the accent underline; the
+/// others are muted text. Returns each tab's rectangle.
+pub(super) fn tab_row(
+    ui: &mut egui::Ui,
+    current: &mut Tab,
+    tabs: &[(Tab, &str, Badge)],
+) -> Vec<Rect> {
+    let mut rects = Vec::new();
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(2.0, 4.0);
+        for &(tab, name, badge) in tabs {
+            let selected = *current == tab;
+            // A frame isn't measured before it's placed, so the row is wrapped here.
+            let left = ui.cursor().left();
+            if left > ui.max_rect().left()
+                && left + tab_width(ui, name, badge) > ui.max_rect().right()
+            {
+                ui.end_row();
+            }
+            let frame = egui::Frame::new()
+                .fill(if selected {
+                    style::RAISED
+                } else {
+                    Color32::TRANSPARENT
+                })
+                .corner_radius(egui::CornerRadius::same(6))
+                .inner_margin(egui::Margin::symmetric(8, 4));
+            let shown = frame.show(ui, |ui| {
+                ui.spacing_mut().item_spacing.x = 5.0;
+                let text = egui::RichText::new(name).size(13.5);
                 let text = if selected {
                     text.strong().color(style::TEXT)
                 } else {
                     text.color(style::MUTED)
                 };
-                let response = ui.add(egui::Button::new(text).frame(false));
-                if selected {
-                    let tab_rect = response.rect;
-                    ui.painter().line_segment(
-                        [
-                            tab_rect.left_bottom() + egui::vec2(0.0, 3.0),
-                            tab_rect.right_bottom() + egui::vec2(0.0, 3.0),
-                        ],
-                        egui::Stroke::new(2.0, style::ACCENT),
-                    );
+                ui.add(egui::Label::new(text).selectable(false).extend());
+                match badge {
+                    Badge::Busy => {
+                        ui.add(egui::Spinner::new().size(11.0));
+                    }
+                    Badge::Count(n) | Badge::Warnings(n) if n > 0 => {
+                        let warns = matches!(badge, Badge::Warnings(_));
+                        egui::Frame::new()
+                            .fill(if selected {
+                                style::PANEL
+                            } else {
+                                style::SURFACE
+                            })
+                            .corner_radius(egui::CornerRadius::same(8))
+                            .inner_margin(egui::Margin::symmetric(5, 0))
+                            .show(ui, |ui| {
+                                let colour = if warns { style::WARN } else { style::MUTED };
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(n.to_string()).size(11.0).color(colour),
+                                    )
+                                    .selectable(false)
+                                    .extend(),
+                                );
+                            });
+                    }
+                    _ => {}
                 }
-                if response.clicked() {
-                    *current = tab;
-                }
-            };
-            tab(ui, &mut self.tab, Tab::Layers, "Layers".to_string());
-            tab(
-                ui,
-                &mut self.tab,
-                Tab::Search,
-                if searching { "Search •" } else { "Search" }.to_string(),
-            );
-            let locate = match (self.locating.is_some(), hits) {
-                (true, _) => "Locate •".to_string(),
-                (false, Some(n)) => format!("Locate ({n})"),
-                (false, None) => "Locate".to_string(),
-            };
-            tab(ui, &mut self.tab, Tab::Locate, locate);
-            let dimension = self.world.map(|w| w.dimension_kind().id());
-            let markers = self.here().map_or(0, |h| {
-                h.live_markers()
-                    .filter(|m| Some(m.dimension.as_str()) == dimension)
-                    .count()
             });
-            let label = if markers > 0 {
-                format!("Markers ({markers})")
-            } else {
-                "Markers".to_string()
+            let rect = shown.response.rect;
+            let response = ui.interact(rect, ui.scope_id().with(("tab", name)), Sense::click());
+            if selected {
+                ui.painter().line_segment(
+                    [rect.left_bottom(), rect.right_bottom()],
+                    egui::Stroke::new(2.0, style::ACCENT),
+                );
+            } else if response.hovered() {
+                ui.painter().rect_stroke(
+                    rect,
+                    6.0,
+                    egui::Stroke::new(1.0, style::BORDER),
+                    egui::StrokeKind::Inside,
+                );
+            }
+            if response.clicked() {
+                *current = tab;
+            }
+            rects.push(rect);
+        }
+    });
+    rects
+}
+
+/// A section of the Layers tab's body.
+type LayersBody = fn(&mut App, &mut egui::Ui);
+
+impl App {
+    pub(super) fn side_panel(&mut self, ui: &mut egui::Ui) {
+        let locate = match (&self.locating, &self.found) {
+            (Some(_), _) => Badge::Busy,
+            (None, Some(Ok(found))) => Badge::Count(found.hits.len()),
+            _ => Badge::None,
+        };
+        let seeds_running = self
+            .search_run
+            .as_ref()
+            .is_some_and(|r| r.running.is_some());
+        let finding = self.find_run.as_ref().is_some_and(|r| r.running.is_some());
+        let search = if seeds_running || finding {
+            Badge::Busy
+        } else {
+            // The finds in the seed shown, or the last seed search's hits.
+            let found = match self.settings.search.mode {
+                search::Mode::ThisSeed => self
+                    .find_run
+                    .as_ref()
+                    .and_then(|r| r.outcome.as_ref()?.as_ref().ok())
+                    .map(|o| o.matches.len()),
+                search::Mode::Seeds => self
+                    .search_run
+                    .as_ref()
+                    .and_then(|r| r.outcome.as_ref()?.as_ref().ok())
+                    .map(|o| o.hits.len()),
             };
-            tab(ui, &mut self.tab, Tab::Markers, label);
+            found.map_or(Badge::None, Badge::Count)
+        };
+        let dimension = self.world.map(|w| w.dimension_kind().id());
+        let markers = self.here().map_or(0, |h| {
+            h.live_markers()
+                .filter(|m| Some(m.dimension.as_str()) == dimension)
+                .count()
         });
+        let mut tabs = vec![
+            (Tab::Layers, "Layers", Badge::None),
+            (Tab::Search, "Search", search),
+            (Tab::Locate, "Locate", locate),
+            (Tab::Markers, "Markers", Badge::Count(markers)),
+        ];
+        if let Some((_, details)) = self.world_report() {
+            let warnings = details.warnings.iter().filter(|w| !w.is_note()).count();
+            tabs.push((Tab::World, "World", Badge::Warnings(warnings)));
+        }
+        ui.add_space(2.0);
+        tab_row(ui, &mut self.tab, &tabs);
+        if self.tab == Tab::World && self.world_report().is_none() {
+            self.tab = Tab::Layers;
+        }
         ui.add_space(4.0);
         ui.separator();
         egui::ScrollArea::vertical()
@@ -90,6 +205,7 @@ impl App {
                     Tab::Search => self.search_section(ui),
                     Tab::Locate => self.locate_section(ui),
                     Tab::Markers => self.markers_tab(ui),
+                    Tab::World => self.world_tab(ui),
                 }
                 ui.add_space(8.0);
             });
@@ -136,6 +252,12 @@ impl App {
             veins: self.underground().veins,
             noise_caves: self.underground().noise_caves,
             carvers: self.underground().carvers,
+            flowers: self.settings.flowers,
+            flower: self
+                .settings
+                .flower
+                .clone()
+                .filter(|_| self.settings.flowers),
             pins: if self.settings.export_markers {
                 self.export_pins(world.dimension_kind(), &area)
             } else {
@@ -218,6 +340,8 @@ impl App {
                 veins: export.veins && export.area.scale <= MAX_UNDERGROUND_SCALE,
                 noise_caves: export.noise_caves && export.area.scale <= MAX_UNDERGROUND_SCALE,
                 carvers: export.carvers && export.area.scale <= MAX_UNDERGROUND_SCALE,
+                flowers: export.flowers,
+                flower: export.flower.clone(),
                 pins: export.pins.clone(),
             };
             let image = session
@@ -256,11 +380,22 @@ impl App {
                     }
                     go = go.or(hit_table(ui, "locate hits", &found.hits));
                 } else {
-                    style::heading(ui, "Nearest");
-                    go = go.or(hit_table(ui, "nearest hits", &found.nearest));
-                    ui.add_space(6.0);
-                    style::heading(ui, "/locate gives");
-                    go = go.or(hit_table(ui, "locate hits", &found.hits));
+                    let count = |n: usize| Summary::new(format!("{n} found"));
+                    let folded = &mut self.settings.folded;
+                    let nearest = Section::new("locate.nearest", "Nearest")
+                        .summary(count(found.nearest.len()));
+                    if style::section(ui, folded, nearest, |_| {}) {
+                        go = go.or(style::section_body(ui, |ui| {
+                            hit_table(ui, "nearest hits", &found.nearest)
+                        }));
+                    }
+                    let gives = Section::new("locate.gives", "/locate gives")
+                        .summary(count(found.hits.len()));
+                    if style::section(ui, folded, gives, |_| {}) {
+                        go = go.or(style::section_body(ui, |ui| {
+                            hit_table(ui, "locate hits", &found.hits)
+                        }));
+                    }
                 }
                 if let Some(note) = &found.note {
                     style::hint(ui, note);
@@ -296,7 +431,9 @@ impl App {
                 egui::Slider::new(&mut self.settings.view.y, min_y..=top)
                     .clamping(egui::SliderClamping::Always),
             )
-            .on_hover_text("Biomes and the underground layers are drawn at this y: a slice.");
+            .on_hover_text(
+                "Biomes, the underground layers and flowers are drawn at this y: a slice.",
+            );
         });
         ui.horizontal(|ui| {
             let centre = self.settings.view.centre.map(|c| c.floor() as i32);
@@ -328,39 +465,226 @@ impl App {
 
     /// The underground layers: ore veins, noise caves and carvers at the view's height.
     fn underground_section(&mut self, ui: &mut egui::Ui) {
-        style::heading(ui, "Underground");
-        let close = self.settings.view.scale <= MAX_UNDERGROUND_SCALE;
+        let scale = self.settings.view.scale;
         let veins_here = self.veins_allowed();
-        ui.add_enabled(
-            veins_here,
-            egui::Checkbox::new(&mut self.settings.veins, "Ore veins"),
+        zoom::checkbox(
+            ui,
+            &mut self.settings.veins,
+            "Ore veins",
+            zoom::UNDERGROUND,
+            scale,
+            (!veins_here).then_some("Only where the dimension has ore veins."),
         )
         .on_hover_text("Copper and iron veins: bright where ore is, faint where filler is.");
-        if !veins_here {
-            style::hint(ui, "Only where the dimension has ore veins.");
+        zoom::checkbox(
+            ui,
+            &mut self.settings.noise_caves,
+            "Noise caves",
+            zoom::UNDERGROUND,
+            scale,
+            None,
+        )
+        .on_hover_text("Caves in the terrain itself: air and fluid with ground above.");
+        zoom::checkbox(
+            ui,
+            &mut self.settings.carvers,
+            "Carver caves and ravines",
+            zoom::UNDERGROUND,
+            scale,
+            None,
+        )
+        .on_hover_text("What carvers cut: caves in yellow, ravines in magenta.");
+        let on = Underground {
+            veins: self.settings.veins && veins_here,
+            noise_caves: self.settings.noise_caves,
+            carvers: self.settings.carvers,
+        };
+        match zoom::UNDERGROUND.state(on.any(), scale) {
+            zoom::LayerState::Shown => style::hint(ui, "At the height above. Slow to draw."),
+            zoom::LayerState::Paused => zoom::paused_hint(ui, zoom::UNDERGROUND),
+            zoom::LayerState::Off => {}
         }
-        ui.checkbox(&mut self.settings.noise_caves, "Noise caves")
-            .on_hover_text("Caves in the terrain itself: air and fluid with ground above.");
-        ui.checkbox(&mut self.settings.carvers, "Carver caves and ravines")
-            .on_hover_text("What carvers cut: caves in yellow, ravines in magenta.");
-        if self.underground().any() {
-            if close {
-                style::hint(ui, "At the height above. Slow to draw.");
+    }
+
+    /// Flowers: what bone meal grows at each block at the view's height, the key of those in
+    /// view (click one to show only it), and the heights where the one shown covers most of
+    /// the view.
+    fn flowers_section(&mut self, ui: &mut egui::Ui) {
+        ui.checkbox(&mut self.settings.flowers, "Bone meal flowers")
+            .on_hover_text(
+                "The flower bone meal grows on grass at each block, at the height above: the \
+                 flower's own block, one above the grass.",
+            );
+        if !self.settings.flowers {
+            return;
+        }
+        style::hint(
+            ui,
+            "Opaque where the flower is certain, fainter as it's less likely; dimmed where no \
+             flower grows. Hover the map for the answer at a block.",
+        );
+        if let Some(error) = &self.flower_error {
+            ui.colored_label(style::ERROR, error);
+        }
+        let mut toggle = None;
+        ui.add_space(2.0);
+        if let Some(flower) = &self.settings.flower
+            && !self.flowers_in_view.iter().any(|f| f.flower == *flower)
+            && flower_row(ui, flower, true, "not in view").clicked()
+        {
+            toggle = Some(flower.clone());
+        }
+        let pixels = self.flowers_in_view_pixels.max(1);
+        for count in self.flowers_in_view.iter().take(KEY_ROWS) {
+            let selected = self.settings.flower.as_ref() == Some(&count.flower);
+            let note = if count.certain > 0 {
+                format!(
+                    "{} · certain {}",
+                    percent(count.possible, pixels),
+                    percent(count.certain, pixels)
+                )
             } else {
-                style::hint(ui, "Zoom to 1:4 or closer to see them.");
+                percent(count.possible, pixels)
+            };
+            if flower_row(ui, &count.flower, selected, &note)
+                .on_hover_text(
+                    "The share of the view it can grow in, and is certain in. Click to show \
+                     only it.",
+                )
+                .clicked()
+            {
+                toggle = Some(count.flower.clone());
             }
         }
+        if let Some(flower) = toggle {
+            self.settings.flower = if self.settings.flower.as_ref() == Some(&flower) {
+                None
+            } else {
+                Some(flower)
+            };
+            self.best_heights = None;
+        }
+        ui.add_space(4.0);
+        self.best_height(ui);
+    }
+
+    /// Best height: the heights where the flower shown covers most of the view, worked out in
+    /// the background over the view at a coarser scale. Clicking a height moves the view to it.
+    fn best_height(&mut self, ui: &mut egui::Ui) {
+        let Some(flower) = self.settings.flower.clone() else {
+            style::hint(
+                ui,
+                "Click a flower to show only it and find its best height.",
+            );
+            return;
+        };
+        ui.horizontal(|ui| {
+            let running = self.flower_heights.is_some();
+            if ui
+                .add_enabled(!running, egui::Button::new("Best height"))
+                .on_hover_text(
+                    "The heights where this flower covers most of the view: certain first, \
+                     then possible.",
+                )
+                .clicked()
+            {
+                self.start_best_height(ui.ctx(), flower.clone());
+            }
+            if running {
+                ui.spinner();
+            }
+        });
+        let mut go = None;
+        match &self.best_heights {
+            Some(Ok(best)) if best.flower == flower => {
+                let rows = best.best();
+                if rows.is_empty() {
+                    style::hint(ui, "It doesn't grow anywhere in view, at any height.");
+                } else {
+                    style::hint(ui, &best.over);
+                    egui::Grid::new("best heights")
+                        .num_columns(3)
+                        .striped(true)
+                        .show(ui, |ui| {
+                            for share in rows {
+                                let percent = |n: u64| percent(n, share.pixels);
+                                if ui
+                                    .selectable_label(
+                                        self.settings.view.y == share.y,
+                                        style::mono(format!("y {}", share.y)),
+                                    )
+                                    .on_hover_text("Show the map at this height")
+                                    .clicked()
+                                {
+                                    go = Some(share.y);
+                                }
+                                ui.label(format!("certain {}", percent(share.certain)));
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "possible {}",
+                                        percent(share.possible)
+                                    ))
+                                    .color(style::MUTED),
+                                );
+                                ui.end_row();
+                            }
+                        });
+                }
+            }
+            Some(Err(e)) => {
+                ui.colored_label(style::ERROR, e);
+            }
+            _ => {}
+        }
+        if let Some(y) = go {
+            self.settings.view.y = y;
+        }
+    }
+
+    /// Starts working out `flower`'s best heights over the view, every
+    /// [`BEST_HEIGHT_STEP`] blocks through the level.
+    fn start_best_height(&mut self, ctx: &egui::Context, flower: String) {
+        let (Some(shown), Some(world)) = (&self.shown, self.world) else {
+            return;
+        };
+        let Some(view) = visible_area(&self.settings.view, self.map_size) else {
+            return;
+        };
+        let area = coarser(view, BEST_HEIGHT_PIXELS);
+        let over = format!(
+            "Over the {} × {} blocks in view, every {BEST_HEIGHT_STEP} blocks of height.",
+            u64::from(view.size[0]) * u64::from(view.scale),
+            u64::from(view.size[1]) * u64::from(view.scale),
+        );
+        let [min_y, height] = world.level();
+        let range = [min_y, min_y + height - 1];
+        let session = shown.session.clone();
+        self.best_heights = None;
+        self.flower_heights = Some(Pending::spawn(ctx, move || {
+            let shares = session
+                .flower_heights(&area, &flower, range, BEST_HEIGHT_STEP)
+                .map_err(|e| e.to_string())?;
+            Ok(BestHeights {
+                flower,
+                over,
+                shares,
+            })
+        }));
     }
 
     /// Features to mark: dungeons, geodes, wells, fossils and lava lakes, up close.
     fn features_section(&mut self, ui: &mut egui::Ui) {
-        style::heading(ui, "Features");
         let mut changed = false;
+        let scale = self.settings.view.scale;
         for (name, placed) in icons::FEATURE_KINDS {
             let mut on = placed
                 .iter()
                 .all(|p| self.settings.features.iter().any(|f| f == p));
-            if ui.checkbox(&mut on, *name).changed() {
+            let mut response = zoom::checkbox(ui, &mut on, name, zoom::FEATURES, scale, None);
+            if let Some(note) = zoom::found_note(zoom::FEATURES, scale) {
+                response = response.on_disabled_hover_text(note);
+            }
+            if response.changed() {
                 self.settings
                     .features
                     .retain(|f| !placed.contains(&f.as_str()));
@@ -375,86 +699,278 @@ impl App {
         if changed {
             self.select();
         }
-        if !self.settings.features.is_empty() {
-            if self.settings.view.scale <= spyglass::MAX_FEATURE_SCALE {
-                style::hint(
-                    ui,
-                    "Certain ones filled, likely ones outlined. Slow to draw: each chunk is placed.",
-                );
-            } else {
-                style::hint(ui, "Zoom to 1:2 or closer to see them.");
+        match zoom::FEATURES.state(!self.settings.features.is_empty(), scale) {
+            zoom::LayerState::Shown => style::hint(
+                ui,
+                "Certain ones filled, likely ones outlined. Slow to draw: each chunk is placed.",
+            ),
+            zoom::LayerState::Paused => {
+                zoom::paused_hint(ui, zoom::FEATURES);
+                if let Some(note) = zoom::found_note(zoom::FEATURES, scale) {
+                    style::hint(ui, note);
+                }
             }
+            zoom::LayerState::Off => {}
         }
     }
 
     /// Loot containers, up close: every one, and rings around those holding an item.
     fn loot_section(&mut self, ui: &mut egui::Ui) {
-        style::heading(ui, "Loot");
-        let mut changed = ui
-            .checkbox(&mut self.settings.containers, "Containers")
-            .on_hover_text(
-                "Every chest, barrel and other loot container structures and dungeons place.",
-            )
-            .changed();
-        ui.horizontal(|ui| {
-            ui.label("Ring those holding");
-            let edit = ui.add(
-                egui::TextEdit::singleline(&mut self.settings.loot)
-                    .hint_text("minecraft:diamond")
-                    .desired_width(150.0),
-            );
-            if edit.lost_focus() || (edit.changed() && self.settings.loot.is_empty()) {
-                changed = true;
-            }
-        });
+        let scale = self.settings.view.scale;
+        let mut containers = zoom::checkbox(
+            ui,
+            &mut self.settings.containers,
+            "Containers",
+            zoom::LOOT,
+            scale,
+            None,
+        )
+        .on_hover_text(
+            "Every chest, barrel and other loot container structures and dungeons place.",
+        );
+        if let Some(note) = zoom::found_note(zoom::LOOT, scale) {
+            containers = containers.on_disabled_hover_text(note);
+        }
+        let mut changed = containers.changed();
+        let near = zoom::LOOT.shows(scale);
+        ui.add_enabled_ui(near, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Ring those holding");
+                let edit = ui.add(
+                    style::text_box(&mut self.settings.loot)
+                        .hint_text("minecraft:diamond")
+                        .desired_width(150.0),
+                );
+                if edit.lost_focus() || (edit.changed() && self.settings.loot.is_empty()) {
+                    changed = true;
+                }
+            });
+        })
+        .response
+        .on_disabled_hover_text(format!("{} to see them.", zoom::LOOT.hint()));
         if changed {
             self.select();
         }
         if let Some(error) = &self.selection.loot_error {
             ui.colored_label(style::ERROR, error);
         }
-        if self.settings.containers || self.selection.loot.is_some() {
-            if self.settings.view.scale <= spyglass::MAX_FEATURE_SCALE {
-                style::hint(
-                    ui,
-                    "Gold rings: a full one where it certainly holds the item, a thin one where it \
-                     might. Click a container for its contents. Slow to draw: each chunk is placed.",
-                );
-            } else {
-                style::hint(ui, "Zoom to 1:2 or closer to see them.");
+        let on = self.settings.containers || self.selection.loot.is_some();
+        match zoom::LOOT.state(on, scale) {
+            zoom::LayerState::Shown => style::hint(
+                ui,
+                "Gold rings: a full one where it certainly holds the item, a thin one where it \
+                 might. Click a container for its contents. Slow to draw: each chunk is placed.",
+            ),
+            zoom::LayerState::Paused => {
+                zoom::paused_hint(ui, zoom::LOOT);
+                if let Some(note) = zoom::found_note(zoom::LOOT, scale) {
+                    style::hint(ui, note);
+                }
             }
+            zoom::LayerState::Off => {}
         }
     }
 
     /// What's drawn on the map: biomes, overlays, structures, and whether to confirm with
     /// terrain.
     pub(super) fn layers_tab(&mut self, ui: &mut egui::Ui) {
-        self.biomes_section(ui);
+        let sections: [(&str, &str, LayersBody, Summary); 6] = [
+            (
+                "layers.biomes",
+                "Biomes",
+                Self::biomes_section,
+                self.biomes_summary(),
+            ),
+            (
+                "layers.overlays",
+                "Overlays",
+                Self::overlays_section,
+                self.overlays_summary(),
+            ),
+            (
+                "layers.underground",
+                "Underground",
+                Self::underground_section,
+                self.underground_summary(),
+            ),
+            (
+                "layers.flowers",
+                "Flowers",
+                Self::flowers_section,
+                self.flowers_summary(),
+            ),
+            (
+                "layers.features",
+                "Features",
+                Self::features_section,
+                self.features_summary(),
+            ),
+            (
+                "layers.loot",
+                "Loot",
+                Self::loot_section,
+                self.loot_summary(),
+            ),
+        ];
+        for (id, title, body, summary) in sections {
+            if self.section(ui, Section::new(id, title).summary(summary)) {
+                style::section_body(ui, |ui| body(self, ui));
+            }
+        }
 
-        ui.add_space(6.0);
-        self.overlays_section(ui);
+        let mut clear = false;
+        let chosen = !self.settings.structures.is_empty();
+        let structures =
+            Section::new("layers.structures", "Structures").summary(self.structures_summary());
+        let open = style::section(ui, &mut self.settings.folded, structures, |ui| {
+            clear = chosen && ui.small_button("Clear").clicked();
+        });
+        if clear {
+            self.settings.structures.clear();
+            self.select();
+        }
+        if open {
+            style::section_body(ui, |ui| self.structure_list(ui));
+        }
 
-        ui.add_space(6.0);
-        self.underground_section(ui);
+        let confirm = Section::new("layers.confirm", "Confirm with terrain").summary(Summary::new(
+            if self.settings.confirm { "on" } else { "off" },
+        ));
+        if self.section(ui, confirm) {
+            style::section_body(ui, |ui| self.confirm_section(ui));
+        }
+    }
 
-        ui.add_space(6.0);
-        self.features_section(ui);
+    /// A section of the side panel, folded as the settings keep it: whether it's open.
+    pub(super) fn section(&mut self, ui: &mut egui::Ui, section: Section<'_>) -> bool {
+        style::section(ui, &mut self.settings.folded, section, |_| {})
+    }
 
-        ui.add_space(6.0);
-        self.loot_section(ui);
-
-        ui.add_space(6.0);
-        self.structure_list(ui);
-
-        ui.add_space(6.0);
-        ui.separator();
-        ui.checkbox(&mut self.settings.confirm, "Confirm with terrain");
+    /// The Confirm with terrain section: whether to, and whether the bounds it draws are
+    /// paused.
+    fn confirm_section(&mut self, ui: &mut egui::Ui) {
+        ui.checkbox(
+            &mut self.settings.confirm,
+            "Confirm structures with terrain",
+        );
         style::hint(
             ui,
-            "Decides structure starts and locates with the seed's terrain, as the game does. Off, \
-             most surface structures are candidates. Jigsaw and mineshaft bounds are drawn when \
-             confirmed, at 1:4 or closer.",
+            &format!(
+                "Decides structure starts and locates with the seed's terrain, as the game does. \
+                 Off, most surface structures are candidates. Jigsaw and mineshaft bounds are \
+                 drawn when confirmed, at 1:{} or closer.",
+                zoom::BOUNDS.0
+            ),
         );
+        let bounds = self.settings.confirm && !self.settings.structures.is_empty();
+        if zoom::BOUNDS.state(bounds, self.settings.view.scale) == zoom::LayerState::Paused {
+            style::hint(
+                ui,
+                &format!("Bounds paused: {}.", zoom::BOUNDS.hint().to_lowercase()),
+            );
+        }
+    }
+
+    /// What the folded Biomes section says: the height or the surface, and how many biomes are
+    /// highlighted.
+    fn biomes_summary(&self) -> Summary {
+        let mut parts = vec![if self.settings.surface && self.terrain_allowed() {
+            "at the surface".to_string()
+        } else {
+            format!("y {}", self.settings.view.y)
+        }];
+        if !self.settings.highlight.is_empty() {
+            parts.push(format!("{} highlighted", self.settings.highlight.len()));
+        }
+        Summary::new(parts.join(" · "))
+    }
+
+    /// What the folded Overlays section says: how many are on, and whether slime or generated
+    /// chunks are paused.
+    fn overlays_summary(&self) -> Summary {
+        let scale = self.settings.view.scale;
+        let slime = self.settings.slime_chunks && self.slime_allowed();
+        let generated = self.settings.generated && self.generated_allowed();
+        let on = [
+            self.settings.spawn && self.spawn_allowed(),
+            slime,
+            generated,
+            self.settings.show_done,
+            self.settings.relief && self.terrain_allowed(),
+        ];
+        let paused = [
+            slime && !zoom::SLIME_CHUNKS.shows(scale),
+            generated && !zoom::GENERATED.shows(scale),
+        ];
+        let count = |flags: &[bool]| flags.iter().filter(|&&f| f).count();
+        Summary::new(zoom::summary(
+            count(&on),
+            count(&paused),
+            zoom::SLIME_CHUNKS,
+        ))
+    }
+
+    /// What the folded Underground section says.
+    fn underground_summary(&self) -> Summary {
+        let on = self.underground_on();
+        Summary::new(layers_summary(
+            on,
+            zoom::UNDERGROUND,
+            self.settings.view.scale,
+        ))
+    }
+
+    /// How many underground layers are on, where they can be drawn.
+    fn underground_on(&self) -> usize {
+        [
+            self.settings.veins && self.veins_allowed(),
+            self.settings.noise_caves,
+            self.settings.carvers,
+        ]
+        .iter()
+        .filter(|&&on| on)
+        .count()
+    }
+
+    /// What the folded Flowers section says.
+    fn flowers_summary(&self) -> Summary {
+        Summary::new(match (&self.settings.flowers, &self.settings.flower) {
+            (false, _) => "off".to_string(),
+            (true, Some(flower)) => spyglass::display_name(flower),
+            (true, None) => "on".to_string(),
+        })
+    }
+
+    /// What the folded Features section says: how many kinds are on, and whether they're
+    /// paused.
+    fn features_summary(&self) -> Summary {
+        let on = icons::FEATURE_KINDS
+            .iter()
+            .filter(|(_, placed)| {
+                placed
+                    .iter()
+                    .all(|p| self.settings.features.iter().any(|f| f == p))
+            })
+            .count();
+        Summary::new(layers_summary(on, zoom::FEATURES, self.settings.view.scale))
+    }
+
+    /// What the folded Loot section says: whether containers are marked and an item ringed.
+    fn loot_summary(&self) -> Summary {
+        let on = usize::from(self.settings.containers)
+            + usize::from(!self.settings.loot.trim().is_empty());
+        Summary::new(layers_summary(on, zoom::LOOT, self.settings.view.scale))
+    }
+
+    /// What the folded Structures section says: how many are chosen, and how many starts are
+    /// in view.
+    fn structures_summary(&self) -> Summary {
+        let chosen = self.settings.structures.len();
+        if chosen == 0 {
+            return Summary::new("none chosen");
+        }
+        let in_view: usize = self.in_view.values().sum();
+        Summary::new(format!("{chosen} chosen, {in_view} in view"))
     }
 
     /// The Biomes section: the height, biomes at the surface, the End's void, tied cells and
@@ -462,9 +978,9 @@ impl App {
     fn biomes_section(&mut self, ui: &mut egui::Ui) {
         let terrain = self.terrain_allowed();
         let ceiling = "Not under a ceiling: the surface there is the ceiling.";
-        style::heading(ui, "Biomes");
-        // The height is the underground layers' too, so it stays usable for them.
-        let deep = self.underground().any();
+        // The height is the underground layers' and the flowers' too, so it stays usable for
+        // them.
+        let deep = self.underground().any() || self.settings.flowers;
         ui.add_enabled_ui(!(self.settings.surface && terrain) || deep, |ui| {
             self.height_row(ui);
         });
@@ -503,7 +1019,6 @@ impl App {
     fn overlays_section(&mut self, ui: &mut egui::Ui) {
         let terrain = self.terrain_allowed();
         let ceiling = "Not under a ceiling: the surface there is the ceiling.";
-        style::heading(ui, "Overlays");
         let overworld_only = "Only in the Overworld.";
         let spawn_here = self.spawn_allowed();
         ui.add_enabled(
@@ -514,40 +1029,63 @@ impl App {
         if !spawn_here {
             style::hint(ui, overworld_only);
         }
+        let scale = self.settings.view.scale;
         let slime_here = self.slime_allowed();
-        let slime_visible = self.settings.view.scale <= spyglass::MAX_SLIME_SCALE;
-        ui.add_enabled(
-            slime_here && slime_visible,
-            egui::Checkbox::new(&mut self.settings.slime_chunks, "Slime chunks"),
+        zoom::checkbox(
+            ui,
+            &mut self.settings.slime_chunks,
+            "Slime chunks",
+            zoom::SLIME_CHUNKS,
+            scale,
+            (!slime_here).then_some(overworld_only),
         );
-        if !slime_here {
-            style::hint(ui, overworld_only);
-        } else if !slime_visible {
-            style::hint(ui, "Zoom to 1:16 or closer to see them.");
-        }
         let generated_here = self.generated_allowed();
-        ui.add_enabled(
-            generated_here && slime_visible,
-            egui::Checkbox::new(&mut self.settings.generated, "Generated chunks"),
+        let open_a_world = "Open a world to see its chunks.";
+        zoom::checkbox(
+            ui,
+            &mut self.settings.generated,
+            "Generated chunks",
+            zoom::GENERATED,
+            scale,
+            (!generated_here).then_some(open_a_world),
         )
         .on_hover_text(
             "The chunks your world has generated: magenta, fainter where generated partway, \
              amber where an older version generated them.",
         );
         ui.indent("inhabited", |ui| {
-            ui.add_enabled(
-                generated_here && slime_visible && self.settings.generated,
-                egui::Checkbox::new(&mut self.settings.inhabited, "By time played"),
+            let unavailable = if !generated_here {
+                Some(open_a_world)
+            } else if !self.settings.generated {
+                Some("Shades the generated chunks: turn them on.")
+            } else {
+                None
+            };
+            zoom::checkbox(
+                ui,
+                &mut self.settings.inhabited,
+                "By time played",
+                zoom::GENERATED,
+                scale,
+                unavailable,
             )
             .on_hover_text(
                 "Shade each chunk by the time players spent near it: faint where they passed \
                  through, strong where they lived.",
             );
         });
+        if !slime_here {
+            style::hint(ui, overworld_only);
+        }
         if !generated_here {
-            style::hint(ui, "Open a world to see its chunks.");
-        } else if !slime_visible {
-            style::hint(ui, "Zoom to 1:16 or closer to see them.");
+            style::hint(ui, open_a_world);
+        }
+        let paused = zoom::SLIME_CHUNKS.state(self.settings.slime_chunks && slime_here, scale)
+            == zoom::LayerState::Paused
+            || zoom::GENERATED.state(self.settings.generated && generated_here, scale)
+                == zoom::LayerState::Paused;
+        if paused {
+            zoom::paused_hint(ui, zoom::SLIME_CHUNKS);
         }
         ui.checkbox(&mut self.settings.show_done, "Done things")
             .on_hover_text("Structures, pins and markers you've marked done, dimmed.");
@@ -601,7 +1139,7 @@ impl App {
             biomes.sort_unstable();
             ui.menu_button("+ Highlight a biome", |ui| {
                 ui.add(
-                    egui::TextEdit::singleline(&mut self.biome_filter)
+                    style::text_box(&mut self.biome_filter)
                         .hint_text("Filter biomes")
                         .desired_width(200.0),
                 )
@@ -616,7 +1154,7 @@ impl App {
                                 continue;
                             }
                             let mut on = self.settings.highlight.iter().any(|h| h == id);
-                            if ui.checkbox(&mut on, name).changed() {
+                            if style::menu_checkbox(ui, &mut on, name).changed() {
                                 if on {
                                     self.settings.highlight.push(id.to_string());
                                     self.settings.highlight.sort();
@@ -639,20 +1177,11 @@ impl App {
         let Some(world) = self.world else {
             return;
         };
-        ui.horizontal(|ui| {
-            style::heading(ui, "Structures");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if !self.settings.structures.is_empty() && ui.small_button("Clear").clicked() {
-                    self.settings.structures.clear();
-                    self.select();
-                }
-            });
-        });
         if !self.structures_generate() {
             style::hint(ui, "Structures don't generate in this save.");
         }
         ui.add(
-            egui::TextEdit::singleline(&mut self.structure_filter)
+            style::text_box(&mut self.structure_filter)
                 .hint_text("Filter structures")
                 .desired_width(f32::INFINITY),
         );
@@ -818,6 +1347,12 @@ struct FamilyRow {
     toggle_open: bool,
 }
 
+/// What a folded section of layers that share `limit` says, `on` of them on at `scale`.
+fn layers_summary(on: usize, limit: zoom::Limit, scale: u32) -> String {
+    let paused = if limit.shows(scale) { 0 } else { on };
+    zoom::summary(on, paused, limit)
+}
+
 /// A locate answer's hits as a table: where, how far, and whether certain. Returns the block
 /// of the hit clicked, to go to.
 fn hit_table(ui: &mut egui::Ui, id: &str, hits: &[locate::Hit]) -> Option<[i32; 2]> {
@@ -853,4 +1388,171 @@ fn hit_table(ui: &mut egui::Ui, id: &str, hits: &[locate::Hit]) -> Option<[i32; 
             }
         });
     go
+}
+
+/// The most flowers the key lists.
+const KEY_ROWS: usize = 12;
+/// The most pixels a side Best height samples the view at: it coarsens the scale until the
+/// view fits.
+const BEST_HEIGHT_PIXELS: u32 = 128;
+/// Blocks between the heights Best height tries.
+const BEST_HEIGHT_STEP: u32 = 2;
+/// The heights Best height lists.
+const BEST_HEIGHT_ROWS: usize = 6;
+
+/// Best height's answer for a flower.
+pub(super) struct BestHeights {
+    /// The flower, by block id.
+    pub flower: String,
+    /// What it was worked out over, for the panel.
+    pub over: String,
+    /// Each height's share, lowest first.
+    pub shares: Vec<spyglass::FlowerShare>,
+}
+
+impl BestHeights {
+    /// The heights to list: where the flower is certain in the most pixels, then where it can
+    /// grow in the most, then the lowest; only heights where it can grow.
+    pub fn best(&self) -> Vec<spyglass::FlowerShare> {
+        let mut best: Vec<spyglass::FlowerShare> = self
+            .shares
+            .iter()
+            .copied()
+            .filter(|s| s.possible > 0)
+            .collect();
+        best.sort_by_key(|s| (std::cmp::Reverse((s.certain, s.possible)), s.y));
+        best.truncate(BEST_HEIGHT_ROWS);
+        best
+    }
+}
+
+/// `area` at a coarser scale, covering the same blocks, until neither side is over `pixels`
+/// (or the scale is [`spyglass::MAX_SCALE`]). Its corner moves back to a multiple of the new
+/// scale, as a map area's must.
+fn coarser(area: spyglass::MapArea, pixels: u32) -> spyglass::MapArea {
+    let mut out = area;
+    while (out.size[0] > pixels || out.size[1] > pixels) && out.scale < spyglass::MAX_SCALE {
+        let scale = out.scale * 2;
+        let step = i64::from(scale);
+        for d in 0..2 {
+            let min = i64::from(area.min[d]);
+            let end = min + i64::from(area.size[d]) * i64::from(area.scale);
+            let start = min.div_euclid(step) * step;
+            out.min[d] = i32::try_from(start).expect("within the area's blocks");
+            out.size[d] = u32::try_from((end - start + step - 1) / step).expect("fewer pixels");
+        }
+        out.scale = scale;
+    }
+    out
+}
+
+/// `part` of `whole` as a percentage, with a decimal below 10% so a small field doesn't read
+/// as none: `0%` only for none, `<0.1%` for a sliver.
+fn percent(part: u64, whole: u64) -> String {
+    if part == 0 {
+        return "0%".to_string();
+    }
+    let share = 100.0 * part as f64 / whole.max(1) as f64;
+    if share < 0.1 {
+        "<0.1%".to_string()
+    } else if share < 10.0 {
+        format!("{share:.1}%")
+    } else {
+        format!("{share:.0}%")
+    }
+}
+
+/// A row of the flower key: its swatch, its name and `note`, selected if it's the flower shown.
+fn flower_row(ui: &mut egui::Ui, flower: &str, selected: bool, note: &str) -> egui::Response {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        let [r, g, b] = spyglass::flower_colour(flower);
+        let (swatch, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), Sense::hover());
+        ui.painter()
+            .rect_filled(swatch, 2.0, Color32::from_rgb(r, g, b));
+        let response = ui.selectable_label(selected, spyglass::display_name(flower));
+        ui.label(egui::RichText::new(note).color(style::MUTED));
+        response
+    })
+    .inner
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// At the panel's narrowest, with the widest badges, every tab is whole, on one line or
+    /// two.
+    #[test]
+    fn no_tab_is_cut_off_at_the_panel_s_narrowest() {
+        let ctx = egui::Context::default();
+        style::apply(&ctx);
+        let tabs = [
+            (Tab::Layers, "Layers", Badge::None),
+            (Tab::Search, "Search", Badge::Busy),
+            (Tab::Locate, "Locate", Badge::Count(1000)),
+            (Tab::Markers, "Markers", Badge::Count(999)),
+            (Tab::World, "World", Badge::Warnings(12)),
+        ];
+        // The panel at its narrowest, inside its margin.
+        let width = 260.0 - 2.0 * 14.0;
+        let mut checked = false;
+        for _ in 0..2 {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                ui.allocate_ui(egui::vec2(width, 200.0), |ui| {
+                    ui.set_max_width(width);
+                    let left = ui.max_rect().left();
+                    let mut current = Tab::Search;
+                    let rects = tab_row(ui, &mut current, &tabs);
+                    assert_eq!(rects.len(), tabs.len());
+                    for (rect, (_, name, _)) in rects.iter().zip(&tabs) {
+                        assert!(
+                            rect.left() >= left - 0.5 && rect.right() <= left + width + 0.5,
+                            "{name}: {rect:?} in {width}"
+                        );
+                    }
+                    checked = true;
+                });
+            });
+            output.textures_delta.clear();
+        }
+        assert!(checked);
+    }
+
+    #[test]
+    fn a_folded_layers_section_says_what_s_on_paused_or_off() {
+        // Underground: drawn to 1:4.
+        assert_eq!(layers_summary(0, zoom::UNDERGROUND, 1), "off");
+        assert_eq!(layers_summary(2, zoom::UNDERGROUND, 4), "2 on");
+        assert_eq!(layers_summary(2, zoom::UNDERGROUND, 8), "on, paused");
+        assert_eq!(layers_summary(0, zoom::UNDERGROUND, 8), "off");
+        // Features: drawn to 1:2.
+        assert_eq!(layers_summary(1, zoom::FEATURES, 2), "1 on");
+        assert_eq!(layers_summary(1, zoom::FEATURES, 4), "on, paused");
+    }
+
+    #[test]
+    fn small_shares_keep_a_decimal() {
+        assert_eq!(percent(0, 100), "0%");
+        assert_eq!(percent(1, 10_000), "<0.1%");
+        assert_eq!(percent(25, 1_000), "2.5%");
+        assert_eq!(percent(1, 3), "33%");
+        assert_eq!(percent(5, 5), "100%");
+    }
+
+    #[test]
+    fn best_height_samples_the_same_blocks_coarser() {
+        let view = spyglass::MapArea::centred_on([100, -40], [1000, 300], 2, 64).unwrap();
+        let area = coarser(view, BEST_HEIGHT_PIXELS);
+        assert_eq!(area.scale, 16);
+        assert!(area.size[0] <= BEST_HEIGHT_PIXELS && area.size[1] <= BEST_HEIGHT_PIXELS);
+        area.check().unwrap();
+        // It covers every block the view does.
+        let end = |a: &spyglass::MapArea, d: usize| {
+            i64::from(a.min[d]) + i64::from(a.size[d]) * i64::from(a.scale)
+        };
+        for d in 0..2 {
+            assert!(area.min[d] <= view.min[d] && end(&area, d) >= end(&view, d));
+        }
+    }
 }

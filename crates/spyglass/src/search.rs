@@ -17,8 +17,7 @@ use evaluate::Sessions;
 pub use evaluate::{ConstraintResult, Evaluation, Feature, Outcome};
 pub use find::{FindMatch, FindOptions, FindOutcome, FindProgress, MAX_FIND_TARGETS};
 pub use spyglass_search::{
-    Hit as RankedSeed, Progress as SearchProgress, SeedSource, Stop as SearchStop,
-    Throttle as SearchThrottle,
+    Hit as RankedSeed, Progress as SearchProgress, SeedSource, Stop, Throttle as SearchThrottle,
 };
 
 use crate::{
@@ -362,6 +361,7 @@ fn resolve(scope: Scope<'_>, text: &str) -> Result<SearchQuery> {
             Kind::Slime { .. } => Subject::Overworld("slime chunks are"),
             Kind::Spawn { .. } => Subject::Overworld("the spawn is"),
             Kind::Height { .. } | Kind::Flat { .. } => Subject::Terrain,
+            Kind::FlowerField { .. } => Subject::Overworld("flower fields are"),
         };
         let inferred = scope.infer(subject).map_err(at_line)?;
         let dimension = constraint.dimension.unwrap_or(inferred);
@@ -460,7 +460,8 @@ fn resolve(scope: Scope<'_>, text: &str) -> Result<SearchQuery> {
             | Kind::Coverage { place, .. }
             | Kind::Spawn { place }
             | Kind::Height { place, .. }
-            | Kind::Flat { place, .. } => {
+            | Kind::Flat { place, .. }
+            | Kind::FlowerField { place, .. } => {
                 spawn_in(place, dimension)?;
                 here_in(place, dimension)?;
                 None
@@ -484,6 +485,10 @@ fn resolve(scope: Scope<'_>, text: &str) -> Result<SearchQuery> {
             ),
             Kind::Loot { item, .. } => Some(Target::Loot(item_query(here, item).map_err(at_line)?)),
             Kind::Slime { .. } | Kind::Spawn { .. } | Kind::Height { .. } | Kind::Flat { .. } => {
+                None
+            }
+            Kind::FlowerField { flower, .. } => {
+                here.check_flower(flower).map_err(at_line)?;
                 None
             }
         };
@@ -632,6 +637,23 @@ fn cost(scope: Scope<'_>, kind: &Kind, resolved: &Resolved) -> Result<(u8, u64)>
         Kind::Height { place, step, .. } | Kind::Flat { place, step, .. } => {
             (5, place.grid_bound(*step))
         }
+        // A biome lookup and a flower's noise per sample, at each height.
+        Kind::FlowerField {
+            place,
+            step,
+            heights: [low, high],
+            ..
+        } => {
+            let levels = (i64::from(*high) - i64::from(*low))
+                / i64::from(spyglass_search::FLOWER_Y_STEP)
+                + 2;
+            (
+                3,
+                place
+                    .grid_bound(*step)
+                    .saturating_mul(levels.unsigned_abs()),
+            )
+        }
         _ if target_on_rings || anchor_on_rings => (4, 0),
         Kind::Biome {
             place, sampling, ..
@@ -666,9 +688,9 @@ pub struct SearchOptions {
     /// Decide structure starts with each seed's terrain, as the game does. Slower: terrain is
     /// checked last, for the seeds that pass everything else.
     pub confirm: bool,
-    /// Stops the search from another thread, before its next seed. [`SearchStop::stop`] still
-    /// evaluates the best seeds found; [`SearchStop::stop_now`] cuts that short too.
-    pub stop: SearchStop,
+    /// Stops the search from another thread, before its next seed. [`Stop::stop`] still
+    /// evaluates the best seeds found; [`Stop::stop_now`] cuts that short too.
+    pub stop: Stop,
     /// Limits how many of its threads work at once, from another thread while it runs, to lend
     /// its cores to other work: [`SearchThrottle::set`]. The seeds found don't depend on it.
     pub throttle: SearchThrottle,
@@ -686,7 +708,7 @@ impl Default for SearchOptions {
             threads: None,
             certain: false,
             confirm: false,
-            stop: SearchStop::new(),
+            stop: Stop::new(),
             throttle: SearchThrottle::new(),
         }
     }
@@ -714,7 +736,7 @@ pub struct SearchOutcome {
     pub progress: SearchProgress,
     /// The ranked seeds, best first, with their evaluations.
     pub hits: Vec<SearchHit>,
-    /// Whether [`SearchStop::stop_now`] cut evaluating the ranked seeds short: then `hits` has
+    /// Whether [`Stop::stop_now`] cut evaluating the ranked seeds short: then `hits` has
     /// only the best of `progress.top`, in rank order.
     pub partial: bool,
 }

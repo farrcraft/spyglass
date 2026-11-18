@@ -7,8 +7,8 @@ use std::path::Path;
 use anyhow::Result;
 use serde::Serialize;
 use spyglass::{
-    Dimension, SaveLocation, SaveReport, SaveWarning, SpawnOrigin, StructureLayout,
-    UncheckedVersion,
+    Dimension, SaveDetails, SaveHoldings, SaveLocation, SaveReport, SaveSubject, SaveWarning,
+    SpawnOrigin, StructureLayout, UncheckedVersion,
 };
 
 /// The `--json` format version.
@@ -71,13 +71,38 @@ pub struct Warning {
     /// For a warning about one dimension.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dimension: Option<&'static str>,
+    /// For a save's warning, the item of `world info`'s report it's about.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub about: Option<About>,
 }
 
-pub fn warnings(report: &SaveReport) -> Vec<Warning> {
-    report
-        .warnings
-        .iter()
-        .map(|w| Warning {
+/// What a save's warning is about (`SaveWarning::subject`).
+#[derive(Serialize)]
+pub struct About {
+    /// `setting`, `pack`, `dimension` or `holdings`.
+    pub kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub setting: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dimension: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pack: Option<String>,
+}
+
+impl About {
+    fn new(subject: &SaveSubject) -> Self {
+        About {
+            kind: subject.kind(),
+            setting: subject.setting().map(spyglass::Setting::kind),
+            dimension: subject.dimension().map(Dimension::id),
+            pack: subject.pack().map(str::to_string),
+        }
+    }
+}
+
+impl Warning {
+    pub fn new(w: &SaveWarning) -> Self {
+        Warning {
             kind: w.kind(),
             message: w.to_string(),
             concern: match w {
@@ -85,8 +110,13 @@ pub fn warnings(report: &SaveReport) -> Vec<Warning> {
                 _ => None,
             },
             dimension: w.dimension().map(Dimension::id),
-        })
-        .collect()
+            about: Some(About::new(&w.subject())),
+        }
+    }
+}
+
+pub fn warnings(report: &SaveReport) -> Vec<Warning> {
+    report.warnings.iter().map(Warning::new).collect()
 }
 
 /// The save's warnings with `--world`, and the bundle's if its version wasn't checked. `None`
@@ -102,6 +132,7 @@ pub fn all_warnings(
             message: unchecked.to_string(),
             concern: None,
             dimension: None,
+            about: None,
         });
     }
     all
@@ -380,6 +411,8 @@ pub struct RenderLayers<'a> {
     pub veins: bool,
     pub noise_caves: bool,
     pub carvers: bool,
+    pub flowers: bool,
+    pub flower: Option<&'a str>,
 }
 
 /// A structure marker on a map.
@@ -426,6 +459,7 @@ pub struct Save<'a> {
     pub seed: i64,
     pub generate_structures: bool,
     pub data_packs: &'a [String],
+    /// Deprecated: `world info`'s `packs` has each pack, applied or not.
     pub applied_packs: Vec<AppliedPack<'a>>,
     pub spawn: Option<Location<'a>>,
     pub player: Option<Location<'a>>,
@@ -488,16 +522,182 @@ impl<'a> Save<'a> {
     }
 }
 
-/// `world info`.
+/// `world info`: the save's summary, and the report of what spyglass read from it
+/// (`SaveReport::details`).
 #[derive(Serialize)]
 pub struct WorldInfo<'a> {
     pub format: u32,
     pub command: &'static str,
     #[serde(flatten)]
     pub save: Save<'a>,
-    /// Dimensions the save's packs can't be applied in, and why.
+    /// Dimensions the save's packs can't be applied in, and why: the `pack_error` warnings.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub pack_errors: Vec<PackError>,
+    pub settings: Vec<Setting<'a>>,
+    pub packs: Vec<SavePack<'a>>,
+    pub dimensions: Vec<SaveDimension<'a>>,
+}
+
+impl<'a> WorldInfo<'a> {
+    pub fn new(report: &'a SaveReport, details: &'a SaveDetails) -> Self {
+        let mut save = Save::new(report);
+        save.warnings = details.warnings.iter().map(Warning::new).collect();
+        WorldInfo {
+            format: FORMAT,
+            command: "world info",
+            save,
+            pack_errors: details
+                .warnings
+                .iter()
+                .filter_map(|w| match w {
+                    SaveWarning::PackError {
+                        dimension, message, ..
+                    } => Some(PackError {
+                        dimension: dimension.id(),
+                        message: message.clone(),
+                    }),
+                    _ => None,
+                })
+                .collect(),
+            settings: details
+                .settings
+                .iter()
+                .map(|s| Setting {
+                    setting: s.setting.kind(),
+                    dimension: s.setting.dimension().map(Dimension::id),
+                    value: &s.value,
+                    file: &s.source.file,
+                    field: &s.source.field,
+                    present: s.source.present,
+                    decides: s.decides(),
+                })
+                .collect(),
+            packs: details
+                .packs
+                .iter()
+                .map(|p| {
+                    let applied = report.packs.iter().find(|a| a.name() == p.name);
+                    SavePack {
+                        name: &p.name,
+                        used: p.used.kind(),
+                        hash: applied.map(spyglass::Pack::hash),
+                        answers: p.answers.iter().map(|a| a.name()).collect(),
+                        changes: p.changes.as_ref().map(|c| &c.registries),
+                    }
+                })
+                .collect(),
+            dimensions: details
+                .dimensions
+                .iter()
+                .map(|d| SaveDimension {
+                    dimension: d.dimension.id(),
+                    region: path(&d.region),
+                    answerable: d.answerable,
+                    holdings: d.holdings.as_ref().map(Holdings::new),
+                })
+                .collect(),
+        }
+    }
+}
+
+/// A value `world info` read from the save.
+#[derive(Serialize)]
+pub struct Setting<'a> {
+    pub setting: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dimension: Option<&'static str>,
+    pub value: &'a str,
+    pub file: &'a str,
+    pub field: &'a str,
+    pub present: bool,
+    pub decides: &'static str,
+}
+
+/// An enabled pack in `world info`.
+#[derive(Serialize)]
+pub struct SavePack<'a> {
+    pub name: &'a str,
+    /// `bundle`, `applied`, `feature` or `not_applied`.
+    pub used: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hash: Option<&'a str>,
+    pub answers: Vec<&'static str>,
+    /// For an applied pack, by registry: `replaced`, `added`, `merged`, `hidden`, `shadowed`
+    /// and `unreadable` ids.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub changes: Option<&'a BTreeMap<String, spyglass::RegistryChanges>>,
+}
+
+/// A dimension in `world info`.
+#[derive(Serialize)]
+pub struct SaveDimension<'a> {
+    pub dimension: &'static str,
+    pub region: String,
+    pub answerable: bool,
+    /// `null` with `--quick`.
+    pub holdings: Option<Holdings<'a>>,
+}
+
+/// What a dimension's region files hold.
+#[derive(Serialize)]
+pub struct Holdings<'a> {
+    pub chunks: usize,
+    pub full: usize,
+    pub proto: usize,
+    pub unreadable: usize,
+    pub unreadable_files: usize,
+    pub versions: Vec<VersionCount<'a>>,
+    pub inhabited_ticks: i64,
+    pub bounds: Option<[[i32; 2]; 2]>,
+    pub starts: Vec<Count<'a>>,
+    pub dropped_starts: Vec<Count<'a>>,
+    pub older_starts: Vec<Count<'a>>,
+    pub sealed_containers: Vec<Count<'a>>,
+}
+
+impl<'a> Holdings<'a> {
+    fn new(h: &'a SaveHoldings) -> Self {
+        let counts = |c: &'a [(String, usize)]| {
+            c.iter()
+                .map(|(id, count)| Count { id, count: *count })
+                .collect()
+        };
+        Holdings {
+            chunks: h.chunks,
+            full: h.full,
+            proto: h.proto,
+            unreadable: h.unreadable,
+            unreadable_files: h.unreadable_files,
+            versions: h
+                .versions
+                .iter()
+                .map(|v| VersionCount {
+                    data_version: v.data_version,
+                    version: v.version.as_deref(),
+                    chunks: v.chunks,
+                })
+                .collect(),
+            inhabited_ticks: h.inhabited_ticks,
+            bounds: h.bounds,
+            starts: counts(&h.starts),
+            dropped_starts: counts(&h.dropped_starts),
+            older_starts: counts(&h.older_starts),
+            sealed_containers: counts(&h.sealed_containers),
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct VersionCount<'a> {
+    pub data_version: Option<i32>,
+    pub version: Option<&'a str>,
+    pub chunks: usize,
+}
+
+#[derive(Serialize)]
+pub struct Count<'a> {
+    pub id: &'a str,
+    pub count: usize,
 }
 
 /// A dimension the save's data packs can't be applied in.
@@ -628,6 +828,12 @@ pub enum FeatureAnswer<'a> {
         certain: bool,
     },
     Spawn(SpawnAnswer),
+    FlowerField {
+        position: Xyz,
+        flower: &'a str,
+        blocks: u64,
+        certain: bool,
+    },
     Other,
 }
 
@@ -840,5 +1046,224 @@ impl<'a> Stack<'a> {
                 zoom: m.zoom,
             }),
         }
+    }
+}
+
+/// A chance: exact, and as a float for convenience.
+#[derive(Serialize)]
+pub struct ChanceJson {
+    pub numerator: u128,
+    pub denominator: u128,
+    pub value: f64,
+}
+
+impl From<spyglass::Chance> for ChanceJson {
+    fn from(c: spyglass::Chance) -> Self {
+        ChanceJson {
+            numerator: c.numerator,
+            denominator: c.denominator,
+            value: c.as_f64(),
+        }
+    }
+}
+
+/// `flower at`: each biome the game may give at the block, with its features and flowers.
+#[derive(Serialize)]
+pub struct FlowerAnswer<'a> {
+    pub position: [i32; 3],
+    pub certain: Option<&'a str>,
+    pub biomes: Vec<FlowerBiomeJson<'a>>,
+}
+
+#[derive(Serialize)]
+pub struct FlowerBiomeJson<'a> {
+    pub biome: &'a str,
+    pub features: Vec<BoneMealFeatureJson<'a>>,
+    pub flowers: Vec<FlowerChanceJson<'a>>,
+}
+
+#[derive(Serialize)]
+pub struct BoneMealFeatureJson<'a> {
+    pub id: &'a str,
+    pub provider: &'a str,
+    pub by_position: bool,
+}
+
+#[derive(Serialize)]
+pub struct FlowerChanceJson<'a> {
+    pub flower: &'a str,
+    pub chance: ChanceJson,
+}
+
+/// `flower heights`: one flower's cover of an area, by height.
+#[derive(Serialize)]
+pub struct FlowerHeightsAnswer<'a> {
+    pub flower: &'a str,
+    pub min: [i32; 2],
+    pub max: [i32; 2],
+    pub scale: u32,
+    pub heights: Vec<FlowerShareJson>,
+}
+
+#[derive(Serialize)]
+pub struct FlowerShareJson {
+    pub y: i32,
+    pub certain: u64,
+    pub possible: u64,
+    pub pixels: u64,
+}
+
+/// The fields every `portal` answer starts with: no seed or dimension, since links need
+/// neither.
+#[derive(Serialize)]
+pub struct PortalHeader<'a> {
+    pub format: u32,
+    pub command: &'a str,
+    pub version: &'a str,
+    /// With `--world`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub world: Option<WorldRef>,
+    /// With `--world`, or for a bundle whose version wasn't checked.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warnings: Option<Vec<Warning>>,
+}
+
+/// A portal: its dimension, lowest block, axis and size.
+#[derive(Serialize)]
+pub struct PortalJson {
+    pub dimension: &'static str,
+    pub corner: [i32; 3],
+    pub axis: &'static str,
+    pub width: i32,
+    pub height: i32,
+}
+
+pub fn portal(portal: &spyglass::Portal) -> PortalJson {
+    PortalJson {
+        dimension: portal.dimension.id(),
+        corner: portal.corner,
+        axis: match portal.axis {
+            spyglass::Axis::X => "x",
+            spyglass::Axis::Z => "z",
+        },
+        width: portal.width,
+        height: portal.height,
+    }
+}
+
+/// A save's portal: its blocks as the rectangles the search takes, with its bounds.
+#[derive(Serialize)]
+pub struct SavePortalJson {
+    pub dimension: &'static str,
+    pub corner: [i32; 3],
+    /// `[[x_lo, x_hi], [y_lo, y_hi], [z_lo, z_hi]]`.
+    pub bounds: [[i32; 2]; 3],
+    pub blocks: usize,
+    pub rectangles: Vec<PortalJson>,
+}
+
+pub fn save_portal(save: &spyglass::SavePortal) -> SavePortalJson {
+    SavePortalJson {
+        dimension: save.dimension.id(),
+        corner: save.corner(),
+        bounds: save.bounds(),
+        blocks: save.blocks,
+        rectangles: save.pieces.iter().map(portal).collect(),
+    }
+}
+
+/// `portal link` from a position.
+#[derive(Serialize)]
+pub struct PortalLinkAnswer<'a> {
+    #[serde(flatten)]
+    pub header: PortalHeader<'a>,
+    pub portal: PortalJson,
+    pub to: &'static str,
+    pub exits: Exits,
+    pub radius: i32,
+    pub outcomes: Vec<PortalOutcome>,
+}
+
+/// The exit blocks' inclusive ranges.
+#[derive(Serialize)]
+pub struct Exits {
+    pub x: [i32; 2],
+    pub y: [i32; 2],
+    pub z: [i32; 2],
+}
+
+#[derive(Serialize)]
+pub struct PortalOutcome {
+    pub exits: usize,
+    pub tied: bool,
+    pub portals: Vec<PortalRef>,
+}
+
+/// A portal an outcome lands at: a `--portal` or a save's, by index.
+#[derive(Serialize)]
+pub struct PortalRef {
+    pub source: &'static str,
+    pub index: usize,
+    #[serde(flatten)]
+    pub portal: PortalOrSave,
+}
+
+/// A given portal's fields, or a save portal's.
+#[derive(Serialize)]
+#[serde(untagged)]
+pub enum PortalOrSave {
+    Given(PortalJson),
+    Save(SavePortalJson),
+}
+
+/// `portal link --world`, every portal of the save.
+#[derive(Serialize)]
+pub struct SavePortalsAnswer<'a> {
+    #[serde(flatten)]
+    pub header: PortalHeader<'a>,
+    pub portals: Vec<SavePortalLinkJson>,
+}
+
+#[derive(Serialize)]
+pub struct SavePortalLinkJson {
+    pub index: usize,
+    #[serde(flatten)]
+    pub portal: SavePortalJson,
+    pub to: &'static str,
+    pub outcomes: Vec<SaveOutcome>,
+    pub flags: Vec<FlagJson>,
+}
+
+#[derive(Serialize)]
+pub struct SaveOutcome {
+    pub exits: usize,
+    pub tied: bool,
+    /// Save portals, by index.
+    pub portals: Vec<usize>,
+}
+
+#[derive(Serialize)]
+pub struct FlagJson {
+    pub kind: &'static str,
+    /// For `mislinked`: the portal it leads to.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub to: Option<usize>,
+    /// For `mislinked`: where that portal leads instead.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub back: Option<Vec<usize>>,
+}
+
+pub fn flag(flag: &spyglass::PortalFlag) -> FlagJson {
+    match flag {
+        spyglass::PortalFlag::Mislinked { to, back } => FlagJson {
+            kind: flag.kind(),
+            to: Some(*to),
+            back: Some(back.clone()),
+        },
+        _ => FlagJson {
+            kind: flag.kind(),
+            to: None,
+            back: None,
+        },
     }
 }

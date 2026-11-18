@@ -9,6 +9,7 @@ use spyglass_search::{
 };
 
 use super::{Resolved, SearchQuery, Target, convert, spawn_anchored};
+use crate::Halt;
 use crate::features::Placings;
 use crate::loot::LootPlacings;
 use crate::{
@@ -106,6 +107,18 @@ pub enum Feature {
     },
     /// The spawn.
     Spawn(SpawnOrigin),
+    /// A flower field: its largest field's first block, and how big it is.
+    FlowerField {
+        /// A block of the field, the flower's: one above the grass, at the field's height.
+        position: [i32; 3],
+        /// The flower, a block id.
+        flower: String,
+        /// The field's size in blocks: its grid points times the step squared.
+        blocks: u64,
+        /// Whether the flower is certain at every point of the field, whatever ties give;
+        /// otherwise only possibly.
+        certain: bool,
+    },
 }
 
 impl Feature {
@@ -120,6 +133,7 @@ impl Feature {
             Feature::SlimeChunk(chunk) => chunk.map(|c| c.wrapping_mul(16).wrapping_add(8)),
             Feature::Biome { position, .. } => [position[0], position[2]],
             Feature::Spawn(spawn) => spawn.map_block(),
+            Feature::FlowerField { position, .. } => [position[0], position[2]],
         }
     }
 }
@@ -945,6 +959,25 @@ impl<'a, 'w> Judge<'a, 'w> {
                     features: Vec::new(),
                 }
             }
+            (
+                Kind::FlowerField {
+                    flower,
+                    size,
+                    chance,
+                    heights,
+                    place,
+                    step,
+                },
+                None,
+            ) => flower_field(
+                session,
+                flower,
+                *size,
+                *chance,
+                *heights,
+                &self.area(place, dimension)?,
+                *step,
+            )?,
             _ => unreachable!("resolution gives each kind its target"),
         };
         let spawn_uncertain = uses_spawn(kind) && self.spawn()?.platform_dependent;
@@ -1149,6 +1182,7 @@ impl<'a, 'w> Judge<'a, 'w> {
             |chunk| area.touches_chunk(chunk),
             FeatureOptions::default(),
             &mut self.placings.borrow_mut(),
+            Halt::NEVER,
             |f| {
                 if area.distance([f.position[0], f.position[2]]).is_none()
                     || own.is_some_and(|(d, id, pos)| {
@@ -1347,6 +1381,142 @@ fn coverage(
     }
 }
 
+/// Judges a flower field (`docs/specs/search.md#flower-fields`): at each sampled height, the
+/// grid points where `flower` grows with at least `chance`% chance, and the largest set of them
+/// joined side to side. The best case counts a point where some biome of its tie qualifies,
+/// the worst only where every one does.
+fn flower_field(
+    session: &Session<'_>,
+    flower: &str,
+    size: u32,
+    chance: u32,
+    [low, high]: [i32; 2],
+    area: &Area,
+    step: u32,
+) -> Result<Judged> {
+    let flowers = session.world.flowers()?;
+    // Biomes whose bone meal features can place the flower at all: elsewhere, no noise.
+    let can_grow: Vec<bool> = (0..session.world.source.biome_names().names().len())
+        .map(|b| {
+            let biome = spyglass_biome::BiomeId(u16::try_from(b).expect("biome ids fit a u16"));
+            flowers.biome_features(biome).iter().any(|&f| {
+                flowers
+                    .feature_states(f)
+                    .iter()
+                    .any(|&s| crate::flowers::block_id(flowers.state_name(s)) == flower)
+            })
+        })
+        .collect();
+    // Whether a biome grows the flower at `pos` with at least `chance`%: a·100 ≥ chance·b.
+    let qualifies = |biome: spyglass_biome::BiomeId, pos: [i32; 3]| -> Result<bool> {
+        if !can_grow[usize::from(biome.0)] {
+            return Ok(false);
+        }
+        let odds = flowers
+            .odds(biome, pos)
+            .map_err(|e| Error::Data(crate::Cause(Box::new(e))))?;
+        let total = odds
+            .iter()
+            .filter(|o| crate::flowers::block_id(flowers.state_name(o.state)) == flower)
+            .fold(spyglass_feature::flowers::Chance::new_zero(), |sum, o| {
+                sum.plus(o.chance)
+            });
+        Ok(total.numerator * 100 >= u128::from(chance) * total.denominator)
+    };
+    let zoom = spyglass_blocks::zoom::BiomeZoom::new(session.seed);
+    let grid: Vec<[i32; 2]> = area.grid(step).into_iter().map(|(p, _)| p).collect();
+    let cell = u64::from(step) * u64::from(step);
+    let mut heights: Vec<i32> = (0..)
+        .map(|i| low.saturating_add(i * spyglass_search::FLOWER_Y_STEP))
+        .take_while(|&y| y < high)
+        .collect();
+    heights.push(high);
+    // The largest field in each case: its size in points and one of its points, with its y.
+    let mut best: (usize, [i32; 3]) = (0, [0; 3]);
+    let mut worst: (usize, [i32; 3]) = (0, [0; 3]);
+    for y in heights {
+        let mut maybe = Vec::with_capacity(grid.len());
+        let mut sure = Vec::with_capacity(grid.len());
+        for &[x, z] in &grid {
+            let pos = [x, y, z];
+            let lookup = session.block_lookup(&zoom, pos);
+            let mut any = false;
+            let mut all = true;
+            for &biome in lookup.candidates() {
+                let q = qualifies(biome, pos)?;
+                any |= q;
+                all &= q;
+            }
+            maybe.push(any);
+            sure.push(all);
+        }
+        for (mask, largest) in [(&maybe, &mut best), (&sure, &mut worst)] {
+            let (count, at) = largest_field(&grid, mask, step);
+            if count > largest.0 {
+                *largest = (count, [at[0], y, at[1]]);
+            }
+        }
+    }
+    let blocks = |points: usize| points as u64 * cell;
+    let holds = |points: usize| blocks(points) >= u64::from(size);
+    let sat = |points: usize| (1000 * blocks(points) / u64::from(size)).min(1000) as u32;
+    let mut features = Vec::new();
+    let shown = if holds(worst.0) { worst } else { best };
+    if shown.0 > 0 {
+        features.push(Feature::FlowerField {
+            position: shown.1,
+            flower: flower.to_string(),
+            blocks: blocks(shown.0),
+            certain: holds(worst.0),
+        });
+    }
+    Ok(Judged {
+        best: holds(best.0),
+        worst: holds(worst.0),
+        best_sat: sat(best.0),
+        worst_sat: sat(worst.0),
+        features,
+    })
+}
+
+/// The largest set of `grid`'s points where `mask` holds, joined through neighbours `step`
+/// apart along x or z: its size, and its first point in grid order.
+fn largest_field(grid: &[[i32; 2]], mask: &[bool], step: u32) -> (usize, [i32; 2]) {
+    let index: std::collections::HashMap<[i32; 2], usize> = grid
+        .iter()
+        .enumerate()
+        .filter(|&(i, _)| mask[i])
+        .map(|(i, &p)| (p, i))
+        .collect();
+    let mut seen = vec![false; grid.len()];
+    let mut largest = (0, [0, 0]);
+    let step = i32::try_from(step).expect("steps are at most 4096");
+    for start in 0..grid.len() {
+        if !mask[start] || seen[start] {
+            continue;
+        }
+        seen[start] = true;
+        let mut stack = vec![start];
+        let mut count = 0;
+        while let Some(i) = stack.pop() {
+            count += 1;
+            let [x, z] = grid[i];
+            for next in [[x + step, z], [x - step, z], [x, z + step], [x, z - step]] {
+                if let Some(&j) = index.get(&next)
+                    && !seen[j]
+                {
+                    seen[j] = true;
+                    stack.push(j);
+                }
+            }
+        }
+        if count > largest.0 {
+            largest = (count, grid[start]);
+        }
+    }
+    largest
+}
+
 pub(super) fn lookup(session: &Session<'_>, [x, y, z]: [i32; 3]) -> spyglass_biome::Lookup {
     session.biomes.biome_at(x >> 2, y >> 2, z >> 2)
 }
@@ -1451,7 +1621,8 @@ pub(super) fn uses_spawn(kind: &Kind) -> bool {
         | Kind::Biome { place: p, .. }
         | Kind::Coverage { place: p, .. }
         | Kind::Height { place: p, .. }
-        | Kind::Flat { place: p, .. } => place(p),
+        | Kind::Flat { place: p, .. }
+        | Kind::FlowerField { place: p, .. } => place(p),
         Kind::Spawn { .. } => true,
     }
 }

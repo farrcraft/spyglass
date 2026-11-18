@@ -330,6 +330,13 @@ final class Adapter implements GameApi {
     }
 
     @Override
+    public void decorateInOrder(Game game, NoiseBasedChunkGenerator generator, LevelHeightAccessor height,
+            RandomState random, long seed, java.util.List<ChunkPos> order,
+            java.util.function.BiConsumer<ChunkPos, Runnable> around) {
+        Decoration.decorateInOrder(game, generator, height, random, seed, order, around);
+    }
+
+    @Override
     public void createStructures(Game game, net.minecraft.world.level.chunk.ChunkGenerator generator,
             net.minecraft.world.level.chunk.ChunkGeneratorStructureState state,
             net.minecraft.world.level.StructureManager structures, net.minecraft.world.level.chunk.ChunkAccess chunk,
@@ -341,5 +348,29 @@ final class Adapter implements GameApi {
     @Override
     public JsonArray probeTerrain(Game game, List<String> seeds) {
         return ProbeWorldgen.terrain(game, seeds);
+    }
+
+    @Override
+    public List<BoneMealFeature> boneMealFeatures(Game game, Holder<Biome> biome) {
+        var registry = game.access.lookupOrThrow(Registries.FEATURE);
+        var out = new ArrayList<BoneMealFeature>();
+        for (var feature : biome.value().getGenerationSettings().getBoneMealFeatures()) {
+            out.add(new BoneMealFeature(registry.getKey(feature).toString(), feature));
+        }
+        return out;
+    }
+
+    @Override
+    public BlockState boneMealState(Object feature, net.minecraft.util.RandomSource random, BlockPos pos) {
+        if (!(feature instanceof net.minecraft.world.level.levelgen.feature.SimpleBlockFeature simple)) {
+            return null;
+        }
+        return simple.toPlace().value().getState(null, random, pos);
+    }
+
+    @Override
+    public Holder<Biome> zoomedBiome(long seed, QuartLookup quarts, int x, int y, int z) {
+        return new net.minecraft.world.level.biome.BiomeManager(quarts::at,
+                net.minecraft.world.level.biome.BiomeManager.obfuscateSeed(seed)).getBiome(x, y, z);
     }
 }

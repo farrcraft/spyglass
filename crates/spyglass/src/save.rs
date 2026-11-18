@@ -8,9 +8,16 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 use spyglass_data::bundle::Bundle;
-use spyglass_world::{PackContents, region};
+use spyglass_world::{BorderRead, PackContents, SaveSource, region};
 
 use crate::{BundleInfo, Dimension, Error, Game, PRESET, Pack, Result, World, bundles_in};
+
+mod details;
+
+pub use details::{
+    Answer, DimensionDetails, PackUse, SaveDetails, SaveHoldings, SavePack, SaveSetting,
+    VersionCount, answers_fed_by,
+};
 
 /// A position in a dimension, from a save.
 #[derive(Debug, Clone, PartialEq)]
@@ -59,6 +66,7 @@ pub struct SaveInfo {
 
 /// Why spyglass can't apply an enabled data pack as the game does, or applies it with a caveat.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum PackConcern {
     /// Its zip or folder is missing from `datapacks/`. The game drops it too, but the world may
     /// have been generated with it.
@@ -109,6 +117,7 @@ impl PackConcern {
 
 /// Something that makes spyglass's answers for a save inexact, or impossible.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SaveWarning {
     /// No bundle has the save's data version. Blocks answers.
     NoBundle {
@@ -155,13 +164,165 @@ pub enum SaveWarning {
         /// How many.
         files: usize,
     },
+    /// A note: a dimension's world border is still moving, so answers use the size it ends at.
+    MovingBorder {
+        /// The dimension.
+        dimension: Dimension,
+    },
+    /// An answerable dimension that can't be opened with the applied packs: a pack holds a type
+    /// spyglass doesn't support, or a file it can't read. Blocks answers in that dimension.
+    /// Only [`SaveReport::details`] raises it, since finding it opens every dimension.
+    PackError {
+        /// The dimension.
+        dimension: Dimension,
+        /// The pack whose file the error names, where it names one a pack provides.
+        pack: Option<String>,
+        /// That file, e.g. `data/terralith/worldgen/configured_feature/boulder.json`.
+        file: Option<String>,
+        /// The error.
+        message: String,
+    },
+}
+
+/// What a [`SaveWarning`] is about: the item of [`SaveDetails`] it's shown beside.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum SaveSubject {
+    /// A setting.
+    Setting(Setting),
+    /// An enabled pack, by name.
+    Pack(String),
+    /// A dimension, as a whole.
+    Dimension(Dimension),
+    /// What a dimension's region files hold.
+    Holdings(Dimension),
+}
+
+impl SaveSubject {
+    /// A short machine-readable kind: `setting`, `pack`, `dimension` or `holdings`.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            SaveSubject::Setting(_) => "setting",
+            SaveSubject::Pack(_) => "pack",
+            SaveSubject::Dimension(_) => "dimension",
+            SaveSubject::Holdings(_) => "holdings",
+        }
+    }
+
+    /// The setting, for a setting.
+    pub fn setting(&self) -> Option<Setting> {
+        match self {
+            SaveSubject::Setting(setting) => Some(*setting),
+            _ => None,
+        }
+    }
+
+    /// The pack's name, for a pack.
+    pub fn pack(&self) -> Option<&str> {
+        match self {
+            SaveSubject::Pack(name) => Some(name),
+            _ => None,
+        }
+    }
+
+    /// The dimension it's in: a dimension's, its holdings', or a per-dimension setting's.
+    pub fn dimension(&self) -> Option<Dimension> {
+        match self {
+            SaveSubject::Setting(setting) => setting.dimension(),
+            SaveSubject::Dimension(d) | SaveSubject::Holdings(d) => Some(*d),
+            SaveSubject::Pack(_) => None,
+        }
+    }
+}
+
+/// One of the values spyglass reads from a save, as [`SaveDetails::settings`] lists them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Setting {
+    /// `Data.Version.Name`.
+    Version,
+    /// `Data.DataVersion`.
+    DataVersion,
+    /// The world seed.
+    Seed,
+    /// Whether structures generate.
+    Structures,
+    /// A dimension's generator.
+    Generator(Dimension),
+    /// A dimension's world border.
+    Border(Dimension),
+    /// The world spawn.
+    Spawn,
+    /// The single player.
+    Player,
+    /// `Data.WasModded`.
+    Modded,
+}
+
+impl Setting {
+    /// A short machine-readable name, e.g. `data_version`, `generator`.
+    pub fn kind(self) -> &'static str {
+        match self {
+            Setting::Version => "version",
+            Setting::DataVersion => "data_version",
+            Setting::Seed => "seed",
+            Setting::Structures => "structures",
+            Setting::Generator(_) => "generator",
+            Setting::Border(_) => "border",
+            Setting::Spawn => "spawn",
+            Setting::Player => "player",
+            Setting::Modded => "modded",
+        }
+    }
+
+    /// The dimension it's about, for a per-dimension setting.
+    pub fn dimension(self) -> Option<Dimension> {
+        match self {
+            Setting::Generator(d) | Setting::Border(d) => Some(d),
+            _ => None,
+        }
+    }
+
+    /// A short name for people, e.g. `data version`.
+    pub fn label(self) -> &'static str {
+        match self {
+            Setting::Version => "version",
+            Setting::DataVersion => "data version",
+            Setting::Seed => "seed",
+            Setting::Structures => "structures",
+            Setting::Generator(_) => "generator",
+            Setting::Border(_) => "world border",
+            Setting::Spawn => "spawn",
+            Setting::Player => "single player",
+            Setting::Modded => "modded",
+        }
+    }
+
+    /// What it decides in spyglass's answers (`docs/specs/world-saves.md`, "Settings").
+    pub fn decides(self) -> &'static str {
+        match self {
+            Setting::Version => "what to extract when no bundle matches",
+            Setting::DataVersion => "which bundle answers",
+            Setting::Seed => "every prediction",
+            Setting::Structures => "whether structure answers exist",
+            Setting::Generator(_) => "whether spyglass answers in that dimension",
+            Setting::Border(_) => "where portals can be found and built",
+            Setting::Spawn => "--from spawn, and the spawn origin",
+            Setting::Player => "--from player",
+            Setting::Modded => "nothing, but mods can change generation",
+        }
+    }
 }
 
 impl SaveWarning {
     /// Whether the warning says only what spyglass did, not that answers may be inexact: a data
     /// pack the game skips too, or one applied whatever its format.
     pub fn is_note(&self) -> bool {
-        matches!(self, SaveWarning::DataPack { concern, .. } if !concern.inexact())
+        match self {
+            SaveWarning::DataPack { concern, .. } => !concern.inexact(),
+            SaveWarning::MovingBorder { .. } => true,
+            _ => false,
+        }
     }
 
     /// Whether spyglass refuses to answer: in [`dimension`](Self::dimension), or in the whole
@@ -169,7 +330,9 @@ impl SaveWarning {
     pub fn blocks_answers(&self) -> bool {
         matches!(
             self,
-            SaveWarning::NoBundle { .. } | SaveWarning::UnsupportedGenerator { .. }
+            SaveWarning::NoBundle { .. }
+                | SaveWarning::UnsupportedGenerator { .. }
+                | SaveWarning::PackError { .. }
         )
     }
 
@@ -178,8 +341,35 @@ impl SaveWarning {
         match self {
             SaveWarning::UnsupportedGenerator { dimension, .. }
             | SaveWarning::OlderChunks { dimension, .. }
-            | SaveWarning::UnreadableRegions { dimension, .. } => Some(*dimension),
+            | SaveWarning::UnreadableRegions { dimension, .. }
+            | SaveWarning::MovingBorder { dimension }
+            | SaveWarning::PackError { dimension, .. } => Some(*dimension),
             _ => None,
+        }
+    }
+
+    /// The item of the report it's about, which a front end shows it beside
+    /// (`docs/specs/world-saves.md`, "Warnings and their subjects").
+    pub fn subject(&self) -> SaveSubject {
+        match self {
+            SaveWarning::NoBundle { .. } => SaveSubject::Setting(Setting::DataVersion),
+            SaveWarning::UnsupportedGenerator { dimension, .. } => {
+                SaveSubject::Setting(Setting::Generator(*dimension))
+            }
+            SaveWarning::StructuresDisabled => SaveSubject::Setting(Setting::Structures),
+            SaveWarning::DataPack { name, .. } => SaveSubject::Pack(name.clone()),
+            SaveWarning::Modded => SaveSubject::Setting(Setting::Modded),
+            SaveWarning::OlderChunks { dimension, .. }
+            | SaveWarning::UnreadableRegions { dimension, .. } => SaveSubject::Holdings(*dimension),
+            SaveWarning::MovingBorder { dimension } => {
+                SaveSubject::Setting(Setting::Border(*dimension))
+            }
+            SaveWarning::PackError {
+                dimension, pack, ..
+            } => match pack {
+                Some(pack) => SaveSubject::Pack(pack.clone()),
+                None => SaveSubject::Dimension(*dimension),
+            },
         }
     }
 
@@ -198,6 +388,8 @@ impl SaveWarning {
             SaveWarning::Modded => "modded",
             SaveWarning::OlderChunks { .. } => "older_chunks",
             SaveWarning::UnreadableRegions { .. } => "unreadable_regions",
+            SaveWarning::MovingBorder { .. } => "moving_border",
+            SaveWarning::PackError { .. } => "pack_error",
         }
     }
 }
@@ -281,6 +473,18 @@ impl fmt::Display for SaveWarning {
                 "{files} region files in {} couldn't be read, so their chunks weren't checked",
                 dimension.name()
             ),
+            SaveWarning::MovingBorder { dimension } => write!(
+                f,
+                "the world border in {} is still moving; spyglass answers with the size it ends at",
+                dimension.name()
+            ),
+            SaveWarning::PackError {
+                dimension, message, ..
+            } => write!(
+                f,
+                "{} can't be opened with the save's packs: {message}",
+                dimension.name()
+            ),
         }
     }
 }
@@ -302,6 +506,16 @@ pub struct SaveReport {
     /// Each dimension's folders and, after [`Scan::Chunks`], its chunks, by
     /// [`Dimension::index`].
     pub(crate) dimensions: [SaveDimension; 3],
+    /// What [`Save::read`](spyglass_world::Save::read) read, for [`details`](Self::details).
+    pub(crate) read: spyglass_world::Save,
+    /// The bundle's preset each dimension's generator matches, by [`Dimension::index`].
+    pub(crate) presets: [Option<String>; 3],
+    /// Each dimension's world border and where it's read from, by [`Dimension::index`]; `None`
+    /// where `level.dat` couldn't be read again.
+    pub(crate) borders: [Option<(BorderRead, SaveSource)>; 3],
+    /// The data version and game version of every bundle in the inspector's folder, for naming
+    /// chunks' versions.
+    pub(crate) known_versions: Vec<(i32, String)>,
 }
 
 /// Where a save keeps one dimension's chunks, and what the scan found there.
@@ -525,9 +739,12 @@ fn inspect(inspector: &SaveInspector, dir: &Path, scan: Scan) -> Result<SaveRepo
     }
     // Without a bundle there are no presets to compare with; the missing bundle already blocks
     // answers.
+    let mut matched_presets = [const { None }; 3];
     if let Some(bundle) = &bundle {
         let presets = inspector.presets(bundle)?;
-        warnings.extend(generator_warnings(&save, &presets));
+        let (generator_warnings, matched) = generator_warnings(&save, &presets);
+        warnings.extend(generator_warnings);
+        matched_presets = matched;
     }
     if !save.generate_structures {
         warnings.push(SaveWarning::StructuresDisabled);
@@ -538,6 +755,7 @@ fn inspect(inspector: &SaveInspector, dir: &Path, scan: Scan) -> Result<SaveRepo
     if save.was_modded {
         warnings.push(SaveWarning::Modded);
     }
+    let borders = Dimension::ALL.map(|d| save.world_border_with_source(d.id()).ok());
     let mut dimensions = Vec::with_capacity(3);
     for dimension in Dimension::ALL {
         let region = save.region_dir(dimension.id())?;
@@ -576,10 +794,24 @@ fn inspect(inspector: &SaveInspector, dir: &Path, scan: Scan) -> Result<SaveRepo
             }
         }
     }
+    // Notes last: they don't make answers inexact.
+    for (dimension, border) in Dimension::ALL.into_iter().zip(&borders) {
+        if border
+            .as_ref()
+            .is_some_and(|(read, _)| read.settings().is_moving())
+        {
+            warnings.push(SaveWarning::MovingBorder { dimension });
+        }
+    }
     let location = |l: &spyglass_world::Location| SaveLocation {
         dimension: l.dimension.clone(),
         pos: l.pos,
     };
+    let known_versions = inspector
+        .bundles
+        .iter()
+        .filter_map(|b| Some((i32::try_from(b.data_version).ok()?, b.version.clone())))
+        .collect();
     Ok(SaveReport {
         save: SaveInfo {
             dir: save.dir.clone(),
@@ -596,6 +828,10 @@ fn inspect(inspector: &SaveInspector, dir: &Path, scan: Scan) -> Result<SaveRepo
         warnings,
         packs,
         dimensions: dimensions.try_into().expect("one per dimension"),
+        read: save,
+        presets: matched_presets,
+        borders,
+        known_versions,
     })
 }
 
@@ -677,11 +913,16 @@ fn normalize(value: &Value) -> Value {
 }
 
 /// A warning for each of the Default preset's dimensions whose generator in the save isn't the
-/// preset's. `presets` are the bundle's, as [`SaveInspector::presets`] gives them. A dimension
-/// the bundle's Default preset doesn't have isn't checked, since no world opens for it.
-fn generator_warnings(save: &spyglass_world::Save, presets: &Presets) -> Vec<SaveWarning> {
+/// preset's, and the preset each dimension's generator matches. `presets` are the bundle's, as
+/// [`SaveInspector::presets`] gives them. A dimension the bundle's Default preset doesn't have
+/// isn't checked, since no world opens for it.
+fn generator_warnings(
+    save: &spyglass_world::Save,
+    presets: &Presets,
+) -> (Vec<SaveWarning>, [Option<String>; 3]) {
+    let mut matched = [const { None }; 3];
     let Some((_, supported)) = presets.iter().find(|(id, _)| id == PRESET) else {
-        return Vec::new();
+        return (Vec::new(), matched);
     };
     let mut warnings = Vec::new();
     for dimension in Dimension::ALL {
@@ -699,6 +940,7 @@ fn generator_warnings(save: &spyglass_world::Save, presets: &Presets) -> Vec<Sav
         };
         let ours = normalize(generator);
         if ours == *expected {
+            matched[index] = Some(PRESET.to_string());
             continue;
         }
         // Other presets share some dimensions' generators with the Default one (every preset
@@ -708,13 +950,14 @@ fn generator_warnings(save: &spyglass_world::Save, presets: &Presets) -> Vec<Sav
             .iter()
             .find(|(_, theirs)| theirs[index].as_ref() == Some(&ours))
             .map(|(id, _)| id.clone());
+        matched[index].clone_from(&preset);
         warnings.push(SaveWarning::UnsupportedGenerator {
             dimension,
             preset,
             generator: describe(generator),
         });
     }
-    warnings
+    (warnings, matched)
 }
 
 /// A generator, briefly: `legacy <name>`, or its type and, for noise generators, its settings.

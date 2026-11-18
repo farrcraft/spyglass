@@ -159,38 +159,48 @@ impl App {
         }
     }
 
-    /// The structure starts, features and loot containers the caches hold for `tiles`. Past
-    /// [`MAX_MARKERS`] starts, none are drawn, and the map says so.
+    /// The structure starts, features and loot containers the caches hold for the view's
+    /// regions. Past [`MAX_MARKERS`] starts on the view's tiles, none are drawn, and the map
+    /// says so.
     pub(super) fn markers_in_view(
         &mut self,
         frame: &Frame,
     ) -> (Vec<StructureStart>, Vec<FoundFeature>, Vec<LootMark>) {
-        let tiles = &frame.tiles;
         let mut starts: Vec<StructureStart> = Vec::new();
         if frame.marking {
-            for &tile in tiles {
-                if let Some(Ok(found)) = self.markers.get(&frame.marker_key(tile)) {
+            for &region in &frame.start_regions {
+                if let Some(Ok(found)) = self.markers.get(&frame.marker_key(region)) {
                     starts.extend(found.iter().cloned());
                 }
             }
         }
         let mut found_features: Vec<FoundFeature> = Vec::new();
-        if frame.featuring {
-            for &tile in tiles {
-                if let Some(Ok(found)) = self.feature_markers.get(&frame.feature_key(tile)) {
+        if frame.featuring || frame.features_found {
+            for &region in &frame.regions {
+                if let Some(Ok(found)) = self.feature_markers.get(&frame.feature_key(region)) {
                     found_features.extend(found.iter().cloned());
                 }
             }
         }
         let mut loot_marks: Vec<LootMark> = Vec::new();
-        if frame.looting {
-            for &tile in tiles {
-                if let Some(Ok(marks)) = self.loot_markers.get(&frame.feature_key(tile)) {
+        if frame.looting || frame.loot_found {
+            for &region in &frame.regions {
+                if let Some(Ok(marks)) = self.loot_markers.get(&frame.feature_key(region)) {
                     loot_marks.extend(marks.iter().cloned());
                 }
             }
         }
-        self.too_many_markers = starts.len() > MAX_MARKERS;
+        // Counted on the tiles alone, so the ring of regions around them doesn't count.
+        let on_tiles = view::blocks_under(&frame.tiles).map_or(0, |(lo, hi)| {
+            let inside = |s: &&StructureStart| {
+                [s.position[0], s.position[2]]
+                    .into_iter()
+                    .enumerate()
+                    .all(|(axis, b)| (lo[axis]..=hi[axis]).contains(&i64::from(b)))
+            };
+            starts.iter().filter(inside).count()
+        });
+        self.too_many_markers = on_tiles > MAX_MARKERS;
         if self.too_many_markers {
             starts.clear();
         }

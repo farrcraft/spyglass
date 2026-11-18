@@ -26,16 +26,16 @@ pub struct Ci {
     game_version: String,
     /// Make only these units of the version's oracle work, comma-separated, and run only the
     /// tests that read what they make: `probe`, `biomes`, `structures`, `spawn`, `locate`,
-    /// `loot`, `bundle` (the tests that read only the bundle, and the test pack), or `heights`, `blocks`
-    /// or `features` for one seed, as `heights:0`. `cargo xtask ci-plan` divides a version this
-    /// way between CI's jobs. Every unit by default.
+    /// `portals`, `loot`, `bundle` (the tests that read only the bundle, and the test pack),
+    /// or `heights`, `blocks` or `features` for one seed, as `heights:0`. `cargo xtask ci-plan`
+    /// divides a version this way between CI's jobs. Every unit by default.
     #[arg(long, value_parser = Unit::parse, value_delimiter = ',')]
     units: Vec<Unit>,
     /// Parallel jobs for the golden files. Defaults to the number of CPUs.
     #[arg(long)]
     threads: Option<usize>,
-    /// Accept the Minecraft EULA for `oracle locate`'s server, as `SPYGLASS_ACCEPT_EULA=1`
-    /// does (ADR 0033).
+    /// Accept the Minecraft EULA for the server `oracle locate` and `oracle portals` run, as
+    /// `SPYGLASS_ACCEPT_EULA=1` does (ADR 0033).
     #[arg(long)]
     accept_eula: bool,
 }
@@ -78,7 +78,7 @@ fn seeds(units: &[Unit], kind: Kind) -> Vec<&'static str> {
 }
 
 /// Runs one CI job: extracts the bundle, makes the units' oracle outputs (golden files with one
-/// harness build, then `/locate` answers from a server, then the test pack's), and runs the
+/// harness build, then `/locate` answers and portal links from a server, then the test pack's), and runs the
 /// comparisons whose inputs the job made.
 pub fn run(args: &Ci) -> Result<()> {
     let units = if args.units.is_empty() {
@@ -87,15 +87,15 @@ pub fn run(args: &Ci) -> Result<()> {
         args.units.clone()
     };
     let has = |kind: Kind| units.iter().any(|u| u.kind == kind);
-    // Asked first, so a job doesn't fail at `oracle locate` after minutes of work.
-    if has(Kind::Locate) {
+    // Asked first, so a job doesn't fail at a server's run after minutes of work.
+    if has(Kind::Locate) || has(Kind::Portals) {
         crate::locate::require_eula(args.accept_eula)?;
     }
     let version = step("extract the bundle", || extract_bundle(&args.game_version))?;
     let common = || Common::for_version(&version);
     let golden: Vec<Kind> = Kind::ALL
         .into_iter()
-        .filter(|&k| has(k) && !matches!(k, Kind::Locate | Kind::Bundle))
+        .filter(|&k| has(k) && !matches!(k, Kind::Locate | Kind::Portals | Kind::Bundle))
         .collect();
     if !golden.is_empty() {
         step(&format!("oracle golden: {golden:?}"), || {
@@ -112,7 +112,8 @@ pub fn run(args: &Ci) -> Result<()> {
                     Kind::Features => harness.features(args.threads, &seeds),
                     Kind::Containers => harness.containers(args.threads, &seeds),
                     Kind::Loot => harness.loot(),
-                    Kind::Locate | Kind::Bundle => Ok(()),
+                    Kind::Flowers => harness.flowers(args.threads, oracle::GOLDEN_SEEDS),
+                    Kind::Locate | Kind::Portals | Kind::Bundle => Ok(()),
                 })?;
             }
             Ok(())
@@ -124,6 +125,18 @@ pub fn run(args: &Ci) -> Result<()> {
                 oracle::run(OracleCmd::Locate {
                     common: common(),
                     world: Vec::new(),
+                    accept_eula: true,
+                })
+            })
+        })?;
+    }
+    if has(Kind::Portals) {
+        step("oracle portals", || {
+            timed(Kind::Portals, 0, || {
+                oracle::run(OracleCmd::Portals {
+                    common: common(),
+                    random: 40,
+                    worlds: Vec::new(),
                     accept_eula: true,
                 })
             })

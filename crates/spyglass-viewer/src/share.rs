@@ -36,6 +36,8 @@ pub struct Flags {
     pub caves: bool,
     /// Carvers' caves and canyons.
     pub carvers: bool,
+    /// The flower bone meal grows at each block.
+    pub flowers: bool,
 }
 
 impl Default for Flags {
@@ -51,6 +53,7 @@ impl Default for Flags {
             veins: false,
             caves: false,
             carvers: false,
+            flowers: false,
         }
     }
 }
@@ -68,6 +71,7 @@ impl Flags {
             (self.veins, "veins"),
             (self.caves, "caves"),
             (self.carvers, "carvers"),
+            (self.flowers, "flowers"),
         ]
         .into_iter()
         .filter_map(|(on, name)| on.then_some(name))
@@ -96,6 +100,8 @@ pub struct SharedView {
     pub highlight: Vec<String>,
     /// Placed feature ids, with their namespaces.
     pub features: Vec<String>,
+    /// The one flower shown on the flower layer, a block id with its namespace.
+    pub flower: Option<String>,
     /// The layers on.
     pub flags: Flags,
 }
@@ -133,6 +139,9 @@ impl SharedView {
         }
         if !self.features.is_empty() {
             fields.push(format!("ft={}", short(&self.features)));
+        }
+        if let Some(flower) = &self.flower {
+            fields.push(format!("fl={}", short(std::slice::from_ref(flower))));
         }
         fields.push(format!("l={}", self.flags.names().join(",")));
         format!("{PREFIX}{FORMAT};{}", fields.join(";"))
@@ -175,6 +184,7 @@ impl SharedView {
             structures: Vec::new(),
             highlight: Vec::new(),
             features: Vec::new(),
+            flower: None,
             flags: Flags::default(),
         };
         let mut seed = None;
@@ -227,6 +237,12 @@ impl SharedView {
                         .filter(|ids| ids.iter().all(|id| !id.starts_with('#')))
                         .ok_or_else(bad)?;
                 }
+                "fl" => {
+                    let flower = ids(value)
+                        .filter(|ids| ids.len() == 1 && !ids[0].starts_with('#'))
+                        .ok_or_else(bad)?;
+                    view.flower = flower.into_iter().next();
+                }
                 "l" => {
                     let mut flags = Flags {
                         ties: false,
@@ -238,6 +254,7 @@ impl SharedView {
                         veins: false,
                         caves: false,
                         carvers: false,
+                        flowers: false,
                     };
                     for name in value.split(',') {
                         match name {
@@ -250,6 +267,7 @@ impl SharedView {
                             "veins" => flags.veins = true,
                             "caves" => flags.caves = true,
                             "carvers" => flags.carvers = true,
+                            "flowers" => flags.flowers = true,
                             // Empty (no layers), or a layer from a later viewer.
                             _ => {}
                         }
@@ -309,6 +327,7 @@ mod tests {
             ],
             highlight: vec!["minecraft:river".into()],
             features: Vec::new(),
+            flower: None,
             flags: Flags {
                 ties: true,
                 ..Flags::default()
@@ -332,6 +351,7 @@ mod tests {
             structures: Vec::new(),
             highlight: Vec::new(),
             features: Vec::new(),
+            flower: None,
             flags: Flags {
                 spawn: false,
                 confirm: false,
@@ -367,6 +387,23 @@ mod tests {
         );
         assert_eq!(SharedView::decode(&text), Ok(featured));
         assert!(SharedView::decode("spyglass:1;s=1;ft=#minecraft:dungeons").is_err());
+        let flowers = SharedView {
+            flower: Some("minecraft:cornflower".into()),
+            flags: Flags {
+                flowers: true,
+                ..Flags::default()
+            },
+            ..sample()
+        };
+        let text = flowers.encode();
+        assert!(
+            text.ends_with(";hl=river;fl=cornflower;l=spawn,confirm,flowers"),
+            "{text}"
+        );
+        assert_eq!(SharedView::decode(&text), Ok(flowers));
+        // One flower, and not a tag.
+        assert!(SharedView::decode("spyglass:1;s=1;fl=poppy,dandelion").is_err());
+        assert!(SharedView::decode("spyglass:1;s=1;fl=#minecraft:flowers").is_err());
     }
 
     /// Texts each format has written. Never change these: they must open as they did.
@@ -390,6 +427,7 @@ mod tests {
                     structures: Vec::new(),
                     highlight: Vec::new(),
                     features: Vec::new(),
+                    flower: None,
                     flags: Flags::default(),
                 },
             ),
@@ -405,6 +443,7 @@ mod tests {
                     structures: Vec::new(),
                     highlight: Vec::new(),
                     features: Vec::new(),
+                    flower: None,
                     flags: Flags {
                         spawn: false,
                         confirm: false,
@@ -425,6 +464,7 @@ mod tests {
                 structures: Vec::new(),
                 highlight: Vec::new(),
                 features: Vec::new(),
+                flower: None,
                 flags: Flags {
                     spawn: false,
                     confirm: false,

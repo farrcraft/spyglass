@@ -44,6 +44,10 @@ pub(crate) enum Input {
     Containers,
     /// The loot files.
     Loot,
+    /// The flower files.
+    Flowers,
+    /// The portal file.
+    Portals,
 }
 
 impl Input {
@@ -68,6 +72,8 @@ impl Input {
             Input::Features => "features",
             Input::Containers => "containers",
             Input::Loot => "loot",
+            Input::Flowers => "flowers",
+            Input::Portals => "portals",
             Input::DungeonSeed => {
                 return root
                     .join("oracle-out")
@@ -102,6 +108,8 @@ impl Input {
             Input::Features | Input::DungeonSeed => "cargo xtask oracle features",
             Input::Containers => "cargo xtask oracle containers",
             Input::Loot => "cargo xtask oracle loot",
+            Input::Flowers => "cargo xtask oracle flowers",
+            Input::Portals => "cargo xtask oracle portals",
         }
     }
 }
@@ -196,6 +204,41 @@ pub(crate) const TESTS: &[(&str, &str, &[Input])] = &[
         "spyglass-feature",
         "placing_matches_the_game",
         &[Input::Features, Input::Bundle],
+    ),
+    (
+        "spyglass-feature",
+        "biomes_have_their_bone_meal_features",
+        &[Input::Bundle],
+    ),
+    (
+        "spyglass-feature",
+        "odds_sum_to_one_everywhere",
+        &[Input::Bundle],
+    ),
+    (
+        "spyglass-feature",
+        "odds_match_the_states_drawn",
+        &[Input::Bundle],
+    ),
+    (
+        "spyglass-feature",
+        "flower_providers_match_the_game",
+        &[Input::Flowers, Input::Bundle],
+    ),
+    (
+        "spyglass",
+        "best_heights_agree_with_the_map",
+        &[Input::Bundle],
+    ),
+    (
+        "spyglass",
+        "flowers_through_the_api_are_the_game_s",
+        &[Input::Flowers, Input::Bundle],
+    ),
+    (
+        "spyglass",
+        "portal_links_match_the_game",
+        &[Input::Portals, Input::Bundle],
     ),
     (
         "spyglass-feature",

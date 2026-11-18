@@ -7,7 +7,8 @@ use std::time::{Duration, Instant};
 use spyglass_search::{Anchor, Checked, Place, distance_sqr, map_prefix_throttled};
 
 use super::evaluate::{Area, Here, Sessions, check_at, evaluate_at, lookup, sample, starts_in};
-use super::{Looked, SearchQuery, SearchStop, SearchThrottle, convert};
+use super::{Looked, SearchQuery, SearchThrottle, Stop, convert};
+use crate::Halt;
 use crate::features::Placings;
 use crate::loot::LootPlacings;
 use crate::{
@@ -36,7 +37,7 @@ pub struct FindOptions {
     /// Stop once this much time has passed.
     pub time: Option<Duration>,
     /// Stops the search from another thread, before its next target.
-    pub stop: SearchStop,
+    pub stop: Stop,
     /// Limits how many of its threads work at once, from another thread while it runs.
     pub throttle: SearchThrottle,
 }
@@ -51,7 +52,7 @@ impl Default for FindOptions {
             certain: false,
             confirm: false,
             time: None,
-            stop: SearchStop::new(),
+            stop: Stop::new(),
             throttle: SearchThrottle::new(),
         }
     }
@@ -322,6 +323,7 @@ fn enumerate(
                 |chunk| area.touches_chunk(chunk),
                 FeatureOptions::default(),
                 &mut Placings::default(),
+                Halt::NEVER,
                 |f| {
                     let position = [f.position[0], f.position[2]];
                     if area.distance(position).is_some() {

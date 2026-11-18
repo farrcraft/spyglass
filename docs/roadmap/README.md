@@ -32,8 +32,12 @@ The milestones build toward the goals in the [README](../../README.md#goals): co
 | 24  | [Java's `Math`](completed/24-java-math.md)                                            | `Math` as HotSpot computes it, so every build gives the game's answers.   | Completed   |
 | 25  | [What a save knows](completed/25-what-the-save-knows.md)                              | Generated chunks on the map; structures and opened loot from the save.    | Completed   |
 | 26  | [Data packs](completed/26-data-packs.md)                                              | Answers for worlds whose data packs change generation.                    | Completed   |
-| 27  | [Decoration order](27-decoration-order.md)                                            | Whether the order around the spawn is knowable, and a third answer if so. | Planned     |
+| 27  | [Decoration order](completed/27-decoration-order.md)                                  | Whether the order around the spawn is knowable, and a third answer if so. | Completed   |
 | 28  | [Review fixes](completed/28-review-fixes.md)                                          | The 2026-11-13 review's findings on milestones 23 to 26, fixed.           | Completed   |
+| 29  | [Flower fields](completed/29-flower-fields.md)                                        | Which flower bone meal grows at any block and height; fields to search.   | Completed   |
+| 30  | [Nether portal linking](completed/30-portal-linking.md)                               | Where a portal leads, where to build one so it links, and a save's links. | Completed   |
+| 31  | [What spyglass read from a save](completed/31-save-inspector.md)                      | A save's settings, packs and holdings, and how answers used them.         | Completed   |
+| 32  | [Viewer polish](completed/32-viewer-polish.md)                                        | Clear zoom limits, stopped and reused work on zoom, a foldable panel.     | Completed   |
 
 ## Follow-ups
 

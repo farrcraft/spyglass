@@ -1,13 +1,18 @@
 //! Reading local Minecraft: Java Edition world saves: the seed, version, generators, data packs,
 //! spawn and single player ([`Save::read`]), what its data packs contain ([`Save::packs`]),
-//! how many chunks older versions generated ([`region`]), and where launchers keep saves
+//! how many chunks older versions generated ([`region`]), its portal records ([`poi`]) and
+//! world borders ([`Save::world_border`]), and where launchers keep saves
 //! ([`launchers`]). It does no worldgen and needs
 //! no game data. See `docs/specs/world-saves.md`.
 
+mod border;
 pub mod chunk;
 pub mod launchers;
 mod packs;
+pub mod poi;
 pub mod region;
+
+pub use border::{BorderRead, SavedBorder};
 
 pub use packs::{PackContents, open_pack};
 
@@ -107,12 +112,89 @@ pub struct Save {
     pub spawn: Option<Location>,
     /// The single player's position, in single-player saves.
     pub player: Option<Location>,
+    /// Where each value above came from.
+    pub sources: SaveSources,
 }
+
+/// Where one value in a save came from: a file and the NBT path in it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SaveSource {
+    /// The file, relative to the save and `/`-separated, e.g. `level.dat`.
+    pub file: String,
+    /// The NBT path in it, dotted, e.g. `Data.WorldGenSettings.seed`. A value read from several
+    /// fields names them all, e.g. `Data.SpawnX, SpawnY, SpawnZ`.
+    pub field: String,
+    /// Whether the file has it. If not, the value is the default the game uses, and `file` and
+    /// `field` say where it would be.
+    pub present: bool,
+}
+
+impl SaveSource {
+    fn new(file: &str, field: impl Into<String>, present: bool) -> Self {
+        SaveSource {
+            file: file.to_string(),
+            field: field.into(),
+            present,
+        }
+    }
+}
+
+/// Where [`Save::read`] found each value, by the save's layout (`docs/specs/world-saves.md`,
+/// "The report").
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SaveSources {
+    /// [`Save::name`]'s.
+    pub name: SaveSource,
+    /// [`Save::data_version`]'s.
+    pub data_version: SaveSource,
+    /// [`Save::version_name`]'s.
+    pub version_name: SaveSource,
+    /// [`Save::seed`]'s.
+    pub seed: SaveSource,
+    /// [`Save::generate_structures`]'s: the name found, or the first the game tries.
+    pub generate_structures: SaveSource,
+    /// Each of [`Save::generators`]'s, by dimension id.
+    pub generators: BTreeMap<String, SaveSource>,
+    /// Where the generators are kept, for a dimension that has none.
+    pub dimensions: SaveSource,
+    /// [`Save::enabled_packs`]'s.
+    pub enabled_packs: SaveSource,
+    /// [`Save::was_modded`]'s.
+    pub was_modded: SaveSource,
+    /// [`Save::spawn`]'s.
+    pub spawn: SaveSource,
+    /// [`Save::player`]'s.
+    pub player: SaveSource,
+}
+
+impl SaveSources {
+    /// Where the generator of `dimension` (e.g. `minecraft:the_nether`) is, or would be.
+    pub fn generator(&self, dimension: &str) -> SaveSource {
+        self.generators.get(dimension).cloned().unwrap_or_else(|| {
+            let mut absent = self.dimensions.clone();
+            if absent.field.ends_with(".dimensions") {
+                absent.field = format!("{}.{dimension}.generator", absent.field);
+            }
+            absent.present = false;
+            absent
+        })
+    }
+}
+
+/// `level.dat`, relative to the save.
+const LEVEL_DAT: &str = "level.dat";
+
+/// The 26.x world generation settings, relative to the save.
+const WORLD_GEN_SETTINGS: &str = "data/minecraft/world_gen_settings.dat";
+
+/// What [`Save::world_gen`] reads: the layout, seed, whether structures generate, each
+/// dimension's generator, and where the last three came from.
+type WorldGen = (Layout, i64, bool, BTreeMap<String, Value>, SaveSources);
 
 /// The most a save's NBT files (`level.dat`, player and settings files) may hold, compressed or
 /// not, and the most memory the tree read from one may take. Real ones are kilobytes; the limit
 /// keeps a crafted file from filling memory.
-const MAX_NBT_FILE: u64 = 64 << 20;
+pub(crate) const MAX_NBT_FILE: u64 = 64 << 20;
 
 /// A whole file, unless it's longer than `max` bytes.
 pub(crate) fn read_capped(path: &Path, max: u64) -> io::Result<Vec<u8>> {
@@ -129,7 +211,7 @@ pub(crate) fn read_capped(path: &Path, max: u64) -> io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
-fn read_nbt(path: &Path) -> Result<Tag, WorldError> {
+pub(crate) fn read_nbt(path: &Path) -> Result<Tag, WorldError> {
     let bytes = read_capped(path, MAX_NBT_FILE).map_err(|source| WorldError::Io {
         path: path.to_path_buf(),
         source,
@@ -241,8 +323,19 @@ impl Save {
         let level = read_nbt(&level_path)?;
         let level_fields = Fields { path: &level_path };
 
-        let (layout, seed, generate_structures, generators) =
+        let (layout, seed, generate_structures, generators, world_gen_sources) =
             Self::world_gen(&dir, &level, &level_fields)?;
+        let in_level = |field: &str| {
+            SaveSource::new(LEVEL_DAT, field, level_fields.get(&level, field).is_some())
+        };
+        let spawn_source = match level_fields.get(&level, "Data.spawn") {
+            Some(_) => in_level("Data.spawn"),
+            None => SaveSource::new(
+                LEVEL_DAT,
+                "Data.SpawnX, SpawnY, SpawnZ",
+                level_fields.get(&level, "Data.SpawnX").is_some(),
+            ),
+        };
 
         let spawn = match level_fields.get(&level, "Data.spawn") {
             // 26.x: Data.spawn {pos: [I; x, y, z], dimension}.
@@ -274,7 +367,17 @@ impl Save {
             },
         };
 
-        let player = Self::player(&dir, &level, &level_fields)?;
+        let (player, player_source) = Self::read_player(&dir, &level, &level_fields)?;
+        let sources = SaveSources {
+            name: in_level("Data.LevelName"),
+            data_version: in_level("Data.DataVersion"),
+            version_name: in_level("Data.Version.Name"),
+            enabled_packs: in_level("Data.DataPacks.Enabled"),
+            was_modded: in_level("Data.WasModded"),
+            spawn: spawn_source,
+            player: player_source,
+            ..world_gen_sources
+        };
         Ok(Save {
             layout,
             name: level_fields
@@ -301,60 +404,54 @@ impl Save {
                 .is_some_and(|v| v != 0),
             spawn,
             player,
+            sources,
             dir,
         })
     }
 
-    /// The layout, seed, whether structures generate, and each dimension's generator.
+    /// The layout, seed, whether structures generate, and each dimension's generator, with
+    /// where the last three came from.
     fn world_gen(
         dir: &Path,
         level: &Tag,
         level_fields: &Fields<'_>,
-    ) -> Result<(Layout, i64, bool, BTreeMap<String, Value>), WorldError> {
+    ) -> Result<WorldGen, WorldError> {
         let settings_path = dir
             .join("data")
             .join("minecraft")
             .join("world_gen_settings.dat");
-        let (layout, settings_file, settings_root, settings_prefix) = if settings_path.is_file() {
-            let tag = read_nbt(&settings_path)?;
-            (Layout::Current, settings_path, tag, "data")
-        } else if level_fields.get(level, "Data.WorldGenSettings").is_some() {
-            (
-                Layout::Legacy,
-                level_fields.path.to_path_buf(),
-                level.clone(),
-                "Data.WorldGenSettings",
-            )
-        } else {
-            // Before 1.16: a seed, a generator name and options, and MapFeatures.
-            let mut generator = serde_json::Map::new();
-            for (key, field) in [
-                ("name", "Data.generatorName"),
-                ("options", "Data.generatorOptions"),
-            ] {
-                if let Some(v) = level_fields.get(level, field) {
-                    generator.insert(key.into(), v.to_json());
-                }
-            }
-            let generators = BTreeMap::from([(
-                "minecraft:overworld".to_string(),
-                serde_json::json!({ "legacy_generator": generator }),
-            )]);
-            let structures = level_fields
-                .get(level, "Data.MapFeatures")
-                .and_then(Tag::as_int)
-                .is_none_or(|v| v != 0);
-            return Ok((
-                Layout::Before116,
-                level_fields.long(level, "Data.RandomSeed")?,
-                structures,
-                generators,
-            ));
-        };
+        let (layout, settings_file, settings_name, settings_root, settings_prefix) =
+            if settings_path.is_file() {
+                let tag = read_nbt(&settings_path)?;
+                let name = WORLD_GEN_SETTINGS;
+                (Layout::Current, settings_path, name, tag, "data")
+            } else if level_fields.get(level, "Data.WorldGenSettings").is_some() {
+                (
+                    Layout::Legacy,
+                    level_fields.path.to_path_buf(),
+                    LEVEL_DAT,
+                    level.clone(),
+                    "Data.WorldGenSettings",
+                )
+            } else {
+                return Self::world_gen_before_1_16(level, level_fields);
+            };
         let settings_fields = Fields {
             path: &settings_file,
         };
         let field = |name: &str| format!("{settings_prefix}.{name}");
+        let in_settings = |name: &str| {
+            let present = settings_fields.get(&settings_root, &field(name)).is_some();
+            SaveSource::new(settings_name, field(name), present)
+        };
+        // The game reads either name; the source is the one found, or else the first.
+        let generate_source = [
+            in_settings("generate_structures"),
+            in_settings("generate_features"),
+        ]
+        .into_iter()
+        .find(|s| s.present)
+        .unwrap_or_else(|| in_settings("generate_structures"));
         let generate = settings_fields
             .get(&settings_root, &field("generate_structures"))
             .or_else(|| settings_fields.get(&settings_root, &field("generate_features")));
@@ -376,25 +473,88 @@ impl Save {
             .ok_or_else(|| {
                 settings_fields.error(&field("dimensions"), "a compound of dimensions")
             })?;
-        let generators = dimensions
+        let generators: BTreeMap<String, Value> = dimensions
             .iter()
             .filter_map(|(id, dim)| Some((id.clone(), dim.get("generator")?.to_json())))
             .collect();
+        let generator_sources = generators
+            .keys()
+            .map(|id| {
+                let at = field(&format!("dimensions.{id}.generator"));
+                (id.clone(), SaveSource::new(settings_name, at, true))
+            })
+            .collect();
+        let sources = SaveSources {
+            seed: in_settings("seed"),
+            generate_structures: generate_source,
+            generators: generator_sources,
+            dimensions: in_settings("dimensions"),
+            ..SaveSources::default()
+        };
         Ok((
             layout,
             settings_fields.long(&settings_root, &field("seed"))?,
             generate_structures,
             generators,
+            sources,
         ))
     }
 
-    /// The single player: `Data.Player` before 26.x; in 26.x, `players/data/<uuid>.dat` for
-    /// `Data.singleplayer_uuid`. `None` for server saves.
-    fn player(
+    /// [`world_gen`](Self::world_gen) before 1.16: a seed, a generator name and options, and
+    /// `MapFeatures`, all in `level.dat`.
+    fn world_gen_before_1_16(
+        level: &Tag,
+        level_fields: &Fields<'_>,
+    ) -> Result<WorldGen, WorldError> {
+        let mut generator = serde_json::Map::new();
+        for (key, field) in [
+            ("name", "Data.generatorName"),
+            ("options", "Data.generatorOptions"),
+        ] {
+            if let Some(v) = level_fields.get(level, field) {
+                generator.insert(key.into(), v.to_json());
+            }
+        }
+        let generators = BTreeMap::from([(
+            "minecraft:overworld".to_string(),
+            serde_json::json!({ "legacy_generator": generator }),
+        )]);
+        let structures = level_fields
+            .get(level, "Data.MapFeatures")
+            .and_then(Tag::as_int)
+            .is_none_or(|v| v != 0);
+        let in_level = |field: &str| {
+            SaveSource::new(LEVEL_DAT, field, level_fields.get(level, field).is_some())
+        };
+        let generator_source = SaveSource::new(
+            LEVEL_DAT,
+            "Data.generatorName, generatorOptions",
+            level_fields.get(level, "Data.generatorName").is_some(),
+        );
+        let sources = SaveSources {
+            seed: in_level("Data.RandomSeed"),
+            generate_structures: in_level("Data.MapFeatures"),
+            generators: BTreeMap::from([("minecraft:overworld".to_string(), generator_source)]),
+            // Only the Overworld has a generator in this layout.
+            dimensions: SaveSource::new(LEVEL_DAT, "Data.generatorName", false),
+            ..SaveSources::default()
+        };
+        Ok((
+            Layout::Before116,
+            level_fields.long(level, "Data.RandomSeed")?,
+            structures,
+            generators,
+            sources,
+        ))
+    }
+
+    /// The single player, and where it's read from: `Data.Player` before 26.x; in 26.x,
+    /// `players/data/<uuid>.dat` for `Data.singleplayer_uuid`. `None` for server saves.
+    fn read_player(
         dir: &Path,
         level: &Tag,
         level_fields: &Fields<'_>,
-    ) -> Result<Option<Location>, WorldError> {
+    ) -> Result<(Option<Location>, SaveSource), WorldError> {
         let location = |fields: &Fields<'_>, tag: &Tag| -> Result<Location, WorldError> {
             // An id since 1.16; before, an int: 0, -1 or 1.
             let dimension = match tag.get("Dimension") {
@@ -412,19 +572,28 @@ impl Save {
             })
         };
         if let Some(player) = level_fields.get(level, "Data.Player") {
-            return location(level_fields, player).map(Some);
+            let source = SaveSource::new(LEVEL_DAT, "Data.Player.Pos", true);
+            return Ok((Some(location(level_fields, player)?), source));
         }
         let Some(Tag::IntArray(ints)) = level_fields.get(level, "Data.singleplayer_uuid") else {
-            return Ok(None);
+            // 26.x names its single player by UUID; before, `level.dat` held it.
+            let field = if dir.join(WORLD_GEN_SETTINGS).is_file() {
+                "Data.singleplayer_uuid"
+            } else {
+                "Data.Player.Pos"
+            };
+            return Ok((None, SaveSource::new(LEVEL_DAT, field, false)));
         };
         let uuid = uuid_text(ints)
             .ok_or_else(|| level_fields.error("Data.singleplayer_uuid", "four ints"))?;
+        let file = format!("players/data/{uuid}.dat");
         let path = dir.join("players").join("data").join(format!("{uuid}.dat"));
         if !path.is_file() {
-            return Ok(None);
+            return Ok((None, SaveSource::new(&file, "Pos", false)));
         }
         let tag = read_nbt(&path)?;
-        location(&Fields { path: &path }, &tag).map(Some)
+        let player = location(&Fields { path: &path }, &tag)?;
+        Ok((Some(player), SaveSource::new(&file, "Pos", true)))
     }
 
     /// Where a dimension's region files are, e.g. `minecraft:overworld`. An id that isn't a

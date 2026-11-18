@@ -382,7 +382,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "spyglass-data"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "directories",
  "flate2",
@@ -405,14 +405,14 @@ dependencies = [
 
 [[package]]
 name = "spyglass-math"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "libm",
 ]
 
 [[package]]
 name = "spyglass-rng"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "md-5",
  "spyglass-math",
@@ -420,7 +420,7 @@ dependencies = [
 
 [[package]]
 name = "spyglass-world"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "directories",
  "flate2",

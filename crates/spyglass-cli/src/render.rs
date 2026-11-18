@@ -73,6 +73,8 @@ pub fn run(args: &Render) -> Result<()> {
         veins: args.veins,
         noise_caves: args.caves,
         carvers: args.carvers,
+        flowers: args.flowers || args.flower.is_some(),
+        flower: args.flower.as_deref().map(full_id),
         pins: args.pins.clone(),
     };
     let features = session.map_features(&area, &layers)?;
@@ -126,6 +128,8 @@ pub fn run(args: &Render) -> Result<()> {
                     veins: layers.veins,
                     noise_caves: layers.noise_caves,
                     carvers: layers.carvers,
+                    flowers: layers.flowers,
+                    flower: layers.flower.as_deref(),
                 },
                 structures,
                 features: features
@@ -247,5 +251,14 @@ impl Out<'_> {
                 Ok(place.map_or([0, 0], |l| xz(l.block())))
             }
         }
+    }
+}
+
+/// An id with `minecraft:` added if it has no namespace.
+fn full_id(id: &str) -> String {
+    if id.contains(':') {
+        id.to_string()
+    } else {
+        format!("minecraft:{id}")
     }
 }

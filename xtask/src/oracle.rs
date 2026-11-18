@@ -118,6 +118,19 @@ pub enum OracleCmd {
         #[arg(long = "seed")]
         seeds: Vec<String>,
     },
+    /// Write flower golden files (each bone meal feature's provider at fixed positions, and the
+    /// block biomes of fixed and found patches for each golden seed) into
+    /// `oracle-out/<version>/flowers/`.
+    Flowers {
+        #[command(flatten)]
+        common: Common,
+        /// Parallel seeds. Defaults to the number of CPUs.
+        #[arg(long)]
+        threads: Option<usize>,
+        /// Only these seeds, instead of the golden ones.
+        #[arg(long = "seed")]
+        seeds: Vec<String>,
+    },
     /// Print one column of a generated chunk beside the generator's `getBaseColumn`, marking
     /// where they differ. For finding where blocks go wrong.
     Column {
@@ -149,6 +162,69 @@ pub enum OracleCmd {
         /// as `SPYGLASS_ACCEPT_EULA=1` does.
         #[arg(long)]
         accept_eula: bool,
+    },
+    /// Record the order the game decorates chunks in around the spawn of new worlds, with one
+    /// player joined on a stand-in connection (ADR 0073), into
+    /// `oracle-out/<version>/order/<seed>/`. About a minute per run; not part of `golden`.
+    /// Running the server means accepting the Minecraft EULA (ADR 0033).
+    Order {
+        #[command(flatten)]
+        common: Common,
+        /// Only these seeds, instead of the golden ones (repeatable).
+        #[arg(long = "seed")]
+        seeds: Vec<String>,
+        /// Also this many seeds from a fixed generator, the same on every machine.
+        #[arg(long, default_value_t = 0)]
+        random: usize,
+        /// Runs per seed.
+        #[arg(long, default_value_t = 2)]
+        runs: usize,
+        /// The JVM's processor count, which sets how many workers generate chunks. Defaults to
+        /// every CPU.
+        #[arg(long)]
+        cpus: Option<usize>,
+        /// Record startup alone, without a player joining.
+        #[arg(long)]
+        no_join: bool,
+        /// The server's view distance, in chunks, which sets how far the join decorates.
+        #[arg(long, default_value_t = 10)]
+        view_distance: u32,
+        /// Accept the Minecraft EULA (<https://aka.ms/MinecraftEULA>) for the server this runs,
+        /// as `SPYGLASS_ACCEPT_EULA=1` does.
+        #[arg(long)]
+        accept_eula: bool,
+    },
+    /// Play portal cases on a real dedicated server through the game's own portal code (ADR
+    /// 0076): random layouts and constructed edges, each search's and trip's answer written to
+    /// `oracle-out/<version>/portals/portals.json`. About a minute; not part of `golden`.
+    /// Running the server means accepting the Minecraft EULA (ADR 0033).
+    Portals {
+        #[command(flatten)]
+        common: Common,
+        /// Random layouts, from a fixed generator, besides the constructed ones.
+        #[arg(long, default_value_t = 40)]
+        random: usize,
+        /// A world save of the harness's version to play instead: a copy of it is opened on the
+        /// server, and a trip made from every portal block it records, into
+        /// `oracle-out/<version>/portals/world-<folder>.json`. Repeatable.
+        #[arg(long = "world", value_name = "SAVE")]
+        worlds: Vec<PathBuf>,
+        /// Accept the Minecraft EULA (<https://aka.ms/MinecraftEULA>) for the server this runs,
+        /// as `SPYGLASS_ACCEPT_EULA=1` does.
+        #[arg(long)]
+        accept_eula: bool,
+    },
+    /// Replay the orders `order` recorded: each chunk's target features decorated on its own
+    /// and in the recorded order, into `oracle-out/<version>/order-features/<seed>/`.
+    Replay {
+        #[command(flatten)]
+        common: Common,
+        /// Parallel chunks for the decorations on their own. Defaults to the number of CPUs.
+        #[arg(long)]
+        threads: Option<usize>,
+        /// Only these seeds' recordings (repeatable).
+        #[arg(long = "seed")]
+        seeds: Vec<String>,
     },
     /// Load the test data pack in `oracle/testpack/` over the vanilla one and write probe and
     /// structure files into `oracle-out/<version>+testpack/`, with the pack recorded for the
@@ -343,6 +419,58 @@ pub fn run(cmd: OracleCmd) -> Result<()> {
             let harness = build(&common)?;
             crate::locate::run(&harness, &world)
         }
+        OracleCmd::Order {
+            common,
+            seeds,
+            random,
+            runs,
+            cpus,
+            no_join,
+            view_distance,
+            accept_eula,
+        } => {
+            crate::locate::require_eula(accept_eula)?;
+            let mut seeds: Vec<String> = seeds_or(&seeds, GOLDEN_SEEDS.to_vec())
+                .into_iter()
+                .map(String::from)
+                .collect();
+            seeds.extend(crate::order::random_seeds(random));
+            let harness = build(&common)?;
+            crate::order::run(
+                &harness,
+                &crate::order::Options {
+                    seeds: &seeds,
+                    runs,
+                    cpus,
+                    no_join,
+                    view_distance,
+                },
+            )
+        }
+        OracleCmd::Portals {
+            common,
+            random,
+            worlds,
+            accept_eula,
+        } => {
+            crate::locate::require_eula(accept_eula)?;
+            let harness = build(&common)?;
+            if worlds.is_empty() {
+                crate::portals::run(&harness, random)
+            } else {
+                worlds
+                    .iter()
+                    .try_for_each(|save| crate::portals::run_world(&harness, save))
+            }
+        }
+        OracleCmd::Replay {
+            common,
+            threads,
+            seeds,
+        } => {
+            let harness = build(&common)?;
+            harness.replay(threads, &seeds)
+        }
         OracleCmd::Spawn(common) => {
             let harness = build(&common)?;
             harness.spawn()
@@ -383,6 +511,14 @@ pub fn run(cmd: OracleCmd) -> Result<()> {
             let harness = build(&common)?;
             harness.containers(threads, &seeds_or(&seeds, GOLDEN_SEEDS.to_vec()))
         }
+        OracleCmd::Flowers {
+            common,
+            threads,
+            seeds,
+        } => {
+            let harness = build(&common)?;
+            harness.flowers(threads, &seeds_or(&seeds, GOLDEN_SEEDS.to_vec()))
+        }
         OracleCmd::Column {
             common,
             seed,
@@ -420,7 +556,7 @@ fn seeds_or<'s>(seeds: &'s [String], default: Vec<&'s str>) -> Vec<&'s str> {
 }
 
 /// Every golden file: probes, structures, spawn, heights, blocks, features, containers, the
-/// biome grids and loot, with feature files for `feature_seeds`.
+/// biome grids, loot and flowers, with feature files for `feature_seeds`.
 fn golden(common: &Common, threads: Option<usize>, feature_seeds: &[&str]) -> Result<()> {
     let mut harness = build(common)?;
     harness.probe()?;
@@ -432,6 +568,7 @@ fn golden(common: &Common, threads: Option<usize>, feature_seeds: &[&str]) -> Re
     harness.containers(threads, GOLDEN_SEEDS)?;
     harness.golden_biomes(threads)?;
     harness.loot()?;
+    harness.flowers(threads, GOLDEN_SEEDS)?;
     println!(
         "golden files in {}",
         repo_root()
@@ -588,6 +725,24 @@ impl Harness {
         self.run(&["loot".into(), dir.into()])
     }
 
+    /// Writes `oracle-out/<version>/flowers/` for the Overworld, replacing what was there: bone
+    /// meal grows flowers only on grass, and only Overworld biomes have bone meal features.
+    pub(crate) fn flowers(&self, threads: Option<usize>, seeds: &[&str]) -> Result<()> {
+        let dir = repo_root()
+            .join("oracle-out")
+            .join(&self.version)
+            .join("flowers");
+        if dir.exists() {
+            fs::remove_dir_all(&dir)?;
+        }
+        let mut args: Vec<OsString> = vec!["flowers".into(), dir.into()];
+        if let Some(threads) = threads {
+            args.extend(["--threads".into(), threads.to_string().into()]);
+        }
+        args.extend(seeds.iter().map(OsString::from));
+        self.run(&args)
+    }
+
     /// Writes `oracle-out/<version>/heights/<dimension>/` for each golden dimension, replacing
     /// what was there.
     pub(crate) fn heights(&self, threads: Option<usize>, seeds: &[&str]) -> Result<()> {
@@ -616,6 +771,46 @@ impl Harness {
             extra.extend(["--threads".into(), threads.to_string().into()]);
         }
         self.per_dimension("features", &extra, seeds)
+    }
+
+    /// Replays every order file `oracle order` recorded, or those of `seeds`, into
+    /// `oracle-out/<version>/order-features/<seed>/`, each chunk with its target features' calls
+    /// decorated on its own and in the recorded order.
+    pub(crate) fn replay(&self, threads: Option<usize>, seeds: &[String]) -> Result<()> {
+        let version_dir = repo_root().join("oracle-out").join(&self.version);
+        let order_dir = version_dir.join("order");
+        let mut files = Vec::new();
+        for entry in fs::read_dir(&order_dir).with_context(|| {
+            format!(
+                "no recordings in {}; run cargo xtask oracle order first",
+                order_dir.display()
+            )
+        })? {
+            let seed_dir = entry?.path();
+            let seed = seed_dir.file_name().unwrap_or_default().to_string_lossy();
+            if !seed_dir.is_dir() || !(seeds.is_empty() || seeds.iter().any(|s| *s == seed)) {
+                continue;
+            }
+            for file in fs::read_dir(&seed_dir)? {
+                let file = file?.path();
+                // Startup alone decorates too little to replay.
+                let name = file.file_name().unwrap_or_default().to_string_lossy();
+                if name.ends_with(".json") && !name.ends_with("-startup.json") {
+                    files.push(file);
+                }
+            }
+        }
+        if files.is_empty() {
+            bail!("no order files to replay in {}", order_dir.display());
+        }
+        files.sort();
+        let mut args: Vec<OsString> =
+            vec!["replay".into(), version_dir.join("order-features").into()];
+        if let Some(threads) = threads {
+            args.extend(["--threads".into(), threads.to_string().into()]);
+        }
+        args.extend(files.into_iter().map(OsString::from));
+        self.run(&args)
     }
 
     /// Writes `oracle-out/<version>/containers/<dimension>/` for each golden dimension, replacing

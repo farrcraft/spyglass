@@ -119,6 +119,32 @@ A pack's new biomes get the map's hashed colour for ids it doesn't know ([ADR 00
 
 Packs found in `datapacks/` but in neither list aren't applied: the game adds them on its next start, but the chunks so far were made without them.
 
+### What a pack changes
+
+`Bundle::layer_changes()` says, for each applied pack, what it changes, from the layers' file lists, as [which file wins](#which-file-wins) decides; only tag files are read, for `replace`. Per registry (the folder under `data/<namespace>/`, such as `worldgen/biome` or `tags/worldgen/biome`), a pack's file is:
+
+- **replaced** when a layer below, the bundle included, has a file at the same path that's still in view, and **added** when none has;
+- for a tag, **merged** with what's below, or **replaced** when it says `"replace": true` (a file that doesn't read as a tag is skipped, as the game skips it);
+- **shadowed** when a higher pack has the same path, or hides it with its filter: it never takes effect. A shadowed tag is still merged, unless a higher pack replaces or hides it.
+
+Its `filter` **hides** the files of the packs below it that it matches, counted per registry the same way. Structure templates (`structure/`, `.nbt`) are counted as a registry of their own. A file counts only with its registry's extension (`.nbt` for templates, `.mcfunction` for functions, `.json` for the rest), as `FileToIdConverter` lists them: Terralith's `.json.disabled` structures aren't resources.
+
+`spyglass::answers_fed_by(registry)` names the answers a registry feeds, so a pack's changes say which answers they touch:
+
+| Answers    | Registries                                                                                                                                                                                                                                                              |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| biomes     | `worldgen/biome`, `worldgen/multi_noise_biome_source_parameter_list`, `worldgen/density_function`, `worldgen/noise`, `worldgen/noise_settings`, `worldgen/world_preset`, `dimension`, `dimension_type`                                                                  |
+| terrain    | the biomes' registries except `worldgen/multi_noise_biome_source_parameter_list`, and `worldgen/material_rule`, `worldgen/material_condition`, `worldgen/carver`, `worldgen/configured_carver`, `tags/worldgen/carver`, `tags/worldgen/configured_carver`, `tags/block` |
+| structures | `worldgen/structure`, `worldgen/structure_set`, `worldgen/template_pool`, `worldgen/processor_list`, `structure` (templates), `tags/worldgen/biome`, `tags/worldgen/structure`                                                                                          |
+| features   | `worldgen/biome`, `worldgen/configured_feature`, `worldgen/placed_feature`, `worldgen/feature`, `worldgen/block_state_provider`, `tags/worldgen/feature`, `tags/worldgen/configured_feature`, `tags/worldgen/placed_feature`, `tags/block`                              |
+| loot       | `loot_table`, `enchantment`, `tags/item`, `tags/instrument`, `tags/enchantment`                                                                                                                                                                                         |
+| flowers    | the features' registries, except `tags/worldgen/placed_feature` and `tags/block`                                                                                                                                                                                        |
+| portals    | `worldgen/noise_settings`, `dimension`, `dimension_type`, `tags/block`                                                                                                                                                                                                  |
+
+A test reads the library crates' sources for every registry name a loader uses and checks each feeds an answer.
+
+Any other registry, such as `recipe`, `advancement` or `function`, is counted as not read by spyglass, so a pack of recipes only changes no answers.
+
 ## Testing
 
 - **Unit tests** on packs built in the test: formats in every form, valid and not; packs the game skips; overlays chosen by format, the last on top; filters matching anywhere; zips and folders alike; oversized zip entries, and escaping or invalid paths skipped. On layered bundles: replacement, new ids, filters above and below, tag merging with and without `replace`, unreadable tag files, feature packs, and a bundle without a format.
@@ -128,16 +154,16 @@ Packs found in `datapacks/` but in neither list aren't applied: the game adds th
 
 ### A widely used pack
 
-Terralith 2.6.5 for 26.3, the data pack edition (`Terralith_v2.6.5+26.3.zip`, 2,619 entries), downloaded by hand into the gitignored `packs/`, loaded by the harness with `--pack packs/Terralith_v2.6.5+26.3.zip --name terralith` and compared as `26.3+terralith` (2026-11-13). It replaces the Overworld's noise settings, parameter list and surface rules, overrides 40 vanilla biomes and adds 97, and brings 50 structures and 300 templates.
+Terralith 2.6.5 for 26.3, the data pack edition (`Terralith_v2.6.5+26.3.zip`, 2,619 entries), downloaded by hand into the gitignored `packs/`, loaded by the harness with `--pack packs/Terralith_v2.6.5+26.3.zip --name terralith` and compared as `26.3+terralith` (2026-11-13). It replaces the Overworld's noise settings, parameter list and surface rules, replaces 39 vanilla biomes and adds 95, and brings 29 structures and 183 templates, as `Bundle::layer_changes` counts them and the zip's entries confirm (2026-11-16; an earlier count here, 40, 97, 50 and 300, was wrong). 18 more structure files are named `.json.disabled`, which the game's registries don't list.
 
 What agrees with the game, every value of the golden set: the noise probe, density functions, biomes (every golden cell), the aquifer, the noise fill, spawn, heights, and every block of the golden chunks without carvers and with them.
 
 What spyglass doesn't support, so a world with Terralith isn't answered ([above](#worlds)), each the first such file of its kind:
 
-- **Old templates.** 290 of its 300 structure templates were saved by older versions (data versions 2730 to 4325, 1.17 to 1.21.x), which the game brings up to date with its data fixers when it loads them. spyglass reads only the version's own (`terralith:mage/tower`, 3839).
+- **Old templates.** 173 of its 183 structure templates were saved by older versions (data versions 2730 to 4325, 1.17 to 1.21.x), which the game brings up to date with its data fixers when it loads them. spyglass reads only the version's own (`terralith:mage/tower`, 3839).
 - **Feature forms:** a `minecraft:weighted` block state provider as a `filling_provider` (`terralith:taiga/mega/boulders`), and doubtless more behind it.
 - **Loot:** a `minecraft:tag` entry (`terralith:spire/rare`).
 
-A world with packs loads every template pool, feature and loot table when it opens, not only its dimension's, so every dimension fails on opening, the Nether and the End too though Terralith doesn't change them: structures, features, containers, loot, locate, search and rendering. In the full comparison run (`cargo xtask oracle-test` with the variant present), every test that opens a world or loads the pack's structures, features or loot fails on one of these three errors, 32 of 57; the other 25 pass (2026-11-14).
+A world with packs loads every template pool, feature and loot table when it opens, not only its dimension's, so every dimension fails on opening, the Nether and the End too though Terralith doesn't change them: structures, features, containers, loot, locate, search and rendering. In the full comparison run (`cargo xtask oracle-test` with the variant present), every test that opens a world or loads the pack's structures, features or loot fails on one of these three errors, 33 of 61; the other 28 pass (2026-11-15).
 
 It found faults that the vanilla data, the test pack and the fixture pack don't reach: whether a biome, tag or structure exists was looked up in the bundle and not the packs (`Bundle::has_resource`); surface rules and noise settings read only 26.2's block state form, not 26.3's `{"id", "properties"}`; carvers didn't keep [the game's spare gaussian](carvers.md) from one carver to the next. In the harness, the run without carvers replaced the pack's biomes with vanilla's, and its files were named after the pack's file rather than `--name`.

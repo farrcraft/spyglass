@@ -67,14 +67,16 @@ pub(crate) enum Kind {
     Blocks,
     Features,
     Containers,
+    Flowers,
     Locate,
+    Portals,
     Loot,
     Bundle,
 }
 
 impl Kind {
     /// Every kind, in the order a job makes them.
-    pub(crate) const ALL: [Kind; 11] = [
+    pub(crate) const ALL: [Kind; 13] = [
         Kind::Probe,
         Kind::Biomes,
         Kind::Structures,
@@ -83,7 +85,9 @@ impl Kind {
         Kind::Blocks,
         Kind::Features,
         Kind::Containers,
+        Kind::Flowers,
         Kind::Locate,
+        Kind::Portals,
         Kind::Loot,
         Kind::Bundle,
     ];
@@ -98,7 +102,9 @@ impl Kind {
             Kind::Blocks => "blocks",
             Kind::Features => "features",
             Kind::Containers => "containers",
+            Kind::Flowers => "flowers",
             Kind::Locate => "locate",
+            Kind::Portals => "portals",
             Kind::Loot => "loot",
             Kind::Bundle => "bundle",
         }
@@ -125,7 +131,9 @@ impl Kind {
             Kind::Blocks => &[Input::Blocks, Input::BlocksNoCarvers],
             Kind::Features => &[Input::Features],
             Kind::Containers => &[Input::Containers],
+            Kind::Flowers => &[Input::Flowers],
             Kind::Locate => &[Input::Locate],
+            Kind::Portals => &[Input::Portals],
             Kind::Loot => &[Input::Loot],
             Kind::Bundle => &[],
         }
@@ -178,7 +186,9 @@ impl Unit {
             Kind::Features if self.seed == Some(DUNGEON_SEED) => costs.features + costs.dungeon,
             Kind::Features => costs.features,
             Kind::Containers => costs.containers,
+            Kind::Flowers => costs.flowers,
             Kind::Locate => costs.locate,
+            Kind::Portals => costs.portals,
             Kind::Loot => costs.loot,
             Kind::Bundle => costs.bundle,
         }
@@ -243,8 +253,14 @@ struct Costs {
     /// chunks, and the loot queries over them (about 5 minutes of it, 22 in 26.2). Estimated from local runs
     /// (16 threads) at four times as long, until CI's logs have them.
     containers: f64,
+    /// `oracle flowers`, every golden seed, and its comparisons. Estimated from local runs at
+    /// four times as long, until CI's logs have them.
+    flowers: f64,
     /// `oracle locate`'s server, its map cases included, and their comparisons.
     locate: f64,
+    /// `oracle portals`'s server and its comparison: about 20 s locally, estimated at four
+    /// times as long until CI's logs have it.
+    portals: f64,
     /// `oracle loot`'s fills, and their comparison.
     loot: f64,
     /// The tests that read only the bundle, and the test pack where it loads.
@@ -268,7 +284,9 @@ const COSTS: &[Costs] = &[
         features: 5.0,
         dungeon: 22.0,
         containers: 37.0,
+        flowers: 1.0,
         locate: 12.0,
+        portals: 1.5,
         loot: 1.0,
         bundle: 14.0,
     },
@@ -284,7 +302,9 @@ const COSTS: &[Costs] = &[
         features: 3.1,
         dungeon: 4.5,
         containers: 12.0,
+        flowers: 1.0,
         locate: 5.0,
+        portals: 1.5,
         loot: 1.0,
         bundle: 3.0,
     },
@@ -301,7 +321,9 @@ const COSTS: &[Costs] = &[
         features: 3.1,
         dungeon: 4.8,
         containers: 12.5,
+        flowers: 1.0,
         locate: 5.5,
+        portals: 1.5,
         loot: 1.0,
         bundle: 11.0,
     },
@@ -502,6 +524,24 @@ mod tests {
         }
         assert!(Unit::parse("features:56").is_ok());
         assert!(Unit::parse("blocks:56").is_err());
+    }
+
+    /// A job's name in the checks list, `×` and all: the workflow shows it as it's written.
+    #[test]
+    fn a_job_is_named_by_its_version_and_units() {
+        let units: Vec<Unit> = Unit::all()
+            .into_iter()
+            .filter(|u| u.kind == Kind::Heights)
+            .take(3)
+            .chain(Unit::all().into_iter().filter(|u| u.kind == Kind::Bundle))
+            .collect();
+        let job = Job {
+            version: "26.3",
+            units,
+            minutes: 0.0,
+        };
+        assert_eq!(name(&job, 1, 4), "oracle 26.3 1/4: heights ×3, bundle");
+        assert_eq!(name(&job, 1, 1), "oracle 26.3: heights ×3, bundle");
     }
 
     #[test]

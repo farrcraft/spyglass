@@ -22,23 +22,26 @@ CI runs the Rust crates against these for a fixed set of seeds per supported ver
 
 `cargo xtask oracle` builds and runs the harness. Every subcommand takes `--game-version` (default `latest`), `--cache-dir` and `--java`, and `--pack <folder|zip>` (repeatable, lowest first) with `--name <label>`, which load data packs over the vanilla one ([below](#packs)).
 
-| Command                                                         | Does                                                                                                                                               |
-| --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `build`                                                         | Fetch and verify the server jar, unpack its libraries, compile the harness.                                                                        |
-| `biomes <seed> [--dimension] [--x] [--z] [--size] --out <file>` | Write one golden biome file. Block coordinates; x, z and size must be multiples of 16.                                                             |
-| `check-save <world> [--dimension]`                              | Compare the harness with the biomes stored in a real save. Fails on any unexplained cell.                                                          |
-| `probe`                                                         | Write the [probe files](#probe-files) into `oracle-out/<version>/probe/`.                                                                          |
-| `structures`                                                    | Write the [structure golden files](#structure-golden-files) for the golden seeds and dimensions.                                                   |
-| `spawn`                                                         | Write the [spawn golden files](#spawn-golden-files) for the golden seeds and dimensions.                                                           |
-| `heights [--threads N]`                                         | Write the [height golden files](#height-golden-files) for the golden seeds and dimensions.                                                         |
-| `blocks [--threads N] [--seed S]…`                              | Write the [block golden files](#block-golden-files), with and without carvers, for the golden seeds (or those given).                              |
-| `features [--threads N] [--seed S]…`                            | Write the [feature golden files](#feature-golden-files) for the golden seeds and seed 56 (or those given).                                         |
-| `containers [--threads N] [--seed S]…`                          | Write the [container golden files](#container-golden-files) for the golden seeds (or those given).                                                 |
-| `column <seed> <x> <z> [--dimension]`                           | Print a generated chunk's column beside `getBaseColumn`'s, marking where they differ. For debugging.                                               |
-| `locate`                                                        | Ask a real dedicated server `/locate` questions ([below](#locate-answers)). Not part of `golden`.                                                  |
-| `test-pack`                                                     | Write probe and structure files with the [test pack](#the-test-pack) loaded, into `oracle-out/<version>+testpack/`.                                |
-| `fixture-pack [--only-pack]`                                    | Write [the fixture pack](#the-fixture-pack), then the golden set with it loaded, into `oracle-out/<version>+overrides/`.                           |
-| `golden`                                                        | Regenerate the whole golden set below, probe, structure, spawn, height, block, feature and container files included, into `oracle-out/<version>/`. |
+| Command                                                                                | Does                                                                                                                                                       |
+| -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `build`                                                                                | Fetch and verify the server jar, unpack its libraries, compile the harness.                                                                                |
+| `biomes <seed> [--dimension] [--x] [--z] [--size] --out <file>`                        | Write one golden biome file. Block coordinates; x, z and size must be multiples of 16.                                                                     |
+| `check-save <world> [--dimension]`                                                     | Compare the harness with the biomes stored in a real save. Fails on any unexplained cell.                                                                  |
+| `probe`                                                                                | Write the [probe files](#probe-files) into `oracle-out/<version>/probe/`.                                                                                  |
+| `structures`                                                                           | Write the [structure golden files](#structure-golden-files) for the golden seeds and dimensions.                                                           |
+| `spawn`                                                                                | Write the [spawn golden files](#spawn-golden-files) for the golden seeds and dimensions.                                                                   |
+| `heights [--threads N]`                                                                | Write the [height golden files](#height-golden-files) for the golden seeds and dimensions.                                                                 |
+| `blocks [--threads N] [--seed S]…`                                                     | Write the [block golden files](#block-golden-files), with and without carvers, for the golden seeds (or those given).                                      |
+| `features [--threads N] [--seed S]…`                                                   | Write the [feature golden files](#feature-golden-files) for the golden seeds and seed 56 (or those given).                                                 |
+| `containers [--threads N] [--seed S]…`                                                 | Write the [container golden files](#container-golden-files) for the golden seeds (or those given).                                                         |
+| `flowers [--threads N] [--seed S]…`                                                    | Write the [flower files](#flower-files) for the golden seeds (or those given).                                                                             |
+| `column <seed> <x> <z> [--dimension]`                                                  | Print a generated chunk's column beside `getBaseColumn`'s, marking where they differ. For debugging.                                                       |
+| `locate`                                                                               | Ask a real dedicated server `/locate` questions ([below](#locate-answers)). Not part of `golden`.                                                          |
+| `order [--seed S]… [--random N] [--runs N] [--cpus N] [--no-join] [--view-distance N]` | Record the order the game decorates chunks in around a new world's spawn, with a player joined ([below](#order-files)). Not part of `golden`.              |
+| `replay [--threads N] [--seed S]…`                                                     | Replay the recorded orders' decoration, each chunk on its own and in the recorded order ([below](#replayed-orders)). Not part of `golden`.                 |
+| `test-pack`                                                                            | Write probe and structure files with the [test pack](#the-test-pack) loaded, into `oracle-out/<version>+testpack/`.                                        |
+| `fixture-pack [--only-pack]`                                                           | Write [the fixture pack](#the-fixture-pack), then the golden set with it loaded, into `oracle-out/<version>+overrides/`.                                   |
+| `golden`                                                                               | Regenerate the whole golden set below, probe, structure, spawn, height, block, feature, container and flower files included, into `oracle-out/<version>/`. |
 
 `build` runs automatically before the others, and does nothing when nothing changed:
 
@@ -58,14 +61,14 @@ The Rust tests that compare spyglass with these files are `#[ignore]`d, since th
 
 ### One version's CI job
 
-`cargo xtask ci --game-version <id>` is the job CI runs for each supported version ([ADR 0028](../adr/0028-supported-versions-and-ci.md)), and runs the same locally. Its `oracle locate` step needs the EULA accepted ([below](#locate-answers)), so it checks for `--accept-eula` or `SPYGLASS_ACCEPT_EULA=1` first. CI sets the variable. In order, it:
+`cargo xtask ci --game-version <id>` is the job CI runs for each supported version ([ADR 0028](../adr/0028-supported-versions-and-ci.md)), and runs the same locally. Its `oracle locate` and `oracle portals` steps need the EULA accepted ([below](#locate-answers)), so it checks for `--accept-eula` or `SPYGLASS_ACCEPT_EULA=1` first. CI sets the variable. In order, it:
 
 1. extracts the bundle into `bundles/<id>/`, replacing any there, which downloads the server jar into the jar cache if it isn't already there;
-2. runs `oracle golden`, then `oracle locate`;
+2. runs `oracle golden`, then `oracle locate`, then `oracle portals` (40 random layouts);
 3. runs `oracle test-pack` if [the test pack](#the-test-pack) loads in the version;
 4. runs `oracle-test` for `<id>`, then for `<id>+testpack` if step 3 ran.
 
-CI divides a version's work between jobs with `--units`, a comma-separated list of what to make: `probe`, `biomes`, `structures`, `spawn`, `locate`, `loot`, `bundle`, or `heights`, `blocks` or `features` for one seed (`features:56`). `bundle` stands for the tests that read only the bundle, and the test pack. A job runs the comparisons whose oracle inputs it made all of; one that reads a per-seed output compares the seeds the job made. A bundle-only test runs in the job with `bundle`. Without `--units`, the job does everything. `cargo xtask ci-plan` picks each job's units from estimated minutes per unit, so each job fits its hour, and prints them as the workflow's matrix ([ADR 0058](../adr/0058-oracle-ci-planned-by-cost.md)). Its `--mode` says which versions a run checks: `pr` and `main` the newest release and snapshot in full, older releases in part and older snapshots not at all; `full`, for the weekly run and the release, every version in full ([ADR 0067](../adr/0067-older-snapshots-checked-weekly.md)). Each unit's actual time is printed as a `ci: ... took` line, to compare with the estimates.
+CI divides a version's work between jobs with `--units`, a comma-separated list of what to make: `probe`, `biomes`, `structures`, `spawn`, `locate`, `portals`, `loot`, `bundle`, or `heights`, `blocks` or `features` for one seed (`features:56`). `bundle` stands for the tests that read only the bundle, and the test pack. A job runs the comparisons whose oracle inputs it made all of; one that reads a per-seed output compares the seeds the job made. A bundle-only test runs in the job with `bundle`. Without `--units`, the job does everything. `cargo xtask ci-plan` picks each job's units from estimated minutes per unit, so each job fits its hour, and prints them as the workflow's matrix ([ADR 0058](../adr/0058-oracle-ci-planned-by-cost.md)). Its `--mode` says which versions a run checks: `pr` and `main` the newest release and snapshot in full, older releases in part and older snapshots not at all; `full`, for the weekly run and the release, every version in full ([ADR 0067](../adr/0067-older-snapshots-checked-weekly.md)). Each unit's actual time is printed as a `ci: ... took` line, to compare with the estimates.
 
 Unlike a plain `oracle-test`, a comparison that can't run because an input the job just made is missing is an error, not a skip, and so is a version with no comparison at all. A skip would hide a broken step. The tests pinned to another version are still left out. The workflow, `.github/workflows/ci.yml`, calls only this command, `cargo xtask ci-plan`, `cargo xtask ci-scope` and `cargo xtask check`.
 
@@ -516,6 +519,43 @@ Every container loot table of the version filled by the game's own `LootTable.fi
 
 `cargo xtask oracle loot` takes about 15 seconds, most of it loading the game; the files are 17 to 18 MB a version.
 
+## Flower files
+
+What bone meal grows on grass ([flowers.md](flowers.md)), in two parts, in `oracle-out/<version>/flowers/`. Both have a header of `format` (1), `harness`, `version`, `data_version` and `dimension` (the Overworld).
+
+**`providers.json`:** every bone meal feature any Overworld biome can pick, each drawn at 400 fixed positions with 8 fixed random seeds (`random_seeds`):
+
+```json
+{
+  "random_seeds": [0, 1, 2, 3, 42, -7, 123456789, -9223372036854775808],
+  "features": [
+    {
+      "feature": "minecraft:flower_plain",
+      "cases": [
+        {
+          "pos": [40, -60, -13],
+          "states": ["minecraft:dandelion", "..."],
+          "next": [-1155484576, "..."]
+        }
+      ]
+    }
+  ]
+}
+```
+
+- **Positions:** from `java.util.Random(0x5eedf10e7)`, a quarter each within 64 blocks of the origin, within 4,096, and within 3,000,000, at heights from −60 to 300 in turn.
+- **`states`:** the provider's `getState(null, new LegacyRandomSource(seed), pos)` for each random seed, named as block files name them. **`next`:** that source's `nextInt()` afterwards, which shows whether spyglass drew as many times as the game.
+
+**`<seed>.json`:** for each golden seed (`seed`), the biome `BiomeManager.getBiome` gives at every block of a set of patches, with each biome's bone meal features:
+
+- **Patches:** chunk (0, 0) at each of the providers' heights, then up to 4 per biome that has bone meal features, found by scanning the chunk column at every 24th chunk out to 480: each at the first height of the scanned column the biome is at.
+- **`patches`:** each a `chunk` and a `y`, and its 256 blocks' `biomes`, x fastest, as indexes into `biome_palette`.
+- **`bone_meal_features`:** by biome in the palette, `getBoneMealFeatures`' ids in order, repeats kept.
+
+**How the harness makes them:** quart biomes come from the adapter's chunk biome windows, as golden biome files' do, with each quart's y clamped to the level as a level's chunks clamp it. The zoom is the game's own `BiomeManager`, seeded with `BiomeManager.obfuscateSeed(seed)`.
+
+**Checks:** `spyglass-feature`'s `flower_providers_match_the_game`: every state and next draw, each biome's bone meal features, and every patch block's biome, which must be among spyglass's candidates there. In 26.2, 26.3 and 26.4-snapshot-8 all 25,600 draws and about 435,000 block biomes match. `cargo xtask oracle flowers` takes about 20 seconds, most of it loading the game; the files are about 130 KB a seed, and 1.2 MB for the providers.
+
 ## Locate answers
 
 `/locate` decides whether a structure is generated by generating chunks in a live level, which the standalone harness doesn't build. So `cargo xtask oracle locate` asks the real game ([ADR 0015](../adr/0015-locate-checks-on-a-real-server.md)).
@@ -579,6 +619,128 @@ One UTF-8 JSON file per seed, `oracle-out/<version>/locate/<seed>.json`:
 `maps`, from format 3, are the map cases in the order they ran: the entry's table and its function as the table writes it, the position it was filled from, and the target's block x and z, or null where the map marks nothing. A save's file has none.
 
 `seed` is the text given to the server, or the save's seed as text. `dimension` is the case's dimension, which `from` and `answer` are in. Format 1 files have one `dimension` for the whole file, always the Overworld. `answer` is null when the game found nothing; its y is null where the game prints `~`. `found` is the structure or biome named in the message. [locate.md](locate.md#testing) has the Rust-side comparison.
+
+## Order files
+
+Whether the order chunks are decorated in can be known around the spawn depends on what the game does there, so `cargo xtask oracle order` records it ([ADR 0073](../adr/0073-the-oracle-joins-a-stand-in-player.md); background in [decoration-order.md](../research/decoration-order.md)). It runs the dedicated server, so it needs the EULA accepted as [`locate`](#locate-answers) does.
+
+For each seed (the golden seeds, those given with `--seed`, and `--random N` more from a fixed SplitMix64 sequence) and each of `--runs` runs (default 2):
+
+- A throwaway folder, `target/oracle/<version>/order-server/<seed>/<run>/`, gets `eula.txt` and `server.properties` as for `locate`, with `level-seed` and `view-distance` (`--view-distance`, default 10). It's deleted once the run's file is written, and kept with its `join.log` if the run fails.
+- The harness's `spyglass.oracle.Join` runs there, in a JVM with `--add-opens java.base/java.lang=ALL-UNNAMED` and, with `--cpus N`, `-XX:ActiveProcessorCount=N`. It starts `net.minecraft.server.Main --nogui --jfrProfile` in the same JVM, finds the server through the server thread's task, and waits until it's ready.
+- Unless `--no-join`, it joins one player, `spyglass` with its offline UUID: `PrepareSpawnTask` is started and ticked until it's ready, then `spawnPlayer` places the player on a `Connection` over Netty's `EmbeddedChannel`. Everything the server sends it is dropped, except that each `ClientboundKeepAlivePacket` is answered with a `ServerboundKeepAlivePacket`. It waits until every chunk within the view distance of the player's chunk is loaded in full, then 2 seconds more. The run fails if the player is removed first, or any stage takes over 5 minutes.
+- It stops the server, then the profiler (`JvmProfiler.stop`, as `/jfr stop` does), and reads the recording's `minecraft.ChunkGeneration` events.
+
+One UTF-8 JSON file per run, `oracle-out/<version>/order/<seed>/<run>.json`, where `<run>` is `run<n>`, then `-cpus<N>` with `--cpus`, then `-startup` with `--no-join`:
+
+```json
+{
+  "format": 1,
+  "harness": 1,
+  "version": "26.3",
+  "data_version": 5023,
+  "seed": 1,
+  "processors": 16,
+  "player": { "chunk": [9, 9], "pos": [153, 71, 153] },
+  "view_distance": 10,
+  "features": [
+    {
+      "chunk": [11, 9],
+      "start_ns": 0,
+      "duration_ns": 80577000,
+      "thread": "Worker-Main-2",
+      "startup": true
+    }
+  ]
+}
+```
+
+`features` holds every Overworld event whose `status` is `minecraft:features`, by start time. `start_ns` is from the first one's start, `thread` the event's Java thread, and `startup` whether it started before the server was ready. `processors` is what the JVM saw. `player` and `view_distance` are left out with `--no-join`.
+
+### Replayed orders
+
+`cargo xtask oracle replay` decorates each recorded order again in the standalone harness, to see which answers the order changes. Startup-only files are skipped. For each order file it writes `oracle-out/<version>/order-features/<seed>/<run>.json`, in the [feature golden files](#feature-golden-files)' header form, with `order_file`, and `chunks` in the recorded order:
+
+- **`tries`:** the chunk's target features' calls decorated on its own, as in the feature golden files.
+- **`replayed`:** the same calls, from decorating every chunk of the order in turn over one shared set of chunks: every chunk of the order and its 8 neighbours generated through the step before features, with no structures, as [feature golden files](#feature-golden-files) are, and each chunk decorated in full when its turn comes (`GameApi.decorateInOrder`).
+
+`cargo xtask order-report` prints how often two runs of a seed agree on the order and on the spawn chunk, and how many chunks' replayed calls differ from those on their own and between runs, by distance from the spawn chunk and by feature.
+
+## Portal files
+
+Which portal a trip lands at is gameplay code, so `cargo xtask oracle portals` plays cases through the game's own portal code on its running server ([ADR 0076](../adr/0076-the-oracle-drives-the-game-s-portal-code.md); the behaviour is [portals.md](portals.md)). It runs the dedicated server, so it needs the EULA accepted as [`locate`](#locate-answers) does. It doesn't take `--pack` yet.
+
+- **The cases** come from the xtask: one layout of each constructed kind and `--random N` (default 40) random layouts from a fixed SplitMix64 sequence, written to `target/oracle/<version>/portals-server/cases.json`. The constructed kinds are:
+  - `radius-in` and `radius-out`: a block at the search's radius (at the square's corner) and one past it, each way, into the Overworld and the Nether; `height`: a block 100 above the exit;
+  - `y-tie`: equal distance, the lower block wins; `chunk-tie-z` and `chunk-tie-x`: equal distance and height in different chunks; `section-tie`: three in one section;
+  - `border-outside` and `border-inside`: candidates at a small Nether border's edges, whole and half-block; `border-clamp`: trips aimed past it; `y-unclamped`: a trip from y 300;
+  - `stale`: a record whose block is stone; `end`: a trip from the End; `built`: a trip with no portal in range.
+
+  A random layout has 2 to 6 portals of 1 to 4 by 1 to 5 blocks in the Overworld (within 200 blocks of the origin) and in the Nether (within 25), none touching; six searches in each; and five trips from inside each portal a player can stand in: the low and high corners of its standing range and three positions at random.
+
+- **The run** is `spyglass.oracle.Portals` in that folder, with `server.properties` as for `locate` plus a void superflat Overworld (`level-type=minecraft:flat`). It starts the server in its JVM, finds it as `Join` does, puts a recording `PortalForcer` in each level, and plays each layout on the server thread: borders set, portals placed with `setBlock`, stale records added, searches through `findClosestPortalPosition`, trips through `getPortalDestination` for a marker entity, and everything removed afterwards, the portals the game built included. The game adds a block's record in a task of its own, so setting up, answering and undoing are separate server tasks, and the answers check every placed block has its record first. The folder is deleted once the file is written, and kept with its `portals.log` if the run fails.
+
+One UTF-8 JSON file, `oracle-out/<version>/portals/portals.json`: the cases file with a header and the answers added.
+
+```json
+{
+  "format": 1,
+  "harness": 1,
+  "version": "26.3",
+  "data_version": 5023,
+  "layouts": [
+    {
+      "name": "border-clamp",
+      "kind": "border-clamp",
+      "borders": [
+        {
+          "dimension": "minecraft:the_nether",
+          "center": [0.5, 0.0],
+          "size": 63.0
+        }
+      ],
+      "portals": [
+        {
+          "dimension": "minecraft:overworld",
+          "axis": "x",
+          "corner": [1000, 70, 0],
+          "width": 2,
+          "height": 3
+        }
+      ],
+      "stale": [],
+      "searches": [
+        {
+          "dimension": "minecraft:the_nether",
+          "exit": [28, 70, 0],
+          "found": [23, 70, 0]
+        }
+      ],
+      "trips": [
+        {
+          "dimension": "minecraft:overworld",
+          "pos": [1001.0, 70.0, 0.5],
+          "portal": 0,
+          "to": "minecraft:the_nether",
+          "exit": [31, 70, 0],
+          "found": [31, 72, 3],
+          "built": false,
+          "transition": true
+        }
+      ]
+    }
+  ]
+}
+```
+
+- A search's `dimension` is the one searched; `found` is the block the game found, or null.
+- A trip's `dimension` is where it starts, inside portal `portal` of the layout. `to` and `exit` are what the game searched from, `found` what it found, `built` whether it built a portal, and `transition` whether it returned one.
+
+`portal_links_match_the_game` in `crates/spyglass/tests/portals.rs` compares them: each trip's target must be the game's, each certain link must be the game's block, and each tie must hold it. Only random layouts and section ties may be tied, and section ties must be. It fails if a kind is missing.
+
+**A save's portals.** `cargo xtask oracle portals --world SAVE` (repeatable) plays a copy of a save instead, which must have been last played in the harness's version. The save is copied, without its `session.lock`, into `target/oracle/<version>/portals-world/world` and opened by the server as its level (`level-name=world`, with the same properties otherwise and no generator settings). The cases are one layout, `world`, of kind `world`: `existing`, each portal record `spyglass_world::poi` reads in the three dimensions, and a trip from the middle of each of those blocks, at its bottom, with its block as `entry`. The harness checks each existing block instead of placing it, adding `portal`: whether it's still a portal block; a trip whose `entry` isn't one is marked `skipped`. The file is `oracle-out/<version>/portals/world-<folder>.json`, with the save's path added as `save`.
+
+`a_save_s_portal_links_match_the_game` reads each such file's save as spyglass does (`SaveReport::portals`, its borders included) and requires every record to be a portal on the server, every trip to aim where `Game::portal_target` does, and to land where `portal_link` among the save's portals says, or build one where it finds none. It reads a save on this machine, so neither `cargo xtask oracle-test` nor CI runs it: run it with `cargo test --release -p spyglass --test portals -- --ignored a_save_s`.
 
 ## Probe files
 

@@ -2,10 +2,11 @@
 //! editor, the worlds menu, sharing a view as text, and importing and exporting the data file.
 //! Also keeping the data in step with the world shown.
 
+use super::map::portal_layer::PortalRef;
 use super::*;
 use crate::share::{Flags, SharedView};
-use crate::style;
-use crate::userdata::{COLOURS, Kind, Place, WorldData, WorldKey};
+use crate::style::{self, Section, Summary};
+use crate::userdata::{COLOURS, Kind, MarkerKind, Place, WorldData, WorldKey};
 
 /// What the map's context menu was opened on, besides a block.
 #[derive(Debug, Clone, PartialEq)]
@@ -172,6 +173,7 @@ impl App {
             structures: settings.structures.clone(),
             highlight: settings.highlight.clone(),
             features: settings.features.clone(),
+            flower: settings.flower.clone(),
             flags: Flags {
                 ties: settings.ties,
                 slime: settings.slime_chunks,
@@ -182,6 +184,7 @@ impl App {
                 veins: settings.veins,
                 caves: settings.noise_caves,
                 carvers: settings.carvers,
+                flowers: settings.flowers,
             },
         })
     }
@@ -214,6 +217,8 @@ impl App {
                 settings.veins = view.flags.veins;
                 settings.noise_caves = view.flags.caves;
                 settings.carvers = view.flags.carvers;
+                settings.flowers = view.flags.flowers;
+                settings.flower = view.flower.clone();
                 let centre = view.centre.map(|c| f64::from(c) + 0.5);
                 let shown = View {
                     centre,
@@ -246,6 +251,23 @@ impl App {
         let dimension = world.dimension_kind().id();
         if let Some(here) = self.here_mut() {
             let id = here.add_marker(dimension, block, String::new());
+            self.editing = Some(id);
+        }
+    }
+
+    /// Adds a portal marker with its lowest block at `[x, y, z]` of the dimension shown, 2 × 3
+    /// along x, and opens it to edit.
+    pub(super) fn add_portal(&mut self, [x, y, z]: [i32; 3]) {
+        let Some(world) = self.world else {
+            return;
+        };
+        let dimension = world.dimension_kind().id();
+        if let Some(here) = self.here_mut() {
+            let id = here.add_marker(dimension, [x, z], String::new());
+            if let Some(marker) = here.marker_mut(&id) {
+                marker.y = Some(y);
+                marker.kind = MarkerKind::PORTAL;
+            }
             self.editing = Some(id);
         }
     }
@@ -286,6 +308,7 @@ impl App {
         let mut open = true;
         let mut delete = false;
         let mut go = false;
+        let mut link_area = false;
         egui::Window::new("Marker")
             .open(&mut open)
             .collapsible(false)
@@ -293,7 +316,7 @@ impl App {
             .default_width(260.0)
             .show(ctx, |ui| {
                 let edit = ui.add(
-                    egui::TextEdit::singleline(&mut marker.name)
+                    style::text_box(&mut marker.name)
                         .hint_text("Name")
                         .char_limit(200)
                         .desired_width(f32::INFINITY),
@@ -326,6 +349,7 @@ impl App {
                 });
                 ui.add_space(4.0);
                 ui.label(style::mono(format!("{}, {}", marker.x, marker.z)).color(style::MUTED));
+                link_area = portal_controls(ui, &mut marker, self.settings.view.y);
                 ui.checkbox(&mut marker.done, "Done");
                 ui.horizontal(|ui| {
                     go = ui.button("Go to it").clicked();
@@ -340,13 +364,28 @@ impl App {
             self.editing = None;
             return;
         }
-        if (marker.name.as_str(), marker.colour, marker.done)
-            != (before.name.as_str(), before.colour, before.done)
-        {
+        if link_area {
+            self.show_link_area(ctx, PortalRef::Marker(id.clone()));
+        }
+        if (
+            marker.name.as_str(),
+            marker.colour,
+            marker.done,
+            marker.kind,
+            marker.y,
+        ) != (
+            before.name.as_str(),
+            before.colour,
+            before.done,
+            before.kind,
+            before.y,
+        ) {
             self.change_marker(&id, |m| {
                 m.name = marker.name;
                 m.colour = marker.colour;
                 m.done = marker.done;
+                m.kind = marker.kind;
+                m.y = marker.y;
             });
         }
         if !open {
@@ -354,27 +393,18 @@ impl App {
         }
     }
 
-    /// The Markers tab: the world shown, its markers in this dimension, and what's done.
-    pub(super) fn markers_tab(&mut self, ui: &mut egui::Ui) {
-        let (Some(world), Some(here)) = (self.world, self.here().cloned()) else {
-            ui.label("Open a seed or a save to keep markers in it.");
-            return;
-        };
-        let dimension = world.dimension_kind().id();
-
-        style::heading(ui, "This world");
+    /// The This world section: the world's name, and forgetting it. Whether it was forgotten,
+    /// which leaves nothing more to show.
+    fn this_world(&mut self, ui: &mut egui::Ui, stored: &Option<String>, named: bool) -> bool {
         // Edited in a buffer of its own, so spaces typed at its end stay while the stored name is
         // trimmed; it's the stored name again whenever the world changes.
         if self.world_name.0 != self.world_key {
-            self.world_name = (
-                self.world_key.clone(),
-                here.name.clone().unwrap_or_default(),
-            );
+            self.world_name = (self.world_key.clone(), stored.clone().unwrap_or_default());
         }
         let name = &mut self.world_name.1;
         let edit = ui
             .add(
-                egui::TextEdit::singleline(name)
+                style::text_box(name)
                     .id_salt("world name")
                     .hint_text("Name it to keep it in Worlds")
                     .char_limit(200)
@@ -387,7 +417,7 @@ impl App {
                 here.set_name(name);
             }
         }
-        if here.name.is_some()
+        if named
             && ui
                 .small_button("Forget this world")
                 .on_hover_text("Remove its name, markers and done places from your data")
@@ -400,65 +430,93 @@ impl App {
                 self.world_name = (None, String::new());
                 self.remember_world();
             }
+            return true;
+        }
+        false
+    }
+
+    /// The Markers tab: the world shown, its markers in this dimension, and what's done.
+    pub(super) fn markers_tab(&mut self, ui: &mut egui::Ui) {
+        let (Some(world), Some(here)) = (self.world, self.here().cloned()) else {
+            ui.label("Open a seed or a save to keep markers in it.");
+            return;
+        };
+        let dimension = world.dimension_kind().id();
+
+        let summary = Summary::new(here.name.clone().unwrap_or_else(|| "not named".to_string()));
+        let named = here.name.is_some();
+        if self.section(
+            ui,
+            Section::new("markers.world", "This world").summary(summary),
+        ) && style::section_body(ui, |ui| self.this_world(ui, &here.name, named))
+        {
             return;
         }
 
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            style::heading(ui, "Markers");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .small_button("Add at centre")
-                    .on_hover_text("Or right-click the map, or press M over it")
-                    .clicked()
-                {
-                    let centre = self.settings.view.centre.map(|c| c.floor() as i32);
-                    self.add_marker(centre);
-                }
-            });
-        });
         let markers: Vec<Marker> = here
             .live_markers()
             .filter(|m| m.dimension == dimension)
             .cloned()
             .collect();
-        if markers.is_empty() {
-            style::hint(
-                ui,
-                "No markers here. Right-click the map, or press M over it.",
-            );
+        let mut add = false;
+        let header = Section::new("markers.markers", "Markers")
+            .summary(Summary::new(format!("{} here", markers.len())));
+        let open = style::section(ui, &mut self.settings.folded, header, |ui| {
+            add = ui
+                .small_button("Add at centre")
+                .on_hover_text("Or right-click the map, or press M over it")
+                .clicked();
+        });
+        if add {
+            let centre = self.settings.view.centre.map(|c| c.floor() as i32);
+            self.add_marker(centre);
         }
         let mut go = None;
-        for marker in &markers {
-            ui.horizontal(|ui| {
-                let [r, g, b] = marker.colour;
-                let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), Sense::hover());
-                ui.painter()
-                    .circle_filled(rect.center(), 5.5, Color32::from_rgb(r, g, b));
-                let name = if marker.name.is_empty() {
-                    egui::RichText::new("Unnamed").italics().color(style::MUTED)
-                } else if marker.done {
-                    egui::RichText::new(&marker.name)
-                        .strikethrough()
-                        .color(style::MUTED)
-                } else {
-                    egui::RichText::new(&marker.name)
-                };
-                if ui
-                    .add(egui::Button::new(name).frame(false))
-                    .on_hover_text(format!("{}, {} · click to go there", marker.x, marker.z))
-                    .clicked()
-                {
-                    go = Some([marker.x, marker.z]);
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button("Edit").clicked() {
-                        self.editing = Some(marker.id.clone());
-                    }
-                    ui.label(
-                        style::mono(format!("{}, {}", marker.x, marker.z)).color(style::MUTED),
+        if open {
+            style::section_body(ui, |ui| {
+                if markers.is_empty() {
+                    style::hint(
+                        ui,
+                        "No markers here. Right-click the map, or press M over it.",
                     );
-                });
+                }
+                for marker in &markers {
+                    ui.horizontal(|ui| {
+                        let [r, g, b] = marker.colour;
+                        let (rect, _) =
+                            ui.allocate_exact_size(egui::vec2(12.0, 12.0), Sense::hover());
+                        ui.painter()
+                            .circle_filled(rect.center(), 5.5, Color32::from_rgb(r, g, b));
+                        let name = if marker.name.is_empty() {
+                            egui::RichText::new("Unnamed").italics().color(style::MUTED)
+                        } else if marker.done {
+                            egui::RichText::new(&marker.name)
+                                .strikethrough()
+                                .color(style::MUTED)
+                        } else {
+                            egui::RichText::new(&marker.name)
+                        };
+                        if ui
+                            .add(egui::Button::new(name).frame(false))
+                            .on_hover_text(format!(
+                                "{}, {} · click to go there",
+                                marker.x, marker.z
+                            ))
+                            .clicked()
+                        {
+                            go = Some([marker.x, marker.z]);
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.small_button("Edit").clicked() {
+                                self.editing = Some(marker.id.clone());
+                            }
+                            ui.label(
+                                style::mono(format!("{}, {}", marker.x, marker.z))
+                                    .color(style::MUTED),
+                            );
+                        });
+                    });
+                }
             });
         }
 
@@ -468,41 +526,45 @@ impl App {
             .filter(|d| d.done && d.dimension == dimension)
             .map(|d| d.place.clone())
             .collect();
-        ui.add_space(6.0);
-        style::heading(ui, "Done");
-        ui.checkbox(&mut self.settings.show_done, "Show done things on the map")
-            .on_hover_text("Done things are drawn dimmed; off, they're hidden.");
-        if done.is_empty() {
-            style::hint(
-                ui,
-                "Nothing done here. Right-click a structure, locate pin or search match to mark \
-                 it done.",
-            );
-        }
         let mut undo = None;
-        for place in &done {
-            ui.horizontal(|ui| {
-                let what = match place.kind {
-                    Kind::Structure => icons::family_name(&set_member(world, &place.id)),
-                    Kind::Biome => spyglass::display_name(&place.id),
-                    Kind::Place => "A place".to_string(),
-                };
-                if ui
-                    .add(egui::Button::new(what).frame(false))
-                    .on_hover_text(format!("{} · click to go there", place.id))
-                    .clicked()
-                {
-                    go = Some(place.at);
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button("Not done").clicked() {
-                        undo = Some(place.clone());
-                    }
-                    ui.label(
-                        style::mono(format!("{}, {}", place.at[0], place.at[1]))
-                            .color(style::MUTED),
+        let header = Section::new("markers.done", "Done")
+            .summary(Summary::new(format!("{} here", done.len())));
+        if self.section(ui, header) {
+            style::section_body(ui, |ui| {
+                ui.checkbox(&mut self.settings.show_done, "Show done things on the map")
+                    .on_hover_text("Done things are drawn dimmed; off, they're hidden.");
+                if done.is_empty() {
+                    style::hint(
+                        ui,
+                        "Nothing done here. Right-click a structure, locate pin or search match to mark \
+                 it done.",
                     );
-                });
+                }
+                for place in &done {
+                    ui.horizontal(|ui| {
+                        let what = match place.kind {
+                            Kind::Structure => icons::family_name(&set_member(world, &place.id)),
+                            Kind::Biome => spyglass::display_name(&place.id),
+                            Kind::Place => "A place".to_string(),
+                        };
+                        if ui
+                            .add(egui::Button::new(what).frame(false))
+                            .on_hover_text(format!("{} · click to go there", place.id))
+                            .clicked()
+                        {
+                            go = Some(place.at);
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.small_button("Not done").clicked() {
+                                undo = Some(place.clone());
+                            }
+                            ui.label(
+                                style::mono(format!("{}, {}", place.at[0], place.at[1]))
+                                    .color(style::MUTED),
+                            );
+                        });
+                    });
+                }
             });
         }
         if let Some(place) = undo {
@@ -587,7 +649,7 @@ impl App {
             ui.separator();
             ui.label("Open a view text");
             let edit = ui.add(
-                egui::TextEdit::singleline(&mut self.share_text)
+                style::text_box(&mut self.share_text)
                     .hint_text("spyglass:1;s=…")
                     .desired_width(280.0),
             );
@@ -704,4 +766,58 @@ fn set_member(world: &World, set: &str) -> String {
         .find(|id| world.structure_set(id) == Some(set))
         .unwrap_or(set)
         .to_string()
+}
+
+/// The marker editor's kind controls: a pin or a portal, and a portal's height, axis and size.
+/// A portal needs a height, the view's when it has none. Returns whether its link area was
+/// asked for.
+fn portal_controls(ui: &mut egui::Ui, marker: &mut Marker, view_y: i32) -> bool {
+    let mut portal = matches!(marker.kind, MarkerKind::Portal { .. });
+    ui.horizontal(|ui| {
+        ui.selectable_value(&mut portal, false, "Pin");
+        ui.selectable_value(&mut portal, true, "Nether portal")
+            .on_hover_text("Its lowest block is the marker's, so it needs a height");
+    });
+    match (portal, marker.kind) {
+        (true, MarkerKind::Pin) => {
+            marker.kind = MarkerKind::PORTAL;
+            marker.y.get_or_insert(view_y);
+        }
+        (false, MarkerKind::Portal { .. }) => marker.kind = MarkerKind::Pin,
+        _ => {}
+    }
+    let MarkerKind::Portal {
+        axis,
+        width,
+        height,
+    } = &mut marker.kind
+    else {
+        return false;
+    };
+    let side = 1..=spyglass::MAX_PORTAL_SIDE;
+    ui.horizontal(|ui| {
+        ui.label("Lowest block y");
+        let y = marker.y.get_or_insert(view_y);
+        ui.add(egui::DragValue::new(y).range(-30_000_000..=30_000_000));
+    });
+    ui.horizontal(|ui| {
+        ui.label("Along");
+        ui.selectable_value(axis, spyglass::Axis::X, "x");
+        ui.selectable_value(axis, spyglass::Axis::Z, "z");
+        ui.label("Size");
+        ui.add(egui::DragValue::new(width).range(side.clone()));
+        ui.label("×");
+        ui.add(egui::DragValue::new(height).range(side));
+    })
+    .response
+    .on_hover_text("Inside the frame: 2 × 3 is the smallest the game lights");
+    let leads = marker.dimension != Dimension::End.id();
+    leads
+        && ui
+            .button("Show its link area")
+            .on_hover_text(
+                "Where in the other dimension a new portal would link to this one, at the view's \
+                 height",
+            )
+            .clicked()
 }

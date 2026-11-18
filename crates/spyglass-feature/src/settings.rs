@@ -121,6 +121,11 @@ impl FeatureSettings {
         &self.order
     }
 
+    /// How many biomes the lists are for: the dimension's possible biomes.
+    pub fn biome_count(&self) -> usize {
+        self.lists.len()
+    }
+
     /// A biome's list for each step, by its id in the biome source.
     pub fn lists(&self, biome: spyglass_biome::BiomeId) -> &[Vec<PlacedRef>] {
         &self.lists[usize::from(biome.0)]

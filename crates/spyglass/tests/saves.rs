@@ -15,7 +15,7 @@ fn saved_spawns_are_near_the_spawn_origin() {
         let Ok(quick) = spyglass::inspect_save(&found.dir, &bundles, Scan::Quick) else {
             continue;
         };
-        if !quick.answerable_in(spyglass::Dimension::Overworld) {
+        if !quick.answerable_in(spyglass::Dimension::Overworld) || !quick.pack_errors().is_empty() {
             continue;
         }
         let report = spyglass::inspect_save(&found.dir, &bundles, Scan::Chunks).unwrap();
@@ -73,7 +73,8 @@ fn saved_structure_starts_are_the_predicted_ones() {
         let Ok(quick) = spyglass::inspect_save(&found.dir, &bundles, Scan::Quick) else {
             continue;
         };
-        if !quick.answerable_in(Dimension::Overworld) {
+        // A save whose packs can't be opened is blocked too, which only `pack_errors` finds.
+        if !quick.answerable_in(Dimension::Overworld) || !quick.pack_errors().is_empty() {
             continue;
         }
         let report = spyglass::inspect_save(&found.dir, &bundles, Scan::Chunks).unwrap();
@@ -176,7 +177,8 @@ fn saved_containers_have_the_predicted_seeds() {
                 }
             )
         });
-        if !report.answerable_in(Dimension::Overworld) || older {
+        if !report.answerable_in(Dimension::Overworld) || older || !report.pack_errors().is_empty()
+        {
             continue;
         }
         let world = report.open_world(Dimension::Overworld).unwrap();
@@ -229,6 +231,102 @@ fn saved_containers_have_the_predicted_seeds() {
     }
     println!(
         "{unopened} unopened, {filled} filled, {gone} gone, {not_placed} not placed in the save; {} disagreements",
+        failures.len()
+    );
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Every save in the launchers has a report (`SaveReport::details`), from a quick scan. And in
+/// every answerable 26.3 save no older version touched, the structure starts the chunk scan
+/// counts are those the whole-chunk reader gives `SaveChunks`, chunk by chunk, in the 97 × 97
+/// chunks around the spawn origin.
+#[test]
+#[ignore = "reads the saves on this machine"]
+fn reports_build_and_the_scan_counts_what_chunks_hold() {
+    use spyglass::Dimension;
+    use spyglass_world::chunk::{self, SavedStarts};
+    use spyglass_world::region::{self, ChunkRecord};
+
+    let bundles = spyglass_oracle::default_dir().join("../bundles");
+    let inspector = spyglass::SaveInspector::new(&bundles).unwrap();
+    let (mut reports, mut checked, mut chunks, mut starts) = (0, 0, 0, 0);
+    let mut failures = Vec::new();
+    for found in spyglass::launcher_saves() {
+        let Ok(quick) = inspector.inspect(&found.dir, Scan::Quick) else {
+            continue;
+        };
+        let details = quick.details();
+        assert_eq!(details.dimensions.len(), 3);
+        assert!(
+            details
+                .settings
+                .iter()
+                .any(|s| s.setting == spyglass::Setting::Seed)
+        );
+        reports += 1;
+        let current = quick.save.version_name.as_deref() == Some("26.3");
+        if !current || !details.answerable_in(Dimension::Overworld) {
+            continue;
+        }
+        let report = inspector.inspect(&found.dir, Scan::Chunks).unwrap();
+        if report.warnings.iter().any(|w| {
+            matches!(
+                w,
+                SaveWarning::OlderChunks {
+                    dimension: Dimension::Overworld,
+                    ..
+                }
+            )
+        }) {
+            continue;
+        }
+        let world = report.open_world(Dimension::Overworld).unwrap();
+        let [cx, cz] = world
+            .session(report.save.seed)
+            .unwrap()
+            .spawn_origin()
+            .chunk;
+        let dir = spyglass_world::Save::read(&found.dir)
+            .unwrap()
+            .region_dir("minecraft:overworld")
+            .unwrap();
+        let index = region::index(&dir).unwrap();
+        for (pos, record) in index.chunks() {
+            if (pos[0] - cx).abs() > 48 || (pos[1] - cz).abs() > 48 {
+                continue;
+            }
+            let ChunkRecord::Read(fields) = record else {
+                continue;
+            };
+            let scanned: Vec<(String, String)> = fields
+                .starts
+                .iter()
+                .flatten()
+                .map(|s| (s.structure.clone(), s.id.clone()))
+                .collect();
+            let whole = region::read_chunk(&dir, pos)
+                .and_then(|raw| chunk::read(&raw).ok())
+                .map(|c| c.starts);
+            let read: Vec<(String, String)> = match whole {
+                Some(SavedStarts::Starts(list)) => {
+                    list.into_iter().map(|s| (s.structure, s.id)).collect()
+                }
+                _ => Vec::new(),
+            };
+            chunks += 1;
+            starts += read.len();
+            if scanned != read {
+                failures.push(format!(
+                    "{}: chunk {pos:?}: the scan has {scanned:?}, the chunk {read:?}",
+                    report.save.name
+                ));
+            }
+        }
+        checked += 1;
+        println!("{}: checked", report.save.name);
+    }
+    println!(
+        "{reports} reports; {checked} saves, {chunks} chunks and {starts} starts compared, {} disagreements",
         failures.len()
     );
     assert!(failures.is_empty(), "{}", failures.join("\n"));

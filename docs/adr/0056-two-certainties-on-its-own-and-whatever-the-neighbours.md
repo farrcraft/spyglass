@@ -3,6 +3,7 @@
 - Status: Accepted
 - Date: 2026-10-30
 - Supersedes: [0055](0055-neighbours-decorated-first-make-candidates.md)
+- See also: [0074](0074-no-third-answer-for-the-order-at-creation.md), which measures the order at world creation and keeps these two
 
 ## Context
 

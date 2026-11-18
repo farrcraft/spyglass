@@ -28,7 +28,7 @@ pub use function::{
     Points, Round, Spline, Tiling, Unary, UpscaleAxis, UpscaleMode,
 };
 pub use interval::{Interval, IntervalError};
-pub use load::{Loader, Resources};
+pub use load::{Loader, Resources, parse_noise};
 pub use router::{CLIMATE_ENTRIES, ClimateRouter, ClimateSampler, NOISE_SETTINGS};
 pub use sampler::{Binder, Sampler};
 pub use spyglass_noise::Volume;

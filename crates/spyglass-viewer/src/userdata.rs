@@ -177,6 +177,7 @@ impl WorldData {
             z: z.clamp(-MAX_COORD as i32, MAX_COORD as i32),
             name,
             colour,
+            kind: MarkerKind::Pin,
             done: false,
             deleted: false,
             modified: now(),
@@ -245,6 +246,8 @@ pub struct Marker {
     pub name: String,
     /// Its colour, red, green and blue.
     pub colour: [u8; 3],
+    /// What it marks: a place, or a Nether portal.
+    pub kind: MarkerKind,
     /// Whether it's marked done.
     pub done: bool,
     /// A tombstone, so a merge doesn't bring a deleted marker back.
@@ -255,7 +258,46 @@ pub struct Marker {
     extra: Map<String, Value>,
 }
 
+/// What a marker marks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarkerKind {
+    /// A place: a pin on the map.
+    Pin,
+    /// A Nether portal whose lowest block is the marker's, which needs a `y`.
+    Portal {
+        /// Which way its blocks run.
+        axis: spyglass::Axis,
+        /// How many blocks it spans along its axis, 1 to 21.
+        width: i32,
+        /// How many blocks it spans up, 1 to 21.
+        height: i32,
+    },
+}
+
+impl MarkerKind {
+    /// The smallest portal the game lights: 2 wide and 3 high, along x.
+    pub const PORTAL: MarkerKind = MarkerKind::Portal {
+        axis: spyglass::Axis::X,
+        width: 2,
+        height: 3,
+    };
+}
+
 impl Marker {
+    /// The portal it marks, if it's a portal marker in one of the Default preset's dimensions.
+    pub fn portal(&self) -> Option<spyglass::Portal> {
+        let MarkerKind::Portal {
+            axis,
+            width,
+            height,
+        } = self.kind
+        else {
+            return None;
+        };
+        let dimension = Dimension::from_id(&self.dimension)?;
+        spyglass::Portal::new(dimension, axis, [self.x, self.y?, self.z], width, height).ok()
+    }
+
     /// Records a change made just now.
     pub fn changed(&mut self) {
         self.modified = later(self.modified);
@@ -514,6 +556,22 @@ fn marker_json(marker: &Marker) -> Value {
     object.insert("z".into(), json!(marker.z));
     object.insert("name".into(), json!(marker.name));
     object.insert("colour".into(), json!(colour_text(marker.colour)));
+    // A pin writes no kind, so a kind this viewer doesn't know is written back from `extra`.
+    if let MarkerKind::Portal {
+        axis,
+        width,
+        height,
+    } = marker.kind
+    {
+        object.insert("kind".into(), json!("portal"));
+        let axis = match axis {
+            spyglass::Axis::X => "x",
+            spyglass::Axis::Z => "z",
+        };
+        object.insert("axis".into(), json!(axis));
+        object.insert("width".into(), json!(width));
+        object.insert("height".into(), json!(height));
+    }
     object.insert("done".into(), json!(marker.done));
     object.insert("deleted".into(), json!(marker.deleted));
     object.insert("modified".into(), json!(marker.modified));
@@ -893,6 +951,7 @@ fn parse_marker(
                 .ok_or_else(|| format!("{v} is not #rrggbb"))
         })
         .unwrap_or(COLOURS[0].1);
+    let kind = marker_kind(&mut fields, y.is_some());
     let done = fields.optional("done", boolean).unwrap_or(false);
     let deleted = fields.optional("deleted", boolean).unwrap_or(false);
     let modified = fields.optional("modified", time).unwrap_or(0);
@@ -904,11 +963,48 @@ fn parse_marker(
         z,
         name,
         colour,
+        kind,
         done,
         deleted,
         modified,
         extra: fields.rest(),
     })
+}
+
+/// A marker's `kind`, and for a portal its `axis`, `width` and `height`. Only `pin` and
+/// `portal` are taken: any other kind, and a portal without a `y`, is shown as a pin and its
+/// fields kept as they are, to be written back.
+fn marker_kind(fields: &mut Fields<'_>, has_y: bool) -> MarkerKind {
+    match fields.map.get("kind").and_then(Value::as_str) {
+        Some("pin") => {
+            fields.take("kind");
+            MarkerKind::Pin
+        }
+        Some("portal") if has_y => {
+            fields.take("kind");
+            let axis = fields
+                .optional("axis", |v| match v.as_str() {
+                    Some("x") => Ok(spyglass::Axis::X),
+                    Some("z") => Ok(spyglass::Axis::Z),
+                    _ => Err(format!("{v} is not x or z")),
+                })
+                .unwrap_or(spyglass::Axis::X);
+            let side = |v: &Value| integer(v, 1..=i64::from(spyglass::MAX_PORTAL_SIDE));
+            let width = fields.optional("width", side).unwrap_or(2);
+            let height = fields.optional("height", side).unwrap_or(3);
+            MarkerKind::Portal {
+                axis,
+                width: width as i32,
+                height: height as i32,
+            }
+        }
+        Some("portal") => {
+            let problem = format!("{}: kind: a portal needs y; shown as a pin", fields.path);
+            fields.problems.push(problem);
+            MarkerKind::Pin
+        }
+        _ => MarkerKind::Pin,
+    }
 }
 
 /// A done place's object.
@@ -1224,6 +1320,63 @@ mod tests {
         assert_eq!(again["worlds"][0]["note"], "hi");
         assert_eq!(again["worlds"][0]["markers"][0]["tag"], json!({"k": 1.5}));
         assert_eq!(again["worlds"][0]["done"][0]["by"], "script");
+    }
+
+    #[test]
+    fn portal_markers_round_trip() {
+        let mut data = sample();
+        let w = data.world_mut(&key(-5)).unwrap();
+        let id = w.add_marker(Dimension::Nether.id(), [10, -4], "Hub".into());
+        let marker = w.marker_mut(&id).unwrap();
+        marker.y = Some(70);
+        marker.kind = MarkerKind::Portal {
+            axis: spyglass::Axis::Z,
+            width: 4,
+            height: 5,
+        };
+        let read = reparse(&mut data);
+        assert!(read.problems.is_empty(), "{:?}", read.problems);
+        assert_eq!(read.data, data);
+        let world = read.data.world(&key(-5)).unwrap();
+        let marker = world.live_markers().find(|m| m.id == id).unwrap();
+        let portal =
+            spyglass::Portal::new(Dimension::Nether, spyglass::Axis::Z, [10, 70, -4], 4, 5);
+        assert_eq!(marker.portal(), Some(portal.unwrap()));
+        // A pin writes no kind, so files without portals don't change.
+        let text = data.file_text();
+        assert_eq!(text.matches(r#""kind": "portal""#).count(), 1);
+        assert!(!text.contains(r#""pin""#));
+    }
+
+    #[test]
+    fn kinds_this_viewer_doesn_t_know_are_kept_as_pins() {
+        // A newer viewer's kind, and a portal without a y: both pins here, their fields
+        // written back as they were, as an older viewer keeps a portal marker's.
+        let text = r##"{"format": 1, "worlds": [{"seed": "7", "markers": [
+            {"id": "a", "dimension": "minecraft:overworld", "x": 1, "z": 2,
+             "kind": "beacon", "axis": "z", "width": 9},
+            {"id": "b", "dimension": "minecraft:the_nether", "x": 1, "z": 2,
+             "kind": "portal", "axis": "x", "width": 2, "height": 3},
+            {"id": "c", "dimension": "minecraft:the_nether", "x": 1, "y": 64, "z": 2,
+             "kind": "portal", "axis": "y", "width": 30}]}]}"##;
+        let read = parse(text.as_bytes());
+        let markers = &read.data.worlds[0].markers;
+        assert_eq!(markers[0].kind, MarkerKind::Pin);
+        assert_eq!(markers[1].kind, MarkerKind::Pin);
+        assert_eq!(markers[1].portal(), None);
+        // A wrong axis and width are reported and defaulted, as other fields are.
+        assert_eq!(markers[2].kind, MarkerKind::PORTAL);
+        assert_eq!(read.problems.len(), 3, "{:?}", read.problems);
+        let mut data = read.data;
+        let again: Value = serde_json::from_str(&data.file_text()).unwrap();
+        let written = &again["worlds"][0]["markers"];
+        assert_eq!(written[0]["kind"], "beacon");
+        assert_eq!(written[0]["axis"], "z");
+        assert_eq!(written[0]["width"], 9);
+        assert_eq!(written[1]["kind"], "portal");
+        assert_eq!(written[1]["height"], 3);
+        assert_eq!(written[2]["axis"], "x");
+        assert_eq!(written[2]["width"], 2);
     }
 
     #[test]

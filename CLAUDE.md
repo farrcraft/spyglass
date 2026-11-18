@@ -27,11 +27,12 @@ cargo xtask dist [--target <triple>]          # one target's release archive, in
 cargo xtask release <version>                 # set the version and date the changelog, for a PR
 cargo xtask doctor                            # is this machine ready? (check-only)
 cargo xtask math-report                       # candidates against Java's Math (after oracle math)
+cargo xtask order-report                      # decoration order's stability and effect (after oracle order, replay)
 cargo xtask sweep                             # delete stale build outputs from target/ (ADR 0061)
 cargo xtask java-report [--check]             # rebuild (or check) the extractor's block report class
 cargo xtask links                             # every relative Markdown link and anchor resolves
 cargo xtask guide [--serve]                   # build (or serve) the user guide, docs/guide/, with mdBook
-cargo xtask fuzz <nbt|region>                 # fuzz a reader of untrusted files (nightly, cargo-fuzz)
+cargo xtask fuzz <nbt|region|poi|pack>        # fuzz a reader of untrusted files (nightly, cargo-fuzz)
 cargo xtask msrv                              # build with the minimum supported Rust version
 cargo xtask linux-check [--full]              # fresh clone + setup + extract on Ubuntu, in Docker
 cargo xtask version-diff <old> <new> [--code] # what changed between two bundles

@@ -104,6 +104,16 @@ impl<T> Weighted<T> {
     pub fn entries(&self) -> impl Iterator<Item = &T> {
         self.entries.iter().map(|(v, _)| v)
     }
+
+    /// The entries with their weights, in order.
+    pub fn weighted_entries(&self) -> impl Iterator<Item = (&T, i32)> {
+        self.entries.iter().map(|(v, w)| (v, *w))
+    }
+
+    /// The weights' sum.
+    pub fn total(&self) -> i32 {
+        self.total
+    }
 }
 
 /// `Mth.randomBetweenInclusive`: `nextInt(max − min + 1) + min`.
@@ -547,39 +557,53 @@ fn unsupported(at: &At<'_>, what: &'static str, kind: &str) -> crate::codec::Loa
 fn weighted<T>(
     obj: &Map<String, Value>,
     at: &At<'_>,
-    parse: impl Fn(&Value, &At<'_>) -> LoadResult<T>,
+    parse: impl FnMut(&Value, &At<'_>) -> LoadResult<T>,
 ) -> LoadResult<Weighted<T>> {
-    let at = at.child("distribution");
-    let list = obj
-        .get("distribution")
-        .ok_or_else(|| at.error(LoadErrorKind::Missing("distribution")))?
-        .as_array()
-        .ok_or_else(|| at.error(LoadErrorKind::Shape("a list")))?;
-    let mut entries = Vec::with_capacity(list.len());
-    let mut total: i32 = 0;
-    for (i, entry) in list.iter().enumerate() {
-        let at = at.child(&i.to_string());
-        let entry = object(entry, &at)?;
-        let value = parse(field(entry, "data", &at)?, &at.child("data"))?;
-        let weight = int(field(entry, "weight", &at)?, &at.child("weight"))?;
-        if weight < 0 {
-            return Err(at.child("weight").error(LoadErrorKind::OutOfRange {
-                value: weight.to_string(),
-                min: "0".to_string(),
-                max: i32::MAX.to_string(),
-            }));
+    Weighted::parse_field(obj, "distribution", at, parse)
+}
+
+impl<T> Weighted<T> {
+    /// A weighted list in field `key` of `obj` (`WeightedList.nonEmptyCodec`): a list of
+    /// `{data, weight}` with weights at least 0, at least one of them positive. Value providers
+    /// name it `distribution`, block state providers `entries`.
+    pub fn parse_field(
+        obj: &Map<String, Value>,
+        key: &str,
+        at: &At<'_>,
+        mut parse: impl FnMut(&Value, &At<'_>) -> LoadResult<T>,
+    ) -> LoadResult<Weighted<T>> {
+        let at = at.child(key);
+        let list = obj
+            .get(key)
+            .ok_or_else(|| at.error(LoadErrorKind::Missing("weighted list")))?
+            .as_array()
+            .ok_or_else(|| at.error(LoadErrorKind::Shape("a list")))?;
+        let mut entries = Vec::with_capacity(list.len());
+        let mut total: i32 = 0;
+        for (i, entry) in list.iter().enumerate() {
+            let at = at.child(&i.to_string());
+            let entry = object(entry, &at)?;
+            let value = parse(field(entry, "data", &at)?, &at.child("data"))?;
+            let weight = int(field(entry, "weight", &at)?, &at.child("weight"))?;
+            if weight < 0 {
+                return Err(at.child("weight").error(LoadErrorKind::OutOfRange {
+                    value: weight.to_string(),
+                    min: "0".to_string(),
+                    max: i32::MAX.to_string(),
+                }));
+            }
+            total = total
+                .checked_add(weight)
+                .ok_or_else(|| at.error(LoadErrorKind::Invalid("total weight overflows")))?;
+            entries.push((value, weight));
         }
-        total = total
-            .checked_add(weight)
-            .ok_or_else(|| at.error(LoadErrorKind::Invalid("total weight overflows")))?;
-        entries.push((value, weight));
+        if total == 0 {
+            return Err(at.error(LoadErrorKind::Invalid(
+                "a weighted list needs an entry with non-zero weight",
+            )));
+        }
+        Ok(Weighted { entries, total })
     }
-    if total == 0 {
-        return Err(at.error(LoadErrorKind::Invalid(
-            "a weighted list needs an entry with non-zero weight",
-        )));
-    }
-    Ok(Weighted { entries, total })
 }
 
 #[cfg(test)]

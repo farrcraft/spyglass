@@ -42,6 +42,7 @@ constraint  = [ count ] STRUCTURE region
             | "spawn" point-place
             | "height" INT "to" INT place [ "step" INT ]
             | "flat" INT place [ "step" INT ]
+            | "flower" BLOCK "field" INT [ "chance" PERCENT ] place [ "at" "y" INT [ "to" INT ] ] [ "step" INT ]
 
 count       = INT | "no"
 item        = ITEM [ "with" ENCHANTMENT [ INT ] ]
@@ -60,6 +61,7 @@ A missing count means 1. Structure anchors (`within R of STRUCTURE place`) are a
 - Counts: 1 to 10,000. Cluster sizes: 2 to 64. Weights: 1 to 1,000. Percentages: 1 to 100. `step`: 1 to 4,096.
 - `y`: within the dimension's build height (−64 to 319 in the 26.3 Overworld).
 - A biome constraint's grid, and a `find` line's biome or point grid, counted over its place's bounding box, has at most 1,048,576 points.
+- Flower fields: a size of 1 to 16,777,216 blocks, and at most 1,048,576 samples: the grid's points over its place's bounding box, times the heights it tries.
 - Terrain conditions: heights at most 4,096 in magnitude, `flat` 0 to 4,096, and a grid of at most 16,384 points (a column's height costs far more than its biome).
 - Features: a feature count's, a feature cluster's and a `find` line's feature place is at most 1,024 blocks on a side (a radius at most 511). Placing features takes tens of milliseconds a chunk ([features.md](features.md#ruling-out)), so 4,096 chunks already take minutes.
 - Loot: a loot count's and a `find` line's loot place is at most 2,048 blocks on a side (a radius at most 1,023). An item a dungeon can hold places every chunk, at about 15 ms a chunk on 16 threads, so a disc of radius 1,000 (about 12,300 chunks) takes minutes ([ADR 0065](../adr/0065-loot-in-the-search-language.md)). Enchantment levels: 1 to 255.
@@ -96,6 +98,14 @@ Features are counted as structures are ([below](#outcomes), [ADR 0057](../adr/00
 # Two dungeons whose spawners are at most 16 blocks apart, near the spawn.
 require cluster 2 feature minecraft:monster_room within 16 of each other within 96 of spawn
 prefer 3 feature minecraft:monster_room within 96 of spawn
+```
+
+A flower field is a patch of blocks at one height where bone meal grows a chosen flower ([below](#flower-fields)):
+
+```text
+# A cornflower farm of 300 blocks near the spawn, at a height between 64 and 96.
+require flower minecraft:cornflower field 300 within 1000 of spawn at y 64 to 96 step 8
+prefer flower minecraft:red_tulip field 100 chance 25% within 500 of spawn
 ```
 
 Loot counts containers that hold an item ([ADR 0065](../adr/0065-loot-in-the-search-language.md)):
@@ -196,6 +206,7 @@ Evaluating counts in each case:
 | `spawn place`           | the spawn                               | the spawn (none if platform-dep.)       |
 | `height A to B place`   | the heights (both cases the same)       | the heights                             |
 | `flat D place`          | the heights (both cases the same)       | the heights                             |
+| `flower F field N …`    | samples where some tied biome qualifies | samples where every tied biome does     |
 
 A constraint **holds** in a case when:
 
@@ -207,6 +218,17 @@ A constraint **holds** in a case when:
 - **Spawn**: the spawn is in the place.
 - **Height**: every sample's height is in `A..=B`.
 - **Flat**: the highest and lowest samples differ by at most D.
+- **Flower field**: the largest field, at any height tried, has at least N blocks.
+
+### Flower fields
+
+`flower F field N [chance P%] place [at y A [to B]] [step S]` asks for at least N blocks at one height where bone meal on grass grows flower F, a block id, with at least P% chance (100, so certain, by default) ([flowers.md](flowers.md), [ADR 0075](../adr/0075-flower-answers-carry-exact-chances.md)). The heights are the flower's block, one above the grass: `A`, `A + 4`, `A + 8` and so on below `B`, then `B`; `y` 64 if `at y` isn't given.
+
+- **Samples:** at each height, the place's grid of spacing `step` (default 4), as for biomes. A sample is the flower's chance at block `(x, y, z)` in the biome there (`Session::biome_at_block`, the zoomed biome), the flower's states summed. It **qualifies** in a biome when `100 × chance ≥ P`. In the best case it counts when some candidate of a tied cell qualifies, in the worst when every one does.
+- **Fields:** qualifying samples at the same height, joined to their neighbours `step` apart along x or z. A field's size is its samples times `step²` blocks.
+- **Answer:** the largest field of the case kept, worst first if it holds, as `Feature::FlowerField`: its first sample in grid order, at its height, with its size and whether it holds in the worst case.
+
+The noises behind a flower don't depend on the seed, only the biome does, so a sample in a biome whose bone meal features can't place F costs only its biome lookup. A cornflower field of 300 within 1,000 of the spawn at 9 heights, step 4 (about 1.8 million samples), takes about 1.2 s a seed, and a search about 6 seeds a second on 16 threads (`cargo xtask bench`).
 
 ### Terrain sampling
 
@@ -239,6 +261,7 @@ Every division below rounds down.
 - **Coverage**: `min(1000, 100000 × matching / (P × samples))`.
 - **Height**: `1000 × in range / samples`.
 - **Flat**: 1,000 if it holds, else `1000 × D / (highest − lowest)`.
+- **Flower field**: `min(1000, 1000 × blocks / N)`, for the largest field's blocks in that case.
 
 ### Confirmed mode
 

@@ -14,6 +14,10 @@ use sha1::{Digest, Sha1};
 
 use crate::pack::{Layer, Pack, PackFormat};
 
+mod changes;
+
+pub use changes::{LayerChanges, RegistryChanges, registry_and_id};
+
 /// The bundle format this build reads, and `spyglass-extract` writes.
 pub const FORMAT: u32 = 1;
 
@@ -997,6 +1001,118 @@ mod tests {
         assert_eq!(base.structure_template("igloo/top").unwrap(), b"vanilla");
         let names: Vec<&str> = both.layers().iter().map(|l| l.name.as_str()).collect();
         assert_eq!(names, ["low", "high"]);
+    }
+
+    #[test]
+    fn layer_changes_say_what_each_pack_does() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = layered_base(tmp.path());
+        let low = pack(
+            "low",
+            "",
+            &[
+                ("data/minecraft/worldgen/noise/a.json", "{}"),
+                ("data/minecraft/worldgen/biome/plains.json", "{}"),
+                ("data/mod/worldgen/biome/new.json", "{}"),
+                (
+                    "data/minecraft/tags/worldgen/biome/is_hot.json",
+                    r#"{"values": ["mod:new"]}"#,
+                ),
+                ("data/mod/tags/worldgen/biome/odd.json", r#"{"values": 3}"#),
+                ("data/mod/structure/hut.nbt", "nbt"),
+            ],
+        );
+        let high = pack(
+            "high",
+            r#", "filter": {"block": [{"namespace": "minecraft", "path": "worldgen/biome/desert"}]}"#,
+            &[
+                ("data/minecraft/worldgen/biome/plains.json", "{}"),
+                (
+                    "data/minecraft/tags/worldgen/biome/is_hot.json",
+                    r#"{"replace": true, "values": []}"#,
+                ),
+            ],
+        );
+        let recipes = pack("recipes", "", &[("data/mod/recipe/stick.json", "{}")]);
+        let changes = base
+            .with_packs([&low, &high, &recipes])
+            .unwrap()
+            .layer_changes();
+        let names: Vec<&str> = changes.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["low", "high", "recipes"]);
+        let ids = |list: &[String]| list.to_vec();
+        let low = &changes[0].registries;
+        assert_eq!(ids(&low["worldgen/noise"].replaced), ["minecraft:a"]);
+        assert_eq!(ids(&low["worldgen/biome"].added), ["mod:new"]);
+        // The higher pack has plains too, so the lower one's never takes effect.
+        assert_eq!(ids(&low["worldgen/biome"].shadowed), ["minecraft:plains"]);
+        // Its tag is merged, but the higher pack's replaces it.
+        assert_eq!(
+            ids(&low["tags/worldgen/biome"].shadowed),
+            ["minecraft:is_hot"]
+        );
+        assert_eq!(ids(&low["tags/worldgen/biome"].unreadable), ["mod:odd"]);
+        assert_eq!(ids(&low["structure"].added), ["mod:hut"]);
+        let high = &changes[1].registries;
+        assert_eq!(ids(&high["worldgen/biome"].replaced), ["minecraft:plains"]);
+        assert_eq!(ids(&high["worldgen/biome"].hidden), ["minecraft:desert"]);
+        assert_eq!(
+            ids(&high["tags/worldgen/biome"].replaced),
+            ["minecraft:is_hot"]
+        );
+        let recipes = &changes[2];
+        assert_eq!(ids(&recipes.registries["recipe"].added), ["mod:stick"]);
+        assert!(!recipes.is_empty());
+
+        // Without the higher pack, the lower one's tag merges with the bundle's.
+        let alone = base.with_packs([&low_pack_only()]).unwrap().layer_changes();
+        assert_eq!(
+            ids(&alone[0].registries["tags/worldgen/biome"].merged),
+            ["minecraft:is_hot"]
+        );
+        assert!(base.layer_changes().is_empty());
+    }
+
+    fn low_pack_only() -> Pack {
+        pack(
+            "low",
+            "",
+            &[(
+                "data/minecraft/tags/worldgen/biome/is_hot.json",
+                r#"{"values": ["mod:new"]}"#,
+            )],
+        )
+    }
+
+    #[test]
+    fn registries_are_named_as_the_game_names_them() {
+        let split = |path| registry_and_id(path).unwrap();
+        assert_eq!(
+            split("data/minecraft/worldgen/density_function/overworld/continents.json"),
+            (
+                "worldgen/density_function".into(),
+                "minecraft:overworld/continents".into()
+            )
+        );
+        assert_eq!(
+            split("data/minecraft/tags/worldgen/biome/is_hot.json"),
+            ("tags/worldgen/biome".into(), "minecraft:is_hot".into())
+        );
+        assert_eq!(
+            split("data/minecraft/tags/block/logs.json"),
+            ("tags/block".into(), "minecraft:logs".into())
+        );
+        assert_eq!(
+            split("data/mod/structure/igloo/top.nbt"),
+            ("structure".into(), "mod:igloo/top".into())
+        );
+        assert_eq!(registry_and_id("data/mod/worldgen/biome"), None);
+        // A file the game doesn't list: another extension.
+        assert_eq!(
+            registry_and_id("data/mod/worldgen/structure/camp.json.disabled"),
+            None
+        );
+        assert_eq!(registry_and_id("data/mod/structure/hut.json"), None);
     }
 
     #[test]

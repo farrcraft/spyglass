@@ -28,12 +28,17 @@
 
 mod blocks;
 mod features;
+mod flowers;
 mod game;
+mod link_map;
 mod loot;
+mod portals;
 mod render;
 mod save;
+mod save_portals;
 mod saved;
 mod search;
+mod stopping;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -52,39 +57,61 @@ use spyglass_terrain::{Terrain, TerrainSettings};
 
 pub use blocks::{BlockAt, BlockColumn, Carvers, ChunkBlocks};
 pub use features::{FeatureLocate, FeatureOptions, FeatureQuery, FoundFeature, Neighbours};
+pub use flowers::{BoneMealFeature, FlowerAt, FlowerBiome, FlowerChance};
 pub use game::{Game, GameSession};
+pub use link_map::{Destination, LinkMap, PixelLink};
 pub use loot::{
     ContainerLocate, ContainerSource, FoundContainer, InSave, Item, ItemQuery, MapDestination, Slot,
 };
+pub use portals::{
+    Axis, Border, DEFAULT_ABSOLUTE_MAX, DEFAULT_BORDER_SIZE, ExitLink, Landing, Link, LinkOutcome,
+    MAX_PORTAL_SIDE, Portal, PortalLinks, PortalTarget, portal_destination, portal_link,
+    portal_search_radius,
+};
 pub use render::{
-    BiomeMap, CarverKind, CarvingMap, DEFAULT_MAP_Y, HeightMap, Image, Layers, MARKER_REACH,
-    MAX_FEATURE_SCALE, MAX_PIXELS, MAX_SCALE, MAX_SIDE, MAX_SLIME_SCALE, MAX_UNDERGROUND_SCALE,
-    MapArea, MapFeatures, Pin, UndergroundMap, Vein, VeinPart, biome_colour, display_name,
-    feature_colour, structure_colour, vein_colour,
+    BiomeMap, CarverKind, CarvingMap, DEFAULT_MAP_Y, FlowerCount, FlowerMap, FlowerPixel,
+    FlowerShare, HeightMap, Image, Known, Layers, MARKER_REACH, MAX_FEATURE_SCALE, MAX_PIXELS,
+    MAX_SCALE, MAX_SIDE, MAX_SLIME_SCALE, MAX_UNDERGROUND_SCALE, MapArea, MapFeatures, Pin,
+    UndergroundMap, Vein, VeinPart, biome_colour, display_name, feature_colour, flower_colour,
+    structure_colour, vein_colour,
 };
 pub use save::{
-    LauncherSave, PackConcern, SaveInfo, SaveInspector, SaveLocation, SaveReport, SaveWarning,
-    Scan, find_save, inspect_save, launcher_saves,
+    Answer, DimensionDetails, LauncherSave, PackConcern, PackUse, SaveDetails, SaveHoldings,
+    SaveInfo, SaveInspector, SaveLocation, SavePack, SaveReport, SaveSetting, SaveSubject,
+    SaveWarning, Scan, Setting, VersionCount, answers_fed_by, find_save, inspect_save,
+    launcher_saves,
 };
-pub use saved::{GeneratedChunk, SaveChunks};
+pub use save_portals::{PortalFlag, PortalNote, SavePortal, SavePortalLink, SavePortals};
+pub use saved::{GeneratedChunk, SaveChunks, SaveUsage};
 pub use search::{
     ConstraintResult, Evaluation, Feature, FindMatch, FindOptions, FindOutcome, FindProgress,
     MAX_FIND_TARGETS, Outcome, RankedSeed, SearchHit, SearchOptions, SearchOutcome, SearchProgress,
-    SearchQuery, SearchStop, SearchThrottle, SeedSource,
+    SearchQuery, SearchThrottle, SeedSource, Stop,
 };
 pub use spyglass_data::build;
+pub(crate) use stopping::Halt;
+pub use stopping::Stopping;
+
+/// The old name of [`Stop`], from when only searches could be stopped.
+#[deprecated(
+    since = "0.5.0",
+    note = "use `Stop`, which map calls take too (ADR 0078)"
+)]
+pub type SearchStop = Stop;
 pub use spyglass_data::bundle::{
     BUNDLES_ENV, Kind, app_bundles_dir, default_bundles_dir, user_bundles_dir,
 };
+pub use spyglass_data::bundle::{LayerChanges, RegistryChanges};
 pub use spyglass_data::dimension::Dimension;
 pub use spyglass_data::pack::{FormatRange, Pack, PackError, PackFormat, PackMeta};
 pub use spyglass_data::versions::{CHECKED, Checked};
+pub use spyglass_feature::flowers::Chance;
 pub use spyglass_structure::LOCATE_RADIUS;
 pub use spyglass_terrain::Heightmap;
 /// Coarse timing of terrain, for finding where the time goes; not a stable interface.
 #[cfg(feature = "timing")]
 pub use spyglass_terrain::timing;
-pub use spyglass_world::open_pack;
+pub use spyglass_world::{SaveSource, open_pack};
 
 /// A search query's syntax tree, from [`SearchQuery::query`] (`docs/specs/search.md`).
 pub mod query {
@@ -187,6 +214,10 @@ pub enum Error {
     /// spyglass can't answer for a world save; the reasons are listed.
     #[error("spyglass can't answer for this world: {0}")]
     Unsupported(String),
+    /// A map call made through [`Session::stopping`] was stopped before it finished
+    /// (ADR 0078). It returns nothing, not a partial answer.
+    #[error("stopped")]
+    Stopped,
     /// A query was resolved against a different [`World`] than the session's.
     #[error("{0:?} was resolved against another world; resolve it with this session's world")]
     OtherWorld(String),
@@ -207,6 +238,9 @@ pub enum Error {
     /// A map area or layers that can't be drawn: the message says why.
     #[error("{0}")]
     InvalidMap(String),
+    /// A portal the game can't have, such as one wider than 21 blocks: the message says why.
+    #[error("{0}")]
+    InvalidPortal(String),
     /// Two dimensions whose coordinates the game doesn't link, such as the End and the
     /// Overworld.
     #[error("{from} and {to} aren't linked by coordinates")]
@@ -467,6 +501,8 @@ pub struct World {
     features: OnceLock<features::FeatureWorld>,
     /// Loaded on first loot query.
     loot: OnceLock<loot::LootWorld>,
+    /// Loaded on first flower query.
+    flowers: OnceLock<spyglass_feature::flowers::Flowers>,
     /// Each biome's map colour, by [`BiomeId`].
     palette: Vec<[u8; 3]>,
 }
@@ -497,18 +533,19 @@ impl World {
 
     /// `dimension` of the Default world preset, from `bundle` and any packs applied to it. With
     /// packs, everything loaded on first use otherwise (template pools, block settings,
-    /// features, loot) is loaded now, so what spyglass can't apply is found on opening.
+    /// features, loot, flowers) is loaded now, so what spyglass can't apply is found on opening.
     pub(crate) fn from_bundle(bundle: Bundle, dimension: Dimension) -> Result<World> {
         let world = Self::load(bundle, dimension)?;
         if world.bundle.layers().is_empty() {
             return Ok(world);
         }
         type Step = fn(&World) -> Result<()>;
-        let steps: [Step; 4] = [
+        let steps: [Step; 5] = [
             |w| w.pools().map(drop),
             |w| w.block_settings().map(drop),
             |w| w.feature_world().map(drop),
             |w| w.loot_world().map(drop),
+            |w| w.flowers().map(drop),
         ];
         let mut plain = None;
         for step in steps {
@@ -547,6 +584,7 @@ impl World {
         let DimensionType {
             coordinate_scale,
             has_ceiling,
+            ..
         } = DimensionType::load(&bundle, &dimension_type)?;
         let palette = source
             .biome_names()
@@ -568,6 +606,7 @@ impl World {
             blocks: OnceLock::new(),
             features: OnceLock::new(),
             loot: OnceLock::new(),
+            flowers: OnceLock::new(),
             palette,
         })
     }
@@ -851,6 +890,9 @@ struct DimensionType {
     coordinate_scale: f64,
     /// `has_ceiling`, false if absent.
     has_ceiling: bool,
+    /// `min_y` and `height`: the lowest block and how many there are, the Overworld's -64 and
+    /// 384 if absent.
+    build: [i32; 2],
 }
 
 impl DimensionType {
@@ -866,6 +908,12 @@ impl DimensionType {
                 .get("has_ceiling")
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false),
+            build: [("min_y", -64), ("height", 384)].map(|(field, default)| {
+                json.get(field)
+                    .and_then(serde_json::Value::as_i64)
+                    .and_then(|v| i32::try_from(v).ok())
+                    .unwrap_or(default)
+            }),
         })
     }
 }
@@ -885,6 +933,27 @@ impl StructureQuery {
     /// The argument as given, e.g. `#minecraft:village`.
     pub fn argument(&self) -> &str {
         &self.argument
+    }
+
+    /// A query for every structure this one or `other` names, as one: a start where either's
+    /// structures may start lists them all, and is certain if one of them certainly starts
+    /// there, which asking each query alone can't tell. Its argument is both, comma-separated.
+    /// [`Error::OtherWorld`] if the two were resolved in different worlds.
+    pub fn with(&self, other: &StructureQuery) -> Result<StructureQuery> {
+        if other.world != self.world {
+            return Err(Error::OtherWorld(other.argument.clone()));
+        }
+        let mut targets = self.targets.clone();
+        for &target in &other.targets {
+            if !targets.contains(&target) {
+                targets.push(target);
+            }
+        }
+        Ok(StructureQuery {
+            world: self.world,
+            argument: format!("{}, {}", self.argument, other.argument),
+            targets,
+        })
     }
 }
 
@@ -1338,8 +1407,20 @@ impl<'w> Session<'w> {
         max: [i32; 2],
         confirm: bool,
     ) -> Result<Vec<StructureStart>> {
+        self.structures_in_halting(query, min, max, confirm, Halt::NEVER)
+    }
+
+    /// [`structures_in`](Self::structures_in), checking `halt` before each candidate chunk.
+    pub(crate) fn structures_in_halting(
+        &self,
+        query: &StructureQuery,
+        min: [i32; 2],
+        max: [i32; 2],
+        confirm: bool,
+        halt: Halt<'_>,
+    ) -> Result<Vec<StructureStart>> {
         self.check_world(query.world, &query.argument)?;
-        Ok(self.starts_by_set(&query.targets, |_| (min, max), confirm))
+        self.starts_by_set_halting(&query.targets, |_| (min, max), confirm, halt)
     }
 
     /// Every chunk in each set's `chunks(locate offset)` range (inclusive) where one of
@@ -1350,6 +1431,19 @@ impl<'w> Session<'w> {
         chunks: impl Fn([i32; 3]) -> ([i32; 2], [i32; 2]),
         confirm: bool,
     ) -> Vec<StructureStart> {
+        self.starts_by_set_halting(targets, chunks, confirm, Halt::NEVER)
+            .expect("a call that never halts")
+    }
+
+    /// [`starts_by_set`](Self::starts_by_set), checking `halt` before each candidate chunk,
+    /// since confirming a start with terrain takes a while.
+    fn starts_by_set_halting(
+        &self,
+        targets: &[usize],
+        chunks: impl Fn([i32; 3]) -> ([i32; 2], [i32; 2]),
+        confirm: bool,
+        halt: Halt<'_>,
+    ) -> Result<Vec<StructureStart>> {
         let starts = self.starts(confirm);
         let sets = &self.world.sets;
         let mut out = Vec::new();
@@ -1359,6 +1453,7 @@ impl<'w> Session<'w> {
             }
             let (min, max) = chunks(set.placement.locate_offset);
             for chunk in self.placements.structure_chunks_in(i, min, max) {
+                halt.check()?;
                 if let Some((structures, certain)) = starts.targets_at(i, chunk, targets) {
                     let offset = set.placement.locate_offset;
                     let position = [
@@ -1370,7 +1465,7 @@ impl<'w> Session<'w> {
                 }
             }
         }
-        out
+        Ok(out)
     }
 
     /// The pieces of `structure` (an id, e.g. `minecraft:village_plains`) if it starts in

@@ -48,7 +48,7 @@ impl App {
     fn seed_field(&mut self, ui: &mut egui::Ui) {
         ui.label(egui::RichText::new("Seed").color(style::MUTED));
         let edit = ui.add(
-            egui::TextEdit::singleline(&mut self.settings.seed)
+            style::text_box(&mut self.settings.seed)
                 .font(egui::TextStyle::Monospace)
                 .desired_width(180.0)
                 .hint_text("a number or text"),
@@ -150,7 +150,7 @@ impl App {
                 ui.weak("No saves in the launchers' folders.");
             } else {
                 ui.add(
-                    egui::TextEdit::singleline(&mut self.save_filter)
+                    style::text_box(&mut self.save_filter)
                         .hint_text("Filter saves")
                         .desired_width(220.0),
                 )
@@ -217,7 +217,7 @@ impl App {
                         self.start_export(ui.ctx(), export.clone(), path);
                     }
                 }
-                ui.checkbox(&mut self.settings.export_markers, "Include markers")
+                style::menu_checkbox(ui, &mut self.settings.export_markers, "Include markers")
                     .on_hover_text("Your markers in view, as pins in the image");
                 if ui
                     .button("Copy the command that draws it")
@@ -252,33 +252,34 @@ impl App {
         if self.inspecting.is_some() {
             lines.push((style::MUTED, "Reading the save…".to_string()));
         }
+        // A save that couldn't be shown still has its report in the World tab.
+        let mut world_details = self.save_error.is_some() && self.unshown_save.is_some();
         if let Some(e) = &self.save_error {
             lines.push((style::ERROR, e.clone()));
         }
-        if let Some(report) = &self.save {
+        // The save shown, in one line; the World tab has the rest.
+        if let (Some(report), Some(details)) = (&self.save, &self.save_details) {
+            let warnings = details.warnings.iter().filter(|w| !w.is_note()).count();
+            let packs = if report.packs.is_empty() {
+                String::new()
+            } else {
+                let names: Vec<&str> = report.packs.iter().map(Pack::name).collect();
+                format!(", with {}", names.join(", "))
+            };
+            let (colour, said) = match warnings {
+                0 => (style::MUTED, String::new()),
+                1 => (style::WARN, ": 1 warning".to_string()),
+                n => (style::WARN, format!(": {n} warnings")),
+            };
             lines.push((
-                style::MUTED,
+                colour,
                 format!(
-                    "Showing the save {}, made in Minecraft {}.",
+                    "Showing the save {}, made in Minecraft {}{packs}{said}.",
                     report.save.name,
                     report.save.version_name.as_deref().unwrap_or("?")
                 ),
             ));
-            if !report.packs.is_empty() {
-                let names: Vec<&str> = report.packs.iter().map(Pack::name).collect();
-                lines.push((
-                    style::MUTED,
-                    format!("Data packs applied: {}.", names.join(", ")),
-                ));
-            }
-            for warning in &report.warnings {
-                let colour = if warning.is_note() {
-                    style::MUTED
-                } else {
-                    style::WARN
-                };
-                lines.push((colour, warning.to_string()));
-            }
+            world_details = true;
         }
         if self.exporting.is_some() {
             lines.push((style::MUTED, "Drawing the image…".to_string()));
@@ -296,6 +297,23 @@ impl App {
         ui.horizontal_wrapped(|ui| {
             for (colour, text) in lines {
                 ui.colored_label(colour, text);
+            }
+            if world_details
+                && ui
+                    .small_button("What spyglass read")
+                    .on_hover_text("Open the World tab")
+                    .clicked()
+            {
+                self.tab = Tab::World;
+                // The user asked to see what's wrong: unfold it.
+                if let Some((_, details)) = self.world_report() {
+                    let details = details.clone();
+                    for part in world_panel::WorldSection::ALL {
+                        if world_panel::warnings_in(&details.warnings, part) > 0 {
+                            style::set_folded(&mut self.settings.folded, part.id(), false, false);
+                        }
+                    }
+                }
             }
             if data_problems {
                 ui.small_button("Details").on_hover_ui(|ui| {
@@ -315,6 +333,7 @@ impl App {
             {
                 self.export_note = None;
                 self.save_error = None;
+                self.unshown_save = None;
                 self.data_note = None;
                 self.data_problems_seen = true;
             }

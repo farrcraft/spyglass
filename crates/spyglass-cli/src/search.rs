@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use spyglass::{
-    Feature, Game, Outcome, SearchOptions, SearchOutcome, SearchProgress, SearchQuery, SearchStop,
-    SearchThrottle, SeedSource,
+    Feature, Game, Outcome, SearchOptions, SearchOutcome, SearchProgress, SearchQuery,
+    SearchThrottle, SeedSource, Stop,
 };
 
 use crate::args::Search;
@@ -47,7 +47,7 @@ pub fn run(args: &Search) -> Result<()> {
         threads: args.threads,
         certain: args.certain,
         confirm: args.confirm,
-        stop: SearchStop::new(),
+        stop: Stop::new(),
         throttle: SearchThrottle::new(),
     };
 
@@ -272,6 +272,21 @@ pub(crate) fn feature_json(f: &Feature) -> json::FeatureAnswer<'_> {
             certain: *certain,
         },
         Feature::Spawn(s) => json::FeatureAnswer::Spawn(json::SpawnAnswer::new(s)),
+        Feature::FlowerField {
+            position: [x, y, z],
+            flower,
+            blocks,
+            certain,
+        } => json::FeatureAnswer::FlowerField {
+            position: Xyz {
+                x: *x,
+                y: *y,
+                z: *z,
+            },
+            flower,
+            blocks: *blocks,
+            certain: *certain,
+        },
         _ => json::FeatureAnswer::Other,
     }
 }

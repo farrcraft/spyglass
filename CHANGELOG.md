@@ -6,6 +6,34 @@ Changes go under **Unreleased** as they're made. `cargo xtask release` turns tha
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-17
+
+### Game versions
+
+Checked against the game for 26.2, 26.3, 26.4-snapshot-5, 26.4-snapshot-6, 26.4-snapshot-7, 26.4-snapshot-8.
+
+### Added
+
+- **`spyglass world info` explains what spyglass read from your world:** every setting, the file and field it came from and what it decides; every enabled data pack, whether it was applied, what it changes and which answers that touches; and for each dimension, how many chunks it holds, which versions generated them, the structures answered from the save and the loot containers not yet opened. Each warning is printed under what it's about. In JSON, `settings`, `packs` and `dimensions`, and each warning's `about` ([cli-json.md](docs/specs/cli-json.md#world-info)). In the API, `SaveReport::details`, `spyglass_world::Save::sources`, `Bundle::layer_changes`, `answers_fed_by` and `SaveChunks::usage` ([world-saves.md](docs/specs/world-saves.md#the-report)).
+- **A world border that's still moving** is a note (`moving_border`): spyglass answers with the size it ends at.
+- **Maps from pixels already known:** `Known` holds the pixels of an area known from maps at other scales, and `biome_map_with`, `height_map_with`, `surface_biome_map_with`, `carving_map_with`, `underground_map_with` and `flower_map_with` compute only the rest, giving the same map as computed directly. With every pixel known, they compute nothing ([render.md](docs/specs/render.md#reuse-across-scales)).
+- **`StructureQuery::with`** joins two structure queries into one, so a start either names is listed once, and is certain when one of their structures certainly starts there.
+- **Map calls can be stopped:** `Session::stopping(&stop)` gives the session's map calls (`biome_map`, `height_map`, `surface_biome_map`, `carving_map`, `underground_map`, `flower_map`, `map_features`, `structures_in`, `features_in`, `containers_in`, `containers_holding`), which return the new `Error::Stopped` soon after `stop` is raised from another thread. `Stop` is the search's stop handle under a name for both ([ADR 0078](docs/adr/0078-map-calls-can-be-stopped.md), [render.md](docs/specs/render.md#stopping)).
+
+### Changed
+
+- **The viewer's side panel is in sections that fold,** on every tab, the World tab's included. A folded section says what's in it ("2 on", "on, paused", "3 warnings"), and folds are kept between runs. The selected tab stands out, and its counts are badges: the search's finds, locate's hits, your markers here, and the save's warnings in amber.
+- **The viewer is clear about zoom limits, and quicker to zoom.** Every layer that's drawn only up close is greyed past its limit, with hover text saying how far to zoom in, and stays on, paused, until you zoom back in. Zooming out stops the work the new view doesn't need within a fraction of a second. Features, loot and structures are kept by area rather than by tile, so zooming from 1:2 to 1:1 with features on places nothing again, and a tile zoomed out from cached ones is copied from them. One step past their limit, the features and loot found closer in are still drawn, the area looked at outlined and the rest hatched ([render.md](docs/specs/render.md#reuse-across-scales)).
+
+- **`SaveWarning` has two new variants,** `MovingBorder` and `PackError`, and from now on it, `PackConcern` and the new `SaveSubject`, `Setting` and `PackUse` are `#[non_exhaustive]`: a `match` on them outside the crate needs a `_` arm, and later variants won't break it ([ADR 0077](docs/adr/0077-open-ended-public-enums-are-non-exhaustive.md)). A dimension the packs can't be opened in is a `pack_error` warning in `world info`'s `warnings`, as well as in `pack_errors`.
+- **`world info`'s `applied_packs` is deprecated,** for removal in the release after next: `packs` lists every pack, applied or not.
+- **`SearchStop` is now `Stop`,** since map calls take it too. `SearchStop` is kept as a deprecated alias for one release.
+
+### Fixed
+
+- **The viewer's World tab mixed two saves** when a save it couldn't show was opened while another was on the map: the tab named the one on the map but listed the other's settings and warnings, and the notice counted the wrong save's warnings. Now the tab is about the save that couldn't be shown until its error is dismissed, and the notice about the one on the map.
+- **Chunks saved before 1.18** are read for their status and inhabited time, which they keep under `Level`: `render --generated` and `--inhabited` showed them all as generated partway and never visited.
+
 ## [0.4.0] - 2026-11-14
 
 ### Game versions
@@ -140,7 +168,8 @@ The first release.
 - A warning for a game version this build wasn't checked against. Its answers may differ from the game's ([bundle-format.md](docs/specs/bundle-format.md#checked-versions)).
 - `--version` names the build and the game versions it was checked against.
 
-[Unreleased]: https://github.com/farrcraft/spyglass/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/farrcraft/spyglass/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/farrcraft/spyglass/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/farrcraft/spyglass/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/farrcraft/spyglass/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/farrcraft/spyglass/compare/v0.2.0...v0.3.0

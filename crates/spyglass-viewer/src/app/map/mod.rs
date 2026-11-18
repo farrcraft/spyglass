@@ -19,6 +19,7 @@ mod controls;
 mod jobs;
 mod marker_layer;
 mod menu;
+pub(in crate::app) mod portal_layer;
 
 use controls::scale_bar;
 pub(super) use marker_layer::contents_lines;
@@ -60,6 +61,7 @@ impl App {
         {
             self.add_marker(block);
         }
+        self.poll_save_portals(ui.ctx());
         let (Some(shown), Some(world)) = (&self.shown, self.world) else {
             return;
         };
@@ -69,6 +71,7 @@ impl App {
         self.take_finished(source, frame.selection);
         let layout_keys = self.request_jobs(&frame, world, &session);
         let drawn = self.draw_tiles(ui, &painter, &frame, world, centre);
+        self.count_flowers(&frame);
         if timing::enabled() {
             self.note_timing(&frame, &layout_keys, drawn);
         }
@@ -88,7 +91,14 @@ impl App {
             rect,
             centre,
         };
+        let (portals, portal_hover) = self.draw_portal_layer(ui, &canvas, &frame, world);
+        self.draw_found_regions(&canvas, &frame);
         let pointed = self.draw_marker_layer(ui, &canvas, &frame, world, &session, &spawn);
+        if pointed.target.is_none()
+            && let Some(hover) = &portal_hover
+        {
+            self.portal_tooltip(&response, &portals, hover);
+        }
         if response.clicked()
             && let Some((MenuTarget::Marker(id), _)) = &pointed.target
         {
@@ -111,12 +121,21 @@ impl App {
         }
         self.map_controls(ui, rect, spawn_block, keys.focus_goto);
         self.map_legend(ui, rect, world);
+        self.link_area_notice(ui, rect, &portals, world.dimension_kind());
         scale_bar(&painter, rect, view.scale);
 
         if response.secondary_clicked()
             && let Some(p) = response.interact_pointer_pos()
         {
             self.menu_block = Some(view.block_at(offset(p)).map(|b| b.floor() as i32));
+            self.menu_portal = match (&pointed.target, &portal_hover) {
+                (Some((MenuTarget::Marker(id), _)), _) => {
+                    let what = portal_layer::PortalRef::Marker(id.clone());
+                    portals.has(&what).then_some(what)
+                }
+                (None, Some(portal_layer::PortalHover::Portal(i))) => Some(portals.what(*i)),
+                _ => None,
+            };
             self.menu_target = pointed.target;
         }
         self.context_menu(ui, &response, world, view.y);
@@ -191,10 +210,30 @@ impl App {
         // Terrain layers on the view's own tiles, and on the coarser ones shown while they load
         // only where heights are cheap, so the stand-ins fill in quickly.
         let terrain_here = self.terrain_allowed();
+        let tiles = view.tiles([rect.width(), rect.height()]);
+        let features_on = !self.selection.features.is_empty();
+        let loot_on = self.settings.containers || self.selection.loot.is_some();
+        let featuring = features_on && zoom::FEATURES.shows(view.scale);
+        let looting = loot_on && zoom::LOOT.shows(view.scale);
+        let features_found = features_on && zoom::FEATURES.draws_found(view.scale);
+        let loot_found = loot_on && zoom::LOOT.draws_found(view.scale);
+        let regions = if featuring || looting || features_found || loot_found {
+            view.regions(&tiles, FEATURE_REGION)
+        } else {
+            Vec::new()
+        };
+        let marking = !self.selection.queries.is_empty() && self.structures_generate();
+        let start_regions = if marking {
+            view.start_regions(&tiles)
+        } else {
+            Vec::new()
+        };
         Frame {
             source,
             view,
-            tiles: view.tiles([rect.width(), rect.height()]),
+            tiles,
+            regions,
+            start_regions,
             selection: self.selection.id,
             confirm: self.settings.confirm,
             relief: self.settings.relief && terrain_here,
@@ -202,13 +241,15 @@ impl App {
             // The underground layers only on the view's own tiles: the coarser ones shown
             // while they load would cost as much again.
             underground: self.underground(),
-            marking: !self.selection.queries.is_empty() && self.structures_generate(),
+            // Flowers cost about twice what biomes do, cheap enough for the stand-ins too.
+            flowers: self.settings.flowers,
+            marking,
             // Features only up close: each chunk they could be in is placed.
-            featuring: !self.selection.features.is_empty()
-                && view.scale <= spyglass::MAX_FEATURE_SCALE,
+            featuring,
             // Loot containers too, every one or those of the Loot item.
-            looting: (self.settings.containers || self.selection.loot.is_some())
-                && view.scale <= spyglass::MAX_FEATURE_SCALE,
+            looting,
+            features_found,
+            loot_found,
         }
     }
 
@@ -252,6 +293,9 @@ impl App {
                         // The map has only the layers the key asked for.
                         if let Some(underground) = &data.underground {
                             image.draw_underground(underground, &key.underground.layers());
+                        }
+                        if let Some(Ok(flowers)) = &data.flowers {
+                            image.draw_flowers(&flowers.map, style.flower.as_deref());
                         }
                         if style.slime_chunks || style.generated {
                             image.draw_features(data.biomes.area(), &chunk_features(data, style));
@@ -303,6 +347,13 @@ impl App {
                         ui.label(format!("{name} (tied: {})", tied.join(", ")));
                     }
                 });
+                if self.settings.flowers {
+                    let y = self.settings.view.y;
+                    if let Ok(answer) = session.flower_at([x, y, z]) {
+                        ui.label(flower_summary(&answer))
+                            .on_hover_text(format!("What bone meal grows at y {y}"));
+                    }
+                }
             } else {
                 ui.label(
                     egui::RichText::new(
@@ -359,6 +410,12 @@ struct Frame {
     view: View,
     /// The tiles the view covers, nearest the centre first.
     tiles: Vec<Tile>,
+    /// The feature and loot regions under them, and one more all round, nearest the centre
+    /// first: empty unless features or loot are drawn.
+    regions: Vec<Region>,
+    /// The structure starts regions for the view's tiles, nearest the centre first
+    /// (`View::start_regions`): empty unless structures are marked.
+    start_regions: Vec<Region>,
     /// The marker selection's number.
     selection: u64,
     /// Whether starts are confirmed by terrain.
@@ -368,17 +425,23 @@ struct Frame {
     surface: bool,
     /// The underground layers, on the view's own tiles only.
     underground: Underground,
+    /// Whether flowers are drawn.
+    flowers: bool,
     /// Whether structures are marked, features placed, and loot containers marked.
     marking: bool,
     featuring: bool,
     looting: bool,
+    /// Past their limit, whether the features and loot containers found earlier are drawn,
+    /// from the regions cached, with nothing new asked for (`zoom::DRAW_FOUND`).
+    features_found: bool,
+    loot_found: bool,
 }
 
 impl Frame {
     /// The key a tile's biomes are kept under, with the layers that tile can have.
     fn key(&self, tile: Tile) -> TileKey {
         let terrain = tile.has_terrain(self.view.scale);
-        let deep = tile.scale == self.view.scale && tile.scale <= MAX_UNDERGROUND_SCALE;
+        let deep = tile.scale == self.view.scale && zoom::UNDERGROUND.shows(tile.scale);
         TileKey {
             source: self.source,
             y: self.view.y,
@@ -389,24 +452,25 @@ impl Frame {
             } else {
                 Underground::default()
             },
+            flowers: self.flowers,
             tile,
         }
     }
 
-    fn marker_key(&self, tile: Tile) -> MarkerKey {
+    fn marker_key(&self, region: Region) -> MarkerKey {
         MarkerKey {
             source: self.source,
             selection: self.selection,
             confirm: self.confirm,
-            tile,
+            region,
         }
     }
 
-    fn feature_key(&self, tile: Tile) -> FeatureKey {
+    fn feature_key(&self, region: Region) -> FeatureKey {
         FeatureKey {
             source: self.source,
             selection: self.selection,
-            tile,
+            region,
         }
     }
 }
@@ -418,6 +482,49 @@ struct Canvas<'a> {
     rect: Rect,
     /// The view's centre on screen.
     centre: Pos2,
+}
+
+/// The most flowers the status bar lists at a block.
+const STATUS_FLOWERS: usize = 3;
+
+/// What bone meal grows at a block, for the status bar: the flower if it's certain, else the
+/// likeliest few with their chances in spyglass's biome, and whether a tie could change it.
+fn flower_summary(answer: &spyglass::FlowerAt) -> String {
+    if let Some(flower) = answer.certain() {
+        return format!("{} (certain)", spyglass::display_name(flower));
+    }
+    let first = answer.first();
+    if first.flowers.is_empty() {
+        return "No flower".to_string();
+    }
+    // A flower's states together (pink petals' counts), in the order they first come.
+    let mut blocks: Vec<&str> = Vec::new();
+    for f in &first.flowers {
+        let block = f
+            .flower
+            .split_once('[')
+            .map_or(f.flower.as_str(), |(id, _)| id);
+        if !blocks.contains(&block) {
+            blocks.push(block);
+        }
+    }
+    let mut parts: Vec<String> = blocks
+        .iter()
+        .take(STATUS_FLOWERS)
+        .map(|block| {
+            let chance = first.chance_of(block).as_f64();
+            format!("{} {:.0}%", spyglass::display_name(block), 100.0 * chance)
+        })
+        .collect();
+    if blocks.len() > STATUS_FLOWERS {
+        parts.push(format!("{} more", blocks.len() - STATUS_FLOWERS));
+    }
+    let tied = if answer.biomes.len() > 1 {
+        " (tied)"
+    } else {
+        ""
+    };
+    format!("{}{tied}", parts.join(", "))
 }
 
 /// The hatch behind tiles not drawn yet: lines at 45°, each from the bottom edge to the top,
@@ -433,6 +540,90 @@ fn draw_hatch(painter: &egui::Painter, rect: Rect) {
             egui::Stroke::new(1.0, HATCH),
         );
         x += HATCH_GAP;
+    }
+}
+
+/// Where regions drawn past their limit were looked for: an outline where one meets a region
+/// not looked at.
+const FOUND_OUTLINE: Color32 = Color32::from_rgba_premultiplied(0xd0, 0xd0, 0xd0, 0xc0);
+/// Over regions not looked at past the limit: a faint hatch, darker than the empty map's.
+const NOT_LOOKED: Color32 = Color32::from_rgba_premultiplied(0, 0, 0, 0x60);
+
+impl App {
+    /// Past the features' or loot's limit, the regions looked for and those not
+    /// (`zoom::DRAW_FOUND`): each region not cached for every layer drawn is hatched, and the
+    /// edges between the two are outlined, so an empty region reads as "nothing here".
+    fn draw_found_regions(&self, canvas: &Canvas<'_>, frame: &Frame) {
+        if !frame.features_found && !frame.loot_found {
+            return;
+        }
+        let looked = |region: Region| {
+            let key = frame.feature_key(region);
+            let has = |found: bool, ok: bool| !found || ok;
+            has(
+                frame.features_found,
+                matches!(self.feature_markers.peek(&key), Some(Ok(_))),
+            ) && has(
+                frame.loot_found,
+                matches!(self.loot_markers.peek(&key), Some(Ok(_))),
+            )
+        };
+        let view = frame.view;
+        let origin = view.origin();
+        let scale = f64::from(view.scale);
+        // A region's square on screen.
+        let square = |region: Region| {
+            let side = f64::from(region.size) * 16.0;
+            let at = |i: i32, axis: usize| (f64::from(i) * side / scale + origin[axis]) as f32;
+            let min = canvas.centre + egui::vec2(at(region.x, 0), at(region.z, 1));
+            let max = canvas.centre + egui::vec2(at(region.x + 1, 0), at(region.z + 1, 1));
+            Rect::from_min_max(min, max)
+        };
+        let painter = canvas.painter.with_clip_rect(canvas.rect);
+        let stroke = egui::Stroke::new(1.5, FOUND_OUTLINE);
+        let hatch = egui::Stroke::new(1.0, NOT_LOOKED);
+        let map = canvas.rect;
+        for &region in &frame.regions {
+            let rect = square(region);
+            if !rect.intersects(map) {
+                continue;
+            }
+            if looked(region) {
+                let beside = |dx: i32, dz: i32| {
+                    looked(Region {
+                        x: region.x.saturating_add(dx),
+                        z: region.z.saturating_add(dz),
+                        ..region
+                    })
+                };
+                let sides = [
+                    (beside(0, -1), [rect.left_top(), rect.right_top()]),
+                    (beside(0, 1), [rect.left_bottom(), rect.right_bottom()]),
+                    (beside(-1, 0), [rect.left_top(), rect.left_bottom()]),
+                    (beside(1, 0), [rect.right_top(), rect.right_bottom()]),
+                ];
+                for (_, side) in sides.iter().filter(|(next, _)| !next) {
+                    painter.line_segment(*side, stroke);
+                }
+            } else {
+                // The map's diagonals that cross the square, phased to the map so they run on
+                // from one square to the next.
+                let clipped = painter.with_clip_rect(rect.intersect(map));
+                let along = |p: Pos2| p.x + p.y - map.left() - map.bottom();
+                let first = (along(rect.left_top()) / HATCH_GAP).floor() * HATCH_GAP;
+                let mut x = first;
+                while x <= along(rect.right_bottom()) {
+                    clipped.line_segment(
+                        [
+                            Pos2::new(map.left() + x, map.bottom()),
+                            Pos2::new(map.left() + x + map.height(), map.top()),
+                        ],
+                        hatch,
+                    );
+                    x += HATCH_GAP;
+                }
+            }
+        }
     }
 }
 

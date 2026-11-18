@@ -54,6 +54,153 @@ pub enum Command {
         #[command(subcommand)]
         what: Loot,
     },
+    /// The flower bone meal grows on grass: at a block, or the best height for a farm of one
+    /// flower.
+    Flower {
+        #[command(subcommand)]
+        what: Flower,
+    },
+    /// Where Nether portals lead: the portal a trip lands at, from a portal you give or from
+    /// every portal in a world save. Needs no seed.
+    Portal {
+        #[command(subcommand)]
+        what: PortalCmd,
+    },
+}
+
+/// `spyglass portal` (`docs/specs/portals.md`).
+#[derive(Subcommand)]
+pub enum PortalCmd {
+    /// Where a portal leads: from a portal at a position, the exit blocks a standing player
+    /// aims at and the portal each lands at, among `--portal`s and the save's; or, with only
+    /// `--world`, every portal in the save, with those that don't link back flagged.
+    Link(PortalLink),
+}
+
+#[derive(Args)]
+pub struct PortalLink {
+    /// The portal's dimension: `overworld`, `nether` or `end`. With POSITION; leave both out
+    /// to link a save's portals.
+    #[arg(value_parser = dimension, requires = "position")]
+    pub dimension: Option<Dimension>,
+    /// The portal's lowest block, `x,y,z`: the least x, y and z of its portal blocks.
+    #[arg(allow_hyphen_values = true, value_parser = xyz)]
+    pub position: Option<[i32; 3]>,
+    /// Which way the portal's blocks run: `x` or `z`.
+    #[arg(long, default_value = "x", value_parser = axis)]
+    pub axis: spyglass::Axis,
+    /// The portal's size in blocks, `WIDTHxHEIGHT`: along its axis and up, inside the frame.
+    #[arg(long, default_value = "2x3", value_parser = portal_size)]
+    pub size: [i32; 2],
+    /// Another portal to link to, `DIMENSION:x,y,z`, with `:AXIS` and `:WIDTHxHEIGHT` if not
+    /// `x` and `2x3`, e.g. `overworld:100,64,-30:z:4x5`. Repeatable.
+    #[arg(long = "portal", value_name = "PORTAL", allow_hyphen_values = true, value_parser = portal_spec)]
+    pub portals: Vec<PortalSpec>,
+    /// A world save: its portals are linked too, with its borders and version.
+    #[arg(long, conflicts_with_all = ["bundle", "game_version", "packs"])]
+    pub world: Option<String>,
+    /// Game version of the bundle to use, from `--bundles`. Defaults to the newest release there;
+    /// snapshots are used only when named.
+    #[arg(long)]
+    pub game_version: Option<String>,
+    /// A bundle directory to use instead of choosing one from `--bundles`.
+    #[arg(long, conflicts_with = "game_version")]
+    pub bundle: Option<PathBuf>,
+    /// Where bundles are, one directory per version. `SPYGLASS_BUNDLES` sets the default.
+    #[arg(long, default_value_os_t = spyglass::default_bundles_dir())]
+    pub bundles: PathBuf,
+    /// A data pack, a folder or zip, to apply over the bundle, for a dimension type's scale.
+    /// Repeatable, lowest first.
+    #[arg(long = "pack", value_name = "PACK")]
+    pub packs: Vec<PathBuf>,
+    /// Print JSON (docs/specs/cli-json.md) instead of text.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// A portal given with `--portal`.
+#[derive(Clone, Copy)]
+pub struct PortalSpec {
+    pub dimension: Dimension,
+    pub corner: [i32; 3],
+    pub axis: spyglass::Axis,
+    pub size: [i32; 2],
+}
+
+fn axis(text: &str) -> Result<spyglass::Axis, String> {
+    match text {
+        "x" | "X" => Ok(spyglass::Axis::X),
+        "z" | "Z" => Ok(spyglass::Axis::Z),
+        _ => Err(format!("expected x or z, got {text:?}")),
+    }
+}
+
+fn portal_size(text: &str) -> Result<[i32; 2], String> {
+    text.split_once(['x', 'X'])
+        .and_then(|(w, h)| Some([w.trim().parse().ok()?, h.trim().parse().ok()?]))
+        .ok_or_else(|| format!("expected WIDTHxHEIGHT in blocks, got {text:?}"))
+}
+
+/// `DIMENSION:x,y,z`, then optionally `:AXIS` and `:WIDTHxHEIGHT`, in either order.
+fn portal_spec(text: &str) -> Result<PortalSpec, String> {
+    // A dimension id has a colon of its own: `minecraft:the_nether:1,2,3`.
+    let parts: Vec<&str> = text.split(':').collect();
+    let at = parts
+        .iter()
+        .position(|p| p.contains(','))
+        .ok_or_else(|| format!("expected DIMENSION:x,y,z, got {text:?}"))?;
+    let mut spec = PortalSpec {
+        dimension: dimension(&parts[..at].join(":"))?,
+        corner: xyz(parts[at])?,
+        axis: spyglass::Axis::X,
+        size: [2, 3],
+    };
+    for part in &parts[at + 1..] {
+        match axis(part) {
+            Ok(a) => spec.axis = a,
+            Err(_) => spec.size = portal_size(part)?,
+        }
+    }
+    Ok(spec)
+}
+
+/// `spyglass flower` (`docs/specs/flowers.md`).
+#[derive(Subcommand)]
+pub enum Flower {
+    /// What bone meal grows on grass at a block, `x,y,z`: the block above the grass. Each
+    /// flower with its chance, and why: the biome there and its flower features.
+    At {
+        /// The flower's block, `x,y,z`, one above the grass.
+        #[arg(allow_hyphen_values = true, value_parser = xyz)]
+        position: [i32; 3],
+        #[command(flatten)]
+        common: Common,
+    },
+    /// How much of an area one flower covers at each height: where it's certain and where it
+    /// can grow, for choosing a farm's height.
+    Heights {
+        /// The flower, e.g. `minecraft:cornflower`.
+        flower: String,
+        /// The area's corner, `x,z`, with `--max`: every block between them, both included.
+        #[arg(long, allow_hyphen_values = true, value_parser = xz)]
+        min: [i32; 2],
+        /// The area's other corner, `x,z`.
+        #[arg(long, allow_hyphen_values = true, value_parser = xz)]
+        max: [i32; 2],
+        /// The heights to try, `from..to`, both included: the flower's block, one above the
+        /// grass.
+        #[arg(long, default_value = "-64..320", allow_hyphen_values = true, value_parser = y_range)]
+        y: [i32; 2],
+        /// Try every this many heights.
+        #[arg(long, default_value_t = 1)]
+        step: u32,
+        /// Sample every this many blocks across the area (a power of two): larger areas are
+        /// faster at a coarser scale.
+        #[arg(long, default_value_t = 1)]
+        scale: u32,
+        #[command(flatten)]
+        common: Common,
+    },
 }
 
 /// `spyglass loot` (`docs/specs/locate.md#loot`).
@@ -466,6 +613,14 @@ pub struct Render {
     /// Tint the caves and ravines carvers cut at `--y` (scales up to 4).
     #[arg(long)]
     pub carvers: bool,
+    /// Draw the flower bone meal grows on grass at `--y`, the block above the grass: opaque
+    /// where it's certain, fainter as it's less likely, and dimmed where none grows.
+    #[arg(long)]
+    pub flowers: bool,
+    /// With `--flowers` implied: show only this flower, e.g. `minecraft:cornflower`, dimming
+    /// the blocks that can't grow it.
+    #[arg(long, value_name = "ID")]
+    pub flower: Option<String>,
     /// A pin at block `x,z`, with a colour `#rrggbb` after another comma (amber if none).
     /// Repeat it for more; they're drawn last, in order.
     #[arg(long = "pin", allow_hyphen_values = true, value_parser = pin)]
@@ -538,6 +693,17 @@ fn xyz(text: &str) -> Result<[i32; 3], String> {
     }
 }
 
+/// `from..to`, both included.
+fn y_range(text: &str) -> Result<[i32; 2], String> {
+    let parse = |s: &str| s.trim().parse::<i32>();
+    match text.split_once("..").map(|(a, b)| (parse(a), parse(b))) {
+        Some((Ok(from), Ok(to))) if from <= to => Ok([from, to]),
+        _ => Err(format!(
+            "expected from..to in blocks, from at most to, got {text:?}"
+        )),
+    }
+}
+
 fn xz(text: &str) -> Result<[i32; 2], String> {
     match text
         .split(',')
@@ -567,14 +733,16 @@ pub enum WorldCmd {
         #[arg(long)]
         json: bool,
     },
-    /// A save's seed, version, spawn and player, and anything that makes answers inexact.
+    /// What spyglass read from a save: its settings and where each came from, its data packs and
+    /// what they change, what each dimension holds, and anything that makes answers inexact.
     Info {
         /// The save's folder, or its folder name in a launcher's saves.
         save: String,
         /// Where bundles are, one directory per version. `SPYGLASS_BUNDLES` sets the default.
         #[arg(long, default_value_os_t = spyglass::default_bundles_dir())]
         bundles: PathBuf,
-        /// Skip counting chunks generated by older versions (which reads every region file).
+        /// Skip reading every region file, so leave out what each dimension holds and the chunks
+        /// older versions generated.
         #[arg(long)]
         quick: bool,
         /// Print JSON (docs/specs/cli-json.md) instead of text.

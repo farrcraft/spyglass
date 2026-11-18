@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use spyglass::{
     Dimension, Feature, FindOptions, FindOutcome, FindProgress, Game, SaveReport, Scan,
-    SearchQuery, SearchStop, SearchThrottle,
+    SearchQuery, SearchThrottle, Stop,
 };
 
 use crate::args::{Find, FindOrigin};
@@ -67,7 +67,7 @@ pub fn run(args: &Find) -> Result<()> {
         certain: args.certain,
         confirm: args.confirm,
         time: args.time,
-        stop: SearchStop::new(),
+        stop: Stop::new(),
         throttle: SearchThrottle::new(),
     };
     {

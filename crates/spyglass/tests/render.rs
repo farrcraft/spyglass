@@ -834,6 +834,8 @@ fn the_real_world_renders_the_same_in_tiles() {
             veins: scale <= spyglass::MAX_UNDERGROUND_SCALE,
             noise_caves: scale <= spyglass::MAX_UNDERGROUND_SCALE,
             carvers: scale <= spyglass::MAX_UNDERGROUND_SCALE,
+            flowers: true,
+            flower: None,
             pins: vec![Pin {
                 position: [200, -300],
                 colour: [0xf0, 0xb0, 0x30],
@@ -887,5 +889,264 @@ fn the_real_world_renders_the_same_in_tiles() {
                 session.biome_at([x, h.min(319), z]).biome,
             );
         }
+    }
+}
+
+/// The areas a map of `area` can take known pixels from, each with whether they make it whole:
+/// a finer one covering it and its edge row, a finer one over its west part, and a coarser one
+/// over it (up to `coarsest`), whose corners are every other of its corners.
+fn reuse_sources(area: &MapArea, coarsest: u32) -> Vec<(&'static str, MapArea, bool)> {
+    let [w, h] = area.size;
+    let scale = area.scale;
+    let mut sources = Vec::new();
+    if scale > 1 {
+        let finer = MapArea {
+            min: area.min.map(|m| m - scale as i32),
+            size: [2 * w + 2, 2 * h + 2],
+            scale: scale / 2,
+            y: area.y,
+        };
+        sources.push(("finer", finer, true));
+        sources.push((
+            "finer, the west part",
+            MapArea {
+                size: [w + 2, 2 * h + 2],
+                ..finer
+            },
+            false,
+        ));
+    }
+    if 2 * scale <= coarsest {
+        let side = 2 * scale as i32;
+        sources.push((
+            "coarser",
+            MapArea {
+                min: area.min.map(|m| (m - scale as i32).div_euclid(side) * side),
+                size: [w / 2 + 3, h / 2 + 3],
+                scale: 2 * scale,
+                y: area.y,
+            },
+            false,
+        ));
+    }
+    sources
+}
+
+/// For each scale, a map made `$with` the pixels known from maps of `$direct` at other scales
+/// ([`reuse_sources`]) equals the map made `$direct`ly; and from a whole set of them it's
+/// made through `$stopped` with its stop raised, so nothing is computed.
+macro_rules! check_reuse {
+    ($what:expr, $scales:expr, $coarsest:expr, $area:expr,
+     direct: |$a:ident| $direct:expr,
+     with: |$wa:ident, $k:ident| $with:expr,
+     stopped: |$sa:ident, $sk:ident, $stop:ident| $stopped:expr) => {{
+        for scale in $scales {
+            let area: MapArea = $area(scale);
+            let direct = {
+                let $a = &area;
+                $direct
+            };
+            for (from, source, whole) in reuse_sources(&area, $coarsest) {
+                let mut known = spyglass::Known::new(&area).unwrap();
+                let map = {
+                    let $a = &source;
+                    $direct
+                };
+                known.add(&map).unwrap();
+                assert_eq!(
+                    known.is_complete(),
+                    whole,
+                    "{} 1:{scale} from {from}",
+                    $what
+                );
+                assert!(
+                    known.missing() < known.area().size[0] as usize * known.area().size[1] as usize
+                );
+                let made = {
+                    let ($wa, $k) = (&area, &known);
+                    $with
+                };
+                assert!(made == direct, "{} 1:{scale} from {from}", $what);
+                if whole {
+                    let raised = spyglass::Stop::new();
+                    raised.stop();
+                    let made = {
+                        let ($sa, $sk, $stop) = (&area, &known, &raised);
+                        $stopped
+                    };
+                    assert!(
+                        made.as_ref().ok() == Some(&direct),
+                        "{} 1:{scale} from {from}: computed something",
+                        $what
+                    );
+                }
+            }
+        }
+    }};
+}
+
+/// An area across the tie west of x = 0 and the slope, at `scale`.
+fn reuse_area(scale: u32) -> MapArea {
+    MapArea::centred_on([-8 * scale as i32, 40], [24, 18], scale, 64).unwrap()
+}
+
+#[test]
+fn maps_from_known_pixels_equal_maps_made_directly() {
+    let fixture = bundle();
+    let world = World::open(fixture.path()).unwrap();
+    for seed in [42, 7, -3] {
+        let session = world.session(seed).unwrap();
+        let scales = [1, 2, 4, 8, 16];
+        check_reuse!("biomes", scales, 32, reuse_area,
+            direct: |a| session.biome_map(a).unwrap(),
+            with: |a, k| session.biome_map_with(a, k).unwrap(),
+            stopped: |a, k, stop| session.stopping(stop).biome_map_with(a, k));
+        check_reuse!("heights", scales, 32, reuse_area,
+            direct: |a| session.height_map(a).unwrap(),
+            with: |a, k| session.height_map_with(a, k).unwrap(),
+            stopped: |a, k, stop| session.stopping(stop).height_map_with(a, k));
+        check_reuse!("surface biomes", scales, 32, reuse_area,
+            direct: |a| session.surface_biome_map(&session.height_map(a).unwrap()).unwrap(),
+            with: |a, k| session
+                .surface_biome_map_with(&session.height_map(a).unwrap(), k)
+                .unwrap(),
+            stopped: |a, k, stop| session
+                .stopping(stop)
+                .surface_biome_map_with(&session.height_map(a).unwrap(), k));
+    }
+    // The tie is in the areas compared.
+    let session = world.session(42).unwrap();
+    let map = session.biome_map(&reuse_area(4)).unwrap();
+    assert!(
+        (0..24).any(|i| (0..18).any(|j| map.candidates([i, j]).count() > 1)),
+        "a tied pixel"
+    );
+}
+
+#[test]
+fn underground_maps_from_known_pixels_equal_maps_made_directly() {
+    let fixture = underground_bundle();
+    let world = World::open(fixture.path()).unwrap();
+    let layers = underground(false);
+    // East of x = 0, where veins are: at the noise cave's depth, and higher, where the
+    // vein rule's copper is.
+    let mut maps = Vec::new();
+    for (seed, y) in [(42, -12), (7, 2)] {
+        let area = |scale: u32| MapArea::centred_on([20, 0], [24, 20], scale, y).unwrap();
+        let session = world.session(seed).unwrap();
+        let scales = [1, 2, 4];
+        check_reuse!("carvings", scales, 4, area,
+            direct: |a| session.carving_map(a).unwrap(),
+            with: |a, k| session.carving_map_with(a, k).unwrap(),
+            stopped: |a, k, stop| session.stopping(stop).carving_map_with(a, k));
+        check_reuse!("underground", scales, 4, area,
+            direct: |a| session.underground_map(a, &layers, None).unwrap(),
+            with: |a, k| session.underground_map_with(a, &layers, None, k).unwrap(),
+            stopped: |a, k, stop| session.stopping(stop).underground_map_with(a, &layers, None, k));
+        for scale in scales {
+            maps.push(
+                session
+                    .underground_map(&area(scale), &layers, None)
+                    .unwrap(),
+            );
+        }
+    }
+    // What's compared has something in it.
+    let pixels = || (0..24).flat_map(|i| (0..20).map(move |j| [i, j]));
+    let any = |found: &dyn Fn(&spyglass::UndergroundMap, [u32; 2]) -> bool| {
+        maps.iter().any(|m| pixels().any(|p| found(m, p)))
+    };
+    assert!(any(&|m, p| m.vein(p).is_some()), "a vein");
+    assert!(any(&|m, p| m.is_noise_cave(p)), "a noise cave");
+    assert!(any(&|m, p| m.carver(p).is_some()), "a carver");
+}
+
+#[test]
+fn known_pixels_are_of_one_kind() {
+    let fixture = bundle();
+    let world = World::open(fixture.path()).unwrap();
+    let session = world.session(42).unwrap();
+    let area = reuse_area(4);
+    let mut known = spyglass::Known::new(&area).unwrap();
+    known.add(&session.biome_map(&area).unwrap()).unwrap();
+    assert!(known.is_complete());
+    // Biomes at another height, or at the surface, aren't these.
+    let higher = MapArea { y: 100, ..area };
+    assert!(known.add(&session.biome_map(&higher).unwrap()).is_err());
+    let surface = session
+        .surface_biome_map(&session.height_map(&area).unwrap())
+        .unwrap();
+    assert!(known.add(&surface).is_err());
+    assert!(
+        session
+            .surface_biome_map_with(&session.height_map(&area).unwrap(), &known)
+            .is_err()
+    );
+    assert!(session.biome_map_with(&higher, &known).is_err());
+    // Nor are they another area's.
+    let other = MapArea {
+        min: [0, 0],
+        ..area
+    };
+    assert!(session.biome_map_with(&other, &known).is_err());
+    // Nor another world's.
+    let elsewhere = bundle();
+    let elsewhere = World::open(elsewhere.path()).unwrap();
+    let theirs = elsewhere.session(42).unwrap().biome_map(&area).unwrap();
+    let mut fresh = spyglass::Known::new(&area).unwrap();
+    fresh.add(&theirs).unwrap();
+    assert!(matches!(
+        session.biome_map_with(&area, &fresh),
+        Err(Error::OtherWorld(_))
+    ));
+}
+
+#[test]
+#[ignore = "needs bundles/<version> (SPYGLASS_ORACLE_VERSION, else the newest release)"]
+fn the_real_world_s_maps_from_known_pixels_equal_maps_made_directly() {
+    let dir = spyglass_oracle::bundle_dir();
+    let world = World::open_with_packs(
+        dir,
+        spyglass::Dimension::Overworld,
+        &spyglass_oracle::packs(),
+    )
+    .unwrap();
+    let layers = underground(false);
+    for seed in [-4_893_098_694_207_956_070, 12345] {
+        let session = world.session(seed).unwrap();
+        let area = |scale: u32| MapArea::centred_on([200, -300], [40, 32], scale, 64).unwrap();
+        let scales = [1, 2, 4, 8, 16];
+        check_reuse!("biomes", scales, 32, area,
+            direct: |a| session.biome_map(a).unwrap(),
+            with: |a, k| session.biome_map_with(a, k).unwrap(),
+            stopped: |a, k, stop| session.stopping(stop).biome_map_with(a, k));
+        check_reuse!("heights", scales, 32, area,
+            direct: |a| session.height_map(a).unwrap(),
+            with: |a, k| session.height_map_with(a, k).unwrap(),
+            stopped: |a, k, stop| session.stopping(stop).height_map_with(a, k));
+        check_reuse!("surface biomes", scales, 32, area,
+            direct: |a| session.surface_biome_map(&session.height_map(a).unwrap()).unwrap(),
+            with: |a, k| session
+                .surface_biome_map_with(&session.height_map(a).unwrap(), k)
+                .unwrap(),
+            stopped: |a, k, stop| session
+                .stopping(stop)
+                .surface_biome_map_with(&session.height_map(a).unwrap(), k));
+        check_reuse!("flowers", scales, 32, area,
+            direct: |a| session.flower_map(a).unwrap(),
+            with: |a, k| session.flower_map_with(a, k).unwrap(),
+            stopped: |a, k, stop| session.stopping(stop).flower_map_with(a, k));
+        let deep = |scale: u32| MapArea {
+            y: 0,
+            ..area(scale)
+        };
+        check_reuse!("carvings", [1, 2, 4], 4, deep,
+            direct: |a| session.carving_map(a).unwrap(),
+            with: |a, k| session.carving_map_with(a, k).unwrap(),
+            stopped: |a, k, stop| session.stopping(stop).carving_map_with(a, k));
+        check_reuse!("underground", [1, 2, 4], 4, deep,
+            direct: |a| session.underground_map(a, &layers, None).unwrap(),
+            with: |a, k| session.underground_map_with(a, &layers, None, k).unwrap(),
+            stopped: |a, k, stop| session.stopping(stop).underground_map_with(a, &layers, None, k));
     }
 }

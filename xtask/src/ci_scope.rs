@@ -50,6 +50,7 @@ const ORACLE_FILES: &[&str] = &[
     "xtask/src/locate.rs",
     "xtask/src/oracle.rs",
     "xtask/src/oracle_test.rs",
+    "xtask/src/portals.rs",
 ];
 
 /// Files that only Linux's check runs: Linux setup, the dev container, other workflows.

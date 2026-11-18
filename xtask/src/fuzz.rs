@@ -13,8 +13,8 @@ use crate::{command, repo_root};
 
 #[derive(clap::Args)]
 pub struct Fuzz {
-    /// The target: `nbt` (the NBT reader), `region` (a region file's chunk scan) or `pack` (a
-    /// data pack zip).
+    /// The target: `nbt` (the NBT reader), `region` (a region file's chunk scan), `poi` (a
+    /// points-of-interest region file) or `pack` (a data pack zip).
     target: String,
     /// How long to fuzz, in seconds.
     #[arg(long, default_value_t = 60)]
@@ -25,8 +25,9 @@ pub fn run(args: &Fuzz) -> Result<()> {
     let seeds: fn() -> Vec<(&'static str, Vec<u8>)> = match args.target.as_str() {
         "nbt" => nbt_seeds,
         "region" => region_seeds,
+        "poi" => poi_seeds,
         "pack" => pack_seeds,
-        other => bail!("no fuzz target {other:?}: use nbt, region or pack"),
+        other => bail!("no fuzz target {other:?}: use nbt, region, poi or pack"),
     };
     let dir = repo_root().join("fuzz");
     let corpus = dir.join("corpus").join(&args.target);
@@ -112,13 +113,69 @@ fn nbt_seeds() -> Vec<(&'static str, Vec<u8>)> {
 /// A region file with two uncompressed chunks, one external chunk with no `.mcc` file, and
 /// empty locations.
 fn region_seeds() -> Vec<(&'static str, Vec<u8>)> {
+    vec![(
+        "seed.mca",
+        region_file(vec![
+            (0, 3, nbt::write("", &sample_chunk(3955))),
+            (1, 3, nbt::write("", &sample_chunk(4189))),
+            (2, 3 | 128, Vec::new()),
+        ]),
+    )]
+}
+
+/// A points-of-interest region file: one chunk with a valid section of portal records and a
+/// section that isn't valid, and the same chunk zlib-compressed.
+fn poi_seeds() -> Vec<(&'static str, Vec<u8>)> {
+    let record = |pos: [i32; 3], kind: &str| {
+        Tag::Compound(Compound::from([
+            ("pos".to_string(), Tag::IntArray(pos.to_vec())),
+            ("type".to_string(), Tag::String(kind.to_string())),
+            ("free_tickets".to_string(), Tag::Int(0)),
+        ]))
+    };
+    let section = |valid: i8, records: Vec<Tag>| {
+        Tag::Compound(Compound::from([
+            ("Valid".to_string(), Tag::Byte(valid)),
+            ("Records".to_string(), Tag::List(records)),
+        ]))
+    };
+    let chunk = Tag::Compound(Compound::from([
+        ("DataVersion".to_string(), Tag::Int(4671)),
+        (
+            "Sections".to_string(),
+            Tag::Compound(Compound::from([
+                (
+                    "4".to_string(),
+                    section(
+                        1,
+                        vec![
+                            record([3, 70, 5], "minecraft:nether_portal"),
+                            record([3, 71, 5], "minecraft:nether_portal"),
+                            record([9, 64, 9], "minecraft:home"),
+                        ],
+                    ),
+                ),
+                ("-1".to_string(), section(0, vec![])),
+            ])),
+        ),
+    ]));
+    let plain = nbt::write("", &chunk);
+    let mut zlib = Vec::new();
+    {
+        use std::io::Write as _;
+        let mut encoder = flate2::write::ZlibEncoder::new(&mut zlib, flate2::Compression::fast());
+        encoder.write_all(&plain).expect("in memory");
+        encoder.finish().expect("in memory");
+    }
+    vec![("seed.mca", region_file(vec![(0, 3, plain), (33, 2, zlib)]))]
+}
+
+/// A region file holding `chunks`, each a header index, a compression byte and its body, in
+/// sectors after the header.
+fn region_file(chunks: Vec<(usize, u8, Vec<u8>)>) -> Vec<u8> {
     let mut file = vec![0_u8; 8192];
     let mut sector = 2_u32;
-    for (index, compression, body) in [
-        (0_usize, 3_u8, nbt::write("", &sample_chunk(3955))),
-        (1, 3, nbt::write("", &sample_chunk(4189))),
-        (2, 3 | 128, Vec::new()),
-    ] {
+    for (index, compression, body) in chunks {
         let mut chunk = u32::try_from(body.len() + 1)
             .expect("a small chunk")
             .to_be_bytes()
@@ -132,7 +189,7 @@ fn region_seeds() -> Vec<(&'static str, Vec<u8>)> {
         file.extend(chunk);
         sector += sectors;
     }
-    vec![("seed.mca", file)]
+    file
 }
 
 /// Pack zips: one with overlays, a filter and worldgen files, and one of the older format.
@@ -210,5 +267,10 @@ mod tests {
             [(3955, 1), (4189, 1)]
         );
         assert_eq!(counts.unreadable, 1);
+        fs::write(&path, &poi_seeds()[0].1).unwrap();
+        let index = spyglass_world::poi::read(dir.path(), -4..=19);
+        assert_eq!(index.chunks.len(), 2);
+        assert_eq!(index.unreadable_chunks, 0);
+        assert_eq!(index.portals().count(), 4);
     }
 }

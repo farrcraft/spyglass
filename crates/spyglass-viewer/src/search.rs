@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use spyglass::query::{Anchor, Constraint, ConstraintKind, Importance, Place, Query, Region};
 use spyglass::{
     Dimension, Evaluation, Feature, FindMatch, FindOptions, FindOutcome, FindProgress,
-    FoundContainer, Game, SearchOptions, SearchOutcome, SearchProgress, SearchQuery, SearchStop,
-    SearchThrottle, SeedSource,
+    FoundContainer, Game, SearchOptions, SearchOutcome, SearchProgress, SearchQuery,
+    SearchThrottle, SeedSource, Stop,
 };
 
 use crate::userdata::{self, Kind};
@@ -167,7 +167,7 @@ impl SearchSettings {
             threads: Some(threads),
             certain: self.certain,
             confirm: self.confirm,
-            stop: SearchStop::new(),
+            stop: Stop::new(),
             throttle: SearchThrottle::new(),
         })
     }
@@ -181,7 +181,7 @@ impl SearchSettings {
             certain: self.certain,
             confirm: self.confirm,
             time: None,
-            stop: SearchStop::new(),
+            stop: Stop::new(),
             throttle: SearchThrottle::new(),
         }
     }
@@ -195,7 +195,7 @@ pub fn threads() -> usize {
 /// A search running on its own thread, reporting progress `P` and ending with `O`.
 pub struct Running<P, O> {
     /// Asks the search to stop.
-    stop: SearchStop,
+    stop: Stop,
     /// How many threads the search may use now.
     throttle: SearchThrottle,
     /// The latest progress the search reported.
@@ -213,7 +213,7 @@ impl<P: Clone + Send + 'static, O: Send + 'static> Running<P, O> {
     /// Runs `work` on its own thread, with a callback for its progress; `repaint` is called
     /// whenever there's news.
     fn spawn(
-        stop: SearchStop,
+        stop: Stop,
         throttle: SearchThrottle,
         work: impl FnOnce(&dyn Fn(&P)) -> Result<O, String> + Send + 'static,
         repaint: impl Fn() + Send + Sync + 'static,
@@ -402,6 +402,15 @@ pub fn matches(query: &SearchQuery, evaluation: &Evaluation) -> Vec<Match> {
                 Feature::SlimeChunk(_) => ("Slime chunk".to_string(), true),
                 Feature::Biome { biome, certain, .. } => (biome.biome.clone(), *certain),
                 Feature::Spawn(s) => ("World spawn".to_string(), !s.platform_dependent),
+                Feature::FlowerField {
+                    flower,
+                    blocks,
+                    certain,
+                    position,
+                } => (
+                    format!("{blocks}-block field of {flower} at y {}", position[1]),
+                    *certain,
+                ),
                 _ => continue,
             };
             let at = feature.map_block();
@@ -481,7 +490,8 @@ fn place(kind: &ConstraintKind) -> Place {
         | ConstraintKind::Coverage { place, .. }
         | ConstraintKind::Spawn { place }
         | ConstraintKind::Height { place, .. }
-        | ConstraintKind::Flat { place, .. } => *place,
+        | ConstraintKind::Flat { place, .. }
+        | ConstraintKind::FlowerField { place, .. } => *place,
     }
 }
 

@@ -13,7 +13,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use flate2::read::{GzDecoder, ZlibDecoder};
-use spyglass_data::nbt::{self, RootField};
+use spyglass_data::nbt;
 
 use crate::read_capped;
 
@@ -71,6 +71,24 @@ pub struct ChunkFields {
     pub status: Option<String>,
     /// `InhabitedTime`: ticks players spent nearby, summed over players.
     pub inhabited_time: Option<i64>,
+    /// The structure starts it holds, from `structures.starts` (`Level.Structures.Starts`
+    /// before 1.18): each whose `id` is a string other than `INVALID`, in the order saved.
+    /// `None` without a starts compound. Whether the game reads them as they are depends on
+    /// [`data_version`](Self::data_version) (`docs/specs/world-saves.md`, "Structure starts in
+    /// saves").
+    pub starts: Option<Vec<ChunkStart>>,
+    /// The `id` of each block entity in `block_entities` with a `LootTable`: a container not
+    /// yet filled. Empty before 1.18, whose block entities are in `Level.TileEntities`.
+    pub sealed_containers: Vec<String>,
+}
+
+/// A structure start a chunk holds, as the scan counts it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChunkStart {
+    /// Its key in `starts`, e.g. `minecraft:village_plains`.
+    pub structure: String,
+    /// Its `id`, normally the key.
+    pub id: String,
 }
 
 impl ChunkFields {
@@ -264,11 +282,27 @@ pub fn index_file(path: &Path) -> std::io::Result<RegionIndex> {
         region: region_coords(path),
         chunks: Vec::new(),
     };
+    visit_chunks(path, |index, raw| {
+        let record = raw
+            .and_then(|raw| chunk_fields(&raw))
+            .map_or(ChunkRecord::Unreadable, ChunkRecord::Read);
+        region.chunks.push((index, record));
+    })?;
+    Ok(region)
+}
+
+/// Calls `visit` with each chunk a region file's header lists, in header order: its header
+/// index (`(x & 31) + (z & 31) · 32`) and its uncompressed NBT, or `None` if it can't be read
+/// under the scan's rules. A file shorter than its header lists none.
+pub fn visit_chunks(
+    path: &Path,
+    mut visit: impl FnMut(u16, Option<Vec<u8>>),
+) -> std::io::Result<()> {
     let mut file = File::open(path)?;
     let mut header = Vec::with_capacity(4096);
     (&mut file).take(4096).read_to_end(&mut header)?;
     if header.len() < 4096 {
-        return Ok(region);
+        return Ok(());
     }
     let mut buffer = Vec::new();
     for index in 0..1024 {
@@ -276,12 +310,17 @@ pub fn index_file(path: &Path) -> std::io::Result<RegionIndex> {
         if entry == 0 {
             continue;
         }
-        let record = chunk_data(path, &mut file, &mut buffer, entry, index)
-            .and_then(|raw| chunk_fields(&raw))
-            .map_or(ChunkRecord::Unreadable, ChunkRecord::Read);
-        region.chunks.push((index as u16, record));
+        let raw = chunk_data(path, &mut file, &mut buffer, entry, index);
+        visit(index as u16, raw);
     }
-    Ok(region)
+    Ok(())
+}
+
+/// The chunk at header index `index` of the region file at `path`, if its name parses
+/// (`r.<x>.<z>.mca`).
+pub fn chunk_pos_in(path: &Path, index: u16) -> Option<[i32; 2]> {
+    let [region_x, region_z] = region_coords(path)?;
+    Some(local_to_chunk(region_x, region_z, usize::from(index)))
 }
 
 /// Chunk `pos`'s NBT, uncompressed, from the region files in `dir` (`r.<x>.<z>.mca`): `None`
@@ -321,24 +360,101 @@ fn local_to_chunk(region_x: i32, region_z: i32, index: usize) -> [i32; 2] {
     ]
 }
 
-/// The fields the scan keeps from a chunk's uncompressed NBT: `None` if it's malformed.
+/// The fields the scan keeps from a chunk's uncompressed NBT, read in one pass without
+/// building its tree: `None` if it's malformed. A repeated name keeps the last value, as in a
+/// compound. Before 1.18, `Status`, `InhabitedTime` and the starts are under `Level`.
 fn chunk_fields(raw: &[u8]) -> Option<ChunkFields> {
-    let [data_version, status, inhabited_time] =
-        nbt::read_root_fields(raw, ["DataVersion", "Status", "InhabitedTime"]).ok()?;
-    Some(ChunkFields {
-        data_version: match data_version {
-            Some(RootField::Int(v)) => Some(v),
-            _ => None,
-        },
-        status: match status {
-            Some(RootField::String(s)) => Some(s),
-            _ => None,
-        },
-        inhabited_time: match inhabited_time {
-            Some(RootField::Long(t)) => Some(t),
-            _ => None,
-        },
+    let mut fields = ChunkFields::default();
+    let mut level = ChunkFields::default();
+    nbt::walk(raw, |root| {
+        root.compound(|name, child| {
+            match name {
+                "DataVersion" => fields.data_version = child.int()?,
+                "Status" => fields.status = child.string()?,
+                "InhabitedTime" => fields.inhabited_time = child.long()?,
+                "structures" => fields.starts = starts_in(child, "starts")?,
+                "block_entities" => fields.sealed_containers = sealed_containers(child)?,
+                "Level" => {
+                    level = ChunkFields::default();
+                    child.compound(|name, child| {
+                        match name {
+                            "Status" => level.status = child.string()?,
+                            "InhabitedTime" => level.inhabited_time = child.long()?,
+                            "Structures" => level.starts = starts_in(child, "Starts")?,
+                            _ => {}
+                        }
+                        Ok(())
+                    })?;
+                }
+                _ => {}
+            }
+            Ok(())
+        })
+        .map(drop)
     })
+    .ok()?;
+    Some(ChunkFields {
+        status: fields.status.or(level.status),
+        inhabited_time: fields.inhabited_time.or(level.inhabited_time),
+        starts: fields.starts.or(level.starts),
+        ..fields
+    })
+}
+
+/// The starts in a structures compound's `name` compound, `INVALID` ones and those without a
+/// string `id` left out, as `chunk::read` leaves them out. `None` without the compound.
+fn starts_in(
+    structures: &mut nbt::Walk<'_, '_>,
+    name: &str,
+) -> Result<Option<Vec<ChunkStart>>, nbt::NbtError> {
+    let mut found = None;
+    structures.compound(|field, starts| {
+        if field != name {
+            return Ok(());
+        }
+        let mut these = Vec::new();
+        let is_compound = starts.compound(|structure, start| {
+            let mut id = None;
+            start.compound(|field, value| {
+                if field == "id" {
+                    id = value.string()?;
+                }
+                Ok(())
+            })?;
+            if let Some(id) = id.filter(|id| id != "INVALID") {
+                these.push(ChunkStart {
+                    structure: structure.to_string(),
+                    id,
+                });
+            }
+            Ok(())
+        })?;
+        // A repeated `starts` replaces the one before; one that isn't a compound is no starts.
+        found = is_compound.then_some(these);
+        Ok(())
+    })?;
+    Ok(found)
+}
+
+/// The `id`s of the block entities in a `block_entities` list that have a string `LootTable`.
+fn sealed_containers(list: &mut nbt::Walk<'_, '_>) -> Result<Vec<String>, nbt::NbtError> {
+    let mut sealed = Vec::new();
+    list.list(|entity| {
+        let (mut id, mut loot_table) = (None, false);
+        entity.compound(|field, value| {
+            match field {
+                "id" => id = value.string()?,
+                "LootTable" => loot_table = value.id() == 8,
+                _ => {}
+            }
+            Ok(())
+        })?;
+        if loot_table && let Some(id) = id {
+            sealed.push(id);
+        }
+        Ok(())
+    })?;
+    Ok(sealed)
 }
 
 /// The uncompressed NBT of the chunk at location `entry` (`index` in the header, x fastest),

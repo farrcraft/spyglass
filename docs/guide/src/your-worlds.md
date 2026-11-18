@@ -9,8 +9,46 @@ spyglass locate structure '#minecraft:village' --world "My World" --from player
 ```
 
 - `world list` lists the saves in the official Minecraft Launcher and the Modrinth App.
-- `world info` shows a world's seed, version, spawn and player, the [data packs](data-packs.md) it applies, and anything that makes spyglass's answers inexact.
+- `world info` shows everything spyglass read from a world and how its answers use it ([below](#what-spyglass-read)).
 - `--world` takes a save's folder, or its folder name in a launcher's saves. `--from player` searches from where your player is, in the player's dimension.
+
+## What spyglass read
+
+`world info` explains spyglass's answers for your world, in three parts, each warning under what it's about:
+
+- **Settings:** every value spyglass took from the save, the file and field it came from, and what it decides. The seed decides every prediction, the data version which bundle answers, each dimension's generator whether spyglass answers there at all, the world border where portals can be found.
+- **Data packs:** each enabled pack in load order, whether spyglass applied it, and for one it applied, what it changes and which answers that touches. A pack of recipes or functions changes none of them.
+- **Dimensions:** whether spyglass answers in each, and what its region files hold: how many chunks, which versions generated them, the structures the world itself recorded (answered from the save, not the seed), and the loot containers nobody has opened yet.
+
+For a 26.3 world with Terralith, shortened:
+
+```text
+Settings
+  seed                         -5730496209435919920
+                               from data/minecraft/world_gen_settings.dat data.seed; decides every prediction
+  modded                       yes
+                               from level.dat Data.WasModded; decides nothing, but mods can change generation
+    warning: the world has been opened with a modded game; mods can change generation
+
+Data packs
+  vanilla                      the bundle's own data
+  file/terralith.zip           applied from datapacks/: changes biomes, terrain, structures, features, loot, flowers and portals
+                                 worldgen/biome: 39 replaced, 95 added
+                                 worldgen/structure: 29 added
+                                 function: 3 added (not read by spyglass)
+    error: the Overworld can't be opened with the save's packs: terralith:mage/tower: DataVersion: unsupported template data version "Some(3839); only 5023 is read without data fixing"
+
+Dimensions
+  the Overworld                not answered; regions in dimensions\minecraft\overworld\region
+                                 chunks    4318: 1898 full, 2420 proto, 0 unreadable
+                                 versions  26.3 (5023) 4318
+                                 starts    28 answered from the save: minecraft:mineshaft 12, minecraft:ocean_ruin_cold 5, …
+                                 sealed    337 loot containers not yet opened: minecraft:decorated_pot 115, minecraft:chest 96, …
+```
+
+Reading every region file takes a few seconds for a large world; `--quick` leaves out what each dimension holds. With `--json`, the same report is in `settings`, `packs` and `dimensions`, and each warning says what it's `about` ([the JSON format](https://github.com/farrcraft/spyglass/blob/main/docs/specs/cli-json.md#world-info)).
+
+The viewer shows the same report in its **World** panel, with a tally of what the map has taken from the save so far ([the viewer](viewer.md)). Which containers you've opened isn't in the report: a save can't tell a structure's chest you opened from one you placed, so spyglass says so for each container as you look at it ([below](#when-answers-may-differ)).
 
 ## What the world already holds
 
@@ -21,15 +59,20 @@ Where your world has already generated a chunk, the game answers from what it sa
         272 ~ 384           470 blocks  saved      minecraft:village_plains
 ```
 
+## Portals
+
+`spyglass portal link --world "My World"` lists your world's Nether portals, where each one leads, and the ones that don't link back. The viewer draws them on the map. See [Nether portals](portals.md).
+
 ## When answers may differ
 
-`world info` says whether spyglass can answer for a world, and warns about what makes its answers inexact:
+`world info` says whether spyglass can answer for a world, and warns about what makes its answers inexact. Each warning appears under what it's about:
 
-- **No bundle for the world's version.** [Extract one](game-data.md).
-- **A world preset other than Default,** such as Large Biomes or Amplified.
-- **Data packs spyglass can't apply,** and mods. spyglass applies your world's data packs as the game does; see [data packs](data-packs.md) for what it can't.
-- **Chunks an older version generated.** Those were made by that version's rules, and stay as they were when the world was upgraded.
-
-It reads every region file to count those chunks, which takes a few seconds for a large world. `--quick` skips that.
+- **No bundle for the world's version,** under the data version. [Extract one](game-data.md).
+- **A world preset other than Default,** such as Large Biomes or Amplified, under that dimension's generator.
+- **Structures turned off,** under the structures setting.
+- **Data packs spyglass can't apply,** and mods' packs, under the pack. spyglass applies your world's data packs as the game does; see [data packs](data-packs.md) for what it can't. A pack spyglass applies but can't open a dimension with (a feature type it doesn't place yet, say) is an error under that pack.
+- **A world opened with a modded game,** under the modded setting.
+- **Chunks an older version generated,** and region files that can't be read, under the dimension's holdings. Older chunks were made by that version's rules, and stay as they were when the world was upgraded.
+- **A world border that's still moving** is a note under the border: spyglass answers with the size it ends at.
 
 Loot in a world can differ too: a chest you've already opened holds whatever you left in it. With `--world`, each container in a chunk your world has generated says how the world holds it: `in the save: unopened` (it'll hold what spyglass shows), `opened, now …` with what's in it now, or `gone` (broken, or something else in its place). `loot find` goes by what's in it now.

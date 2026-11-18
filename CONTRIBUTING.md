@@ -18,7 +18,7 @@ Worldgen code aims to match the game **bit for bit**: Java's integer widths and 
 
 ## Checks
 
-Every check runs as a git hook ([ADR 0002](docs/adr/0002-git-hooks-for-local-checks.md)): formatting, spelling, Markdown links and the Mojang-data blocks on commit; clippy, tests, docs, the MSRV build and cargo-deny on push. `cargo xtask check` runs them all, as CI does, and `cargo xtask oracle-test` runs the comparisons with the game where you have their inputs. Don't bypass the hooks with `--no-verify`; if a formatter changes files, review them, stage them and commit again.
+Every check runs as a git hook ([ADR 0002](docs/adr/0002-git-hooks-for-local-checks.md)): formatting, spelling, Markdown links, the user guide's build and the Mojang-data blocks on commit; clippy, tests, docs, the MSRV build and cargo-deny on push. `cargo xtask check` runs them all, as CI does, and `cargo xtask oracle-test` runs the comparisons with the game where you have their inputs. Don't bypass the hooks with `--no-verify`; if a formatter changes files, review them, stage them and commit again.
 
 ## Security
 

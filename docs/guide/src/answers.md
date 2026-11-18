@@ -9,17 +9,17 @@ Each answer is **certain** or a **candidate**:
 - **Certain** means the game generates it there, exactly as shown.
 - A **candidate** is where the game tries to put something, but spyglass can't decide whether it generates there. The answer says why.
 
-**Structures.** `locate` decides each structure with the seed's terrain, as the game does, so its answers are almost always certain, and then they are exactly the game's `/locate` answer. A candidate is left where the game's choice depends on a tied biome cell or on a stronghold position that can differ between platforms. Then the game's answer is the first of the candidates it generates, usually the first listed.
+**Structures.** Whether a structure really generates often depends on the ground where the game tries to build it. `locate` checks the ground, as the game does, so its answers are almost always certain, and then they're exactly what the game's `/locate` says. A few stay candidates: where two biomes fit a spot exactly as well, so the game's choice can't be predicted, or where a stronghold's position can differ between computers. Then the game's answer is the first of the candidates that generates, usually the first listed.
 
-Without terrain (`--unconfirmed`, and maps and searches unless they `--confirm`), most surface structures, such as villages, temples and monuments, are candidates.
+Checking the ground takes time. Without it (`--unconfirmed`, and maps and searches unless you give `--confirm`), most surface structures, such as villages, temples and monuments, are candidates.
 
-**Features and loot.** A feature or container is a candidate when something spyglass doesn't place could change it, such as a mineshaft's pieces. A candidate container's contents may be another seed's.
+**Features and loot.** A feature or container is a candidate when something spyglass doesn't generate could change it, such as the tunnels of a mineshaft. A candidate container's contents may be wrong.
 
-In a search, a constraint that candidates meet is **possibly** met. `--certain` keeps only seeds whose required constraints are met for certain.
+In a search, a constraint that only candidates meet is **possibly** met. `--certain` keeps only seeds whose required constraints are met for certain.
 
 ## Search order and the nearest
 
-Answers are listed in the game's search order, which isn't always nearest first: `/locate` can skip a nearer structure for one it scans first. `--nearest` answers with the nearest instead, and lists nearest first. The viewer's right-click locate shows both when they differ.
+The game's `/locate` doesn't always give the nearest structure. It searches outward in square rings of its structure grid, and stops at the first ring that has one. In that ring, it takes the first structure it scans, though one later in the ring, or in the next ring out, can be nearer. spyglass lists answers in the game's order, so its first answer is the game's. `--nearest` gives the nearest one instead, and lists nearest first. The viewer's right-click locate shows both when they differ.
 
 ## JSON
 

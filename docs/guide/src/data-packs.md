@@ -1,6 +1,6 @@
 # Data packs
 
-A data pack can change how a world generates: its terrain, biomes, structures, features and loot. spyglass applies data packs the way the game does, so its answers for a world with packs are the answers for that world.
+A data pack can change how a world generates: its terrain, biomes, structures, features and loot. spyglass applies data packs the way the game does, so its answers for a world with packs are right for that world.
 
 ## Your world's packs
 
@@ -21,7 +21,14 @@ Data packs
     warning: data pack file/old-pack.zip is enabled but missing from datapacks/, so spyglass can't apply it
 ```
 
-A file is **replaced** when a pack below it (or the game's own data) has it too, and **added** when none does. A tag is **merged** with the tags below it, unless it says to replace them. A pack's filter **hides** files of the packs below it. A file a higher pack replaces or hides is **shadowed**: it never takes effect.
+Packs load in order, each on top of the ones before it. For each kind of file, the counts say:
+
+- **replaced:** a pack below it (or the game's own data) has the same file, and this one takes its place;
+- **added:** no pack below has it;
+- **merged:** a tag combined with the same tag below it (unless the tag says to replace them);
+- **hidden below:** files of the packs below that this pack's filter removes;
+- **shadowed above:** files of this pack that a pack above it replaces or hides, so they never take effect;
+- **unreadable:** files spyglass couldn't read.
 
 What it may warn about, under the pack:
 
@@ -36,15 +43,17 @@ A pack you put into `datapacks/` after the world was created loads the next time
 
 ## Packs for a seed
 
-To see what a seed looks like with packs, give `--pack` with the pack's zip or folder, once for each pack, lowest first, as the game would load them:
+To see what a seed looks like with packs, give `--pack` with each pack's zip or folder, in the order the game would load them, lowest first:
 
 ```sh
-spyglass render --seed 42 --pack Terralith.zip --out map.png
-spyglass locate structure '#minecraft:village' --seed 42 --pack Terralith.zip --pack my-tweaks
-spyglass search 'require minecraft:mansion within 2000 of spawn' --pack Terralith.zip
+spyglass render --seed 42 --pack my-biomes.zip -o map.png
+spyglass locate structure '#minecraft:village' --seed 42 --pack my-biomes.zip --pack my-tweaks
+spyglass search -q 'require minecraft:mansion within 2000 of spawn' --pack my-biomes.zip
 ```
 
-`--pack` works with every command that takes `--seed`. With `--world`, the world's own packs are used instead.
+`--pack` works with every command that takes `--seed`, and with `search` and `portal link`. With `--world`, spyglass uses the world's own packs instead.
+
+A pack made for another game version may not load. Large worldgen packs such as Terralith often include structure files saved by older versions, which spyglass can't read yet, so it says which file it stopped at.
 
 ## Bundles from older versions of spyglass
 

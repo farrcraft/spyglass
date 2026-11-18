@@ -4,9 +4,20 @@
 
 A local-only seed explorer for Minecraft: Java Edition. Describe what you want in a world, and spyglass searches for the seeds that fit best, shows them on a map, and finds where things are in worlds you already play. Output aims to match the game exactly on current versions.
 
-> Status: early. For game versions 26.2, 26.3 and the 26.4 snapshots so far (26.4-snapshot-5 to 26.4-snapshot-9), each checked against the real game, the `spyglass` command answers `/locate`-style questions (structures, biomes, features such as dungeons and geodes, loot containers holding an item, slime chunks, spawn) for any seed or a world save, in the Overworld, the Nether and the End, with `--json` for scripts, gives the blocks the game generates before features, draws maps of them, and searches for the seeds that best fit a query of required and preferred constraints, which can span dimensions ("a fortress near the spawn's portal"), or for the places in one seed that do. The viewer shows the same maps, pannable and zoomable, with layers you choose, a dimension switch and markers of your own, and runs the same searches. Terrain heights decide which structures really generate, so locate answers match the game's `/locate`, with exact bounds for villages, bastions, strongholds and other structures laid out piece by piece; maps can show terrain relief and the biomes at the surface at any scale. New versions are added as they come out, snapshots included, and stay supported ([adding a version](docs/adding-a-version.md)).
+> Status: early. Works with game versions 26.2, 26.3 and the 26.4 snapshots so far (26.4-snapshot-5 to 26.4-snapshot-9), each checked against the real game. New versions are added as they come out, snapshots included, and stay supported ([adding a version](docs/adding-a-version.md)).
 
-![The spyglass viewer showing the best seed from a search for two swamp huts near spawn, with the huts and a cherry grove ringed on a biome map](docs/guide/src/images/viewer-search.png)
+What it does today, for any seed or one of your world saves, in the Overworld, the Nether and the End:
+
+- **Locate** structures, biomes, slime chunks and the spawn as the game's `/locate` does, with exact bounds for villages, bastions and other structures built from pieces.
+- **Find** features the game can't locate, such as dungeons and geodes, and loot chests holding an item.
+- **Plan builds:** which flower bone meal grows at each block, for flower farms, and where a Nether portal will link.
+- **Search** for the seeds that best fit what you ask for ("two witch huts close together near spawn"), or for the places in one seed that do.
+- **Draw maps** of biomes, structures, terrain relief and more, as images or in the viewer.
+- **Read your worlds:** their data packs, the chunks they've already generated, and which chests are still unopened.
+
+The viewer shows all of this on a map you can pan and zoom. The `spyglass` command answers from a terminal, with `--json` for scripts.
+
+![The spyglass viewer showing the best seed from a search for two swamp huts near spawn, with the huts in range and a cherry grove ringed on a biome map](docs/guide/src/images/viewer-search.png)
 
 More of the viewer is in the [user guide](https://farrcraft.github.io/spyglass/viewer.html).
 
@@ -19,7 +30,7 @@ Not affiliated with or endorsed by Mojang or Microsoft.
 - **Your existing worlds.** Point spyglass at a local world save and it reads the seed, version and world settings, then answers "where is the nearest stronghold, ancient city or mushroom island from here?" for that world, not just for theoretical seeds.
 - **All three dimensions:** Overworld, Nether and End.
 - **Library first.** Everything is a Rust library. A command-line tool (JSON output, for scripts) and the GUI are both thin front ends over the same API, so anything the GUI can show, a script can compute.
-- **Local only.** No server, no account, no telemetry. The only network access is downloading the game's own server jar from Mojang, which the extractor (or the viewer, when asked to) does once per version.
+- **Local only.** No server, no account, no telemetry. The only network access is to Mojang, for the game's version list and its own server jar, which the extractor (or the viewer, when asked to) downloads once per version.
 
 ## Why
 
@@ -70,6 +81,7 @@ See [docs/getting-started.md](docs/getting-started.md) for the full walkthrough,
 
 | Crate                | Role                                                                       |
 | -------------------- | -------------------------------------------------------------------------- |
+| `spyglass-math`      | Java's `Math` functions, giving the same results on every platform.        |
 | `spyglass-rng`       | Bit-exact ports of the game's RNGs.                                        |
 | `spyglass-noise`     | Bit-exact ports of the game's noise.                                       |
 | `spyglass-data`      | Reads version bundles; shared JSON and NBT readers.                        |

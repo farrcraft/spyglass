@@ -39,6 +39,12 @@ description: Launch and drive the spyglass viewer on Windows to see a change wor
 
 5. **Stop** it when done: `& $V stop`.
 
+`start` doesn't clear its `-Out` folder, and the viewer keeps its user data there, so markers and done places can be set up by writing `spyglass-data.json` into the folder first ([user-data.md](../../../docs/specs/user-data.md)).
+
+## Screenshots for the guide
+
+Shots include the window's 32-px title bar (1402 × 932). The guide's images are 1402 × 900, without it: crop the top 32 rows with `System.Drawing` before saving into `docs/guide/src/images/`. Each image's caption in the guide records its seed, version, dimension, center, scale and what's on, so it can be retaken.
+
 ## Layout at 1400 × 900
 
 These are positions in the screenshot, as of the redesigned viewer. Take a shot before relying on them.
@@ -52,6 +58,6 @@ These are positions in the screenshot, as of the redesigned viewer. Take a shot 
 ## Notes
 
 - Run one viewer at a time: `start` stops any running one, and `shot` captures the first it finds.
-- The screen must be unlocked, and nothing may cover the window: capture copies the screen, and input goes to whatever is under the pointer.
+- The screen must be unlocked. Capture copies the screen, and input goes to whatever is under the pointer, so every action first brings the viewer to the front and stops with an error if it can't; nothing is captured or sent then. Ask the user to leave the screen alone while you drive it.
 - If the viewer opens without game data, its first-run panel asks to extract some. Point `-Version` at a bundle that's already in `bundles/`.
 - Report what the screenshots showed, and say when a check was by eye only.

@@ -1,13 +1,13 @@
 # Seed search
 
-`spyglass search` finds the seeds that best fit a query. The viewer's **Search** tab takes the same queries.
+`spyglass search` goes through seeds and keeps the ones that best fit what you ask for. You ask in a **query**. The viewer's **Search** tab takes the same queries.
 
 ## Queries
 
-Each line of a query is a constraint:
+A query is one or more lines, and each line is a **constraint**: something you want in the seed.
 
-- `require` constraints are ones a seed must meet;
-- `prefer` constraints add to a seed's score, and `weight N` makes one count N times.
+- A `require` line is something a seed must have. Seeds without it are skipped.
+- A `prefer` line is something you'd like. It adds to a seed's score, and the best-scoring seeds are kept. Add `weight N` to make it count N times as much.
 
 ```sh
 spyglass search --time 2m -q 'require 2 minecraft:swamp_hut within 600 of spawn
@@ -16,12 +16,27 @@ prefer 3 #minecraft:village within 800 of spawn
 prefer biome minecraft:cherry_grove within 500 of spawn weight 2'
 ```
 
-A constraint counts structures (ids or `#tags`), features, loot or slime chunks in a place, or asks for a biome, the spawn or terrain (`height A to B`, `flat D`) there, or a field of a flower (`flower F field N`, see [Flower farms](flower-farms.md#finding-a-seed)). `no` asks for none, and `biome B covers 30%` for a share of the place. The place is:
+Each constraint says **what** you want and **where**.
 
-- a distance from the spawn or a point: `within 600 of spawn`, `within 300 of 1000,-2000`;
-- a rectangle: `in -500,-500 to 500,500`;
-- for structures and slime chunks, a distance from a structure: `within 200 of minecraft:fortress within 1000 of spawn`;
-- for a `cluster`, a distance of each other. The [search language's specification](https://github.com/farrcraft/spyglass/blob/main/docs/specs/search.md) has every form. A long query is easier to keep in a file: `--query-file huts.txt`.
+What you can ask for:
+
+- a number of structures: `2 minecraft:swamp_hut`, or a group with a tag, `#minecraft:village`;
+- features, such as `feature minecraft:monster_room` (a dungeon);
+- a container holding an item: `loot minecraft:diamond`;
+- slime chunks: `slime`;
+- a biome: `biome minecraft:cherry_grove`, or a share of the place, `biome minecraft:cherry_grove covers 30%`;
+- terrain: `height 60 to 90` for ground at those heights, or `flat 4` for ground that varies by no more than 4 blocks;
+- a field of a flower: `flower minecraft:cornflower field 300` (see [Flower farms](flower-farms.md#finding-a-seed));
+- none of something: `no minecraft:pillager_outpost`;
+- several of a structure close together: `cluster 2 minecraft:swamp_hut within 200 of each other`.
+
+Where:
+
+- within a distance of the spawn or a point: `within 600 of spawn`, `within 300 of 1000,-2000`;
+- in a rectangle: `in -500,-500 to 500,500`;
+- for structures and slime chunks, near a structure: `within 200 of minecraft:fortress within 1000 of spawn`.
+
+The [search language's specification](https://github.com/farrcraft/spyglass/blob/main/docs/specs/search.md) has every form. A long query is easier to keep in a file, passed with `--query-file huts.txt`.
 
 ## Examples
 
@@ -78,7 +93,7 @@ require nether #minecraft:ruined_portal within 300 of spawn
 | Option                          | Default    | What it does                                                                                                                      |
 | ------------------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | `-q <text>` or `--query-file`   | required   | The query.                                                                                                                        |
-| `--count <n>`, `--time <t>`     | none       | Stop after this many seeds, or this long (`90s`, `10m`, `2h`). Without either, Ctrl-C stops it and prints the best so far.        |
+| `--count <n>`, `--time <t>`     | none       | Stop after this many seeds, or this long (`90s`, `10m`, `2h`). Without either, a search of every seed runs until Ctrl-C.          |
 | `--range <a..b>`, `--seeds <f>` | every seed | Only seeds from a to b (both included), or those listed in a file. `--range -2147483648..2147483647` is every seed text can make. |
 | `--from <index>`                | `0`        | Where to start; a search prints the index to continue from.                                                                       |
 | `--top <n>`                     | `10`       | How many seeds to keep.                                                                                                           |
@@ -86,17 +101,17 @@ require nether #minecraft:ruined_portal within 300 of spawn
 | `--certain`                     | off        | Only seeds whose required constraints hold whatever is left undecided.                                                            |
 | `--threads <n>`                 | all cores  | Worker threads.                                                                                                                   |
 
-The bundle options are as for [`locate`](command.md#locate). `--json` prints every hit, with what each constraint matched. The same query, range, start and count always give the same list, on any machine.
+The pack and bundle options work as for [`locate`](command.md#locate). `--json` prints the same seeds, with everything each constraint matched. The same query, range, start and count always give the same list, on any computer.
 
-A search stops at `--count`, `--time` or Ctrl-C once the seeds being checked are done, and then evaluates the best seeds again for what each constraint matched. For structures and biomes that's instant; for features and loot each seed takes as long again as it did to check, so `--time` is a lower bound: the loot query above with `--time 20s` printed after 16 minutes on 16 threads. A second Ctrl-C skips evaluating the best seeds.
+When a search stops, at `--count`, `--time` or Ctrl-C, it first finishes the seeds it's checking. Then it looks at the best seeds again, to list what each constraint matched. For structures and biomes that's instant. For features and loot, each seed takes as long again as it did the first time, so a search can run well past its `--time`: the loot example above, with `--time 20s`, printed after 16 minutes on 16 threads. Press Ctrl-C a second time to skip that step.
 
 ## What a search costs
 
-- **Structures** are fast. Searching every seed checks structure placement first, which depends only on part of the seed, so seeds that can't place enough structures are skipped 65,536 at a time.
-- **Confirming** with terrain costs little on top, since it runs only on seeds that pass everything else. Without `--confirm`, a constraint on most structures is usually **possibly** met rather than met: they're where the game tries them, and whether each one generates depends on the ground there.
-- **Features** are slow. Each seed's dungeons are placed chunk by chunk, about a seed a second, and a feature's place is at most 1,024 blocks on a side.
-- **Loot** is slower still. Each seed places every chunk of the place until it finds the item: about a minute a seed for a radius of 1,000. A loot place is at most 2,048 blocks on a side.
+- **Structures** are fast. Where structures can go depends on only part of the seed, so spyglass can rule out 65,536 seeds at a time when they can't have enough of them.
+- **Confirming** with terrain (`--confirm`) adds little, since it runs only on seeds that pass everything else. Without it, most structure constraints are only **possibly** met: the structures are where the game tries to build them, but whether each one generates depends on the ground there.
+- **Features** are slow: spyglass generates each seed's chunks one by one, about a seed a second for dungeons. A feature constraint's area can be at most 1,024 blocks across.
+- **Loot** is slower still. spyglass generates every chunk in the area until it finds the item: about a minute a seed within 1,000 blocks. A loot constraint's area can be at most 2,048 blocks across.
 
-Cheaper constraints in a query are checked first, and rule seeds out before any chunk is placed, so put a structure or biome constraint beside a feature or loot one where you can. Use `--range` and `--count` to keep a slow search small.
+spyglass checks the cheapest constraints first, and they rule seeds out before any chunk is generated. So where you can, add a structure or biome constraint alongside a feature or loot one. Use `--range` and `--count` to keep a slow search small.
 
-Likely features and containers count only towards **possibly** met. `--certain` keeps only seeds whose answers are certain ([what that means](answers.md#certain-and-candidate)).
+Features and containers that are only likely count as **possibly** met. `--certain` keeps only seeds whose answers are certain ([what that means](answers.md#certain-and-candidate)).

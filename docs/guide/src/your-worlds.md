@@ -1,6 +1,6 @@
 # Your own worlds
 
-Every command takes `--world` instead of `--seed`, and the viewer opens saves too. spyglass reads a save's seed, game version and player from it, and never writes to it.
+Every command that takes `--seed` also takes `--world` instead, to answer for one of your world saves. The viewer opens saves too. spyglass reads the world's seed, game version and player position from the save, and never changes the save.
 
 ```sh
 spyglass world list
@@ -10,15 +10,15 @@ spyglass locate structure '#minecraft:village' --world "My World" --from player
 
 - `world list` lists the saves in the official Minecraft Launcher and the Modrinth App.
 - `world info` shows everything spyglass read from a world and how its answers use it ([below](#what-spyglass-read)).
-- `--world` takes a save's folder, or its folder name in a launcher's saves. `--from player` searches from where your player is, in the player's dimension.
+- `--world` takes a save's folder, or its folder name in a launcher's saves. `--from player` searches from where your player is, in your player's dimension.
 
 ## What spyglass read
 
-`world info` explains spyglass's answers for your world, in three parts, each warning under what it's about:
+`world info` explains how spyglass answers for your world. It has three parts, and lists each warning under the thing it's about:
 
-- **Settings:** every value spyglass took from the save, the file and field it came from, and what it decides. The seed decides every prediction, the data version which bundle answers, each dimension's generator whether spyglass answers there at all, the world border where portals can be found.
-- **Data packs:** each enabled pack in load order, whether spyglass applied it, and for one it applied, what it changes and which answers that touches. A pack of recipes or functions changes none of them.
-- **Dimensions:** whether spyglass answers in each, and what its region files hold: how many chunks, which versions generated them, the structures the world itself recorded (answered from the save, not the seed), and the loot containers nobody has opened yet.
+- **Settings:** every value spyglass took from the save, the file it came from, and what it decides. For example, the seed decides every prediction, the game version decides which bundle answers, and the world border decides where portals can go.
+- **Data packs:** each pack the world uses, in the order the game loads them, whether spyglass applied it, and, if it did, what the pack changes and which answers that affects. A pack of only recipes or functions changes none of them.
+- **Dimensions:** whether spyglass can answer in each dimension, and what your world has saved there: how many chunks, which game versions generated them, the structures the world recorded, and the loot containers nobody has opened yet.
 
 For a 26.3 world with Terralith, shortened:
 
@@ -46,13 +46,13 @@ Dimensions
                                  sealed    337 loot containers not yet opened: minecraft:decorated_pot 115, minecraft:chest 96, …
 ```
 
-Reading every region file takes a few seconds for a large world; `--quick` leaves out what each dimension holds. With `--json`, the same report is in `settings`, `packs` and `dimensions`, and each warning says what it's `about` ([the JSON format](https://github.com/farrcraft/spyglass/blob/main/docs/specs/cli-json.md#world-info)).
+For a large world, reading all its chunks takes a few seconds. `--quick` skips that, and leaves out what each dimension holds. With `--json`, the same report is in `settings`, `packs` and `dimensions`, and each warning says what it's `about` ([the JSON format](https://github.com/farrcraft/spyglass/blob/main/docs/specs/cli-json.md#world-info)).
 
-The viewer shows the same report in its **World** panel, with a tally of what the map has taken from the save so far ([the viewer](viewer.md)). Which containers you've opened isn't in the report: a save can't tell a structure's chest you opened from one you placed, so spyglass says so for each container as you look at it ([below](#when-answers-may-differ)).
+The viewer shows the same report in its **World** tab, with a count of what the map has taken from the save so far ([the viewer](viewer.md#your-worlds)). The report doesn't count the containers you've opened, since a save can't tell a structure's chest you opened from one you placed yourself. Instead, spyglass says how each container stands as you look at it ([below](#when-answers-may-differ)).
 
 ## What the world already holds
 
-Where your world has already generated a chunk, the game answers from what it saved there, not from the seed, and so does spyglass. A structure in a chunk the world has saved is marked **saved**: it's there, even if an older version, a data pack or a mod placed it. A chunk the world saved with no structure has none, whatever the seed would put there. Everywhere else, spyglass predicts from the seed as usual. Chunks saved before 1.18.2 are predicted too, since the game renames their structures by biome as it loads them.
+Once your world has generated a chunk, the game uses what it saved there, not the seed, and so does spyglass. A structure in a chunk your world has saved is marked **saved**: it's really there, even if an older version, a data pack or a mod put it there. A saved chunk with no structure has none, whatever the seed would put there. Everywhere else, spyglass predicts from the seed as usual. Chunks saved before 1.18.2 are predicted too, since the game renames their structures when it loads them.
 
 ```text
 #village from 0 64 0 (My World, seed -4893098694207956070, Minecraft 26.3)
@@ -70,9 +70,9 @@ Where your world has already generated a chunk, the game answers from what it sa
 - **No bundle for the world's version,** under the data version. [Extract one](game-data.md).
 - **A world preset other than Default,** such as Large Biomes or Amplified, under that dimension's generator.
 - **Structures turned off,** under the structures setting.
-- **Data packs spyglass can't apply,** and mods' packs, under the pack. spyglass applies your world's data packs as the game does; see [data packs](data-packs.md) for what it can't. A pack spyglass applies but can't open a dimension with (a feature type it doesn't place yet, say) is an error under that pack.
+- **Data packs spyglass can't apply,** and mods' packs, under the pack. spyglass applies your world's data packs as the game does; see [data packs](data-packs.md) for what it can't. If spyglass applies a pack but then can't open a dimension with it (because the pack uses a kind of feature spyglass doesn't support yet, say), that's an error under the pack, or under the dimension when spyglass can't tell which pack caused it.
 - **A world opened with a modded game,** under the modded setting.
-- **Chunks an older version generated,** and region files that can't be read, under the dimension's holdings. Older chunks were made by that version's rules, and stay as they were when the world was upgraded.
+- **Chunks an older version generated,** and files that can't be read, under the dimension. Older chunks were made by that version's rules, and stay as they were when the world was upgraded.
 - **A world border that's still moving** is a note under the border: spyglass answers with the size it ends at.
 
-Loot in a world can differ too: a chest you've already opened holds whatever you left in it. With `--world`, each container in a chunk your world has generated says how the world holds it: `in the save: unopened` (it'll hold what spyglass shows), `opened, now …` with what's in it now, or `gone` (broken, or something else in its place). `loot find` goes by what's in it now.
+Loot can differ too: a chest you've already opened holds whatever you left in it. With `--world`, each container in a chunk your world has generated says what the save holds: `in the save: unopened` (it holds what spyglass shows), `opened, now …` with what's in it now, or `gone` (broken, or something else in its place). `loot find` goes by what's in it now.

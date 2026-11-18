@@ -75,7 +75,7 @@ Windows and macOS need nothing extra.
 cargo xtask doctor
 ```
 
-It checks the Rust toolchain, rustfmt and clippy, pre-commit and the git hooks, Java (below), and Docker (only a warning; just the [Linux check](#linux-check) and the [dev container](#dev-container) need it). Each line is `ok`, `warn` or `FAIL`, with a fix for anything that isn't ok. It never installs anything, and exits non-zero if something fails. By default it checks Java against the latest release; use `--game-version <id>` for another, and `--java <path>` to check a specific installation.
+It checks the Rust toolchain and its pin, rustfmt and clippy, the MSRV toolchain, the cargo tools the hooks use (cargo-nextest, cargo-shear, mdBook) and cargo-about, pre-commit and the git hooks, Java (below), your bundles, stale build outputs in `target/`, and Docker (only a warning; just the [Linux check](#linux-check) and the [dev container](#dev-container) need it). Each line is `ok`, `warn` or `FAIL`, with a fix for anything that isn't ok. It never installs anything, and exits non-zero if something fails. By default it checks Java against the latest release; use `--game-version <id>` for another, and `--java <path>` to check a specific installation.
 
 ### Java
 
@@ -106,15 +106,15 @@ cargo run -p spyglass-extract
 
 All checks are defined in [`.pre-commit-config.yaml`](../.pre-commit-config.yaml) (see [ADR 0002](adr/0002-git-hooks-for-local-checks.md) and [ADR 0005](adr/0005-extra-rust-checks.md)). Once the setup script has run, they run automatically:
 
-- **On commit**, against staged files: line endings and whitespace, JSON/YAML/TOML syntax, blocks on jars, class files and extracted game data, relative Markdown links and anchors (`cargo xtask links`), `cargo fmt`, unused dependencies (cargo-shear), spelling (typos), TOML formatting (taplo), JSON/YAML/Markdown formatting (Prettier), Markdown lint, shellcheck and GitHub Actions workflows (zizmor). Formatters fix files in place and fail the commit; review the changes, `git add` them and commit again.
+- **On commit**, against staged files: line endings and whitespace, JSON/YAML/TOML syntax, blocks on jars, class files, extracted game data and Java outside `oracle/`, the extractor's committed block report class matching its source (`cargo xtask java-report --check`), no references from code to `docs/roadmap/` or `docs/plans/`, relative Markdown links and anchors (`cargo xtask links`), the user guide building (`cargo xtask guide`, when `docs/guide/` changes), `cargo fmt`, unused dependencies (cargo-shear), spelling (typos), TOML formatting (taplo), JSON/YAML/Markdown formatting (Prettier), Markdown lint, shellcheck and GitHub Actions workflows (zizmor). Formatters fix files in place and fail the commit; review the changes, `git add` them and commit again.
 - **On push:** `cargo clippy` with warnings as errors, tests (`cargo nextest run`, then `cargo test --doc` for doctests), `cargo doc` with the rustdoc lints, a build with the minimum supported Rust version (`cargo xtask msrv`), and `cargo-deny` (security advisories, licenses, dependency sources; configured in [`deny.toml`](../deny.toml)).
 
 Lint levels for every crate are set once, in `[workspace.lints]` in the root `Cargo.toml`. A new crate opts in with `[lints] workspace = true`.
 
-The setup scripts install the extra tools the hooks need: `cargo-nextest`, `cargo-shear` and the MSRV toolchain. To install them by hand:
+The setup scripts install the extra tools the hooks need: `cargo-nextest`, `cargo-shear`, mdBook and the MSRV toolchain. To install them by hand:
 
 ```sh
-cargo install --locked cargo-nextest@0.9.149 cargo-shear@1.14.0
+cargo install --locked cargo-nextest@0.9.149 cargo-shear@1.14.0 mdbook@0.5.4
 rustup toolchain install "$(cargo xtask msrv --print)" --profile minimal
 ```
 
@@ -141,27 +141,33 @@ It builds the `base` stage of `.devcontainer/Dockerfile` (only git, curl and a C
 
 Project-level commands live in the `xtask` crate and run as `cargo xtask <command>` (see [ADR 0003](adr/0003-cargo-xtask-for-project-commands.md)). `cargo xtask --help` lists them. The first run compiles it, which takes a few seconds.
 
-| Command                     | What it does                                                                                                                        |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `cargo xtask bench`         | Times the public API's main operations (`dist` build).                                                                              |
-| `cargo xtask check`         | Every check in the pre-commit config, on all files, then a sweep of stale build outputs.                                            |
-| `cargo xtask ci`            | One game version's CI job, from extraction to comparison.                                                                           |
-| `cargo xtask ci-plan`       | CI's oracle jobs, planned from estimated costs ([ADR 0058](adr/0058-oracle-ci-planned-by-cost.md)).                                 |
-| `cargo xtask ci-scope`      | Which CI jobs a pull request needs, from the files it changes ([ADR 0041](adr/0041-ci-runs-what-a-change-can-affect.md)).           |
-| `cargo xtask dist`          | Builds one target's release archive into `target/archives/` ([ADR 0038](adr/0038-how-release-archives-are-built.md)).               |
-| `cargo xtask doctor`        | Reports whether this machine is ready.                                                                                              |
-| `cargo xtask math-report`   | How often candidate implementations differ from Java's `Math`, from `cargo xtask oracle math` ([java-math.md](specs/java-math.md)). |
-| `cargo xtask fuzz`          | Fuzzes the NBT or region reader (nightly and cargo-fuzz; [ADR 0036](adr/0036-fuzzing-with-cargo-fuzz.md)).                          |
-| `cargo xtask links`         | Checks every relative link and anchor in the Markdown.                                                                              |
-| `cargo xtask linux-check`   | Checks a fresh clone on a clean Linux machine, in Docker.                                                                           |
-| `cargo xtask msrv`          | Builds the workspace with its minimum Rust version.                                                                                 |
-| `cargo xtask oracle`        | Builds and runs the oracle harness (below).                                                                                         |
-| `cargo xtask oracle-test`   | Runs the ignored comparisons with the game (below).                                                                                 |
-| `cargo xtask profile`       | Where a bench line's time goes, by function, from Linux `perf` in Docker ([profiling](#profiling)).                                 |
-| `cargo xtask release`       | Sets the version and dates the changelog for a release ([releasing](releasing.md)).                                                 |
-| `cargo xtask sweep`         | Deletes stale build outputs from `target/` ([ADR 0061](adr/0061-keeping-target-small.md)).                                          |
-| `cargo xtask version-diff`  | Reports what changed between two bundles ([adding a version](adding-a-version.md)).                                                 |
-| `cargo xtask viewer-timing` | Times the viewer's cold start and a zoom in nine fixed scenarios (`dist` build; [measuring the viewer](#measuring-the-viewer)).     |
+| Command                     | What it does                                                                                                                                                 |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `cargo xtask bench`         | Times the public API's main operations (`dist` build).                                                                                                       |
+| `cargo xtask check`         | Every check in the pre-commit config, on all files, then a sweep of stale build outputs.                                                                     |
+| `cargo xtask ci`            | One game version's CI job, from extraction to comparison.                                                                                                    |
+| `cargo xtask ci-plan`       | CI's oracle jobs, planned from estimated costs ([ADR 0058](adr/0058-oracle-ci-planned-by-cost.md)).                                                          |
+| `cargo xtask ci-scope`      | Which CI jobs a pull request needs, from the files it changes ([ADR 0041](adr/0041-ci-runs-what-a-change-can-affect.md)).                                    |
+| `cargo xtask dist`          | Builds one target's release archive into `target/archives/` ([ADR 0038](adr/0038-how-release-archives-are-built.md)).                                        |
+| `cargo xtask doctor`        | Reports whether this machine is ready.                                                                                                                       |
+| `cargo xtask math-report`   | How often candidate implementations differ from Java's `Math`, from `cargo xtask oracle math` ([java-math.md](specs/java-math.md)).                          |
+| `cargo xtask fuzz`          | Fuzzes a reader of untrusted files: NBT, region, POI or data pack (nightly and cargo-fuzz; [ADR 0036](adr/0036-fuzzing-with-cargo-fuzz.md)).                 |
+| `cargo xtask guide`         | Builds the user guide into `target/guide/`; `--serve` serves it while you write ([below](#9-running-spyglass)).                                              |
+| `cargo xtask java-report`   | Rebuilds the extractor's block report class from its source; `--check` fails if they differ ([ADR 0054](adr/0054-block-behaviour-from-the-running-game.md)). |
+| `cargo xtask jdk-status`    | The JDK major version a game version needs, and whether one is found. The setup scripts use it.                                                              |
+| `cargo xtask order-report`  | How stable the game's decoration order is, from `oracle order` and `oracle replay`.                                                                          |
+| `cargo xtask release-notes` | Writes a release's notes from the changelog; the Release workflow's first step ([releasing](releasing.md)).                                                  |
+| `cargo xtask smoke`         | Unpacks a release archive outside the repo and runs it as a user without Rust would.                                                                         |
+| `cargo xtask links`         | Checks every relative link and anchor in the Markdown.                                                                                                       |
+| `cargo xtask linux-check`   | Checks a fresh clone on a clean Linux machine, in Docker.                                                                                                    |
+| `cargo xtask msrv`          | Builds the workspace with its minimum Rust version.                                                                                                          |
+| `cargo xtask oracle`        | Builds and runs the oracle harness (below).                                                                                                                  |
+| `cargo xtask oracle-test`   | Runs the ignored comparisons with the game (below).                                                                                                          |
+| `cargo xtask profile`       | Where a bench line's time goes, by function, from Linux `perf` in Docker ([profiling](#profiling)).                                                          |
+| `cargo xtask release`       | Sets the version and dates the changelog for a release ([releasing](releasing.md)).                                                                          |
+| `cargo xtask sweep`         | Deletes stale build outputs from `target/` ([ADR 0061](adr/0061-keeping-target-small.md)).                                                                   |
+| `cargo xtask version-diff`  | Reports what changed between two bundles ([adding a version](adding-a-version.md)).                                                                          |
+| `cargo xtask viewer-timing` | Times the viewer's cold start and a zoom in nine fixed scenarios (`dist` build; [measuring the viewer](#measuring-the-viewer)).                              |
 
 ### Profiling
 
@@ -227,9 +233,9 @@ cargo test --release -p spyglass-structure -- --ignored
 cargo test --release -p spyglass-biome --test spawn -- --ignored
 ```
 
-`oracle locate` (and `cargo xtask ci`, which runs it) starts Mojang's dedicated server, which means accepting the [Minecraft EULA](https://aka.ms/MinecraftEULA). It won't run until you do: pass `--accept-eula`, or set `SPYGLASS_ACCEPT_EULA=1` ([ADR 0033](adr/0033-the-oracle-accepts-the-eula-only-when-asked.md)).
+`oracle locate`, `oracle order` and `oracle portals` (and `cargo xtask ci`, which runs `locate` and `portals`) start Mojang's dedicated server, which means accepting the [Minecraft EULA](https://aka.ms/MinecraftEULA). It won't run until you do: pass `--accept-eula`, or set `SPYGLASS_ACCEPT_EULA=1` ([ADR 0033](adr/0033-the-oracle-accepts-the-eula-only-when-asked.md)).
 
-The other subcommands each do one part of the work, and `cargo xtask oracle --help` describes them: `build` compiles the harness (the others do it first when anything is stale), `biomes` writes one golden biome file for a seed and region, `heights` writes the height golden files (part of `golden`), `locate` asks a real dedicated server `/locate` questions and takes several minutes (not part of `golden`), and `test-pack` checks the forms vanilla data doesn't use ([specs/oracle.md](specs/oracle.md)).
+The other subcommands each do one part of the work, and `cargo xtask oracle --help` describes them: `build` compiles the harness (the others do it first when anything is stale), `biomes` writes one golden biome file for a seed and region, `heights` writes the height golden files (part of `golden`), `locate` asks a real dedicated server `/locate` questions and takes several minutes (not part of `golden`), and `test-pack` checks the forms vanilla data doesn't use ([specs/oracle.md](specs/oracle.md)). Others write the golden files for one area of worldgen (`loot`, `blocks`, `features`, `containers`, `flowers`, `math`), drive the server for portals and decoration order (`portals`, `order`, `replay`), or help find a difference (`column`, `fixture-pack`).
 
 `check-save` takes any world created in the same game version with the Default preset and no worldgen datapacks. Its folder is in your launcher's `saves` directory. It should report zero unexplained mismatches.
 
@@ -272,7 +278,7 @@ cargo run --release -p spyglass-viewer
 
 ### Measuring the viewer
 
-Two environment variables are for measuring the viewer. `SPYGLASS_VIEWER_TIMING=1` writes each tile job's time to stderr, and how long the map takes to cover the window and to fill it, after anything changes what it shows (on Windows, redirect stderr to see it). `SPYGLASS_VIEWER_SETTINGS=<file>` keeps settings in that file instead of the per-user one, and user data in that file's folder, so a measurement can start from known settings. `SPYGLASS_VIEWER_TIMING_ZOOM=<scale>` zooms the map to that scale once the window is first full (`<scale>,covered`: once it's first covered, while jobs still run), so the zoom is timed too, and the jobs it stops say how long they took to stop. `cargo xtask viewer-timing` uses all three: it starts the viewer from settings of its own in nine scenarios, from biomes at 1:4 to biomes at the surface while a search runs in another process, the last four zooming in or out, and prints the timings and the viewer's peak memory.
+Three environment variables are for measuring the viewer. `SPYGLASS_VIEWER_TIMING=1` writes each tile job's time to stderr, and how long the map takes to cover the window and to fill it, after anything changes what it shows (on Windows, redirect stderr to see it). `SPYGLASS_VIEWER_SETTINGS=<file>` keeps settings in that file instead of the per-user one, and user data in that file's folder, so a measurement can start from known settings. `SPYGLASS_VIEWER_TIMING_ZOOM=<scale>` zooms the map to that scale once the window is first full (`<scale>,covered`: once it's first covered, while jobs still run), so the zoom is timed too, and the jobs it stops say how long they took to stop. `cargo xtask viewer-timing` uses all three: it starts the viewer from settings of its own in nine scenarios, from biomes at 1:4 to biomes at the surface while a search runs in another process, the last four zooming in or out, and prints the timings and the viewer's peak memory.
 
 ## Next steps
 

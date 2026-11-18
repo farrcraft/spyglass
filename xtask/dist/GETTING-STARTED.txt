@@ -8,7 +8,8 @@ that fit what you want. It works for seeds and for your own world saves.
 This folder holds three programs:
 
   spyglass-viewer    the map app
-  spyglass           the command: locate, render, search, find, loot, world
+  spyglass           the command: locate, loot, render, search, find, world
+                     and more (spyglass --help lists them all)
   spyglass-extract   builds the game data spyglass needs, once per game version
 
 This is the short version. The user guide covers everything else:
@@ -62,7 +63,8 @@ Explore in spyglass-viewer, or from a terminal:
     spyglass render --seed 12345 --structures '#minecraft:village' --spawn -o map.png
     spyglass search -q 'require 2 minecraft:swamp_hut within 600 of spawn' --time 60s
 
-On Windows, in PowerShell or cmd, use double quotes instead of single quotes.
+In the Windows Command Prompt (cmd), use double quotes instead of single
+quotes. PowerShell takes them as written.
 Every command has --help, and --json for scripts.
 
 `spyglass --version` lists the game versions this build was checked against

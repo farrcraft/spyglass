@@ -131,6 +131,10 @@ pub const CHECKED: &[Checked] = &[
         id: "26.4-snapshot-8",
         data_version: 5128,
     },
+    Checked {
+        id: "26.4-snapshot-9",
+        data_version: 5129,
+    },
 ];
 
 /// How a data version relates to [`CHECKED`].

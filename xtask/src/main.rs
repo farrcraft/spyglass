@@ -71,7 +71,8 @@ enum Cmd {
     /// Build one target's release archive into `target/archives/`: the binaries in a `dist`
     /// build, the docs and the third-party licenses (docs/adr/0038-how-release-archives-are-built.md).
     Dist(dist::Dist),
-    /// Fuzz a reader of untrusted files with cargo-fuzz on nightly: `nbt` or `region`.
+    /// Fuzz a reader of untrusted files with cargo-fuzz on nightly: `nbt`, `region`, `poi` or
+    /// `pack`.
     Fuzz(fuzz::Fuzz),
     /// Build the user guide, `docs/guide/`, into `target/guide/`, failing on mdBook's warnings
     /// (docs/adr/0066-a-user-guide-on-github-pages.md); with `--serve`, serve it while writing.

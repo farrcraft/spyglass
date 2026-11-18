@@ -51,13 +51,36 @@ public class ViewerInput {
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] public static extern void mouse_event(int f, int x, int y, int d, int e);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int c);
+    [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
+    [DllImport("user32.dll")] public static extern void keybd_event(byte k, byte s, int f, IntPtr e);
     [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr h, int a, out RECT r, int s);
     public struct RECT { public int L, T, R, B; }
 }
 "@
 }
 
+# Brings the viewer to the front, or throws. Windows ignores SetForegroundWindow from a
+# process that isn't in front, unless a key was just pressed, so a lone Alt press comes first.
+# Every capture and every input goes through this, so none of them can reach another window.
+function Focus {
+    $p = Get-Process spyglass-viewer -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $p) { throw 'the viewer is not running' }
+    $h = $p.MainWindowHandle
+    for ($try = 0; $try -lt 5; $try++) {
+        if ([ViewerInput]::GetForegroundWindow() -eq $h) { return $h }
+        if ([ViewerInput]::IsIconic($h)) { [ViewerInput]::ShowWindow($h, 9) | Out-Null }
+        [ViewerInput]::keybd_event(0x12, 0, 0, [IntPtr]::Zero)
+        [ViewerInput]::keybd_event(0x12, 0, 2, [IntPtr]::Zero)
+        [ViewerInput]::SetForegroundWindow($h) | Out-Null
+        Start-Sleep -Milliseconds 300
+    }
+    throw 'could not bring the viewer to the front; nothing was captured or sent'
+}
+
 function Press([int]$down, [int]$up) {
+    Focus | Out-Null
     [ViewerInput]::SetCursorPos($X, $Y) | Out-Null
     Start-Sleep -Milliseconds 150
     [ViewerInput]::mouse_event($down, 0, 0, 0, 0)
@@ -95,12 +118,11 @@ switch ($Action) {
     }
     'shot' {
         if (-not $Out) { throw 'shot needs -Out, a .png path' }
-        $p = Get-Process spyglass-viewer | Select-Object -First 1
-        [ViewerInput]::SetForegroundWindow($p.MainWindowHandle) | Out-Null
+        $h = Focus
         Start-Sleep -Milliseconds 500
         $r = New-Object ViewerInput+RECT
         # DWMWA_EXTENDED_FRAME_BOUNDS: the window without its invisible resize border.
-        [ViewerInput]::DwmGetWindowAttribute($p.MainWindowHandle, 9, [ref]$r, 16) | Out-Null
+        [ViewerInput]::DwmGetWindowAttribute($h, 9, [ref]$r, 16) | Out-Null
         $bmp = New-Object System.Drawing.Bitmap ($r.R - $r.L), ($r.B - $r.T)
         $g = [System.Drawing.Graphics]::FromImage($bmp)
         $g.CopyFromScreen($r.L, $r.T, 0, 0, $bmp.Size)
@@ -110,10 +132,12 @@ switch ($Action) {
     'click' { Press 2 4 }
     'rclick' { Press 8 16 }
     'move' {
+        Focus | Out-Null
         [ViewerInput]::SetCursorPos($X, $Y) | Out-Null
         Start-Sleep -Milliseconds 400
     }
     'wheel' {
+        Focus | Out-Null
         [ViewerInput]::SetCursorPos($X, $Y) | Out-Null
         Start-Sleep -Milliseconds 200
         for ($i = 0; $i -lt [Math]::Abs($Notches); $i++) {
@@ -124,8 +148,7 @@ switch ($Action) {
     'key' {
         if (-not $Keys) { throw 'key needs -Keys, in SendKeys notation' }
         Add-Type -AssemblyName System.Windows.Forms
-        $p = Get-Process spyglass-viewer | Select-Object -First 1
-        [ViewerInput]::SetForegroundWindow($p.MainWindowHandle) | Out-Null
+        Focus | Out-Null
         Start-Sleep -Milliseconds 200
         [System.Windows.Forms.SendKeys]::SendWait($Keys)
         Start-Sleep -Milliseconds 300

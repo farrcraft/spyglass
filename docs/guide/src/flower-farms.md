@@ -18,7 +18,7 @@ Deep dark and dripstone caves grow plains flowers, so an underground farm there 
 
 ## Finding a field
 
-Seed 12345 has a flower forest about 2,000 blocks north of the spawn, around x 190, z −2060. Draw the flowers on a map at the height your platform will be, the height of the flower's block, one above the grass:
+Seed 12345 has a flower forest about 2,000 blocks north of the spawn, around x 190, z −2060. Draw the flowers on a map at the height of your farm's flowers, which is one block above the grass:
 
 ```sh
 spyglass render --seed 12345 --centre 190,-2060 --scale 1 --size 256x256 --y 94 --flowers -o flowers.png
@@ -71,7 +71,7 @@ spyglass search -q "require flower minecraft:cornflower field 300 within 1000 of
 prefer flower minecraft:red_tulip field 100 chance 25% within 500 of spawn
 ```
 
-The field is checked on a grid every `step` blocks (4 by default), so a smaller step is more exact and slower. The answer gives the field's first block and its height; check it with `spyglass flower at`, and choose the height with `spyglass flower heights`. The same constraint works in `spyglass find`, around each place it finds.
+The field is checked on a grid every `step` blocks (4 by default), so a smaller step is more exact and slower. The answer gives the x and z of the field's first block (`--json` also gives its height). Check it with `spyglass flower at`, and choose the height with `spyglass flower heights`. The same constraint works in `spyglass find`, around each place it finds.
 
 ## Your own world
 

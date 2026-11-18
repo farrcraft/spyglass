@@ -4,7 +4,7 @@ spyglass runs locally and never sends your data anywhere. Its exposure is to wha
 
 ## What counts
 
-- **Files spyglass reads that someone else may have made:** world saves (`level.dat`, player files, region files) and the data packs inside them. Any such file that crashes spyglass, makes it allocate without bound, hang where the game wouldn't, or read or write outside the save is a vulnerability.
+- **Files spyglass reads that someone else may have made:** world saves (`level.dat`, player files, region and entity files, and the points-of-interest files that hold portals) and the data packs inside them. Any such file that crashes spyglass, makes it allocate without bound, hang where the game wouldn't, or read or write outside the save is a vulnerability.
 - **Downloads:** the extractor downloads Mojang's version manifest and server jar and checks the jar's SHA-1 against the manifest before using it ([data sources](docs/specs/data-sources.md)). A way to make spyglass use a file it didn't verify is a vulnerability.
 - **Unpacking the jar:** a jar entry that is written outside the bundle or cache folder.
 

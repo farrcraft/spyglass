@@ -6,6 +6,16 @@ Changes go under **Unreleased** as they're made. `cargo xtask release` turns tha
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-18
+
+### Game versions
+
+Checked against the game for 26.2, 26.3, 26.4-snapshot-5, 26.4-snapshot-6, 26.4-snapshot-7, 26.4-snapshot-8, 26.4-snapshot-9.
+
+### Added
+
+- **26.4-snapshot-9**, checked against the game. Nothing spyglass answers changed: its worldgen differs from snapshot-8's only in the names of the noise settings' debug functions.
+
 ## [0.5.0] - 2026-11-17
 
 ### Game versions
@@ -168,7 +178,8 @@ The first release.
 - A warning for a game version this build wasn't checked against. Its answers may differ from the game's ([bundle-format.md](docs/specs/bundle-format.md#checked-versions)).
 - `--version` names the build and the game versions it was checked against.
 
-[Unreleased]: https://github.com/farrcraft/spyglass/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/farrcraft/spyglass/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/farrcraft/spyglass/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/farrcraft/spyglass/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/farrcraft/spyglass/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/farrcraft/spyglass/compare/v0.3.0...v0.3.1

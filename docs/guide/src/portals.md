@@ -16,12 +16,15 @@ A portal "links back" when trips from each portal land at the other. Two portals
 spyglass portal link nether 100,64,100 --portal overworld:800,64,800 --game-version 26.3
 ```
 
-Give the portal's dimension and its lowest block, and with `--axis z` and `--size 4x5` its direction and size inside the frame if they aren't along x and 2 × 3. The answer lists the blocks a player standing in it aims at, and where each part of it lands among the portals you give with `--portal`, and with `--world`, your world's portals:
+Give the portal's dimension and its lowest block inside the frame. If it runs along z, add `--axis z`, and if it isn't 2 × 3 inside, add its size, such as `--size 4x5`. List the portals on the other side with `--portal`, or use `--world` for your world's portals.
+
+The answer lists the blocks a player standing in the portal aims at, and which portal each of them lands at. These answers are for a player standing still. Walking through can carry you a little further:
 
 ```text
 A 2 × 3 portal along x at 100 64 100 in the Nether leads to the Overworld (Minecraft 26.3):
   336 exit blocks, x 802 to 813, y 64 to 65, z 797 to 810, each searched 128 blocks around in x and z
   all exits land at --portal 1 (the Overworld 800 64 800)
+For a standing player: one moving through the portal can aim a tick's movement further.
 ```
 
 A portal can be **split**: some places in it lead to one portal and some to another, or to none. That's usually a sign to move one of them.
@@ -37,9 +40,10 @@ This lists every portal your world has, in each dimension, with where it leads, 
 - **mislinked:** it leads to a portal that doesn't lead back to it;
 - **split:** different places in it lead to different portals;
 - **unlinked:** no portal is in range on the other side, so going through builds a new one;
-- **tied:** two portals are exactly as near, and which one you land at can't be known from the portals alone.
+- **tied:** two portals are exactly as near, and which one you land at can't be known from the portals alone;
+- **too low:** the portal is too low for a player to stand in.
 
-spyglass reads the portals from the world's points-of-interest files, where the game keeps them. Parts of a world last played before 1.16 may have portals those files don't list yet, and spyglass says so.
+spyglass reads the portals from the files where the game keeps track of them (its "points of interest" files, in the save's `poi` folders). Parts of a world last played before 1.16 may have portals those files don't list yet, and spyglass says so.
 
 In the viewer, open the save: its portals are drawn in both dimensions, in purple, and flagged ones in orange. Hover one for where it leads and what's wrong.
 

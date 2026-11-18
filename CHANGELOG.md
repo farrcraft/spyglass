@@ -6,6 +6,10 @@ Changes go under **Unreleased** as they're made. `cargo xtask release` turns tha
 
 ## [Unreleased]
 
+### Added
+
+- **26.4-snapshot-9**, checked against the game. Nothing spyglass answers changed: its worldgen differs from snapshot-8's only in the names of the noise settings' debug functions.
+
 ## [0.5.0] - 2026-11-17
 
 ### Game versions

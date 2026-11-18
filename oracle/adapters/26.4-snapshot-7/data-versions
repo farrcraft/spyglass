@@ -1,3 +1,4 @@
 # The data versions this adapter covers (ADR 0027): one `from..` or `from..until` per line,
-# `until` exclusive. 26.4-snapshot-7 is 5127; 26.4-snapshot-8, 5128, needs nothing new.
+# `until` exclusive. 26.4-snapshot-7 is 5127; 26.4-snapshot-8 (5128) and 26.4-snapshot-9
+# (5129) need nothing new.
 5127..
